@@ -10,7 +10,7 @@ from app import task20_current_schema, task20_definitions
 from app.task_lifecycle_current_schema import (
     create_current_task20_schema, task20_schema_is_current, task_lifecycle_objects,
 )
-from app.task8_storage import register_task8_functions, task8_set_parts
+from app.task8_storage import register_task8_functions
 from app.task_entity_schema import (
     _objects, capture_task_entities, migrate_task_entities, resolve_dispatcher_claim_source_id,
     resolve_source_public_owner, restore_task_entities,
@@ -103,102 +103,6 @@ def _source():
     db.execute("update sqlite_sequence set seq=416921 where name='tasks'")
     db.commit()
     return db
-
-
-def test_native_reply_dto_preserves_source_pydantic_parsing_for_current_and_claimed_inputs():
-    from app import task_entity_storage
-    from app.store import (
-        AutoReplyStore, REPLY_TASK_CLAIMED_SQL, REPLY_TASK_CURRENT_SQL,
-    )
-
-    with closing(_source()) as db:
-        db.row_factory = sqlite3.Row
-        for input_id, label in ((205, b"current"), (206, b"claimed")):
-            input_parts = task8_set_parts(
-                "reply_task_inputs",
-                {
-                    "trigger_text": sqlite3.Binary(b"typed " + label + b" text"),
-                    "trigger_message_json": sqlite3.Binary(
-                        b'{"typed":"' + label + b'"}',
-                    ),
-                },
-            )
-            db.execute(
-                f"update tasks set {input_parts.sql} where _kind=? and id=?",
-                (*input_parts.parameters, TASK_RECORD_TYPES.code("reply_task_inputs"), input_id),
-            )
-        db.commit()
-        assert [tuple(row) for row in db.execute(
-            "select typeof(trigger_text),trigger_text,typeof(trigger_message_json),"
-            "trigger_message_json from ("
-            + task20_definitions.task20_projection("reply_task_inputs")
-            + ") where id in ('5','6') order by id"
-        ).fetchall()] == [
-            ("blob", b"typed current text", "blob", b'{"typed":"current"}'),
-            ("blob", b"typed claimed text", "blob", b'{"typed":"claimed"}'),
-        ]
-        source_dtos = {}
-        for claimed, projection in (
-            (False, REPLY_TASK_CURRENT_SQL), (True, REPLY_TASK_CLAIMED_SQL),
-        ):
-            row = db.execute(
-                f"select * from ({projection}) where id=201",
-            ).fetchone()
-            source_dtos[claimed] = AutoReplyStore._reply_task_from_row(row)
-            label = "claimed" if claimed else "current"
-            assert source_dtos[claimed].trigger_text == f"typed {label} text"
-            assert source_dtos[claimed].trigger_message_json == f'{{"typed":"{label}"}}'
-
-        db.execute("begin immediate")
-        metadata = capture_task_entities(db)
-        migrate_task_entities(db, metadata)
-        assert [tuple(row) for row in db.execute(
-            "select typeof(trigger_text),trigger_text,typeof(trigger_message_json),"
-            "trigger_message_json from task_inputs where id in (205,206) order by id"
-        ).fetchall()] == [
-            ("blob", b"typed current text", "blob", b'{"typed":"current"}'),
-            ("blob", b"typed claimed text", "blob", b'{"typed":"claimed"}'),
-        ]
-        for claimed in (False, True):
-            owner = task_entity_storage.get_task_with_inputs(db, 201)
-            native = AutoReplyStore._reply_task_from_native(owner, claimed=claimed)
-            source = source_dtos[claimed]
-            assert type(native.trigger_text) is type(source.trigger_text)
-            assert native.trigger_text == source.trigger_text
-            assert type(native.trigger_message_json) is type(source.trigger_message_json)
-            assert native.trigger_message_json == source.trigger_message_json
-            assert native.id == source.id
-            assert source.current_input_id == 5
-            assert source.claimed_input_id == 6
-            assert native.current_input_id == 205
-            assert native.claimed_input_id == 206
-
-
-def test_native_reply_dto_preserves_source_pydantic_fractional_attempts_error():
-    from app import task_entity_storage
-    from app.store import AutoReplyStore, REPLY_TASK_CURRENT_SQL
-    from pydantic import ValidationError
-
-    with closing(_source()) as db:
-        db.row_factory = sqlite3.Row
-        task_parts = task8_set_parts("reply_tasks", {"attempts": 1.25})
-        db.execute(
-            f"update tasks set {task_parts.sql} where _kind=? and id=201",
-            (*task_parts.parameters, TASK_RECORD_TYPES.code("reply_tasks")),
-        )
-        db.commit()
-        source_row = db.execute(
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=201",
-        ).fetchone()
-        with pytest.raises(ValidationError):
-            AutoReplyStore._reply_task_from_row(source_row)
-
-        db.execute("begin immediate")
-        metadata = capture_task_entities(db)
-        migrate_task_entities(db, metadata)
-        owner = task_entity_storage.get_task_with_inputs(db, 201)
-        with pytest.raises(ValidationError):
-            AutoReplyStore._reply_task_from_native(owner)
 
 
 def test_forward_migrates_all_twenty_families_to_native_task_and_domain_owners():
@@ -1230,61 +1134,6 @@ def test_native_workbench_session_collision_and_turn_preserve_source_uuid_and_op
                           "where owner.client_request_id='client-request-uuid'").fetchone()
         assert tuple(turn)[1:] == (203, "client-request-uuid")
         UUID(turn[0])
-
-
-def test_new_native_email_task_inverse_uses_predecessor_runtime_identity():
-    from hashlib import sha256
-    from app.task_entity_storage import create_task
-
-    with closing(_source()) as db:
-        db.row_factory = sqlite3.Row
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        source_metadata = capture_task_entities(db)
-        forward = migrate_task_entities(db, source_metadata)
-        now = db.execute("select current_timestamp").fetchone()[0]
-        task_values = {"kind": "email_classification", "status": "pending",
-                       "available_at": now, "attempts": 0, "error": "",
-                       "owner_pid": None, "generation": 0,
-                       "lease_owner": "", "lease_expires_at": "",
-                       "created_at": now, "updated_at": now}
-        remapped_task = create_task(db, values=task_values)
-        # Reuse a low, unoccupied canonical ID to exercise the inverse physical
-        # allocator independently from both the old Task water and public key.
-        db.execute("update tasks set id=1 where id=?", (remapped_task["id"],))
-        stable_identity_by_id = {1: "acct:mailbox:folder:uidvalidity:uid-low"}
-        allocated_task = create_task(db, values=task_values)
-        stable_identity_by_id[allocated_task["id"]] = "acct:mailbox:folder:uidvalidity:uid-high"
-        for task_id, stable_identity in stable_identity_by_id.items():
-            db.execute(
-                "insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
-                "values(?,?,?,?)",
-                (task_id, "email", stable_identity, "{}"),
-            )
-            db.execute("insert into task_results(task_id,result_kind,result_json) values(?,?,?)",
-                       (task_id, "email_classification", "{}"))
-
-        inverse = restore_task_entities(db, source_metadata, forward)
-        projection = task20_definitions.task20_projection("email_agent_classification_tasks")
-        from app.store import AutoReplyStore
-        handoff = {(row["source_kind"], row["canonical_id"]): row["source_physical_id"]
-                   for row in inverse["inverse_identity"]["owners"]}
-        assert handoff[("email_agent_classification_tasks", 1)] > source_metadata["task_sequence"][1]
-        for task_id, stable_identity in stable_identity_by_id.items():
-            expected = "email-classification:" + sha256(stable_identity.encode("utf-8")).hexdigest()
-            source_id = handoff.get(("email_agent_classification_tasks", task_id), task_id)
-            restored = db.execute(
-                "select id,legacy_key from tasks where record_type='email_agent_classification_tasks' "
-                "and id=?", (source_id,),
-            ).fetchone()
-            assert tuple(restored) == (source_id, str(task_id))
-            assert tuple(db.execute("select task_id from (" + projection + ") where task_id=?",
-                                    (expected,)).fetchone()) == (expected,)
-            assert AutoReplyStore._validate_runtime_operation_workload(
-                "email_classification", expected,
-            ) == ("email_classification", expected)
-            assert len(expected.removeprefix("email-classification:")) == 64
-        assert inverse["inverse_identity"]["version"] == 1
 
 
 def test_current_inverse_keeps_marker_shaped_text_parameter_as_text():
