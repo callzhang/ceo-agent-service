@@ -15,7 +15,7 @@ def test_selected_and_inlined_skills_compile_to_one_native_override(tmp_path, mo
         path.parent.mkdir(parents=True)
         path.write_text(f"---\nname: {name}\ndescription: Test source.\n---\nFull body.")
     monkeypatch.setattr("app.business_skills.codex_skill_roots", lambda **kwargs: (root, tmp_path / "empty1", tmp_path / "empty2"))
-    monkeypatch.setattr("app.codex_runtime_adapter.service_mcp_config_options", lambda: [])
+    monkeypatch.setattr("app.codex_runtime_adapter.service_mcp_config_options", lambda **kwargs: [])
     config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"})
     adapter = CodexRuntimeAdapter(tmp_path, config)
     options = dict(developer_instructions="Exact Task instructions.", skill_names=("ceo-work-tracking",))
