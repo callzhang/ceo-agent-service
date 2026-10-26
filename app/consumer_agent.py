@@ -540,8 +540,8 @@ Controlled structured actions are proposals: do not dispatch them yourself.
 {CONSUMER_OUTBOUND_INSTRUCTION}
 Audit reads and reviews the complete candidate; system code executes its exact
 persisted approved plan. Return one valid purpose output using its supplied action/reason/target/payload/evidence_refs schema and assessment metadata. Multi-operation work uses action=plan with the complete proposal in payload.
-Every action has a stable action_identity for the same intended external
-outcome. Change it only when the intended outcome, target or purpose changes.
+Every action has an action_identity: a short label, unique within the proposal.
+A later revision may write a different one.
 Supply canonical typed capability/operation, exact target and payload; no shell
 argv. Preserve all accepted service-prepared message text in later stages.
 Supply source context, facts and rule evidence, and two to four mutually

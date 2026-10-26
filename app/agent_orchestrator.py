@@ -34,7 +34,12 @@ from app.consumer_purpose_retry import (
 )
 
 MAX_TURNS_PER_PROCESS = 32
-MAX_CONTENT_FEEDBACK_CYCLES = 3
+# Audit returns and rejects are the normal business loop: a task may be sent
+# back this many times before it ends audit_revision_exhausted. Technical
+# retries have their own budget and never consume these.
+MAX_CONTENT_FEEDBACK_CYCLES = 10
+# Re-prompting the Consumer to confirm an uncertain message delivery.
+MAX_UNCERTAIN_DELIVERY_REVISIONS = 3
 MAX_ROLE_ATTEMPTS_PER_PROCESS = 2
 # A role is allowed one initial turn and three retries in the same proposal.
 MAX_CONSECUTIVE_FAILED_TURNS = MAX_AUTOMATIC_ATTEMPTS
@@ -805,7 +810,7 @@ class AgentOrchestrator:
                 if (
                     consumer.proposal_revision
                     - uncertain_delivery["proposal_revision"]
-                    >= MAX_CONTENT_FEEDBACK_CYCLES
+                    >= MAX_UNCERTAIN_DELIVERY_REVISIONS
                 ):
                     return self._candidate_terminal(
                         state,
