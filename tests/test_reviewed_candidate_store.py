@@ -4,11 +4,16 @@ from pathlib import Path
 
 import pytest
 
-from app.run_storage import AGENT_RUN_SQL, insert_run
 from app.state_definitions import state_projection
-from app.task8_storage import task8_set_parts
-from app.action_storage import CANDIDATE_EXECUTION_SQL, update_action
-from app.store import AgentRole, AutoReplyStore, STORE_SCHEMA_VERSION_KEY
+from app.store import (
+    AGENT_RUN_SQL,
+    CANDIDATE_EXECUTION_SQL,
+    STORE_SCHEMA_VERSION_KEY,
+    AgentRole,
+    AutoReplyStore,
+)
+from tests.support.native_run_rows import insert_native_run
+from tests.support.native_task_fields import set_native_task_fields
 from app import store as store_module
 
 
@@ -183,7 +188,7 @@ def test_wechat_native_replay_rechecks_exact_reference_after_io(tmp_path, monkey
     def rotate_reference(*args):
         result = original(*args)
         with store._connect() as db:
-            db.execute("update runs set session_id='rotated' where record_type='agent_runtime_attempts' and parent_id=? and status='completed'", (run.id,))
+            db.execute("update runtime_attempts set session_id='rotated' where parent_id=? and status='completed'", (run.id,))
         return result
 
     monkeypatch.setattr(native_trajectory, "read_native_result_stream", rotate_reference)
@@ -278,68 +283,6 @@ def _reviewed(store: AutoReplyStore, *, options=True, decision_options=None):
     return task, candidate, review, body
 
 
-def test_actions_schema_retires_candidate_tables_and_preserves_public_ids(tmp_path):
-    from app.action_storage import ACTION_TYPES, action_physical_id
-
-    store = AutoReplyStore(tmp_path / "actions.sqlite3")
-    task, candidate, review, _ = _reviewed(store)
-    selected = store.select_candidate_option(candidate["id"], review["id"], "execute")
-    execution = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
-    attempt = store.begin_candidate_action(execution["id"], "worker", 0, "actions-receipt")
-    store.record_candidate_external_action(
-        execution["id"], "worker", 0, "actions-receipt", "send",
-        {"user_id": "x"}, {"receipt": "provider substitute"},
-    )
-    store.finish_candidate_execution(execution["id"], "worker", "done", {})
-    supplement = store.record_candidate_supplement(candidate["id"], "new business fact")
-    records = {
-        "review_candidates": candidate, "candidate_reviews": review,
-        "candidate_selections": selected, "candidate_supplements": supplement,
-        "candidate_execution_alias": execution,
-    }
-    with store._connect() as db:
-        names = {row[0] for row in db.execute(
-            "select name from sqlite_master where type in ('table','view')"
-        )}
-        assert "actions" in names
-        assert not names.intersection(ACTION_TYPES)
-        physical = {kind: action_physical_id(db, kind, row["id"]) for kind, row in records.items()}
-        assert None not in physical.values()
-        assert len(set(physical.values())) == len(records)
-        assert any(physical[kind] != row["id"] for kind, row in records.items())
-        owner = db.execute(
-            "select id,record_type,action_external_action_key,action_action_identity,"
-            "action_status from actions where record_type='action' "
-            "and action_external_action_key='actions-receipt'"
-        ).fetchone()
-        assert owner is not None
-        assert owner["action_status"] == "verified"
-        assert db.execute(
-            "select count(*) from actions where record_type='candidate_action_attempts' "
-            "and external_action_key='actions-receipt'"
-        ).fetchone()[0] == 0
-        assert db.execute(
-            "select count(*) from actions where record_type='external_action_results' "
-            "and external_action_key='actions-receipt'"
-        ).fetchone()[0] == 0
-        assert not db.execute("pragma foreign_key_check").fetchall()
-    reopened = AutoReplyStore(store.path)
-    assert reopened.get_candidate_execution(candidate["id"])["status"] == "done"
-    attempts = reopened.list_candidate_action_attempts(execution["id"])
-    assert len(attempts) == 1
-    assert attempts[0]["id"] == attempt["id"]
-    assert attempts[0]["action_owner_id"] != attempts[0]["id"]
-    assert attempts[0]["status"] == "verified"
-    with reopened._connect() as db:
-        assert [tuple(row) for row in db.execute(
-            "select id,status from action_receipts where action_id=? and execution_id=? "
-            "and action_index=0 order by id",
-            (attempts[0]["action_owner_id"], execution["id"]),
-        )] == [(attempts[0]["id"], "verified")]
-    assert reopened.list_verified_candidate_actions(task.id)[0]["provider_result_json"] == '{"receipt":"provider substitute"}'
-    assert reopened.list_human_decision_evidence(task.id)[-1]["instruction"] == "new business fact"
-
-
 def test_review_binding_and_restart(tmp_path: Path):
     path = tmp_path / "candidate.sqlite3"
     store = AutoReplyStore(path)
@@ -380,12 +323,11 @@ def test_selection_stores_only_reference_and_reads_exact_bound_option(tmp_path):
     task, candidate, review, body = _reviewed(store)
     selected = store.select_candidate_option(candidate["id"], review["id"], "execute")
     with store._connect() as db:
-        assert "branch_json" not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
-        stored = db.execute("""select json(payload_json),candidate_id,review_id
-            from actions where record_type='candidate_selections' and legacy_key=?""",
-            (str(selected["id"]),)).fetchone()
-        assert json.loads(stored[0]) == ["execute", "selected", selected["created_at"]]
-        assert stored[1] != candidate["id"] or stored[2] != review["id"]
+        assert "branch_json" not in {row[1] for row in db.execute("pragma table_xinfo(run_adopted_selections)")}
+        stored = db.execute("""select option_key,status,created_at,consumer_run_id,audit_run_id
+            from run_adopted_selections where id=?""", (selected["id"],)).fetchone()
+        assert tuple(stored[:3]) == ("execute", "selected", selected["created_at"])
+        assert (stored[3], stored[4]) == (candidate["id"], review["audit_run_id"])
     assert store.select_candidate_option(candidate["id"], review["id"], "execute") == selected
     with pytest.raises(ValueError, match="selection_conflict"):
         store.select_candidate_option(candidate["id"], review["id"], "stop")
@@ -466,12 +408,12 @@ def test_provider_receipt_survives_candidate_invalidation_after_dispatch(tmp_pat
     claim = store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
     store.begin_candidate_action(claim["id"], "worker", 0, "effect-key")
     with store._connect() as db:
-        update_action(db, "review_candidates", candidate["id"], {
-            "invalidated_at": db.execute("select current_timestamp").fetchone()[0],
-            "invalidation_reason": "new source fact",
-        })
-        parts = task8_set_parts("reply_tasks", {"execution_generation": "next-generation", "status": "pending"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
+        db.execute(
+            "update run_adopted_results set invalidated_at=current_timestamp,"
+            "invalidation_reason='new source fact' where consumer_run_id=?",
+            (candidate["id"],),
+        )
+        set_native_task_fields(db, "reply_tasks", task.id, {"execution_generation": "next-generation", "status": "pending"})
     with pytest.raises(ValueError, match="generation mismatch"):
         store.begin_candidate_action(claim["id"], "worker", 0, "effect-key")
     receipt = store.record_candidate_external_action(
@@ -516,8 +458,8 @@ def test_historical_hard_refusal_blocks_execution_without_erasing_review(tmp_pat
     if options:
         store.select_candidate_option(candidate["id"], review["id"], "execute")
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runs', {
+        insert_native_run(
+            db, {
                 'task_id': task.id,
                 'execution_generation': 'older-generation',
                 'role': 'audit',
@@ -544,8 +486,7 @@ def test_generation_rotation_prevents_old_approved_plan(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store, options=False)
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"execution_generation": "new-generation"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
+        set_native_task_fields(db, "reply_tasks", task.id, {"execution_generation": "new-generation"})
     assert store.current_reviewed_candidate(task.id, task.execution_generation) is None
     with pytest.raises(ValueError, match="generation mismatch"):
         store.claim_candidate_execution(candidate["id"], review["id"], "worker", 60)
@@ -630,8 +571,7 @@ def test_selection_wakes_same_generation_without_rewriting_question(tmp_path: Pa
     store = AutoReplyStore(tmp_path / "candidate.sqlite3")
     task, candidate, review, _ = _reviewed(store)
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "needs_human"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "needs_human"})
     with pytest.raises(ValueError, match="choice is missing"):
         store.wake_selected_candidate_execution(candidate["id"], review["id"])
     store.select_candidate_option(candidate["id"], review["id"], "execute")
@@ -649,8 +589,7 @@ def test_preserved_human_evidence_survives_invalidation_and_generation_change(tm
     store.select_candidate_option(candidate["id"], review["id"], "execute")
     store.record_candidate_supplement(candidate["id"], "Applicant changed the due date")
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"execution_generation": "new-facts-generation"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?", (*parts.parameters, task.id))
+        set_native_task_fields(db, "reply_tasks", task.id, {"execution_generation": "new-facts-generation"})
 
     events = store.list_human_decision_evidence(task.id)
     assert [event["kind"] for event in events] == ["selection", "supplement"]
