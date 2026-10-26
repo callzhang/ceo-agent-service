@@ -388,3 +388,18 @@ def test_v1_probe_failure_is_recorded_without_changing_manifest():
     assert record["provider_status"] == 400
     assert record["provider_error_type"] == "invalid_request_error"
     assert "not supported" in record["message"]
+
+
+def test_current_audit_wire_is_normalized_and_bound_by_the_service():
+    wire = {
+        "outcome": "approve", "summary": "Reviewed whole candidate",
+        "evidence_refs": ["source:1"], "feedback": None,
+        "error_code": "", "error_retryable": False, "error_authorization_required": False,
+        "risk": "low", "confidence": 0.9, "rule_coverage": 1.0, "information_completeness": 1.0,
+    }
+
+    normalized = normalize_role_result(ROOT, "audit", wire, candidate_digest="a" * 64)
+    assert normalized["ok"], normalized
+    assert normalized["result"]["outcome"] == "approve"
+    assert normalized["result"]["candidate_digest"] == "a" * 64
+    assert normalized["result"]["proposal_revision"] == 0

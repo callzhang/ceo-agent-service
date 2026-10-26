@@ -65,10 +65,12 @@ NORMALIZE_SOURCE = r'''
 import json, sys
 from app.agent_wire_contracts import parse_consumer_agent_wire_result, parse_audit_agent_wire_result
 role = sys.argv[1]
+bound_digest = sys.argv[2]
 raw = json.loads(sys.stdin.read())
 event = json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(raw)}})
 result = (parse_consumer_agent_wire_result(event) if role == "consumer"
-          else parse_audit_agent_wire_result(event))
+          else parse_audit_agent_wire_result(
+              event, proposal_revision=0, candidate_digest=bound_digest))
 digest = None
 if role == "consumer":
     try:
@@ -171,10 +173,13 @@ def role_instructions(root: Path) -> dict:
     return instructions
 
 
-def normalize_role_result(root: Path, role: str, result: dict | None) -> dict:
+def normalize_role_result(
+    root: Path, role: str, result: dict | None, *, candidate_digest: str | None = None
+) -> dict:
+    """The service binds an Audit result to its candidate; the model never writes the digest."""
     if result is None:
         return {"ok": False, "error": "missing JSON result", "result": None, "digest": None}
-    completed = subprocess.run([sys.executable, "-c", NORMALIZE_SOURCE, role],
+    completed = subprocess.run([sys.executable, "-c", NORMALIZE_SOURCE, role, candidate_digest or "0" * 64],
                                cwd=root, input=json.dumps(result, ensure_ascii=False),
                                capture_output=True, text=True, timeout=30, check=False,
                                env={**os.environ, "PYTHONPATH": str(root)})
@@ -445,7 +450,7 @@ def run_suite(root: Path, manifest: dict, *, archived: bool = False) -> dict:
                 timeout=settings["timeout_seconds_per_case"],
             ) if audit_applicable else {"ok": False, "error": "Audit not applicable to failed or invalid Consumer", "result": None}
             normalized_audit = (
-                normalize_role_result(root, "audit", audit["result"])
+                normalize_role_result(root, "audit", audit["result"], candidate_digest=subject["digest"])
                 if audit["ok"] else
                 {"ok": False, "error": audit["error"], "result": None, "digest": None}
             )

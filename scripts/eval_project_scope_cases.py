@@ -125,7 +125,8 @@ def run(manifest_path: Path, output: Path) -> dict:
                 command=command, prompt=prompt,
                 timeout=settings["timeout_seconds_per_case"],
             )
-            parsed = business.normalize_role_result(ROOT, "audit", raw.get("result"))
+            parsed = business.normalize_role_result(
+                ROOT, "audit", raw.get("result"), candidate_digest=subject["digest"])
             result = parsed.get("result") or {}
             bound = (result.get("candidate_digest") == subject["digest"]
                      and result.get("proposal_revision") == 0)
@@ -222,7 +223,8 @@ def correct_wire(manifest_path: Path, previous_path: Path, output: Path) -> None
             command=command, prompt=correction,
             timeout=settings["timeout_seconds_per_case"],
         )
-        parsed = business.normalize_role_result(ROOT, "audit", raw.get("result"))
+        parsed = business.normalize_role_result(
+            ROOT, "audit", raw.get("result"), candidate_digest=subject["digest"])
         after = raw.get("result") or {}
         before = prior["native"]["result"]
         before_without_digest = {k: v for k, v in before.items() if k != "candidate_digest"}

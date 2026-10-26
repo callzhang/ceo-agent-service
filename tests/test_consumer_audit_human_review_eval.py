@@ -41,12 +41,12 @@ def test_native_audit_binding_and_outcome_are_both_required(monkeypatch):
     monkeypatch.setattr(review.business, 'run_role', lambda **kwargs: {
         'ok': True, 'result': {}, 'tool_item_types': [],
     })
-    monkeypatch.setattr(review.business, 'normalize_role_result', lambda *args: {
+    monkeypatch.setattr(review.business, 'normalize_role_result', lambda *args, **kwargs: {
         'ok': True, 'result': {'outcome': 'approve', 'proposal_revision': 0,
                                'candidate_digest': 'wrong-candidate'},
     })
     assert review.run_suite(review.ROOT, manifest)['passed'] == 0
-    monkeypatch.setattr(review.business, 'normalize_role_result', lambda *args: {
+    monkeypatch.setattr(review.business, 'normalize_role_result', lambda *args, **kwargs: {
         'ok': True, 'result': {'outcome': 'approve', 'proposal_revision': 0,
                                'candidate_digest': subject['digest']},
     })

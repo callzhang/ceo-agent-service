@@ -35,7 +35,8 @@ def run_suite(root: Path, manifest: dict) -> dict:
                                          instructions['wire_schemas']['audit']),
             timeout=settings['timeout_seconds_per_case'],
         )
-        contract = business.normalize_role_result(root, 'audit', audit.get('result'))
+        contract = business.normalize_role_result(
+            root, 'audit', audit.get('result'), candidate_digest=subject['digest'])
         result = contract.get('result') or {}
         bound = (result.get('candidate_digest') == subject['digest']
                  and result.get('proposal_revision') == 0)
