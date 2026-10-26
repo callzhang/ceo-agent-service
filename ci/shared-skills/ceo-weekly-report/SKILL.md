@@ -18,13 +18,13 @@ been retired; historical validation output is not a current publication
 condition. Missing business-line submissions and missing CRM, finance or
 telemetry actuals do not block the report, but a metric may be `无数据` only
 after its source was actually tried: cite the query it came back empty from, or
-the exact error, in the coverage gaps. Return `failed` only when a declared
-read or the document write itself fails, never because evidence is incomplete.
-No data never makes the task fail, end `needs_human`, or ask back instead of
-completing: a metric whose source was tried and is unreadable stays `无数据` and
-does not lower `information_completeness`, which for this report is the share
-of readable sources that were read. The renderer shows empty values as `无数据`
-and an unknown owner as `待确认负责人`; it rejects only input it cannot place.
+the exact error, in the coverage gaps. Return `failed` only when the document
+write itself fails, never because evidence is incomplete.
+The general rule that missing data or a missing tool is never a failure is in
+the base Developer prompt. For this report: a no-data metric whose source was
+tried does not lower `information_completeness`, which here is the share of
+readable sources that were read; the renderer shows empty values as `无数据`
+and an unknown owner as `待确认负责人`, and rejects only input it cannot place.
 Asking the owning head for a missing number (step 5) is a normal step, not a gate.
 Do not ask Derek to supply materials already accessible to the Agent.
 

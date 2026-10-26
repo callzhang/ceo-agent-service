@@ -2,9 +2,11 @@
 
 ## Authoritative completion — 2026-10-26
 
-Latest follow-up: the current-model-only Meeting readers are deployed as
-`8e0f66b00` (09:20 UTC), FK findings are empty, and the completed one-off repair
-entry point is removed. The Signal publication table below records its earlier
+Latest follow-up: native execution reference unification is deployed as
+`134af324c` (10:02 UTC), FK findings are empty, three redundant old selectors
+are retired and58 mixed-role Meeting references now resolve to execution.
+The prior current-model-only reader cleanup8e0f66b00 and one-off tool retirement
+remain in effect. The Signal publication table below records its earlier
 07:39 UTC release checkpoint.
 
 PR [294](https://github.com/callzhang/ceo-agent-service/pull/294) is merged and
@@ -39,8 +41,11 @@ Next current-code unit: native reference selection is unified across Meeting
 search/detail. Three redundant old selectors are retired; current Run parent+
 execution workload selects the right call.795 existing indexed locators are
 preserved;58 mixed-role Meeting references are corrected, with two real native
-trajectory reproductions.39+25 focused cases and independent review pass;
-standard deployment/readback remain pending. See [native reader evidence](native-reference-reader-unification.md).
+trajectory reproductions.39+25 focused cases, independent review and the
+mandatory exact-target gate pass. Standard134af324c deployment and actual
+398104/399558 API/Chrome readback confirm native_available=true; schema/FK
+remain exact and all task artifacts/verified backup are removed.
+See [native reader evidence](native-reference-reader-unification.md).
 
 [Exact structured readback](validation/2026-10-26-signal-owner-production-readback.json),
 [Signal contract and copy evidence](signal-source-owner-validation.md), and

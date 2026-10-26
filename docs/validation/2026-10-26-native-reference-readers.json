@@ -1,0 +1,228 @@
+{
+  "scope": "Current Run/RuntimeAttempt execution reference owner unification",
+  "target_commit": "134af324cfd10fe5f0e32fe1da24e26f006b7b1d",
+  "change_commit": "1d2b7ad6a",
+  "before": {
+    "at": "2026-10-26T09:55:19.473349+00:00",
+    "code": "f143f5f7f9913e913b4f27b4698b61643735d42e",
+    "health": {
+      "http": 200,
+      "value": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "status": {
+      "http": 200,
+      "value": {
+        "queue_count": 11,
+        "pending": 7,
+        "processing": 2,
+        "failed": 36,
+        "retryable": 0,
+        "attention": 9
+      }
+    }
+  },
+  "current_data_comparison": {
+    "indexed_rows": 795,
+    "indexed_locator_differences": [],
+    "meeting_role_locator_corrections": 58,
+    "corrected_run_ids": [
+      397983,
+      398001,
+      398059,
+      398069,
+      398081,
+      398104,
+      398119,
+      398158,
+      398176,
+      398194,
+      398214,
+      398230,
+      398249,
+      398291,
+      398308,
+      398332,
+      398339,
+      398348,
+      398383,
+      398404,
+      398427,
+      398466,
+      398476,
+      398487,
+      398514,
+      398528,
+      398555,
+      398588,
+      398596,
+      399321,
+      399329,
+      399337,
+      399356,
+      399372,
+      399373,
+      399434,
+      399435,
+      399475,
+      399478,
+      399495,
+      399509,
+      399514,
+      399515,
+      399516,
+      399519,
+      399520,
+      399525,
+      399530,
+      399532,
+      399533,
+      399534,
+      399537,
+      399544,
+      399547,
+      399548,
+      399551,
+      399558,
+      399574
+    ],
+    "real_native_samples": [
+      {
+        "run_id": 398104,
+        "old_reason": "native_decision_invalid",
+        "new_available": true
+      },
+      {
+        "run_id": 399558,
+        "old_reason": "native_decision_invalid",
+        "new_available": true
+      }
+    ],
+    "production_writes": 0,
+    "provider_calls": 0
+  },
+  "tests": {
+    "reference_and_search_cases": 39,
+    "seconds": 22.67,
+    "actual_caller_cases": 25,
+    "caller_seconds": 63.76,
+    "ruff": "passed",
+    "independent_review": "implementation and SPEC approved; current contract docs updated"
+  },
+  "retired_helpers": [
+    "latest_standalone_ref",
+    "exact_standalone_ref",
+    "legacy_codex_ref"
+  ],
+  "schema_change": false,
+  "test_provider_calls": 0,
+  "post_deploy": {
+    "at": "2026-10-26T10:02:36.998234+00:00",
+    "code": "134af324cfd10fe5f0e32fe1da24e26f006b7b1d",
+    "pid": 29433,
+    "retired_helpers_absent": true,
+    "health": {
+      "http": 200,
+      "value": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "status": {
+      "http": 200,
+      "value": {
+        "queue_count": 11,
+        "pending": 8,
+        "processing": 0,
+        "failed": 36,
+        "retryable": 0,
+        "attention": 9
+      }
+    },
+    "attention": {
+      "http": 200,
+      "value": {
+        "count": 9
+      }
+    },
+    "history": {
+      "http": 200,
+      "value": {
+        "total": 38461,
+        "returned": 1
+      }
+    },
+    "398104": {
+      "http": 200,
+      "value": {
+        "id": 398104,
+        "task_id": 417218,
+        "source_job_id": null,
+        "task_available": true,
+        "native_available": true,
+        "native_reason": "",
+        "status": "sent"
+      }
+    },
+    "399558": {
+      "http": 200,
+      "value": {
+        "id": 399558,
+        "task_id": 417513,
+        "source_job_id": null,
+        "task_available": true,
+        "native_available": true,
+        "native_reason": "",
+        "status": "sent"
+      }
+    },
+    "190042": {
+      "http": 200,
+      "value": {
+        "id": 190042,
+        "task_id": null,
+        "source_job_id": 4908,
+        "task_available": false,
+        "native_available": false,
+        "native_reason": "native_reference_unavailable",
+        "status": "failed"
+      }
+    },
+    "database": {
+      "objects": 476,
+      "sha256": "234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221",
+      "fk_findings": [],
+      "search_index_rows": 795
+    }
+  },
+  "cleanup": {
+    "root": "/tmp/ceo-native-reader.LwiKpN",
+    "status": "completed",
+    "verified_backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+    "backup_integrity": "ok",
+    "backup_complete": true,
+    "open_references": 0,
+    "root_absent": true,
+    "backup_absent": true,
+    "verified_at": "2026-10-26T10:08:01.711254+00:00"
+  },
+  "standard_gate": {
+    "target": "134af324cfd10fe5f0e32fe1da24e26f006b7b1d",
+    "passed": true,
+    "fixed_test_budget_seconds": 300,
+    "fixed_memory_bytes": 2147483648,
+    "completed_standard_deploy": true
+  },
+  "ui": {
+    "opened_meeting_runs": [
+      399558,
+      398104
+    ],
+    "execution_reason_visible": true,
+    "previous_native_unavailable_notice_absent": true,
+    "temporary_tab_closed": true
+  },
+  "production_business_data_write": false
+}
