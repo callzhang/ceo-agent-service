@@ -133,6 +133,7 @@ class FakeAdapter:
         sandbox_mode=None,
         skill_names=(),
         inlined_skill_names=(),
+        project_doc_max_bytes=None,
     ):
         self.commands.append(
             (route.name, session_id, approval_policy, use_approval_bypass)
