@@ -218,7 +218,11 @@ class ScheduledTaskOptionService:
                 f"managed revision {revision_id}: managed_revision_missing"
             )
         option = self._managed_revision_option(revision)
-        if not option.available:
+        if option.unavailable_reason not in {
+            None,
+            "managed_revision_not_loaded",
+            "runtime_skill_snapshot_missing",
+        }:
             raise ScheduledTaskOptionUnavailableError(
                 f"managed revision {revision_id}: {option.unavailable_reason}"
             )
@@ -353,7 +357,11 @@ class ScheduledTaskOptionService:
     ) -> ManagedSkillRevisionOption:
         snapshot = self._runtime_skill_snapshot
         if snapshot is None:
-            reason = "runtime_skill_snapshot_missing"
+            reason = (
+                "managed_skill_disabled"
+                if self._managed_revision_is_disabled(revision)
+                else "runtime_skill_snapshot_missing"
+            )
         elif any(
             loaded.id == revision.id
             and loaded.skill_id == revision.skill_id
@@ -361,7 +369,7 @@ class ScheduledTaskOptionService:
             for loaded in snapshot.revisions
         ):
             reason = None
-        elif self._snapshot_binding_is_disabled(revision):
+        elif self._managed_revision_is_disabled(revision):
             reason = "managed_skill_disabled"
         else:
             reason = "managed_revision_not_loaded"
@@ -374,15 +382,19 @@ class ScheduledTaskOptionService:
             unavailable_reason=reason,
         )
 
-    def _snapshot_binding_is_disabled(self, revision: ManagedSkillRevision) -> bool:
+    def _managed_revision_is_disabled(self, revision: ManagedSkillRevision) -> bool:
         snapshot = self._runtime_skill_snapshot
-        if snapshot is None or snapshot.config_id <= 0:
+        config_id = snapshot.config_id if snapshot is not None else 0
+        if config_id <= 0:
+            current = self._store.get_pending_or_active_runtime_skill_config()
+            config_id = current.id if current is not None else 0
+        if config_id <= 0:
             return False
         return any(
             binding.skill_id == revision.skill_id
             and binding.revision_id == revision.id
             and not binding.enabled
-            for binding in self._store.list_runtime_skill_bindings(snapshot.config_id)
+            for binding in self._store.list_runtime_skill_bindings(config_id)
         )
 
     @staticmethod

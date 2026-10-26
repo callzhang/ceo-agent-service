@@ -282,15 +282,11 @@ def test_managed_options_list_every_immutable_revision_and_exact_load_state(
     assert revisions[1].unavailable_reason == "managed_revision_not_loaded"
     assert options[1].revisions[0].available is False
     assert options[1].revisions[0].unavailable_reason == "managed_skill_disabled"
-    with pytest.raises(
-        ScheduledTaskOptionUnavailableError,
-        match=f"managed revision {second.id}: managed_revision_not_loaded",
-    ):
-        service.resolve_managed_skill_revision(
-            skill_id=enabled_skill.id,
-            revision_id=second.id,
-            skill_name=enabled_skill.name,
-        )
+    assert service.resolve_managed_skill_revision(
+        skill_id=enabled_skill.id,
+        revision_id=second.id,
+        skill_name=enabled_skill.name,
+    ) == second
     with pytest.raises(
         ScheduledTaskOptionUnavailableError,
         match=f"managed revision {disabled_revision.id}: managed_skill_disabled",
@@ -354,9 +350,57 @@ def test_managed_revision_is_unavailable_without_current_process_snapshot(
 
     assert option.available is False
     assert option.unavailable_reason == "runtime_skill_snapshot_missing"
+    assert service.resolve_managed_skill_revision(
+        skill_id=skill.id,
+        revision_id=revision.id,
+        skill_name=skill.name,
+    ) == revision
+
+
+def test_resolves_exact_persisted_revision_for_frozen_scheduled_execution(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "options.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "CEO Test")
+    revision = store.create_managed_skill_revision(
+        skill.id, MANAGED_V1, source="settings"
+    )
+    service = _service(tmp_path, store=store, runtime_skill_snapshot=None)
+
+    resolved = service.resolve_managed_skill_revision(
+        skill_id=skill.id,
+        revision_id=revision.id,
+        skill_name=skill.name,
+    )
+
+    assert resolved == revision
+
+
+def test_frozen_resolution_still_rejects_explicitly_disabled_revision_without_snapshot(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "options.sqlite3")
+    skill = store.create_managed_skill("ceo-test", "CEO Test")
+    revision = store.create_managed_skill_revision(
+        skill.id, MANAGED_V1, source="settings"
+    )
+    store.create_runtime_skill_config(
+        [
+            {
+                "skill_id": skill.id,
+                "revision_id": revision.id,
+                "enabled": False,
+                "load_order": 0,
+                "purpose": "test",
+            }
+        ],
+        expected_parent_id=None,
+    )
+    service = _service(tmp_path, store=store, runtime_skill_snapshot=None)
+
     with pytest.raises(
         ScheduledTaskOptionUnavailableError,
-        match=f"managed revision {revision.id}: runtime_skill_snapshot_missing",
+        match=f"managed revision {revision.id}: managed_skill_disabled",
     ):
         service.resolve_managed_skill_revision(
             skill_id=skill.id,

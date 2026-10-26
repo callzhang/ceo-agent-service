@@ -2776,6 +2776,7 @@ CEO 日报默认使用 `America/Los_Angeles` 每天 06:00，OKR 管理周报默�
 `ScheduledTaskSnapshot.from_task(task).to_json()` 生成冻结定义，不省略快照。
 同一任务的不同运行使用不同 `scheduled_for`，遵守任务 ID 与调度时间的唯一约束；
 验证 execution 映射时也不得通过放宽这些生产约束来构造夹具。
+Agent 执行使用 trigger 快照中的精确 managed Skill revision。该 revision 即使未载入当前进程的启动快照，也从不可变 revision store 按 ID 读取；缺失、Skill 身份不匹配或明确禁用仍拒绝，绝不替换为最新版。这样重试可以复用原输入绑定的 Skill 正文。
 
 一次正常到期分为两个可恢复阶段：`scheduled` adapter 领取 `scheduled_task_runs.pending`，在一个
 事务中创建或复用唯一 `reply_tasks.channel=scheduled` 输入、保存 execution link，并把 trigger

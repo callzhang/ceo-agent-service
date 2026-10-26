@@ -4,6 +4,7 @@ tests/test_action_receipt_source.py
 tests/test_action_receipt_storage.py
 tests/test_action_storage.py
 tests/test_agent_cron_schedule.py
+tests/test_agent_cron_options.py
 tests/test_agent_envelope.py
 tests/test_agent_runtime_config.py
 tests/test_agent_runtime_contracts.py
