@@ -3,7 +3,7 @@
 
 
 from app import action_storage as actions
-from tests.test_provenance_vector_storage import db as db
+from tests.support.historical_action_storage import db as db
 
 
 SOURCE_HASHES = {

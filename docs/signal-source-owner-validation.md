@@ -78,6 +78,7 @@ above supply the previously missing cold-code evidence.
   then passed both deterministic/executable artifact tests (2).
 - Affected readers:79 tests pass across business Console source reconstruction,
   project context, business resolution, Attention and minutes owner backfill.
+- Additional source-callsite scan found stale current semantic Store storage assertions. Five focused groups (14 parameters) passed after preserving all binding/hash/body-free/dedupe/association assertions and moving their storage checks to the selected parent owner; incremental independent QUALITY approved.
 - Scoped Ruff, compilation and diff checks pass. Independent migration SPEC and
   implementation QUALITY reviews approve the candidate; reviewers did not run
   the production-copy proof themselves.
@@ -98,8 +99,59 @@ protected tests. Its interface is
 `prepare_signal_source_owner_release(path)` with publish/verify_loaded/rollback/
 finalize. Only the exact frozen25.2/54→25.3/54 pair is approved.
 
+Copy UI verification completed in Chrome against an isolated console on18776,
+with no worker: formal Tasks loaded; Task851 showed source evidence and expanded
+the existing upstream source record; canonical historical project1 rendered
+facts, source conversations,22 retained Todos and historical send receipts; an
+expanded receipt returned its retained provider identity; Dashboard/History
+loaded. Frontend production build passed. This is copy UI evidence, not live
+production readback. The test tab was closed and only its console was stopped.
+
+The execution policy now allowed the previously authorized cleanup. Eleven
+explicit expired test roots were verified unused with lsof, then removed;
+all eleven paths were rechecked absent. Their logical file sizes totaled
+12,246,326,516 bytes (including the later history-test root). The104 pytest
+current-links in the history root all resolved inside that root. Four old API
+outputs (38,162 bytes) were also removed. Production, native trajectories,
+current Signal validation inputs and the active workflow backup were excluded.
+This is artifact cleanup, not a database-model saving or an APFS reclaimed-byte
+measurement. The previous approval-Never rejection is a historical checkpoint;
+it no longer blocks those eleven roots/four outputs.
+
 Integrated Quality, standard deploy, production schema/health/queue/Attention/
-History/source-detail/receipt readback and final artifact cleanup remain pending.
+History/source-detail/receipt readback and current artifact/backup cleanup
+remain pending.
 All completed writes above were confined to disposable copies; no real outbound
 send occurred. The previous A5 native acceptance evidence is retained separately
 and is not replaced by this storage verification.
+
+## Follow-up historical-tool dependency boundary
+
+The active Signal vector fixture now uses the actual current schema. A final
+importer scan found that six historical Action ABI/migration files borrowed its
+old two-variant Task20/Run11 graph. That graph is now explicitly frozen in
+`tests/support/historical_action_storage.py` using the unchanged original
+`d2dc7c6c3` constructor. Current Signal/provider/TaskAgent tests keep the current
+fixture; the current Business evidence case passed with that fixture. The unused
+fixture import in model-result tests was removed.
+
+The retained `final_action_schema` inverse also borrowed the current runtime
+projection. With its historical fixture restored, both variants reproduced a
+real `KeyError:30`: the current inner join omitted a sole inline historical
+Signal. Its17-slot LEFT JOIN/COALESCE projection is now private to that explicit
+tool. Current5-slot runtime code and the frozen25.2/25.3 manifests are unchanged.
+All six original nodes and assertions remain; eleven executions passed, with an
+added complete identity-to-body map for shared, original-inline and post-forward
+new-inline sources. Independent SPEC/QUALITY approved this thin correction.
+
+A bounded25-node sweep of the other fixture consumers returned32 pass/31 fail;
+one current-fixture Row/tuple assertion was corrected without changing expected
+values and passed separately. The other30 are not claimed green:26 are old
+Task20 fixtures using a newer task writer's physical status column; two old
+Work Update fixtures expect the retired8-slot control fields; two old Email
+fixtures expect removed classification正文 facts. Representative tests from all
+three groups independently fail identically in the untouched `dc07ddcbe`
+checkout. Existing failure assertions were not deleted, weakened or hidden.
+These broader historical validation debts are recorded for the publication
+owner and still prevent a full-green claim. The two current source-provider/Task
+Agent files additionally pass7 executions; providers are substitutes.

@@ -525,6 +525,9 @@ owner 即创建/复用来源，后续写入不推广或修改旧 Signal；parent
 current-data inverse，不进入运行时兼容分支。来源值/类型、Signal身份、业务关联、回执
 及来源不可用语义不变。该目标尚待验收发布；基线生产25.2的两种表示仅是迁移源。
 详见[字段归属和验证](signal-source-owner-unification.md)。
+保留的历史正文退休工具只使用内部固定17槽 LEFT JOIN/COALESCE reader；当前运行时仍为
+必需 parent 的5槽 INNER JOIN，不按旧结构回退。旧显式工具的来源正文核验、alias/clock、
+新数据 inverse 和回执保留规则不变；历史测试 fixture 与当前 Signal fixture 分开。
 TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
 定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
 单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用

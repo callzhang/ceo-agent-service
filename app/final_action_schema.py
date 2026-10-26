@@ -23,12 +23,24 @@ from app.business_source_reader import SourceVersionBinding
 from app.email_canonical_storage import _action_objects
 from app.email_canonical_definitions import EMAILS_TABLE_SQL, EMAILS_TRIGGER_SQL
 from app.provenance_definitions import SOURCE_FIELDS, SIGNAL_FACT_FIELDS, SIGNAL_FIELDS
-from app.provenance_storage import create_provenance_schema, signal_projection
+from app.provenance_storage import create_provenance_schema
 from app.storage_payload import ACTION_RECORD_TYPES
 
 
 _SIGNAL = "business_task_signals"
 _IDENTITY_FIELDS = SOURCE_FIELDS[:-5]
+
+
+def _historical_signal_projection():
+    """Project the frozen 17-slot inline-or-shared Signal representation."""
+    column = "ba_task_signals_"
+    select = ["cast(a.legacy_key as integer) as id",
+              f"a.{column}provenance_id as provenance_id"]
+    select += [f"coalesce(p.{field},a.{column}{field}) as {field}"
+               for field in SOURCE_FIELDS]
+    select += [f"a.{column}{field} as {field}" for field in SIGNAL_FACT_FIELDS]
+    return ("select " + ",".join(select) + " from actions a left join provenance p "
+            f"on p.id=a.{column}provenance_id where a.record_type='{_SIGNAL}'")
 
 
 @lru_cache(maxsize=4)
@@ -235,7 +247,7 @@ def restore_final_actions(db, metadata, *, read_body: Callable[[SourceVersionBin
     rows = _raw_rows(db, columns, final=True)
     kind_at, payload_at = columns.index("_kind"), columns.index("payload_json")
     layouts = actions.action_payloads(variant, physical_provenance=True).layouts
-    cursor = db.execute(signal_projection())
+    cursor = db.execute(_historical_signal_projection())
     signals = {row[0]: dict(zip((item[0] for item in cursor.description), row, strict=True)) for row in cursor}
     aliases = {row[1]: row for row in metadata["source_document_aliases"]}
     water = max((row[0] for row in aliases.values()), default=0)

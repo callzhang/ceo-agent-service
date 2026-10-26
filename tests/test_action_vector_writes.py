@@ -4,7 +4,8 @@ import sqlite3
 
 import pytest
 
-from tests.test_provenance_vector_storage import db as db
+from tests.support.historical_action_storage import db as db
+from tests import test_provenance_vector_storage as current_signal_storage
 from app.action_storage import (
     insert_error_action, error_set_parts, insert_action, update_action,
     insert_sync_action, update_sync_action, action_payloads,
@@ -12,6 +13,9 @@ from app.action_storage import (
 )
 from app.task8_storage import register_task8_functions, task8_insert_parts
 from app.run_storage import insert_run
+
+
+current_signal_db = current_signal_storage.db
 
 
 def seed_task(db):
@@ -112,7 +116,8 @@ def test_skill_load_receipt_retains_parent_and_reconstructable_result(db):
     assert db.execute("select typeof(payload_json) from actions").fetchone() == ("blob",)
 
 
-def test_business_evidence_dao_upsert_and_date_copy_keep_reference_ids(db):
+def test_business_evidence_dao_upsert_and_date_copy_keep_reference_ids(current_signal_db):
+    db = current_signal_db
     from tests.test_provenance_vector_storage import binding as binding_fixture
     from app.provenance_storage import insert_signal_version
     from app.business_storage import insert_business
@@ -132,7 +137,7 @@ def test_business_evidence_dao_upsert_and_date_copy_keep_reference_ids(db):
     assert evidence.rowcount == 1
     assert copy_business_action_date_evidence(db, source_task_id=2, target_task_id=3) == 1
     assert copy_business_action_date_evidence(db, source_task_id=2, target_task_id=3) == 0
-    assert db.execute("select ba_task_anchor_links_reason,typeof(payload_json) from actions where record_type='business_task_anchor_links'").fetchone() == ("updated", "blob")
+    assert tuple(db.execute("select ba_task_anchor_links_reason,typeof(payload_json) from actions where record_type='business_task_anchor_links'").fetchone()) == ("updated", "blob")
     assert db.execute("pragma foreign_key_check").fetchall() == []
 
 
