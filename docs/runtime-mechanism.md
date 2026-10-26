@@ -29,8 +29,8 @@ Store `2026-10-25.2`／Email54 通过显式发布退休
 重命名校验及 `actions.legacy_key` 更新编译。迁移只 DROP 此触发器并更新版本；
 inverse CREATE 原始 SQL、恢复版本时钟，保留新任务、Action、收据和序列。
 部署采用 publish→restart/health→verify_loaded→finalize；失败走 schema inverse。
-静默读取只增加精确上一版 Store25.1，运行时不修补旧声明。旧 A5b 显式工具仍固定
-到 Store25.1，并退出本次自动发布分派。验收见
+静默读取只接受精确上一版 Store25.2／Email54，Store25.1 已退出当前自动发布分派；
+运行时不修补旧声明。旧 A5b 显式工具仍固定到 Store25.1。安静窗口和租约判定不变。验收见
 [触发器退休验证](action-reference-trigger-retirement-validation.md)。
 
 

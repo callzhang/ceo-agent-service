@@ -42,9 +42,12 @@ exact original SQLite-normalized trigger SQL.
 run in immediate transactions and check the exact source/target schema, marker,
 Email version, original FK-finding set and quick_check. Inverse restores the
 original trigger and Store marker timestamp while preserving current rows.
-Deployment quiet readers accept only the immediately previous Store25.1.
-Ordinary runtime does no read-path repair. The old A5b explicit tool is pinned
-to its original Store25.1 declaration and no longer selected by current deploy.
+At the time of this migration, deployment quiet readers accepted the then-current
+immediate predecessor Store25.1. The current deployment reader now accepts only
+the exact Store25.2/Email54 predecessor of Store25.3; Store25.1 is no longer an
+automatic source. Ordinary runtime does no read-path repair. The old A5b explicit
+tool remains pinned to its original Store25.1 declaration and is not selected by
+current deploy.
 
 ## Evidence
 
