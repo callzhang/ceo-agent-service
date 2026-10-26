@@ -1,3 +1,4 @@
+from tests.support.session_search import seed_session_search_metadata
 from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import json
 import os
@@ -1005,6 +1006,7 @@ def _seed_native_meeting_search(
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: native)
     with store._connect() as db:
         insert_runtime_attempt_row(db, {
+                'parent_id': run_id,
                 'workload_kind': 'meeting',
                 'workload_key': str(run_id),
                 'attempt_number': 1,
@@ -2159,7 +2161,7 @@ def test_history_search_shows_similar_codex_sessions(tmp_path: Path, monkeypatch
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     run_id = seed_meeting_attempt(store)
     native = _seed_native_meeting_search(store, run_id, tmp_path, monkeypatch)
-    store.upsert_codex_session_search_index(
+    seed_session_search_metadata(store,
         session_id="meeting-session-history-1",
         source_type="meeting_alignment",
         source_id=str(run_id),
@@ -2241,7 +2243,7 @@ def test_history_object_dropdown_controls_results(tmp_path: Path, monkeypatch):
     )
     run_id = seed_meeting_attempt(store)
     _seed_native_meeting_search(store, run_id, tmp_path, monkeypatch)
-    store.upsert_codex_session_search_index(
+    seed_session_search_metadata(store,
         session_id="meeting-session-history-1",
         source_type="meeting_alignment",
         source_id=str(run_id),

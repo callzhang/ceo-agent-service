@@ -487,8 +487,7 @@ history_only，当前 source-backed 正式导入条件仍保留，清单版本�
 完整51→42映射与默认值见[九字段映射](business-model-legacy-fields-mapping.md)。
 
 手工旧业务模型写入命令 `backfill-routine-process-todos`、`backfill-todo-deadlines`、
-`backfill-todo-owner-ids` 和 `repair-task-projects-apply` 已退休；Project 修复
-`repair-task-projects-plan` 仍只生成清单。历史 Work Project／Work Todo／Work Update
+`backfill-todo-owner-ids` 和 `repair-task-projects-apply` 已退休；旧 Project 只读修复规划器 `repair-task-projects-plan` 及其专用解码器也已退休。历史 Work Project／Work Todo／Work Update
 行与已有回执继续供读取和 History 使用；D1a/D2 仅退休旧入口。当前 Task Agent、
 Task 写入及 task-semantic-import 的来源核对与正式采用条件保持，19.11 字段处置按上文执行。
 五个无运行时调用者的旧 Store writer（创建/更新 Work Project、创建/更新 Work Todo、
@@ -4478,8 +4477,9 @@ running execution attempts remain unavailable. OKR exact-parent/session semantic
 are unchanged. History metadata search and Meeting-native candidate enumeration
 remain distinct; metadata membership/order/session binding and FTS/embedding are
 unchanged. The redundant latest_standalone_ref/exact_standalone_ref/legacy_codex_ref
-helpers and their old alias projections are retired. `latest_task_ref` remains
-used by current Task inspection/replay tools. See `native-reference-reader-unification.md`.
+helpers and their old alias projections are retired. Task inspection/replay and
+test fixture readers now also use `native_run_ref`; `latest_task_ref` is retired.
+See `native-reference-reader-unification.md`.
 
 ### DWS document permission pagination (2026-10-26)
 
@@ -4499,3 +4499,15 @@ Incomplete or inconsistent discovery raises `DwsError` rather than looking like 
 empty or exhaustive conversation list. The original successful provider ledger is
 returned unchanged; this reader adds no retry, continuation loop or business action.
 Existing direct/group message-reading paths are unchanged.
+
+### Remaining entrypoint retirement (2026-10-26)
+
+The obsolete read-only Project restoration/archive planner, its CLI command and
+Project-shaped native decoder are retired; the current semantic import and
+exact historical fact/receipt readers remain. Task inspection/replay use the
+shared native Run/RuntimeAttempt reference reader with the same newest-completed
+selection. The uncalled Meeting session-index helper and its sole runtime Store
+metadata writer are removed. Existing search metadata remains readable, and
+native corpus/scoring is unchanged; only test fixtures seed retained metadata.
+No schema, business fact, provider action or Audit policy changes are involved.
+See [entrypoint cleanup](remaining-entrypoint-retirement.md).

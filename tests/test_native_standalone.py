@@ -1,3 +1,4 @@
+from tests.support.session_search import seed_session_search_metadata
 import json
 import pytest
 
@@ -114,7 +115,7 @@ def test_meeting_current_run_range_is_read_without_attempt(tmp_path, monkeypatch
     )
     run = store.create_professional_run(job, session_id="native-meeting", status="no_action", transcript_start=0, transcript_end=1)
     assert store.get_professional_run(run)["native_available"]
-    store.upsert_codex_session_search_index(
+    seed_session_search_metadata(store,
         session_id="native-meeting", source_type="meeting_alignment",
         source_id=str(run), title="Legacy Planning",
     )
@@ -174,7 +175,7 @@ def test_meeting_search_and_detail_share_execution_parent_not_audit_or_other_run
         _attempt(db, run_id, str(run_id), "audit", 0, 1, 1, kind="meeting_audit")
         ref = native_run_ref(db, run_id, "meeting_alignment_runs")
     assert (ref.session_id, ref.start, ref.end) == ("execution", 0, 2)
-    store.upsert_codex_session_search_index(
+    seed_session_search_metadata(store,
         session_id="execution", source_type="meeting_alignment", source_id=str(run_id), title=source.title,
     )
     [found] = store.search_codex_sessions(fts_query="Native", meeting_native_only=meeting_native_only)

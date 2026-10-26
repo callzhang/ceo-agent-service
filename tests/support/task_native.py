@@ -5,7 +5,7 @@ from uuid import uuid4
 import pytest
 
 from app.run_entity_storage import create_runtime_attempt
-from app.native_standalone import latest_task_ref
+from app.native_standalone import native_run_ref
 from app import native_trajectory
 from app.store import AutoReplyStore
 from app.task_agent import _task_decision_candidates
@@ -13,7 +13,7 @@ from app.task_agent import _task_decision_candidates
 
 def read_task_fixture_decision(store, run_id):
     with store._connect() as db:
-        ref = latest_task_ref(db, run_id)
+        ref = native_run_ref(db, run_id, 'task_agent_runs')
     assert ref is not None
     path = native_trajectory.find_codex_session_path(ref.session_id)
     assert path is not None
@@ -27,7 +27,7 @@ def read_task_fixture_decision(store, run_id):
 
 def rewrite_task_fixture_decision(store, run_id, decision):
     with store._connect() as db:
-        ref = latest_task_ref(db, run_id)
+        ref = native_run_ref(db, run_id, 'task_agent_runs')
     assert ref is not None
     path = native_trajectory.find_codex_session_path(ref.session_id)
     assert path is not None

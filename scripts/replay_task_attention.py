@@ -472,7 +472,7 @@ def _assessment_evidence_matches(actual, *, required, alternatives):
 
 
 def readback(store, *, input_id, before, expected=None, project_before=None, source_payload=None, prepared_sources=None):
-    from app.native_standalone import latest_task_ref, task_decision_value
+    from app.native_standalone import native_run_ref, task_decision_value
 
     if source_payload is not None:
         _verified_replay_payload(store.get_work_summary_input(input_id), source_payload)
@@ -483,7 +483,7 @@ def readback(store, *, input_id, before, expected=None, project_before=None, sou
             f"select * from ({NATIVE_TASK_RUN_SQL}) where summary_input_id=? order by id desc limit 1",
             (input_id,),
         ).fetchone()
-        native_ref = latest_task_ref(db, run["id"]) if run is not None else None
+        native_ref = native_run_ref(db, run["id"], "task_agent_runs") if run is not None else None
         attempts = [
             dict(row)
             for row in db.execute(

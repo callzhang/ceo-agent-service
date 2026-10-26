@@ -22503,27 +22503,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     )
         return results
 
-    def upsert_codex_session_search_index(
-        self,
-        *,
-        session_id: str,
-        source_type: str,
-        source_id: str,
-        title: str,
-    ) -> None:
-        if not session_id.strip():
-            return
-        with self._connect() as db:
-            db.execute(
-                "insert into codex_session_search_index "
-                "(session_id,source_type,source_id,title,created_at,updated_at) "
-                "values(?,?,?,?,current_timestamp,current_timestamp) "
-                "on conflict(session_id) do update set source_type=excluded.source_type,"
-                "source_id=excluded.source_id,title=excluded.title,updated_at=current_timestamp",
-                (session_id, source_type, source_id, title),
-            )
-            # Native-derived corpus is assembled only for an in-memory search.
-
     def search_codex_sessions(
         self,
         *,

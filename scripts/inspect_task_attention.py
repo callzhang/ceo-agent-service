@@ -10,7 +10,7 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
 from app.business_definitions import BUSINESS_PROJECTIONS
-from app.native_standalone import latest_task_ref, task_decision_value
+from app.native_standalone import native_run_ref, task_decision_value
 from app.store import NATIVE_TASK_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 
@@ -75,7 +75,7 @@ def main() -> int:
             f"from ({NATIVE_TASK_RUN_SQL}) where summary_input_id=? order by id",
             (args.input_id,),
         ).fetchall()
-        refs = [latest_task_ref(db, run["id"]) for run in runs]
+        refs = [native_run_ref(db, run["id"], "task_agent_runs") for run in runs]
     decisions = [task_decision_value(ref) for ref in refs]
     with closing(sqlite3.connect(args.db.resolve().as_uri() + "?mode=ro", uri=True)) as db:
         db.row_factory = sqlite3.Row

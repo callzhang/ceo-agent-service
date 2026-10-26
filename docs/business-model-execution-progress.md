@@ -2,6 +2,12 @@
 
 ## Authoritative completion — 2026-10-26
 
+Remaining-entrypoint follow-up is implemented and under publication verification:
+Task inspection/replay now uses the shared native reader; the old Project
+read-only planner/decoder and uncalled Meeting metadata writer are retired.
+Focused41+31 cases and independent reviews pass; no schema/data change.
+See [scoped evidence](remaining-entrypoint-retirement.md).
+
 Latest follow-up: native execution reference unification is deployed as
 `134af324c` (10:02 UTC), FK findings are empty, three redundant old selectors
 are retired and58 mixed-role Meeting references now resolve to execution.

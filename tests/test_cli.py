@@ -147,27 +147,12 @@ def test_native_chat_readback_cli_preview_uses_read_only_database_connection(
     assert db_path.read_bytes() == before
 
 
-def test_task_project_repair_plan_parses_required_paths():
-    plan = build_parser().parse_args(
-        [
-            "repair-task-projects-plan",
-            "--db",
-            "/tmp/current.sqlite3",
-            "--historical-db",
-            "/tmp/historical.sqlite3",
-            "--manifest",
-            "/tmp/repair.json",
-        ]
-    )
-    assert plan.historical_db == "/tmp/historical.sqlite3"
-    assert plan.manifest == "/tmp/repair.json"
-
-
 @pytest.mark.parametrize("command,options", [
     ("backfill-routine-process-todos", ["--todo-id", "1", "--reason", "retired"]),
     ("backfill-todo-deadlines", []),
     ("backfill-todo-owner-ids", []),
     ("repair-task-projects-apply", ["--manifest", "/tmp/repair.json"]),
+    ("repair-task-projects-plan", ["--manifest", "/tmp/repair.json"]),
 ])
 def test_retired_legacy_mutation_commands_are_not_parsed(command, options):
     with pytest.raises(SystemExit) as error:
@@ -176,7 +161,6 @@ def test_retired_legacy_mutation_commands_are_not_parsed(command, options):
 
 
 @pytest.mark.parametrize("command,options", [
-    ("repair-task-projects-plan", ["--manifest", "/tmp/repair.json"]),
     ("task-semantic-import-plan", ["--output", "/tmp/import.json"]),
     ("task-semantic-import-apply", ["--manifest", "/tmp/import.json"]),
     ("backfill-minutes-owners", []),

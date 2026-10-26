@@ -535,12 +535,6 @@ cd /path/to/ceo-agent-service
 # 扫描新增 AI 听记和 CEO_WORKSPACE 下的新增 Markdown/text 文件
 "$HOME/miniforge3/bin/ceo-agent" scan-task-sources
 
-# 只读生成历史 task project 修复清单，供核查候选和来源证据
-"$HOME/miniforge3/bin/python" -m app.cli repair-task-projects-plan \
-  --db /absolute/current.sqlite3 \
-  --historical-db /absolute/historical.sqlite3 \
-  --manifest /absolute/task-project-repair.json
-
 # 扫描当前登录人的钉钉 OA 待审批
 "$HOME/miniforge3/bin/ceo-agent" scan-oa-approvals
 ```
@@ -549,7 +543,7 @@ cd /path/to/ceo-agent-service
 
 Task Agent 创建 project 时必须提供非空标题。更新采用受保护的稀疏语义：结构化输出里的空字符串、空数组或枚举默认值不能覆盖已有的标题、分类、owner、目标、背景、facts 或来源记录；需要有意清除这些字段时必须走单独、可审计的人工修复流程。项目匹配会遍历全部 active/waiting project，再只把最高分候选交给 Agent，避免旧项目因超过 500 条窗口而不可见。
 
-`repair-task-projects-plan` 不修改数据库，只把当前为空且能由历史 task-agent 决策或指定历史快照追溯的字段列为恢复候选，并只把“来源文件比入库时间早至少 14 天、所有业务更新均为 local_file、且没有 TODO/follow-up”的项目列为归档候选。它将候选和来源证据写入指定的 JSON 清单；手工应用该清单的 `repair-task-projects-apply` 命令已退休。已有历史项目、TODO、更新和回执仍可查询；当前 Task 写入及 `task-semantic-import-plan`／`task-semantic-import-apply` 保持原有行为。
+历史项目、TODO、更新和回执仍可查询；当前 Task 写入及 `task-semantic-import-plan`／`task-semantic-import-apply` 保持原有行为。
 
 CEO reply agent 使用原生 `codex exec`，沿用启动服务的安装用户现有 `~/.codex` 配置、MCP、
 plugins、Skills 和认证状态；hooks 不沿用（`--disable hooks`），以免插件的收尾钩子在一轮里生成第二份结果。服务不会把 MCP transport、OAuth header、bearer token 或

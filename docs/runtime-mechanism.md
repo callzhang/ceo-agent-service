@@ -514,7 +514,7 @@ history_only，当前 source-backed 正式导入条件仍保留，清单版本�
 
 四个手工旧业务模型写入 CLI 已退休：`backfill-routine-process-todos`、
 `backfill-todo-deadlines`、`backfill-todo-owner-ids`、`repair-task-projects-apply`。
-`repair-task-projects-plan` 仍提供只读清单；旧 Project／Todo／Update 历史行和
+旧 Project 只读修复规划器及专用解码器已退休；旧 Project／Todo／Update 历史行和
 既有回执继续读取。D1a/D2 仅退休旧入口；当前 Task Agent、Task 写入及
 task-semantic-import 的来源核对与正式采用条件保持。Store19.11 的 DDL 与字段迁移
 按上文执行；这些子单元不代表整个 D 已完成。
@@ -5584,8 +5584,9 @@ running execution attempts remain unavailable. OKR exact-parent/session semantic
 are unchanged. History metadata search and Meeting-native candidate enumeration
 remain distinct; metadata membership/order/session binding and FTS/embedding are
 unchanged. The redundant latest_standalone_ref/exact_standalone_ref/legacy_codex_ref
-helpers and their old alias projections are retired. `latest_task_ref` remains
-used by current Task inspection/replay tools. See `native-reference-reader-unification.md`.
+helpers and their old alias projections are retired. Task inspection/replay and
+test fixture readers now also use `native_run_ref`; `latest_task_ref` is retired.
+See `native-reference-reader-unification.md`.
 
 ### DWS document permission pagination (2026-10-26)
 
@@ -5605,3 +5606,15 @@ Incomplete or inconsistent discovery raises `DwsError` rather than looking like 
 empty or exhaustive conversation list. The original successful provider ledger is
 returned unchanged; this reader adds no retry, continuation loop or business action.
 Existing direct/group message-reading paths are unchanged.
+
+### Remaining entrypoint retirement (2026-10-26)
+
+The obsolete read-only Project restoration/archive planner, its CLI command and
+Project-shaped native decoder are retired; the current semantic import and
+exact historical fact/receipt readers remain. Task inspection/replay use the
+shared native Run/RuntimeAttempt reference reader with the same newest-completed
+selection. The uncalled Meeting session-index helper and its sole runtime Store
+metadata writer are removed. Existing search metadata remains readable, and
+native corpus/scoring is unchanged; only test fixtures seed retained metadata.
+No schema, business fact, provider action or Audit policy changes are involved.
+See [entrypoint cleanup](remaining-entrypoint-retirement.md).

@@ -1176,26 +1176,6 @@ def _meeting_topic_terms(text: str) -> list[str]:
     ))
 
 
-def _index_meeting_codex_session(
-    store: AutoReplyStore,
-    runner: Any,
-    job: Any,
-    source: Any,
-    decision: MeetingAlignmentDecision,
-    *,
-    source_id: int,
-) -> None:
-    session_id = str(getattr(runner, "last_session_id", "") or "").strip()
-    if not session_id:
-        return
-    store.upsert_codex_session_search_index(
-        session_id=session_id,
-        source_type="meeting_alignment",
-        source_id=str(source_id),
-        title=source.title,
-    )
-
-
 def _meeting_session_index_text(
     source: Any,
     decision: MeetingAlignmentDecision,

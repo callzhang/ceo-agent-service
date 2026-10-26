@@ -248,39 +248,6 @@ def task_decision_value(ref: NativeStandaloneRef | None) -> dict | None:
     return original
 
 
-def task_project_value(ref: NativeStandaloneRef | None) -> dict | None:
-    """Recover a legacy project decision for the offline repair planner."""
-    from app.agent_result import agent_message_json_objects
-    from app.task_agent import _task_decision_text_candidates
-
-    if ref is None:
-        return None
-    try:
-        raw = _native_stream(ref)
-    except (OSError, RuntimeError, ValueError):
-        return None
-    for line in reversed(raw.splitlines()):
-        try:
-            record = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-        for text in reversed(_task_decision_text_candidates(record)):
-            for candidate in reversed(agent_message_json_objects(text)):
-                if isinstance(candidate, dict) and isinstance(candidate.get("project"), dict):
-                    return candidate
-    return None
-
-
-def latest_task_ref(db: sqlite3.Connection, run_id: int) -> NativeStandaloneRef | None:
-    attempt = db.execute(
-        "select runtime_kind,session_id,transcript_start,transcript_end "
-        "from runtime_attempts where parent_id=? and workload_kind='task' "
-        "and status='completed' order by id desc limit 1",
-        (run_id,),
-    ).fetchone()
-    return ref_from_attempt(attempt)
-
-
 def native_run_ref(
     db: sqlite3.Connection, run_id: int, source_type: str,
 ) -> NativeStandaloneRef | None:

@@ -1,8 +1,7 @@
-"""Current51 Store caller regressions; run against the cumulative copied app."""
-import inspect
+"""Current Store reader regressions for retained metadata and setup facts."""
+from tests.support.session_search import seed_session_search_metadata
 import sqlite3
 
-from app.meeting_alignment import _index_meeting_codex_session
 from app.runs11_definitions import RUN11_SOURCE_PROFILES
 from app.store import AutoReplyStore
 
@@ -10,68 +9,34 @@ from app.store import AutoReplyStore
 def _migrated_store(tmp_path):
     return AutoReplyStore(tmp_path / "store.sqlite3")
 
-def test_metadata_aliases_update_and_title_search(tmp_path):
+def test_retained_metadata_aliases_and_title_search(tmp_path):
     store = _migrated_store(tmp_path)
-    for session, title in (("alias-a", "alpha"), ("alias-b", "bravo")):
-        store.upsert_codex_session_search_index(
-            session_id=session, source_type="meeting_alignment",
-            source_id="45", title=title,
+    for session, source_id, title in (
+        ("alias-a", "60", "charlie"), ("alias-b", "45", "bravo")
+    ):
+        seed_session_search_metadata(
+            store, session_id=session, source_type="meeting_alignment",
+            source_id=source_id, title=title,
         )
-    projection = "codex_session_search_index"
     with store._connect() as db:
-        before = [dict(row) for row in db.execute(
-            f"select * from {projection} order by id")]
-        assert [row["id"] for row in before] == [1, 2]
-        assert [(row["session_id"], row["source_id"], row["title"])
-                for row in before] == [
-                    ("alias-a", "45", "alpha"), ("alias-b", "45", "bravo")]
-        assert all(row["created_at"] and row["updated_at"] for row in before)
-        assert db.execute("select count(*) from codex_session_search_index").fetchone()[0] == 2
-        assert not db.execute("select 1 from sqlite_schema where name like 'codex_session_search_fts%'").fetchall()
-    store.upsert_codex_session_search_index(
-        session_id="alias-a", source_type="meeting_alignment",
-        source_id="60", title="charlie",
-    )
-    with store._connect() as db:
-        after = [dict(row) for row in db.execute(f"select * from {projection} order by id")]
-    assert len(after) == 2
-    assert after[0]["id"] == before[0]["id"]
-    assert after[0]["session_id"] == before[0]["session_id"]
-    assert after[0]["created_at"] == before[0]["created_at"]
-    assert (after[0]["source_id"], after[0]["title"]) == ("60", "charlie")
-    assert (after[1]["source_id"], after[1]["title"]) == ("45", "bravo")
+        rows = db.execute("select * from codex_session_search_index order by id").fetchall()
+        assert [row["id"] for row in rows] == [1, 2]
+        assert [(row["session_id"], row["source_id"], row["title"]) for row in rows] == [
+            ("alias-a", "60", "charlie"), ("alias-b", "45", "bravo")]
+        assert all(row["created_at"] and row["updated_at"] for row in rows)
+        assert not db.execute(
+            "select 1 from sqlite_schema where name like 'codex_session_search_fts%'"
+        ).fetchall()
     found = store.search_codex_sessions(fts_query="charlie", limit=5)
     assert [(item.session_id, item.native_reason) for item in found] == [
         ("alias-a", "native_reference_unavailable")]
     assert store.search_codex_sessions(fts_query="alpha") == []
-    assert "embedding_client" not in inspect.signature(_index_meeting_codex_session).parameters
-
-
-def test_metadata_update_uses_unique_session_index(tmp_path):
-    store = _migrated_store(tmp_path)
-    store.upsert_codex_session_search_index(
-        session_id="session", source_type="meeting_alignment",
-        source_id="45", title="old",
-    )
-    statement = (
-        "update codex_session_search_index set source_type=?,source_id=?,title=?,"
-        "updated_at=current_timestamp where session_id=?"
-    )
-    source = inspect.getsource(AutoReplyStore.upsert_codex_session_search_index)
-    assert "on conflict(session_id)" in source
-    with store._connect() as db:
-        details = [row[3] for row in db.execute(
-            "explain query plan " + statement,
-            ("meeting_alignment", "60", "new", "session"),
-        )]
-    assert any("USING INDEX sqlite_autoindex_codex_session_search_index_1" in item for item in details)
-    assert not any("SCAN codex_session_search_index" in item for item in details)
 
 
 def test_search_tied_timestamp_uses_native_public_id_order(tmp_path):
     store = _migrated_store(tmp_path)
     for session in ("one", "two"):
-        store.upsert_codex_session_search_index(
+        seed_session_search_metadata(store,
             session_id=session, source_type="meeting_alignment",
             source_id="45", title="same",
         )

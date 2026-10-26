@@ -1,3 +1,4 @@
+from tests.support.session_search import seed_session_search_metadata
 from tests.sent_fixtures import historical_sent_delivery
 
 from tests.test_email_legacy_schema import published_source as published_source
@@ -3972,6 +3973,7 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
         run_id = store.create_professional_run(job_id, session_id=session_id, status="ready_to_send", error="", transcript_start=index * 2, transcript_end=index * 2 + 2)
         with store._connect() as db:
             _insert_runtime_attempt_row(db, {
+                'parent_id': run_id,
                     'workload_kind': 'meeting',
                     'workload_key': str(run_id),
                     'attempt_number': 1,
@@ -3985,17 +3987,10 @@ def test_store_indexes_and_searches_codex_sessions_with_fts_and_embeddings(
                     'transcript_end': index * 2 + 2,
                 },
             )
-        store.upsert_codex_session_search_index(
+        seed_session_search_metadata(store,
             session_id=session_id, source_type="meeting_alignment",
             source_id=str(run_id), title=title,
         )
-        with pytest.raises(TypeError, match="unexpected keyword"):
-            store.upsert_codex_session_search_index(
-                session_id=session_id, source_type="meeting_alignment",
-                source_id=str(run_id), title=title,
-                summary_text="private summary", fts_text="private token",
-                embedding=[1.0, 0.0],
-            )
 
     calls = []
 

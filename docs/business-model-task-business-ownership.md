@@ -2,6 +2,15 @@
 
 Scope: source inspection at `580ebf6b5` on 2026-10-19, with aggregate-only `mode=ro` reads of the production SQLite database. This is an implementation map, not a data conversion or approval to retire historical facts. Numeric public IDs are scoped to their existing `record_type`; the physical `tasks`, `runs`, `business`, and `actions` containers do not make their records semantically interchangeable. Current schema/projection definitions, rather than retired physical-table names in historical migrations, define the fields below.
 
+Current-state note (2026-10-26): the following table is the dated2026-10-19
+inventory. Later Task/Run/entity and historical-reader releases supersede its
+old physical projections and active-writer descriptions. The Project apply
+command was retired previously; the read-only planner and its dedicated native
+Project decoder are now also retired. Current state and exact evidence are in
+[business model progress](business-model-execution-progress.md) and
+[entrypoint retirement](remaining-entrypoint-retirement.md). Historical facts
+and receipts remain readable; this inventory is not a current writer registry.
+
 ## Runtime task and run boundary
 
 | Source type and owner | Exact identity and state that must survive | Current writers and readers | Simplification judgment |

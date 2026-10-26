@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from app.native_standalone import native_run_ref, latest_task_ref
+from app.native_standalone import native_run_ref
 from app.workbench.native_events import _attempts
 
 
@@ -34,12 +34,19 @@ def seed_attempt(db, public_id, *, workload_kind, workload_key, session, start, 
                 'codex_cli', session, start, end, status))
 
 
-def test_task_reader_preserves_repair_namespace_and_original_attempt_order(db):
+def test_task_reader_prefers_completed_attempt_over_newer_failed_attempt(db):
     seed_attempt(db, 20, workload_kind='task', workload_key='7', session='base', start=1, end=4, parent_id=7)
     seed_attempt(db, 21, workload_kind='task', workload_key='7', session='repair', start=5, end=9, parent_id=7)
-    seed_attempt(db, 22, workload_kind='task', workload_key='8', session='other-parent', start=1, end=2, parent_id=8)
-    ref = latest_task_ref(db, 7)
+    seed_attempt(db, 22, workload_kind='task', workload_key='7', session='failed', start=10, end=12, status='failed', parent_id=7)
+    seed_attempt(db, 23, workload_kind='task', workload_key='8', session='other-parent', start=1, end=2, parent_id=8)
+    ref = native_run_ref(db, 7, 'task_agent_runs')
     assert (ref.session_id, ref.start, ref.end) == ('repair', 5, 9)
+
+
+def test_task_reader_returns_none_without_completed_attempt(db):
+    seed_attempt(db, 30, workload_kind='task', workload_key='7', session='failed', start=1, end=2,
+                 status='failed', parent_id=7)
+    assert native_run_ref(db, 7, 'task_agent_runs') is None
 
 
 def test_exact_okr_reader_does_not_substitute_later_request_result(db):

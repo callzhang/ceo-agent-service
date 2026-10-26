@@ -4,7 +4,6 @@ import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore
 from app.task_storage import insert_task, task_physical_id
 from app.run_storage import insert_run
 from tests.workbench_schema_fixtures import (
@@ -240,32 +239,6 @@ def test_inverse_restores_exact_fts_shadow_state(tmp_path, indexed):
         ).fetchall()
         == expected
     )
-
-
-def test_metadata_upsert_changes_source_and_title_and_preserves_row_identity(tmp_path):
-    store = AutoReplyStore(tmp_path / "current.db")
-    store.upsert_codex_session_search_index(
-        session_id="session",
-        source_type="workbench",
-        source_id="uuid",
-        title="original word",
-    )
-    with store._connect() as db:
-        before = tuple(
-            db.execute("select * from codex_session_search_index").fetchone()
-        )
-    store.upsert_codex_session_search_index(
-        session_id="session",
-        source_type="meeting_alignment",
-        source_id="7",
-        title="replacement title",
-    )
-    with store._connect() as db:
-        rows = db.execute("select * from codex_session_search_index").fetchall()
-        assert len(rows) == 1
-        after = tuple(rows[0])
-        assert (after[0], after[1], after[5]) == (before[0], before[1], before[5])
-        assert after[2:5] == ("meeting_alignment", "7", "replacement title")
 
 
 @pytest.mark.parametrize("table", ["tasks", "runs"])
