@@ -4,20 +4,20 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
-      "old_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f",
+      "old_sha256": "4507e1d54af92b6b84b60168abc82d572b147d6730b545361ff61d4e52df821e",
       "new_sha256": "240255b37c9febef394c13546978a2902482e5261daf5587e11136ffb1af7952",
-      "old_managed_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f"
+      "old_managed_sha256": "4507e1d54af92b6b84b60168abc82d572b147d6730b545361ff61d4e52df821e"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
       "target": "skills/ceo-weekly-report/scripts/report_contract.py",
-      "old_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a",
+      "old_sha256": "c67ff09c8333e43b54dfa326721becba08d1b31628c113a520cb5276b058cd63",
       "new_sha256": "c67ff09c8333e43b54dfa326721becba08d1b31628c113a520cb5276b058cd63"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
       "target": "skills/ceo-weekly-report/scripts/validate_run.py",
-      "old_sha256": "3a4a2f00138492780b54107ddd37303649bb11e333ea1d13ed092a897299587e",
+      "old_sha256": "7da98e0c3751f4e54a1b2fc8a47e6565c3b1b73b130978f4f57c17301bcd1a1b",
       "new_sha256": "7da98e0c3751f4e54a1b2fc8a47e6565c3b1b73b130978f4f57c17301bcd1a1b"
     },
     {
@@ -149,7 +149,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
       "target": "skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
-      "old_sha256": "94326d6138ae1b4a8a5560ed417b54bb1b9ad9317ed586c8b24f4963bbd44cd9",
+      "old_sha256": "3c1f9652fd273d417752889c6c3b9675188b403fb490f80d75458bab8e1e3b43",
       "new_sha256": "3c1f9652fd273d417752889c6c3b9675188b403fb490f80d75458bab8e1e3b43"
     },
     {
