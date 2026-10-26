@@ -178,12 +178,11 @@ def test_source_verified_retry_rejects_changed_failure(tmp_path: Path):
         account_id=ACCOUNT, action_types=(EmailAction.MOVE,), limit=1,
     )[0]
     with store._connect() as db:
-        action_rows = db.execute(
-            f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL}) where action_id=?",
+        # The failure the operator inspected is no longer the recorded one.
+        assert db.execute(
+            "update action_receipts set error_text='new failure' where action_id=?",
             (action_id,),
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row["rowid"], {"error": "new failure"})
+        ).rowcount == 1
     assert not _release(store,
         failed, source_locator=failed.action.locator, source_revision="source-v1",
         requested_at="2026-10-12T06:00:00+00:00", apply=True,
@@ -250,13 +249,13 @@ def test_exhausted_retry_is_consumed_once_without_resetting_budget(tmp_path: Pat
             action_id=action_id, claimed_at=f"2026-10-12T06:00:0{index}+00:00",
         )
         assert claimed is not None
-        assert not _action_row(store.path, action_id)["next_attempt_at"]
         store.complete_direct_action_attempt(
             claimed, status="failed", provider_operation="MOVE",
             provider_target=claimed.locator.stable_message_identity,
             provider_result_id="", error="provider_apply_failed:TimeoutError",
             finished_at=f"2026-10-12T06:00:0{index}+00:00", retryable=False,
         )
+        assert not _action_row(store.path, action_id)["next_attempt_at"]
     assert _action_row(store.path, action_id)["attempt_count"] == 4
     assert store.claim_direct_action(
         action_id=action_id, claimed_at="2026-10-12T07:00:00+00:00",
