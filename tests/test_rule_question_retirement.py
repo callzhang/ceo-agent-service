@@ -30,6 +30,9 @@ def isolated_native_home(tmp_path, monkeypatch):
     home = tmp_path / "native-home"
     home.mkdir()
     monkeypatch.setenv("CODEX_HOME", str(home))
+    # The session path inventory is cached per directory for a minute; a reused
+    # temporary directory name must not inherit an earlier test's listing.
+    monkeypatch.setattr("app.native_trajectory._PATH_INVENTORIES", {})
     return home
 
 

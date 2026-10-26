@@ -892,6 +892,9 @@ historical section. An OA decision belongs to the exact reviewed process/task
 action; without its canonical receipt, the page states that execution remains
 unverified. Terminal-source closure JSON is rendered as a readable closure
 explanation, never as evidence that an approval or a message send succeeded.
+A Task that has already stopped as `failed` on `external_action_uncertain` or
+`external_action_failed` still reads as failed there; only an execution that is
+still open and uncertain reads as uncertain.
 The projection does not write state or execute external actions.
 
 Audit handoff includes System-produced JSON type facts for each current action's

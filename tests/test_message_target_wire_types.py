@@ -13,7 +13,6 @@ from tests.support.native_consumer_output_fixture import native_consumer_stream_
 from app.process_runner import ProcessRunResult
 from app.agent_result import ResultParseError
 from app.native_agent_output import native_output_schema
-from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 from app.agent_wire_contracts import ConsumerAgentWireResult, parse_consumer_agent_wire_result
 from tests.test_agent_contracts import _consumer_wire_payload, _proposal
 
