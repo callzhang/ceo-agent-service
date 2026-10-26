@@ -1,0 +1,137 @@
+{
+  "scope": "Remaining old entrypoints and helper retirement",
+  "target_commit": "8e4007913d4362c772a692607afc0d2b89cfde22",
+  "before": {
+    "phase": "before",
+    "production_commit": "136a4496257ce4f3e3bc596801feea4ab2c4c517",
+    "schema_objects": 476,
+    "schema_sha256": "982ba47f9d2054d9b05e50ce7c9b95329e412ed3da5aa4aa04835b18a6843bf9",
+    "fk_findings": [],
+    "metadata_rows": 795,
+    "completed_task_run_refs": 5340,
+    "different_ref_count": 0,
+    "status": {
+      "http": 200,
+      "summary": {
+        "queue_count": 11,
+        "pending": 8,
+        "processing": 0,
+        "failed": 27,
+        "retryable": 0,
+        "attention": 5
+      }
+    },
+    "attention": {
+      "http": 200,
+      "count": 3,
+      "total": 5
+    },
+    "history": {
+      "http": 200,
+      "count": 20,
+      "total": 38554
+    },
+    "metadata_sha256": "c592f2464aa5b305aef56e79e24550e059e7fb368586019dd63a98136c1676c6",
+    "inspector_input_id": 417552
+  },
+  "after": {
+    "at": "2026-10-26T19:36:08.141779+00:00",
+    "production_commit": "8e4007913d4362c772a692607afc0d2b89cfde22",
+    "schema_objects": 476,
+    "schema_sha256": "982ba47f9d2054d9b05e50ce7c9b95329e412ed3da5aa4aa04835b18a6843bf9",
+    "metadata_rows": 795,
+    "metadata_sha256": "c592f2464aa5b305aef56e79e24550e059e7fb368586019dd63a98136c1676c6",
+    "fk_findings": [],
+    "installed_retired_entries_absent": true,
+    "/healthz": {
+      "http": 200,
+      "health": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "/api/console/status": {
+      "http": 200,
+      "summary": {
+        "queue_count": 11,
+        "pending": 8,
+        "processing": 0,
+        "failed": 27,
+        "retryable": 0,
+        "attention": 5
+      }
+    },
+    "/api/console/attention": {
+      "http": 200,
+      "total": 5,
+      "count": 3
+    },
+    "/api/console/history": {
+      "http": 200,
+      "total": 38554,
+      "count": 20
+    },
+    "/api/console/meeting-attempts/399558": {
+      "http": 200,
+      "id": 399558,
+      "task_id": 417513,
+      "status": "sent",
+      "native_available": true,
+      "native_reason": ""
+    },
+    "inspector": {
+      "input_id": 417552,
+      "input_status": "done",
+      "run_count": 1,
+      "runs": [
+        {
+          "id": 399688,
+          "status": "completed",
+          "native_available": true
+        }
+      ]
+    },
+    "pid": "21568"
+  },
+  "checks": {
+    "focused_tests": {
+      "native_readers_store_history": 41,
+      "inspection_replay_cli": 31,
+      "workbench_current_migration": 15
+    },
+    "ruff": "pass",
+    "independent_spec_review": "approved",
+    "independent_quality_review": "approved",
+    "mandatory_exact_target_deploy_gate": "pass",
+    "schema_changed": false,
+    "business_data_migrated": false,
+    "real_test_sends": 0,
+    "new_model_calls": 0
+  },
+  "ui": {
+    "history_search_query": "风险",
+    "history_search_total": 2509,
+    "history_search_page_readback": true,
+    "meeting_run": 399558,
+    "meeting_execution_reason_visible": true,
+    "meeting_native_unavailable_notice": false,
+    "ephemeral_tab_closed": true
+  },
+  "remaining_business_issues": {
+    "failed_tasks_unchanged": 27,
+    "attention_summary_unchanged": 5,
+    "wechat_sender_error_observed": "prepared WeChat delivery is required",
+    "wechat_code_changed_in_this_release": false
+  },
+  "cleanup": {
+    "status": "complete",
+    "temporary_root": "/private/tmp/ceo-retire-entrypoints.YIoUSE",
+    "backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+    "backup_complete_marker": true,
+    "backup_integrity": "ok",
+    "temporary_root_absent": true,
+    "backup_absent": true,
+    "production_db_preserved": true,
+    "native_trajectories_preserved": true
+  }
+}

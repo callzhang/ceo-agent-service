@@ -23,9 +23,35 @@ is not changed to accommodate the fixture.
 - After integration,41 native/professional/readers/Store FTS/embedding/History
   cases pass in6.84s.
 -31 inspection/replay-readback/retired/current CLI cases pass in7.30s.
-- Independent SPEC and QUALITY reviews found no code blockers.
+-15 current Workbench/schema/inverse cases pass in0.71s.
+- Ruff/diff checks pass; independent SPEC and QUALITY reviews found no blockers.
 - No stored fact, provenance, receipt, source locator, schema, Audit/retry policy
   or provider action is modified. No real test sends or new model calls.
 
-Publication, fresh production readback and authorized artifact cleanup are
-recorded below only after completion.
+## Production and cleanup
+
+Standard exact-target deployment completed `136a44962 → 8e4007913`; the mandatory
+clean-clone gate passed under the unchanged2GB/5minute limits. At19:36 UTC,
+PID21568 loaded that exact commit. Health, status, Attention and History returned
+200. Failed Tasks27 and Attention summary5 match the pre-release baseline.
+The UI still exposes the independently existing WeChat sender error
+`prepared WeChat delivery is required`; no WeChat code changed between the
+immediate production baseline and this release. This cleanup does not claim
+to resolve those existing business issues.
+
+Before publication, all5340 completed Task Run references exactly matched the
+shared reader. After publication, all476 schema objects and all795 retained
+metadata rows have the same complete checksums as before, and FK findings are
+empty. Installed sources have none of the retired entries. The installed
+inspection script reads actual input417552, completed Run399688 and its available
+native result. Chrome History search reads2509 matching results; Meeting399558
+shows its native execution reason and summary without the unavailable notice.
+The ephemeral tab is closed.
+
+The deployment workflow backup passed its complete marker and full SQLite
+integrity check. After readback and zero-open-file checks, the exact verified
+backup and the entire owned temporary root were deleted and their absence
+verified. Production DB and original native trajectories are preserved.
+No physical DB savings are claimed from temporary artifact deletion.
+
+[Body-free acceptance record](validation/2026-10-26-remaining-entrypoints.json).

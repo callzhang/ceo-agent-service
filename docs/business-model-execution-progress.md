@@ -2,10 +2,13 @@
 
 ## Authoritative completion — 2026-10-26
 
-Remaining-entrypoint follow-up is implemented and under publication verification:
-Task inspection/replay now uses the shared native reader; the old Project
-read-only planner/decoder and uncalled Meeting metadata writer are retired.
-Focused41+31 cases and independent reviews pass; no schema/data change.
+Remaining-entrypoint follow-up is deployed as8e4007913 (19:36 UTC):
+Task inspection/replay uses the shared native reader; the old Project read-only
+planner/decoder and uncalled Meeting metadata writer are retired. Focused87
+cases, independent reviews and the mandatory deploy gate pass. Exact schema
+and795 metadata checksums/FK0, actual Task inspector and History/Meeting UI
+readbacks pass; temporary artifacts and verified workflow backup are removed.
+No schema/data change; existing27 failed Tasks/Attention5 are not resolved here.
 See [scoped evidence](remaining-entrypoint-retirement.md).
 
 Latest follow-up: native execution reference unification is deployed as
