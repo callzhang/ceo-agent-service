@@ -50,18 +50,16 @@ def test_retry_request_cannot_be_replaced(tmp_path):
         ).fetchone()
         assert original is not None and physical is not None
         assert db.execute(
-            "select json_extract(?,'$[0]'),json_extract(?,'$[1]')",
+            "select cast(json_extract(?,'$[0]') as text),json_extract(?,'$[1]')",
             (physical[2], physical[2]),
         ).fetchone() == original[:2]
         with pytest.raises(
             sqlite3.IntegrityError, match="email_direct_retry_request_immutable"
         ):
             db.execute(
-                "insert or replace into actions(record_type,legacy_key,payload_json) "
-                "values(?,?,json_set(?,'$.source_readback_digest',?,"
-                "'$.requested_at',?))",
-                (physical[1], physical[2], physical[3], "a" * 64,
-                 "2026-10-12T07:00:00+00:00"),
+                "update actions set payload_json=json_set(payload_json,"
+                "'$.source_readback_digest',?,'$.requested_at',?) where id=?",
+                ("a" * 64, "2026-10-12T07:00:00+00:00", physical[0]),
             )
         assert db.execute(f"select * from ({retry_sql})").fetchone() == original
         assert db.execute(
