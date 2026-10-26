@@ -2,6 +2,27 @@
 
 ## Authoritative completion — 2026-10-26
 
+Current-model marker cleanup is deployed as a8d3aba6d (20:58 UTC). Five current
+behaviors are restored, six retired marked contracts removed; no xfail or
+unconditional skip decorators remain. The29 retained conditional/dependency
+sites are audited environment/live/source-contract requirements. Restoration
+exposed and fixed a real Consumer session-completion hash overwrite in separate
+754019af1; the gated matching/mismatch/missing hash cases pass without new policy
+or compatibility. Standard gate, PID76100/health/queue/Attention/History/UI,
+exact476 schema and FK0 readbacks pass. Test artifacts and verified deployment
+backup are removed; existing pre-switch business failures remain recorded.
+See [test marker cleanup](current-model-test-marker-cleanup.md).
+
+WeChat sender follow-up: fresh13:07 America/Los_Angeles readback confirms the
+existing e00211098/bd2a3e117 repairs are already deployed in7a05e1126. All481
+matching historical errors are resolved and absent from Attention; no ready,
+sending or unknown WeChat delivery remains. The retired-column fixture is now
+fixed using the current Action owner and its xfail removed:114 scoped tests
+pass with no xfail or skips; actual Store/substitute sender regression and
+error/Attention UI pass. No duplicate runtime patch/restart/production send.
+Verified workflow backup and task artifacts are removed.
+See [sender verification](wechat-prepared-sender-verification.md).
+
 Remaining-entrypoint follow-up is deployed as8e4007913 (19:36 UTC):
 Task inspection/replay uses the shared native reader; the old Project read-only
 planner/decoder and uncalled Meeting metadata writer are retired. Focused87

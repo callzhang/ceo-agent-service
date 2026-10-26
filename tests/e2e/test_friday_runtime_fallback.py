@@ -35,7 +35,7 @@ from app.agent_runtime_router import (
     RoutedResultCodec,
 )
 from app.agent_runtime_production import build_friday_runtime_launch_environment
-from app.friday_runtime_adapter import FridayRuntimeAdapter
+from app.friday_runtime_adapter import FridayRuntimeAdapter, UrllibFridayHttpTransport
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from tests.runtime_route_env import codex_api_env
@@ -153,20 +153,12 @@ def _config(base_url: str):
 
 def _seed_run(store: AutoReplyStore) -> tuple[int, int, str]:
     generation = "friday-runtime-e2e-generation"
-    with store._connect() as db:
-        cursor = db.execute(
-            """
-            insert into reply_tasks (
-                channel, conversation_id, conversation_title, single_chat,
-                trigger_message_id, trigger_create_time, trigger_sender,
-                trigger_text, trigger_message_json, execution_generation, status
-            ) values ('synthetic', 'friday-e2e', 'Friday E2E', 1,
-                      'friday-e2e-message', current_timestamp, 'test',
-                      'synthetic fallback', '{}', ?, 'processing')
-            """,
-            (generation,),
-        )
-        task_id = int(cursor.lastrowid)
+    store.enqueue_reply_task(
+        conversation_id="friday-e2e", conversation_title="Friday E2E", single_chat=True,
+        trigger_message_id="friday-e2e-message", trigger_create_time="2026-08-27 00:00:00",
+        trigger_sender="test", trigger_text="synthetic fallback", execution_generation=generation,
+    )
+    task_id = store.claim_reply_tasks(limit=1)[0].id
     claim = store.claim_agent_run(
         task_id,
         generation,
@@ -181,14 +173,6 @@ def _seed_run(store: AutoReplyStore) -> tuple[int, int, str]:
     return task_id, claim.run.id, generation
 
 
-@pytest.mark.skip(
-    reason=(
-        "friday_runtime is closed (Derek, 2026-09-18) and is not in "
-        "CEO_AGENT_RUNTIME_ROUTES. This test was already failing at ad8d227a, "
-        "before the route was removed, so it is not evidence about the route "
-        "being closed. Re-enable it by finding out why it failed then."
-    )
-)
 def test_oauth_and_codex_failure_fall_back_to_friday_in_one_agent_run(
     tmp_path: Path, fake_friday_server
 ):
@@ -212,7 +196,9 @@ def test_oauth_and_codex_failure_fall_back_to_friday_in_one_agent_run(
         config=config,
         router=AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots),
         adapter=_FailingCodexAdapter(),
-        friday_adapter=FridayRuntimeAdapter(config, poll_interval_seconds=0),
+        friday_adapter=FridayRuntimeAdapter(
+            config, transport=UrllibFridayHttpTransport(base_url), poll_interval_seconds=0
+        ),
         executor=lambda *_args, **_kwargs: ProcessRunResult(1, "", "provider unavailable"),
         now=lambda: __import__("datetime").datetime.now(__import__("datetime").UTC),
     )

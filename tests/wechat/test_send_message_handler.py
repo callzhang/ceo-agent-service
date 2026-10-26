@@ -74,6 +74,34 @@ def test_an_approved_send_is_sent_once_and_verified(tmp_path):
     assert again.status == "verified" and len(runner.calls) == 1
 
 
+@pytest.mark.parametrize("entrypoint", ["auto", "approve"])
+def test_sender_recovery_reuses_real_candidate_preparation_once(tmp_path, entrypoint):
+    from app.wechat import service
+    from app.wechat.accessibility import WechatSender
+
+    store, task, row, _action, _handler, runner, prepared = _setup(tmp_path)
+    delivery_id = store.create_standard_wechat_delivery(
+        candidate_id=row["candidate_id"], review_id=row["review_id"],
+        action_identity=IDENTITY,
+    )
+    assert store.get_outbound_postfix("wechat", f"wechat:{delivery_id}") is None
+    sender = WechatSender(store, runner)
+    if entrypoint == "auto":
+        assert service.process_ready_wechat_deliveries(
+            store, sender, mode="auto", sender_enabled=True,
+        ) == 1
+    else:
+        assert service.approve_wechat_delivery(store, sender, delivery_id) == "sent"
+    assert runner.calls == [("Alex", prepared.final_body)]
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "sent"
+    assert service.process_ready_wechat_deliveries(
+        store, sender, mode="auto", sender_enabled=True,
+    ) == 0
+    assert runner.calls == [("Alex", prepared.final_body)]
+    assert store.get_outbound_postfix("wechat", prepared.delivery_key) == prepared
+    assert store.get_wechat_delivery_for_task(task.id).id == delivery_id
+
+
 def test_a_send_wechat_cannot_confirm_is_uncertain_and_never_repeated(tmp_path):
     runner = Runner(AccessibilityResult(True, False, "fp"))
     store, task, row, action, handler, runner, _ = _setup(tmp_path, runner)

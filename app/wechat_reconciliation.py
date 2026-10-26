@@ -52,8 +52,8 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
     window proves the old body's absence and the successor's exact presence.
     """
     attempt = store.get_reply_attempt(attempt_id)
-    if attempt is None or attempt.channel != "wechat" or attempt.send_status != "failed":
-        raise ValueError("wechat_attempt_not_failed")
+    if attempt is None or attempt.channel != "wechat":
+        raise ValueError("wechat_attempt_missing_or_wrong_channel")
     task = store.get_reply_task_by_trigger_message_id(
         attempt.trigger_message_id, channel="wechat"
     )

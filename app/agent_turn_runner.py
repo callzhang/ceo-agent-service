@@ -1771,7 +1771,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     ) if is_claude or durable_consumer_result else json.dumps({"schema_id": runtime_result_schema_id}),
                     conversation_id=self.task.conversation_id if durable_consumer_result else "",
                     route_name=route.name,
-                    conversation_contract_hash=conversation_contract_hash,
+                    conversation_contract_hash=session_contract_hash_for_route(route),
                     agent_run_final_result=result.model_dump(mode="json") if durable_consumer_result else None,
                     agent_run_transcript_end=transcript_end if durable_consumer_result else None,
                 )

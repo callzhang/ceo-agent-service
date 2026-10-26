@@ -1,0 +1,326 @@
+{
+  "baseline": "047fefe89",
+  "initial_marker_call_sites": 41,
+  "remaining_marker_call_sites": 29,
+  "remaining_xfail_call_sites": 0,
+  "remaining_unconditional_skip_decorators": 0,
+  "remaining_sites": [
+    {
+      "file": "tests/browser/test_console_acceptance.py",
+      "line": 15,
+      "kind": "skipif",
+      "reason": "'set WORKBENCH_BROWSER_TESTS=1 to run console browser acceptance'"
+    },
+    {
+      "file": "tests/browser/test_console_acceptance.py",
+      "line": 21,
+      "kind": "importorskip",
+      "reason": "'playwright.sync_api'"
+    },
+    {
+      "file": "tests/browser/test_email_unsubscribe_browser.py",
+      "line": 61,
+      "kind": "skipif",
+      "reason": "'set WORKBENCH_BROWSER_TESTS=1 to run local browser fixtures'"
+    },
+    {
+      "file": "tests/browser/test_email_unsubscribe_browser.py",
+      "line": 66,
+      "kind": "importorskip",
+      "reason": "'playwright.sync_api'"
+    },
+    {
+      "file": "tests/e2e/test_consumer_audit_live.py",
+      "line": 778,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_CONSUMER_AUDIT_E2E=1 to run native Consumer/Audit controlled-sink E2E'"
+    },
+    {
+      "file": "tests/e2e/test_email_classifier_skill_pressure_live.py",
+      "line": 23,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_EMAIL_CLASSIFIER_SKILL_E2E=1 to run the native classifier Skill pressure check'"
+    },
+    {
+      "file": "tests/e2e/test_friday_runtime_fallback.py",
+      "line": 245,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_FRIDAY_RUNTIME_E2E=1 for local Friday Runtime E2E'"
+    },
+    {
+      "file": "tests/e2e/test_friday_runtime_fallback.py",
+      "line": 273,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_FRIDAY_RUNTIME_E2E=1 for local MiniMax E2E'"
+    },
+    {
+      "file": "tests/e2e/test_live_smoke.py",
+      "line": 16,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_DWS_E2E=1 to run live read-only dws smoke test'"
+    },
+    {
+      "file": "tests/e2e/test_live_smoke.py",
+      "line": 31,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_CODEX_E2E=1 to run live Codex exec smoke test'"
+    },
+    {
+      "file": "tests/e2e/test_live_smoke.py",
+      "line": 54,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_DING_SEND_E2E=1 to send a live DING smoke test'"
+    },
+    {
+      "file": "tests/e2e/test_live_smoke.py",
+      "line": 69,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_DINGTALK_SEND_E2E=1 plus CEO_E2E_CONVERSATION_ID to send a live DingTalk chat smoke test'"
+    },
+    {
+      "file": "tests/e2e/test_live_smoke.py",
+      "line": 79,
+      "kind": "skip",
+      "reason": "'CEO_E2E_CONVERSATION_ID is required'"
+    },
+    {
+      "file": "tests/e2e/test_runtime_failover_live.py",
+      "line": 35,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_RUNTIME_FAILOVER_E2E=1 to run live runtime failover E2E'"
+    },
+    {
+      "file": "tests/e2e/test_task5_skill_semantics_live.py",
+      "line": 25,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_TASK5_SKILL_E2E=1 to run native Task 5 Skill checks'"
+    },
+    {
+      "file": "tests/e2e/test_task6_personnel_semantics_live.py",
+      "line": 26,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_TASK6_SKILL_E2E=1 to run native Task 6 Skill checks'"
+    },
+    {
+      "file": "tests/e2e/test_task7_work_tracking_semantics_live.py",
+      "line": 30,
+      "kind": "skipif",
+      "reason": "'set CEO_LIVE_TASK7_SKILL_E2E=1 to run native Task 7 Skill checks'"
+    },
+    {
+      "file": "tests/test_database_copy_lifecycle_acceptance.py",
+      "line": 38,
+      "kind": "skipif",
+      "reason": "'explicit owned database snapshot required'"
+    },
+    {
+      "file": "tests/test_email_embedding_client.py",
+      "line": 270,
+      "kind": "skip",
+      "reason": "'set CEO_LIVE_EMAIL_EMBEDDING_E2E=1 for GPU4'"
+    },
+    {
+      "file": "tests/test_email_folder_classifier_e2e.py",
+      "line": 1084,
+      "kind": "skip",
+      "reason": "'set CEO_LIVE_EMAIL_FOLDER_CLASSIFIER_E2E=1 for mailbox writes'"
+    },
+    {
+      "file": "tests/test_email_folder_classifier_e2e.py",
+      "line": 1101,
+      "kind": "skip",
+      "reason": "'missing live mailbox configuration: ' + ', '.join(missing)"
+    },
+    {
+      "file": "tests/test_email_folder_classifier_e2e.py",
+      "line": 1419,
+      "kind": "skip",
+      "reason": "'set CEO_LIVE_EMAIL_EMBEDDING_E2E=1 for GPU4'"
+    },
+    {
+      "file": "tests/test_email_store.py",
+      "line": 6815,
+      "kind": "skipif",
+      "reason": "'process fd listing requires /dev/fd'"
+    },
+    {
+      "file": "tests/test_reply_attempt_source.py",
+      "line": 239,
+      "kind": "skip",
+      "reason": "'actual source contract'"
+    },
+    {
+      "file": "tests/test_reply_attempt_source.py",
+      "line": 252,
+      "kind": "skip",
+      "reason": "'fresh source contract'"
+    },
+    {
+      "file": "tests/test_state_point_statement_defaults.py",
+      "line": 69,
+      "kind": "skip",
+      "reason": "'SQLite only substitutes defaults for NOT NULL columns'"
+    },
+    {
+      "file": "tests/test_workbench_browser.py",
+      "line": 18,
+      "kind": "skipif",
+      "reason": "'set WORKBENCH_BROWSER_TESTS=1 to run real browser regressions'"
+    },
+    {
+      "file": "tests/test_workbench_browser.py",
+      "line": 56,
+      "kind": "importorskip",
+      "reason": "'playwright.sync_api'"
+    },
+    {
+      "file": "tests/test_workbench_browser.py",
+      "line": 122,
+      "kind": "importorskip",
+      "reason": "'playwright.sync_api'"
+    }
+  ],
+  "restored_behaviors": [
+    "Worker execution-generation mismatch retry",
+    "Consumer exact route-session/native-schema reuse (moved to gated fingerprint tests)",
+    "Consumer effectful native event evidence",
+    "Consumer later provider event evidence",
+    "OAuth/API fallback to current Friday route using fake localhost service"
+  ],
+  "retired_marked_contracts": [
+    "implicit concurrent old Tasks auto-repair",
+    "fresh Memory FK writer variant absent from fixture matrix since5e3b77c1d",
+    "old ScriptAgent receipt-retry case with no actual retry",
+    "old unprobed API fallback contract (typed ineligible successor retained)",
+    "application probe provider-effect policy",
+    "application probe provider-event grammar policy"
+  ],
+  "additional_retired_neighbors": [
+    "legacy conversation bare-hash unconditional reuse expectation",
+    "native wire schema overriding Developer contract mismatch expectation"
+  ],
+  "focused_results": {
+    "current_store_schema_action_cases": 138,
+    "restored_provider_probe_runner_initial_cases": 73,
+    "final_gated_session_and_runner_cases": 48,
+    "worker_and_current_executor_successors": 4,
+    "fake_friday_case": 1,
+    "retained_source_profile_cases": {
+      "passed": 2,
+      "skipped_by_exact_source_profile": 2
+    }
+  },
+  "runtime_fix": {
+    "commit": "754019af1",
+    "change": "completion persists existing route-specific session contract rather than bare wire hash",
+    "baseline_red": "second native command exec --json instead of exec resume",
+    "policy_change": false,
+    "compatibility_added": false
+  },
+  "publication": {
+    "status": "standard exact-target deploy complete",
+    "target_commit": "a8d3aba6d13907778a4c91b187ea896dfe195d61",
+    "mandatory_clean_clone_gate": "pass",
+    "before": {
+      "at": "2026-10-26T20:42:15.656368+00:00",
+      "production_commit": "b9244988e69ca2c7a45b1b62751fbbce3da19dcb",
+      "status": {
+        "http": 200,
+        "summary": {
+          "queue_count": 11,
+          "pending": 6,
+          "processing": 1,
+          "failed": 25,
+          "retryable": 0,
+          "attention": 3
+        }
+      },
+      "attention": {
+        "http": 200,
+        "total": 3
+      },
+      "history": {
+        "http": 200,
+        "total": 38570
+      },
+      "schema_objects": 476,
+      "schema_sha256": "982ba47f9d2054d9b05e50ce7c9b95329e412ed3da5aa4aa04835b18a6843bf9",
+      "fk_findings": [],
+      "backups": [
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3"
+      ]
+    },
+    "after": {
+      "at": "2026-10-26T20:58:22.421602+00:00",
+      "code": "a8d3aba6d13907778a4c91b187ea896dfe195d61",
+      "pid": "76100",
+      "schema_objects": 476,
+      "schema_sha256": "982ba47f9d2054d9b05e50ce7c9b95329e412ed3da5aa4aa04835b18a6843bf9",
+      "fk_findings": [],
+      "installed_completion_contract": "session_contract_hash_for_route(route)",
+      "healthz": {
+        "http": 200,
+        "value": {
+          "ok": true,
+          "status": "ok"
+        }
+      },
+      "api/console/status": {
+        "http": 200,
+        "summary": {
+          "queue_count": 11,
+          "pending": 6,
+          "processing": 1,
+          "failed": 27,
+          "retryable": 0,
+          "attention": 4
+        }
+      },
+      "api/console/attention": {
+        "http": 200,
+        "total": 4,
+        "items": 2
+      },
+      "api/console/history": {
+        "http": 200,
+        "total": 38572,
+        "items": 20
+      }
+    },
+    "existing_task_failure_timing": {
+      "failed_tasks": [
+        {
+          "id": 417543,
+          "kind": "reply",
+          "status": "failed",
+          "updated_at": "2026-10-26 20:56:50",
+          "error_excerpt": "audit_revision_exhausted"
+        }
+      ],
+      "failed_runs": [],
+      "process_start_local": "Mon Oct 26 13:57:04 2026"
+    }
+  },
+  "test_external_sends": 0,
+  "ui": {
+    "history_rows_visible": true,
+    "queue_tabs_visible": true,
+    "attention_section_visible": true,
+    "service_running": true,
+    "temporary_tab_closed": true
+  },
+  "cleanup": {
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-4d3fc1d8-2dbe-41b9-9715-644bd856f032.sqlite3",
+    "backup_complete": true,
+    "backup_integrity": "ok",
+    "temporary_root": "/private/tmp/ceo-current-test-markers.3i2SEj",
+    "open_files": 0,
+    "active_deploys": 0,
+    "status": "complete",
+    "temporary_root_absent": true,
+    "backup_absent": true,
+    "production_db_preserved": true,
+    "native_trajectories_preserved": true
+  },
+  "skip_alias_and_unittest_scan": "no additional skip aliases or unittest skips found"
+}

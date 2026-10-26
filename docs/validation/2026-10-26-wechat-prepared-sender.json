@@ -1,0 +1,137 @@
+{
+  "scope": "Verify already-deployed WeChat prepared sender and retry repair",
+  "existing_fix_commits": [
+    "e002110988aa6a4635f029198ed285cc5cdbe50a",
+    "bd2a3e1178f29fcead1851d1a0af0625cdf34d47"
+  ],
+  "duplicate_runtime_development": false,
+  "additional_deployment": false,
+  "reason": "production already contains both existing fixes and installed runtime file matches tested source",
+  "tests": {
+    "sender_service_accessibility_passed": 85,
+    "existing_xfail": 1,
+    "existing_xfail_reason": "retired-column deletion fixture in test_accessibility",
+    "handler_review_passed": 28,
+    "real_store_original_and_current_diagnostics_passed": 3,
+    "new_persistent_real_store_cases": 2,
+    "original_exception_reproduced_before_substitute_call": true,
+    "current_auto_and_approve_each_send_once": true,
+    "real_test_sends": 0
+  },
+  "production": {
+    "at": "2026-10-26T20:07:59.564110+00:00",
+    "production_commit": "7a05e1126cc3e1c500794a16cd19ba96324244f9",
+    "pid": "42152",
+    "error": {
+      "count": 481,
+      "unresolved": 0,
+      "latest_created_at": "2026-10-26 19:41:35",
+      "latest_resolved_at": "2026-10-26 19:45:25"
+    },
+    "delivery_statuses": [
+      {
+        "status": "sent",
+        "count": 62
+      },
+      {
+        "status": "skipped",
+        "count": 6
+      },
+      {
+        "status": "superseded",
+        "count": 74
+      }
+    ],
+    "latest_deliveries": [
+      {
+        "id": 146,
+        "status": "sent",
+        "created_at": "2026-10-26 17:37:15",
+        "updated_at": "2026-10-26 19:54:45",
+        "error": ""
+      },
+      {
+        "id": 145,
+        "status": "superseded",
+        "created_at": "2026-10-26 17:26:35",
+        "updated_at": "2026-10-26 17:37:14",
+        "error": "superseded_by_newer_wechat_trigger:417557"
+      },
+      {
+        "id": 144,
+        "status": "superseded",
+        "created_at": "2026-10-26 17:22:06",
+        "updated_at": "2026-10-26 17:26:34",
+        "error": "superseded_by_newer_wechat_trigger:417556"
+      },
+      {
+        "id": 143,
+        "status": "sent",
+        "created_at": "2026-10-24 06:10:35",
+        "updated_at": "2026-10-24 06:13:25",
+        "error": ""
+      },
+      {
+        "id": 142,
+        "status": "sent",
+        "created_at": "2026-10-24 02:54:32",
+        "updated_at": "2026-10-24 05:58:40",
+        "error": ""
+      }
+    ],
+    "fk_findings": [],
+    "runtime_service_hash_equal": true,
+    "/healthz": {
+      "http": 200,
+      "health": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "/api/console/status": {
+      "http": 200,
+      "summary": {
+        "queue_count": 11,
+        "pending": 6,
+        "processing": 0,
+        "failed": 27,
+        "retryable": 0,
+        "attention": 4
+      }
+    },
+    "/api/console/attention": {
+      "http": 200,
+      "total": 4,
+      "prepared_sender_error_present": false
+    },
+    "/api/console/history/errors/16127": {
+      "http": 200,
+      "item": {
+        "id": 16127,
+        "status": "resolved",
+        "created_at": "2026-10-26 19:41:35",
+        "resolved_at": "2026-10-26 19:45:25",
+        "resolution": "recovered by later successful WeChat sender tick"
+      }
+    }
+  },
+  "ui": {
+    "error_16127_resolved_visible": true,
+    "attention_loaded": true,
+    "prepared_sender_error_present": false,
+    "temporary_tab_closed": true
+  },
+  "cleanup": {
+    "backup_complete": true,
+    "backup_integrity": "ok",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+    "temporary_root": "/private/tmp/ceo-wechat-sender-verify.Qtl2x6",
+    "open_files": 0,
+    "active_deploys": 0,
+    "status": "complete",
+    "temporary_root_absent": true,
+    "backup_absent": true,
+    "production_db_preserved": true,
+    "native_trajectory_preserved": true
+  }
+}

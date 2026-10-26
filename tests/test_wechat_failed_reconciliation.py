@@ -185,7 +185,7 @@ def test_retry_api_path_settles_current_sent_task_without_constructing_sender(mo
         def get_reply_attempt(self, attempt_id):
             assert attempt_id == 16128
             return SimpleNamespace(
-                channel="wechat", send_status="failed", trigger_message_id="trigger-1",
+                channel="wechat", send_status="sent", trigger_message_id="trigger-1",
                 conversation_id="melody115", agent_run_id=1616,
             )
 
