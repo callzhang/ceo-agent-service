@@ -301,6 +301,7 @@ tests/test_workbench_confirmation_retirement.py
 tests/test_agent_cli_mail_sources.py
 tests/test_prompt_composition.py
 tests/test_meeting_task_storage.py
+tests/test_meeting_attempt_recovery_api.py
 tests/test_email_action_validation.py
 tests/test_action_payload.py
 tests/test_oa_skill_reference_prompt.py

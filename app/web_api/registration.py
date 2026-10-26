@@ -1147,6 +1147,44 @@ def register_console_routes(
             },
         })
 
+    @app.post("/api/console/meeting-attempts/{run_id}/rerun")
+    async def console_meeting_history_rerun(run_id: int, request: Request):
+        del request
+        store = store_factory()
+        run = store.get_meeting_alignment_run(run_id)
+        if run is None or run.task_id is None:
+            return JSONResponse({
+                "ok": False, "code": "not_found",
+                "message": "Meeting attempt not found", "details": {},
+            }, status_code=404)
+        job = store.get_meeting_alignment_job(run.task_id)
+        if job is None:
+            return JSONResponse({
+                "ok": False, "code": "not_found",
+                "message": "Meeting task not found", "details": {},
+            }, status_code=404)
+        latest_runs = store.list_meeting_alignment_runs(job.id)
+        if not latest_runs or latest_runs[0].id != run_id:
+            return JSONResponse({
+                "ok": False, "code": "attempt_not_latest",
+                "message": "Meeting rerun is available only for the latest attempt",
+                "details": {},
+            }, status_code=409)
+        if run.status not in {"failed", "retry"}:
+            return JSONResponse({
+                "ok": False, "code": "attempt_not_failed",
+                "message": "Only a failed latest Meeting attempt can be rerun",
+                "details": {},
+            }, status_code=409)
+        reopened = store.rerun_meeting_alignment_jobs([job.id])
+        if job.id not in reopened:
+            return JSONResponse({
+                "ok": False, "code": "meeting_not_rerunnable",
+                "message": "Meeting task is not eligible for a safe rerun",
+                "details": {},
+            }, status_code=409)
+        return command_result(message="重跑已提交；原 Attempt 保留，后续仍经正常分析与独立 Audit")
+
     @app.post("/api/console/meeting-attempts/{run_id}/audit-recovery")
     async def console_meeting_audit_recovery(run_id: int, request: Request):
         payload = await request.json()
