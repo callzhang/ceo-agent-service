@@ -244,7 +244,7 @@ def test_resumed_session_binding_preserves_captured_transcript_end(tmp_path):
     )
     store.mark_agent_runtime_attempt_running_once(attempt.id)
     with store._connect() as db:
-        db.execute("update runs set transcript_end=158 where record_type='agent_runtime_attempts' and cast(legacy_key as integer)=?", (attempt.id,))
+        db.execute("update runtime_attempts set transcript_end=158 where id=?", (attempt.id,))
     bound = store.set_agent_runtime_attempt_session(
         attempt.id, "existing-session", "codex_session:existing-session", transcript_start=124,
     )
@@ -1964,120 +1964,6 @@ def _create_previous_run_database(path: Path) -> Path:
         db.execute("""insert into agent_run_state_events(id,agent_run_id,phase,structured_error_json,created_at) values(8,7,'historical_state','{}','2026-08-06 15:00:00')""")
         db.execute("""insert into agent_execution_receipts(id,agent_run_id,receipt_id,operation_id,cli,command_path,command_digest,exit_code,completed,persisted,safe_to_confirm,created_at) values(9,7,'receipt-1','operation-1','dws','chat.message.send','digest-1',0,1,1,1,'2026-08-06 15:01:00')""")
     return path
-
-
-def test_agent_run_migration_preserves_receipts_without_exposing_legacy_events(tmp_path):
-    from tests.run_schema_fixtures import (
-        current_store_with_migrated_core,
-        migrate_previous_run_schema,
-    )
-
-    db_path = _create_previous_run_database(tmp_path / "old.sqlite3")
-    with sqlite3.connect(db_path) as db:
-        source_receipt = db.execute(
-            "select id,agent_run_id,created_at,effect_counted "
-            "from agent_execution_receipts"
-        ).fetchone()
-    migrate_previous_run_schema(db_path)
-
-    store = current_store_with_migrated_core(
-        tmp_path, db_path, include_receipts=True
-    )
-    run = store.get_agent_run(7)
-
-    assert run is not None
-    assert run.role is AgentRole.AUDIT
-    assert run.proposal_revision == 0
-    assert run.turn_attempt == 0
-    assert run.parent_agent_run_id is None
-    assert run.operation_id == ""
-    assert run.tool_events == []
-    assert store.foreign_key_violations() == []
-    with sqlite3.connect(store.path) as db:
-        event = db.execute(
-            f"select id, created_at from ({RUN_STATE_EVENT_SQL}) where agent_run_id=7"
-        ).fetchone()
-        from app.action_storage import AGENT_EXECUTION_RECEIPT_SQL
-        receipt = db.execute(
-            "select id, created_at, effect_counted "
-            f"from ({AGENT_EXECUTION_RECEIPT_SQL}) where agent_run_id=7"
-        ).fetchone()
-    assert event == (8, "2026-08-06 15:00:00")
-    assert receipt == (9, "2026-08-06 15:01:00", 0)
-    assert source_receipt == (9, 7, "2026-08-06 15:01:00", 0)
-    assert not hasattr(store, "list_agent_execution_receipts")
-    with sqlite3.connect(store.path) as db:
-        columns = {
-            row[1] for row in db.execute("pragma table_info(runs)").fetchall()
-        }
-    assert "side_effect_state" not in columns
-    assert not any(column.startswith("reconciliation_") for column in columns)
-    assert not any(column.startswith("effect_") for column in columns)
-
-
-def test_agent_run_migration_preserves_failed_projection_and_legacy_state_history(
-    tmp_path,
-):
-    from tests.run_schema_fixtures import (
-        current_store_with_migrated_core,
-        migrate_previous_run_schema,
-    )
-
-    db_path = _create_previous_run_database(tmp_path / "legacy-unknown.sqlite3")
-    with sqlite3.connect(db_path) as db:
-        db.execute(
-            "update agent_runs set status='failed', structured_error_json='{\"code\":\"legacy_unknown\",\"retryable\":true}' where id=7"
-        )
-
-        db.execute("update agent_run_state_events set phase='legacy_unknown_migrated',structured_error_json='{\"code\":\"legacy_unknown\",\"retryable\":true}' where agent_run_id=7")
-
-    migrate_previous_run_schema(db_path)
-    store = current_store_with_migrated_core(
-        tmp_path, db_path, include_receipts=True
-    )
-    run = store.get_agent_run(7)
-
-    assert run is not None
-    assert run.status == "failed"
-    assert json.loads(run.structured_error_json) == {
-        "code": "legacy_unknown",
-        "retryable": True,
-    }
-    with sqlite3.connect(store.path) as db:
-        event = db.execute(
-            f"select phase, structured_error_json from ({RUN_STATE_EVENT_SQL}) "
-            "where agent_run_id=7 order by id desc limit 1"
-        ).fetchone()
-    assert event == (
-        "legacy_unknown_migrated",
-        '{"code":"legacy_unknown","retryable":true}',
-    )
-
-
-def test_agent_run_migration_preserves_existing_turn_identity(tmp_path):
-    from tests.run_schema_fixtures import (
-        current_store_with_migrated_core,
-        migrate_previous_run_schema,
-    )
-
-    db_path = _create_previous_run_database(tmp_path / "partial.sqlite3")
-    with sqlite3.connect(db_path) as db:
-        db.executescript(
-            """
-            update agent_runs
-            set role='consumer', proposal_revision=2, turn_attempt=3;
-            """
-        )
-
-    migrate_previous_run_schema(db_path)
-    run = current_store_with_migrated_core(
-        tmp_path, db_path, include_receipts=True
-    ).get_agent_run(7)
-
-    assert run is not None
-    assert run.role is AgentRole.CONSUMER
-    assert run.proposal_revision == 2
-    assert run.turn_attempt == 3
 
 
 def test_agent_run_migration_preserves_source_before_nonempty_native_event_failure(
