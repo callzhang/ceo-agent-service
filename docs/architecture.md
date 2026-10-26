@@ -4432,3 +4432,12 @@ recorded in `validation/2026-10-26-signal-owner-production-readback.json` and
 `business-model-execution-progress.md`. Earlier unactivated/pending phase notes
 remain historical implementation checkpoints. No review, retry, authorization
 or test outbound-send policy changed in this publication.
+
+### Explicit historical Run reference maintenance
+
+Historical Meeting Runs whose original Task is unavailable retain the source
+Job in `run_provenance.job_id` and use NULL for the optional native `runs.task_id`.
+They remain inspectable and do not become executable Tasks. The explicit
+`scripts/repair_orphan_meeting_run.py` can detach an independently verified missing
+Task pointer inside a maintenance transaction; it is not runtime auto-healing.
+See `orphan-meeting-run-reference-repair.md` for the separate authorized repair.

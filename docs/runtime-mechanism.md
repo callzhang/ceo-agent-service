@@ -5524,3 +5524,12 @@ recorded in `validation/2026-10-26-signal-owner-production-readback.json` and
 `business-model-execution-progress.md`. Earlier unactivated/pending phase notes
 remain historical implementation checkpoints. No review, retry, authorization
 or test outbound-send policy changed in this publication.
+
+### Explicit historical Run reference maintenance
+
+Historical Meeting Runs without a native Task keep their original source Job
+and Run/RuntimeAttempt/error history. NULL in the optional native Task reference
+means unavailable; it does not enqueue or retry the old Job. The explicit
+`scripts/repair_orphan_meeting_run.py` is maintenance-only, with a rollback
+rehearsal by default and a separate commit flag. Store initialization, dispatcher,
+Audit and delivery behavior are unchanged. See `orphan-meeting-run-reference-repair.md`.
