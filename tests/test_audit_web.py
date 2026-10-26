@@ -1,3 +1,4 @@
+from tests.support.reply_action_snapshot import reply_action_snapshot
 from tests.support.session_search import seed_session_search_metadata
 from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 import json
@@ -278,7 +279,7 @@ def test_attempt_detail_renders_linked_consumer_result(tmp_path: Path):
     attempt_id = _finalize_consumer_result_attempt(store, task, audit)
 
     before_render = {
-        "attempt_count": len(store.list_reply_attempts()),
+        "attempt_count": len(reply_action_snapshot(store)),
         "attempt": store.get_reply_attempt(attempt_id),
         "task": store.get_reply_task(task.id),
         "consumer": store.get_agent_run(consumer.id),
@@ -296,7 +297,7 @@ def test_attempt_detail_renders_linked_consumer_result(tmp_path: Path):
     status, detail = render_attempt_detail(store, attempt_id)
 
     after_render = {
-        "attempt_count": len(store.list_reply_attempts()),
+        "attempt_count": len(reply_action_snapshot(store)),
         "attempt": store.get_reply_attempt(attempt_id),
         "task": store.get_reply_task(task.id),
         "consumer": store.get_agent_run(consumer.id),
@@ -10846,7 +10847,7 @@ def test_render_workers_page_shows_service_and_queue_status(
     assert payload["summary"]["retryable"] >= 1
     assert next(queue for queue in payload["queues"] if queue["name"] == "Reply attempts")["retryable"] == 1
     assert all(queue["name"] != "DingTalk Todos" for queue in payload["queues"])
-    assert store.get_work_todo_dingtalk_link(legacy_link_id).status == "failed"
+    assert next((link for link in store.list_work_todo_dingtalk_links_for_todos([todo_id]).get(todo_id, []) if link.id == legacy_link_id), None).status == "failed"
     assert any(queue["name"] == "Work items" for queue in payload["queues"])
     classifier_queue = next(
         queue
@@ -11332,7 +11333,7 @@ def test_status_keeps_historical_todo_link_out_of_queue_summary(tmp_path: Path):
     assert "business_task_todo_sync_outbox" in {
         row["name"] for row in payload["dispatcher_queues"]
     }
-    assert store.list_work_todo_dingtalk_links(work_todo_id=1)[0].last_error == "historical failure"
+    assert sorted(store.list_work_todo_dingtalk_links_for_todos([1]).get(1, []), key=lambda link: link.id)[0].last_error == "historical failure"
 
 
 def test_attention_skips_all_typed_unsubscribe_failures(tmp_path: Path):

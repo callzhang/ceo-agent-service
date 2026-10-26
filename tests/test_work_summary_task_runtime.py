@@ -1,3 +1,4 @@
+from app.run_entity_storage import get_run
 import sqlite3
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -121,9 +122,11 @@ def test_work_summary_uses_canonical_task_id_and_keeps_terminal_input_immutable(
     assert claimed.payload_json == '{"summary":"replacement"}'
 
     run_id = store.claim_professional_run(claimed.id)
-    assert store.get_professional_run(run_id)["task_id"] == claimed.id
+    with store._connect() as db:
+        assert get_run(db, run_id)["task_id"] == claimed.id
     store.finish_professional_run(run_id, status="completed", session_id="fixture-session")
-    finished = store.get_professional_run(run_id)
+    with store._connect() as db:
+        finished = get_run(db, run_id)
     assert (finished["status"], finished["session_id"]) == ("completed", "fixture-session")
 
     assert store.enqueue_work_summary_input("local_file", "42", '{"summary":"late"}') == first

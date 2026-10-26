@@ -1,8 +1,6 @@
 """Professional Run lifecycle on the native Task/Run owners."""
 from __future__ import annotations
 
-import json
-
 from app import run_entity_storage as runs
 
 
@@ -128,64 +126,3 @@ class LogicalRunStoreMixin:
             return
         with self._agent_run_write_transaction(None) as (db, _):
             finish(db)
-
-    def get_professional_run(self, run_id: int, *, load_native: bool = True):
-        from app.native_standalone import (
-            _meeting_tool_events, native_run_ref,
-            okr_envelope, task_decision, meeting_decision,
-        )
-        with self._connect() as db:
-            row = runs.get_run(db, run_id)
-            provenance = runs.get_run_provenance(db, run_id)
-            if row is None or provenance is None:
-                return None
-            source = provenance["source_type"]
-            values = {**row, **provenance}
-            if source == "task_agent_runs":
-                ref = native_run_ref(db, run_id, source) if load_native else None
-                native = task_decision(ref)
-                projection = runs.get_run_projection(db, run_id)
-                values.update(
-                    decision_json=native.decision_json, projection_json=projection or "{}",
-                    audit_summary=native.audit_summary, memory_recall_used=int(native.memory_recall_used),
-                    native_available=native.available, native_reason=native.reason,
-                )
-            elif source == "meeting_alignment_runs":
-                ref = native_run_ref(db, run_id, source) if load_native else None
-                native = meeting_decision(ref) if ref is not None else None
-                values.update(
-                    decision_json=native.decision_json if native else "{}",
-                    audit_summary=native.audit_summary if native else "",
-                    audit_tool_events_json=native.audit_tool_events_json if native else "[]",
-                    native_available=bool(native and native.available),
-                    native_reason=native.reason if native else "native_reference_unavailable",
-                    tool_events_available=bool(native and native.tool_events_available),
-                    tool_events_reason=native.tool_events_reason if native else "native_reference_unavailable",
-                )
-            else:
-                ref = native_run_ref(db, run_id, source) if load_native else None
-                envelope, reason = okr_envelope(ref)
-                events, available, event_reason = _meeting_tool_events(ref) if not reason and ref else ("[]", False, reason)
-                values.update(envelope_json=envelope, audit_tool_events_json=events,
-                              audit_summary=(
-                                  str(json.loads(envelope).get("audit", {}).get("summary") or "")
-                                  if not reason else ""
-                              ), native_available=not reason, native_reason=reason,
-                              tool_events_available=available, tool_events_reason=event_reason)
-            return values
-
-    def list_okr_review_runs(self, task_id: int) -> list[dict[str, object]]:
-        """Read OKR review history by canonical Task identity and native Run IDs."""
-        from app.task_entity_storage import get_task
-
-        with self._connect() as db:
-            task = get_task(db, task_id)
-            if task is None or task["kind"] != "okr_review":
-                raise ValueError("OKR review history requires an OKR review Task")
-            run_ids = [int(row[0]) for row in db.execute(
-                "select r.id from runs r join run_provenance p on p.run_id=r.id "
-                "where r.task_id=? and p.source_type='okr_review_runs' order by r.id desc",
-                (task_id,),
-            ).fetchall()]
-        return [run for run_id in run_ids
-                if (run := self.get_professional_run(run_id)) is not None]

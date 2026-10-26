@@ -249,11 +249,10 @@ def test_assessment_change_creates_one_event_and_replay_is_idempotent(projection
     assert projection.store.get_business_attention_item(attention_id).assessment_json == updated.assessment_json
 
 
-def test_resolution_requires_signal_and_reading_never_resolves(projection):
+def test_resolution_requires_signal(projection):
     task_id, anchor_id, signal_id = _task_with_anchor(projection, "read")
     item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
 
-    projection.record_viewed(item_id=item_id, viewed_at="2026-09-22T12:00:00Z")
     assert projection.store.get_business_attention_item(item_id).status.value == "active"
     assert [event.event_type.value for event in projection.store.list_business_attention_events(item_id)] == ["opened"]
     with pytest.raises(ValueError, match="resolution evidence signal"):

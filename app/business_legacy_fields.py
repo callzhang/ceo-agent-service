@@ -91,37 +91,3 @@ def current_action_objects(reply_variant):
         for sql in (table, *indexes, *triggers):
             db.execute(sql)
         return actions._objects(db, "actions")
-
-
-def current_business_schema_is_current(db):
-    from app.action_reply_storage import _source_declaration
-    retired = (*business.BUSINESS_SOURCE_TABLES.values(), "business_attention_items",
-               "business_project_candidates", "wechat_memory_candidates", "business_legacy_links")
-    return (_source_declaration(db, "business") == current_business_declaration()
-            and not any(db.execute("select 1 from sqlite_schema where name=? collate nocase",
-                                   (name,)).fetchone() for name in retired))
-
-
-def create_current_action_schema(db, *, reply_variant):
-    from app import action_storage as actions
-    from app.current_database_schema import FINAL_ACTION_OPTIONS
-    expected = current_action_objects(reply_variant)
-    if actions._objects(db, "actions"):
-        if not actions.action_schema_is_current(
-            db, allow_missing_objects=True, reply_variant=reply_variant,
-            **FINAL_ACTION_OPTIONS, expected_objects=expected,
-        ):
-            raise ValueError("unsupported current Actions declaration")
-        existing = {obj["name"] for obj in actions._objects(db, "actions")}
-        for obj in expected:
-            if obj["name"] not in existing:
-                db.execute(obj["sql"])
-    else:
-        actions._require_available_names(db, expected)
-        for obj in sorted(expected, key=lambda obj: obj["type"] != "table"):
-            db.execute(obj["sql"])
-
-
-def current_action_variants():
-    return {variant: current_action_objects(variant)
-            for variant in ("actual_no_memory_fk", "fresh_memory_fk")}

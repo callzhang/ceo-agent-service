@@ -3599,9 +3599,8 @@ class EmailStore:
                 ]
             )
         )
-        shared_action_lifecycle.persist_plan(
+        shared_action_lifecycle.persist_email_plan(
             db,
-            "email",
             {
                 "action_plan_id": plan.action_plan_id,
                 "action_plan_version": plan.action_plan_version,

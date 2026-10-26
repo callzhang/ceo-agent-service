@@ -3113,6 +3113,44 @@ def test_append_action_plan_version_rejects_invalid_correction_category(
         )
 
 
+def test_action_plan_same_id_with_changed_fields_conflicts(tmp_path: Path):
+    database = tmp_path / "plan-immutable-id.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    conflicting = classification.action_plan.model_copy(update={"config_version": "changed"})
+
+    with pytest.raises(EmailActionPlanConflict, match="different immutable fields"):
+        store.append_action_plan_version(
+            classification.classification_id, conflicting,
+            confirmed_category=conflicting.category,
+        )
+    rows = _fetchall(database, f"select action_plan_id, action_plan_version from ({EMAIL_PLAN_SQL})")
+    assert [(row["action_plan_id"], row["action_plan_version"]) for row in rows] == [
+        (classification.action_plan.action_plan_id, 1),
+    ]
+
+
+def test_action_plan_version_gap_conflicts(tmp_path: Path):
+    database = tmp_path / "plan-version-gap.sqlite3"
+    store = EmailStore(database)
+    classification = _classification(status=EmailClassificationStatus.PROCESSED)
+    _persist_scan(store, classification)
+    assert classification.action_plan is not None
+    gap = _versioned_plan(
+        classification.action_plan, version=3, category=EmailCategory.NOTIFICATION,
+        actions=(EmailAction.ARCHIVE,), action_parameters={},
+    )
+
+    with pytest.raises(EmailActionPlanConflict, match="version must be 2"):
+        store.append_action_plan_version(
+            classification.classification_id, gap, confirmed_category=EmailCategory.NOTIFICATION,
+        )
+    rows = _fetchall(database, f"select action_plan_version from ({EMAIL_PLAN_SQL})")
+    assert [row["action_plan_version"] for row in rows] == [1]
+
+
 def test_changed_snapshot_cannot_reuse_an_existing_plan_version(tmp_path: Path):
     database = tmp_path / "plan-conflict.sqlite3"
     store = EmailStore(database)

@@ -1,5 +1,19 @@
 # Current Runtime Mechanism
 
+## 当前业务读取入口清退（2026-10-26）
+
+历史 Project 的 HTML 与 JSON 继续共用 `load_project_task_detail`，原有详情链接、
+来源、业务事实和回执保持可查。无调用的单条历史查询和旧跟进查询已退休；旧的
+文本详情 renderer 与固定 score／match_reasons 不再构成并行读取模型。
+Run、来源与投影事实使用现有 owner，原生结果使用精确 Run 身份的 native resolver；
+仅测试使用的专业 Run 聚合读取器及 ReplyAttempt 列表／计数入口已删除。
+
+当前 Email 计划由 `persist_email_plan` 写入，保持现有不可变计划、版本和幂等合同。
+Reviewed 旧计划写入分支退出运行时代码；历史转换所需的旧候选造数能力只在测试
+夹具中。Attention 读取不产生解决或成员变更。没有新增旧结构兼容、自修补、
+审查／授权／重试政策或数据库迁移。发布与生产读回见
+[清退验收](unused-business-path-retirement.md)。
+
 ## 数据库结构与迁移合同
 
 当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本迁移和仅 Email 变化的迁移。当前 Signal 发布的上一版是 Store `2026-10-25.2`／Email54；更早的 Store `2026-10-19.12`／Email53 Action Entity 路径已退出自动发布分派。不能把旧 marker 当成可直接迁移的证据；不匹配的 schema 在任何写入前失败关闭。下方更早的阶段记录描述的是当时的候选与已完成工作，不代表当前可自动升级范围。

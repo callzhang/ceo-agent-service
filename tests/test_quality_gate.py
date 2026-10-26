@@ -1333,7 +1333,7 @@ def test_quality_gate_preserves_historical_todo_links_without_monitoring_them(tm
     assert "work_todo_dingtalk_links" not in report.missing_sources
     assert not [item for item in (*report.violations, *report.attention)
                 if item.source == "work_todo_dingtalk_links"]
-    assert [row.status.value for row in store.list_work_todo_dingtalk_links(work_todo_id=todo_id)] == ["failed", "active"]
+    assert [row.status.value for row in sorted(store.list_work_todo_dingtalk_links_for_todos([todo_id]).get(todo_id, []), key=lambda link: link.id)] == ["failed", "active"]
 
 
 def test_quality_gate_writes_coverage_state(tmp_path):

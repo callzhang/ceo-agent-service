@@ -1,5 +1,22 @@
 # CEO Agent Service Architecture
 
+## 当前业务读取入口清退（2026-10-26）
+
+历史 Project 详情继续由 `load_project_task_detail` 服务 HTML 和 JSON，保留原有
+URL、来源、事实、Todo、Update、跟进和回执；旧的独立文本 renderer 与固定的
+检索评分字段已经退出当前模型。无调用的单条历史查询、旧跟进查询和重复的已发送
+回复别名已删除，历史数据仍由原有 owner 持有。
+
+Run 落库事实由当前 Run／provenance／projection owner 提供，原生结果由已有
+native resolver 按精确身份和范围读取；测试不再依赖另一套专业 Run 聚合读取器。
+History 展示测试使用正式 History 入口，纯持久化测试的窄查询仅位于测试目录。
+Attention 的读取不改变其业务状态；没有单独的 viewed 写入入口。
+
+Email 计划只使用 `persist_email_plan`；Reviewed 的旧计划写入及旧候选造数支持
+不进入当前业务写入器。显式历史迁移测试使用冻结来源夹具。
+本轮不改变 DDL、业务事实、审查、授权、重试或回执语义；部署状态与读回证据见
+[清退验收](unused-business-path-retirement.md)。
+
 ## 数据库结构与迁移合同
 
 当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本迁移和仅 Email 变化的迁移。当前 Signal 发布的上一版是 Store `2026-10-25.2`／Email54；更早的 Store `2026-10-19.12`／Email53 Action Entity 路径已退出自动发布分派。不能把旧 marker 当成可直接迁移的证据；不匹配的 schema 在任何写入前失败关闭。下方更早的阶段记录描述的是当时的候选与已完成工作，不代表当前可自动升级范围。

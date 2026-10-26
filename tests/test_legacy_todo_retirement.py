@@ -73,12 +73,11 @@ def test_recorded_active_legacy_todo_collision_stays_readable_and_cannot_dispatc
     assert store.list_business_task_dingtalk_links() == []
     assert store.list_business_task_todo_sync_outbox() == []
 
-    recorded = store.get_work_todo_dingtalk_link(link_id)
+    recorded = next((link for link in store.list_work_todo_dingtalk_links_for_todos([legacy_id]).get(legacy_id, []) if link.id == link_id), None)
     assert recorded.work_todo_id == legacy_id
     assert recorded.status == "active"
     assert recorded.last_dingtalk_payload_json == provider_json
-    assert store.get_active_work_todo_dingtalk_link(legacy_id) == recorded
-    assert store.list_work_todo_dingtalk_links_for_todo(legacy_id) == [recorded]
+    assert sorted(store.list_work_todo_dingtalk_links_for_todos([legacy_id]).get(legacy_id, []), key=lambda link: link.id) == [recorded]
     assert store.list_work_todo_dingtalk_links_for_todos([legacy_id]) == {legacy_id: [recorded]}
     [operation] = store.list_task_todo_sync_outbox()
     assert dict(store.get_task_todo_sync_outbox(outbox_id)) == dict(operation)

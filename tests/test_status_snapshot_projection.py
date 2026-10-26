@@ -128,7 +128,7 @@ def _insert_email_classification(db, classification_id, plan_id, status):
 
 
 def _insert_email_plan(db, plan_id, classification_id, version=1):
-    shared_action_lifecycle.persist_plan(db, "email", {
+    shared_action_lifecycle.persist_email_plan(db, {
         "action_plan_id": plan_id,
         "action_plan_version": version,
         "classification_id": classification_id,

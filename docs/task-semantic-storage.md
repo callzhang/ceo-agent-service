@@ -479,7 +479,7 @@ when fields or category change. It records `updated`, `category_changed`, or
 change. Attention Task links are idempotent membership facts, so one item can
 aggregate several independently open Tasks or no Tasks. Explicit resolution
 requires a persisted Signal linked to the same Project and appends one `resolved` event.
-`record_viewed` performs no authoritative write and cannot resolve an item.
+Reading an attention item performs no authoritative write and cannot resolve it.
 
 `recompute_for_tasks` never creates attention from a relevant anchor alone. It
 refreshes only existing, explicitly proposed attention items that reference the

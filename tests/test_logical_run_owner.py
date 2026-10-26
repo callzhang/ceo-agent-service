@@ -1,4 +1,6 @@
 """One logical owner, with source identities and real invocation facts distinct."""
+
+from app.run_entity_storage import get_run, get_run_provenance, get_run_projection
 import sqlite3
 
 import pytest
@@ -27,12 +29,17 @@ def test_claim_finish_uses_common_owner_without_manufacturing_invocation(tmp_pat
         assert db.execute("select count(*) from runtime_attempts").fetchone()[0] == 0
     store.finish_professional_run(run_id, status="completed",
                                   session_id="source-no-range", error="")
-    run = store.get_professional_run(run_id)
+    with store._connect() as db:
+        run = get_run(db, run_id)
     assert run["id"] == run_id
     assert run["status"] == "completed"
-    assert run["native_available"] is False
-    assert run["native_reason"] == "native_reference_unavailable"
-    assert run["projection_json"] == "{}"
+    from app.native_standalone import native_run_ref, task_decision
+    with store._connect() as db:
+        native = task_decision(native_run_ref(db, run_id, "task_agent_runs"))
+    assert native.available is False
+    assert native.reason == "native_reference_unavailable"
+    with store._connect() as db:
+        assert get_run_projection(db, run_id) == "{}"
     store.finish_professional_run(run_id, status="completed",
                                   session_id="source-no-range", error="")
     with pytest.raises(ValueError, match="conflicting"):
@@ -64,7 +71,8 @@ def test_okr_history_preserves_absent_lifecycle_without_an_attempt(tmp_path):
             "started_at,parent_id from runs where id=?", (run_id,)
         ).fetchone()) == (None,) * 13
         assert db.execute("select count(*) from runtime_attempts").fetchone()[0] == 0
-    assert store.get_professional_run(run_id)["task_id"] == request
+    with store._connect() as db:
+        assert get_run(db, run_id)["task_id"] == request
 
 
 def test_retired_parallel_writers_are_absent_from_current_store():
@@ -130,8 +138,10 @@ def test_consumer_parent_contract_rejects_standalone_in_all_existing_refs(tmp_pa
         with pytest.raises(sqlite3.IntegrityError, match="action parent type mismatch"):
             db.execute("insert into actions(_kind,payload_json,agent_run_id) values(9,?,?)",
                        (RECEIPT_PAYLOAD, standalone))
-    assert store.get_professional_run(standalone, load_native=False) is not None
-    assert store.get_professional_run(consumer, load_native=False) is None
+    with store._connect() as db:
+        assert get_run(db, standalone) is not None
+    with store._connect() as db:
+        assert get_run_provenance(db, consumer) is None
     assert store.get_agent_run(standalone, load_events=False) is None
     assert store.get_agent_run(consumer, load_events=False).id == consumer
     with pytest.raises(ValueError, match="does not exist"):

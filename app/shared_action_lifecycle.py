@@ -13,7 +13,6 @@ from app import action_storage as storage
 from app.action_email_definitions import EMAIL_FIELDS, EMAIL_DEFAULTS, EMAIL_NUMERIC_SCOPE
 from app.shared_action_definitions import SPECIALIZED_RECORD_TYPES, SOURCE_TO_TARGET, SPECIALIZED_SOURCE_TO_TARGET, email_projection
 
-PLAN_KINDS = {'reviewed': 'review_candidates', 'email': 'email_action_plans'}
 STEP_KINDS = {'email_reply': 'email_reply_dispatch_claims', 'email_unsubscribe': 'email_unsubscribe_claims'}
 RESULT_KINDS = {'email_reply': 'email_reply_receipts', 'email_unsubscribe': 'email_unsubscribe_receipts'}
 
@@ -52,34 +51,20 @@ def _allocate(db, kind, supplied=None):
     return (maximum or 0) + 1
 
 
-def _insert(db, kind, values, *, ignore=False, plan_step_conflict=False):
+def _insert(db, kind, values, *, ignore=False):
     storage._check_fields(kind, values)
     storage._email_lock(db, tuple(values.values()))
     layout = _layout(kind)
-    if kind in EMAIL_FIELDS:
-        defaults = {field: db.execute('select ' + expression).fetchone()[0]
-                    for field, expression in EMAIL_DEFAULTS[kind].items() if field in layout.fields}
-        references = {}
-    else:
-        clock = db.execute('select current_timestamp').fetchone()[0]
-        defaults = {**storage.DEFAULTS[kind], **{field: clock for field in ('created_at', 'updated_at') if field in layout.fields}}
-        references = storage._kind_references(kind, execution_owner=True)
+    defaults = {field: db.execute('select ' + expression).fetchone()[0]
+                for field, expression in EMAIL_DEFAULTS[kind].items() if field in layout.fields}
     payload = dict.fromkeys(layout.fields) | defaults | {field: value for field, value in values.items() if field in layout.fields}
     public = _allocate(db, kind, values.get('id'))
-    physical = {
-        field: (storage.action_physical_id(db, storage.EXECUTION_ALIAS, values.get(field))
-                if kind == 'candidate_action_attempts' and field == 'execution_id'
-                else storage._parent_id(db, field, values.get(field)))
-        for field in references
-    }
-    columns = ('_kind', 'legacy_key', 'payload_json', *physical)
+    columns = ('_kind', 'legacy_key', 'payload_json')
     packed = db.execute('select jsonb(?)', (layout.pack(payload, scalar_codec=storage._encoded_native_sqlite_value),)).fetchone()[0]
-    conflict = (" on conflict(email_action_plan_id,email_action_type) where record_type='email_actions' do nothing"
-                if plan_step_conflict else '')
     cursor = db.execute('insert ' + ('or ignore ' if ignore else '') + 'into actions('
-        + ','.join(columns) + ') values(' + ','.join('?' for _ in columns) + ')' + conflict
+        + ','.join(columns) + ') values(' + ','.join('?' for _ in columns) + ')'
         + ' returning cast(legacy_key as integer)',
-        (SPECIALIZED_RECORD_TYPES.code(kind), str(public), packed, *physical.values()))
+        (SPECIALIZED_RECORD_TYPES.code(kind), str(public), packed))
     row = cursor.fetchone()
     cursor.fetchall()
     return storage.ActionWriteResult(row[0] if row else None, cursor.rowcount)
@@ -118,38 +103,22 @@ def _update(db, kind, public_id, values, *, where_sql='', parameters=()):
         (*paths, *arguments))
 
 
-def persist_plan(db, origin, values, *, ignore=False):
-    kind = PLAN_KINDS[origin]
-    if origin == 'email':
-        from app.email_store import EmailActionPlanConflict
-        existing = _fetch(db, 'select * from (' + email_projection(kind) + ') where action_plan_id=?', (values['action_plan_id'],))
-        immutable = tuple(field for field in EMAIL_FIELDS[kind] if field not in ('action_plan_id', 'legacy_serialization_pre_v16'))
-        if existing is not None:
-            if any(existing[field] != values[field] for field in immutable):
-                raise EmailActionPlanConflict(f"ActionPlan ID {values['action_plan_id']} has different immutable fields")
-            return storage.ActionWriteResult(None, 0)
-        versions = db.execute('select action_plan_version from (' + email_projection(kind) + ') where classification_id=?', (values['classification_id'],)).fetchall()
-        if any(row[0] == values['action_plan_version'] for row in versions):
-            raise EmailActionPlanConflict(f"ActionPlan version {values['action_plan_version']} already exists for classification {values['classification_id']}")
-        wanted = max((row[0] for row in versions), default=0) + 1
-        if values['action_plan_version'] != wanted:
-            raise EmailActionPlanConflict(f"ActionPlan version must be {wanted} for classification {values['classification_id']}")
+def persist_email_plan(db, values, *, ignore=False):
+    kind = 'email_action_plans'
+    from app.email_store import EmailActionPlanConflict
+    existing = _fetch(db, 'select * from (' + email_projection(kind) + ') where action_plan_id=?', (values['action_plan_id'],))
+    immutable = tuple(field for field in EMAIL_FIELDS[kind] if field not in ('action_plan_id', 'legacy_serialization_pre_v16'))
+    if existing is not None:
+        if any(existing[field] != values[field] for field in immutable):
+            raise EmailActionPlanConflict(f"ActionPlan ID {values['action_plan_id']} has different immutable fields")
+        return storage.ActionWriteResult(None, 0)
+    versions = db.execute('select action_plan_version from (' + email_projection(kind) + ') where classification_id=?', (values['classification_id'],)).fetchall()
+    if any(row[0] == values['action_plan_version'] for row in versions):
+        raise EmailActionPlanConflict(f"ActionPlan version {values['action_plan_version']} already exists for classification {values['classification_id']}")
+    wanted = max((row[0] for row in versions), default=0) + 1
+    if values['action_plan_version'] != wanted:
+        raise EmailActionPlanConflict(f"ActionPlan version must be {wanted} for classification {values['classification_id']}")
     return _insert(db, kind, values, ignore=ignore)
-
-
-def update_plan(db, origin, public_id, values, *, where_sql='', parameters=()):
-    kind = PLAN_KINDS[origin]
-    if where_sql:
-        if origin == 'reviewed':
-            from app.store import NATIVE_REVIEW_CANDIDATE_SQL
-            projection = NATIVE_REVIEW_CANDIDATE_SQL
-        else:
-            projection = email_projection(kind, include_rowid=True)
-        identity = 'candidate_id' if origin == 'reviewed' else 'rowid'
-        if not db.execute(f'select 1 from ({projection}) where {identity}=? and ({where_sql})',
-                          (public_id, *parameters)).fetchone():
-            return storage.ActionWriteResult(None, 0)
-    return _update(db, kind, public_id, values)
 
 
 def create_direct_email_action(db, values):

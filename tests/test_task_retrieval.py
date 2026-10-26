@@ -1,4 +1,7 @@
-from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo
+from tests.support.legacy_todo_facts import (
+    seed_legacy_todo_link, seed_legacy_work_project, seed_legacy_work_todo,
+    seed_legacy_work_update,
+)
 import json
 from app.business_source_reader import (
     AvailableSource, PreparedSources, RequestSourceReader, SourceUnavailableReason,
@@ -10,7 +13,6 @@ from app.task_models import WorkItem
 from app.task_semantic_models import AttentionStatus, BusinessTaskStage
 from app.task_retrieval import (
     load_project_task_detail,
-    render_project_task_details,
     resolve_task_owner_display,
     retrieve_task_semantic_context,
     render_task_semantic_context,
@@ -955,12 +957,13 @@ def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
     assert detail.follow_ups_by_todo[todo_two][0].question_text == "B?"
 
 
-def test_render_project_task_details_uses_todo_owner_as_project_display_fallback(tmp_path):
+def test_history_detail_uses_todo_owner_as_project_display_fallback(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
     project_id = seed_legacy_work_project(store,
         title="客户交付",
         category="projects",
         status="active",
+        facts_json=json.dumps([{"description": "验收事实", "source": "message:1"}], ensure_ascii=False),
         source_conversations_json=json.dumps(
             [{"id": "cid-delivery", "title": "客户交付群"}],
             ensure_ascii=False,
@@ -972,16 +975,43 @@ def test_render_project_task_details_uses_todo_owner_as_project_display_fallback
         owner_user_id="owner-1",
         owner_name="Avery",
         status="open",
+        completion_evidence_json='{"receipt":"confirmed"}',
     )
+    seed_legacy_work_update(store, project_id=project_id, source_type="message",
+                            source_ref="message:1", summary="验收更新",
+                            changes_json='{"state":"confirmed"}')
+    seed_legacy_todo_link(store, work_todo_id=todo_id, dingtalk_task_id="provider-1",
+                          executor_user_id="owner-1", executor_name="Avery",
+                          title_snapshot="确认客户验收 ETA", status="active")
+    store.create_follow_up_draft(project_id=project_id, todo_id=todo_id,
+                                 owner_name="Avery", target_conversation_id="cid-delivery",
+                                 target_kind="group", question_text="何时验收？", status="draft")
 
-    detail = load_project_task_detail(store, project_id)
-    assert detail is not None
-    payload = json.loads(render_project_task_details([detail]))
+    from app.audit_web import _task_detail_cell, render_task_project_detail
+    from app.web_api.tasks import task_detail
 
-    assert payload[0]["project"]["id"] == project_id
-    assert payload[0]["project"]["owner"] == "Avery"
-    assert payload[0]["todos"][0]["id"] == todo_id
-    assert payload[0]["todos"][0]["owner"] == "Avery"
+    payload = task_detail(store, project_id)
+    assert payload["project"]["id"] == project_id
+    assert payload["project"]["source_conversations"][0]["id"] == "cid-delivery"
+    assert payload["todos"][0]["id"] == todo_id
+    assert payload["todos"][0]["detail_url"] == f"/tasks/legacy-project/{project_id}#todo-{todo_id}"
+    assert payload["project"]["facts"][0]["description"] == "验收事实"
+    assert payload["todos"][0]["owner_name"] == "Avery"
+    assert payload["todos"][0]["completion_evidence"] == {"receipt": "confirmed"}
+    assert payload["todos"][0]["dingtalk_todos"][0]["dingtalk_task_id"] == "provider-1"
+    follow_up = payload["todos"][0]["follow_ups"][0]
+    assert follow_up["question_text"] == "何时验收？"
+    assert follow_up["detail_url"] == f"/tasks/legacy-project/{project_id}#follow-up-{follow_up['id']}"
+    assert payload["updates"][0]["changes"] == {"state": "confirmed"}
+    status, html = render_task_project_detail(store, project_id)
+    assert status == 200
+    assert _task_detail_cell("Owner", "Avery") in html
+    assert f'id="todo-{todo_id}"' in html
+    assert f'id="follow-up-{follow_up["id"]}"' in html
+    assert '<h3 class="todo-detail-title">确认客户验收 ETA</h3>' in html
+    assert '&quot;receipt&quot;: &quot;confirmed&quot;' in html
+    for value in ("验收事实", "message:1", "验收更新", "何时验收？", "provider-1"):
+        assert value in html
 
 
 def test_a_source_read_again_sees_its_own_earlier_tasks_however_the_words_rank(tmp_path):

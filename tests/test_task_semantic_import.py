@@ -152,7 +152,7 @@ def test_ambiguous_legacy_project_stays_unresolved_and_readable(tmp_path):
     assert len(_rows(store.path, "business_task_signals")) == 0
     assert len(_rows(store.path, "business_tasks")) == 0
     assert store.get_work_project(project_id) is not None
-    assert store.get_work_todo(todo_id) is not None
+    assert next((todo for todo in store.list_work_todos() if todo.id == todo_id), None) is not None
     assert store.list_work_updates(project_id)[0].id == update_id
 
 

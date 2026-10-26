@@ -1,3 +1,4 @@
+from app.native_standalone import native_run_ref, task_decision, meeting_decision, okr_envelope, _meeting_tool_events
 from tests.support.session_search import seed_session_search_metadata
 import json
 import pytest
@@ -74,17 +75,19 @@ def test_meeting_run_hydrates_only_exact_native_range_and_reports_unavailable(tm
             f"select * from ({MEETING_LOGICAL_RUN_SQL}) where id=?", (run,)
         ).fetchone()
     assert not {"decision_json", "audit_summary", "audit_tool_events_json"} & set(row.keys())
-    loaded = store.get_professional_run(run)
-    assert loaded["native_available"]
-    assert json.loads(loaded["decision_json"])["final_message"] == "current turn"
-    assert loaded["audit_summary"] == current.audit_summary
-    assert json.loads(loaded["audit_tool_events_json"])[0]["command"] == "native evidence"
+    with store._connect() as db:
+        loaded = meeting_decision(native_run_ref(db, run, "meeting_alignment_runs"))
+    assert loaded.available
+    assert json.loads(loaded.decision_json)["final_message"] == "current turn"
+    assert loaded.audit_summary == current.audit_summary
+    assert json.loads(loaded.audit_tool_events_json)[0]["command"] == "native evidence"
 
     native.write_text(_message(old.model_dump_json()) + "\n")
-    missing = store.get_professional_run(run)
-    assert not missing["native_available"]
-    assert missing["native_reason"] == "native_source_unavailable"
-    assert missing["decision_json"] == "{}"
+    with store._connect() as db:
+        missing = meeting_decision(native_run_ref(db, run, "meeting_alignment_runs"))
+    assert not missing.available
+    assert missing.reason == "native_source_unavailable"
+    assert missing.decision_json == "{}"
 
 
 def test_meeting_multiturn_reference_is_unavailable(tmp_path, monkeypatch):
@@ -114,7 +117,8 @@ def test_meeting_current_run_range_is_read_without_attempt(tmp_path, monkeypatch
         status="no_action",
     )
     run = store.create_professional_run(job, session_id="native-meeting", status="no_action", transcript_start=0, transcript_end=1)
-    assert store.get_professional_run(run)["native_available"]
+    with store._connect() as db:
+        assert meeting_decision(native_run_ref(db, run, "meeting_alignment_runs")).available
     seed_session_search_metadata(store,
         session_id="native-meeting", source_type="meeting_alignment",
         source_id=str(run), title="Legacy Planning",
@@ -124,9 +128,8 @@ def test_meeting_current_run_range_is_read_without_attempt(tmp_path, monkeypatch
                  kind="meeting", status="failed")
         _attempt(db, run, str(run), "native-meeting", 0, 1, 2,
                  kind="meeting", status="running")
-    unavailable = store.get_professional_run(run)
-    assert not unavailable["native_available"]
-    assert unavailable["native_reason"] == "native_reference_unavailable"
+    with store._connect() as db:
+        assert native_run_ref(db, run, "meeting_alignment_runs") is None
     [search] = store.search_codex_sessions(fts_query="Planning")
     assert search.summary_text == ""
     assert search.native_reason == "native_reference_unavailable"
@@ -237,10 +240,11 @@ def test_friday_original_artifact_read_uses_existing_adapter_and_reports_unavail
                 'created_at': '', 'updated_at': '',
             },
         )
-    loaded = store.get_professional_run(run)
-    assert loaded["native_available"]
-    assert loaded["tool_events_available"] is False
-    assert loaded["tool_events_reason"] == "native_tool_stream_unavailable"
+    with store._connect() as db:
+        loaded = meeting_decision(native_run_ref(db, run, "meeting_alignment_runs"))
+    assert loaded.available
+    assert loaded.tool_events_available is False
+    assert loaded.tool_events_reason == "native_tool_stream_unavailable"
 
     def unavailable(self, thread_id):
         raise RuntimeError("Artifact unavailable")
@@ -317,14 +321,16 @@ def test_task_run_uses_latest_completed_exact_attempt_without_old_fallback(tmp_p
             f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run,)
         ).fetchone()
     assert not {"decision_json", "audit_summary", "memory_recall_used"} & set(stored.keys())
-    loaded = store.get_professional_run(run)
-    assert loaded["native_available"] is True
-    assert json.loads(loaded["decision_json"])["update_summary"] == "new decision"
+    with store._connect() as db:
+        loaded = task_decision(native_run_ref(db, run, "task_agent_runs"))
+    assert loaded.available is True
+    assert json.loads(loaded.decision_json)["update_summary"] == "new decision"
 
     native.write_text(_message(first.model_dump_json()) + "\n")
-    missing = store.get_professional_run(run)
-    assert missing["native_available"] is False
-    assert missing["decision_json"] == "{}"
+    with store._connect() as db:
+        missing = task_decision(native_run_ref(db, run, "task_agent_runs"))
+    assert missing.available is False
+    assert missing.decision_json == "{}"
 
 
 def test_task_evaluation_reads_original_native_decision_without_sql_copy(tmp_path, monkeypatch):
@@ -407,17 +413,20 @@ def test_okr_run_keeps_business_items_and_reads_native_envelope(tmp_path, monkey
     store.bind_okr_review_runtime_attempt(task_id=task_id, run_id=run, attempt_id=attempt.id)
     with store._connect() as db:
         assert db.execute("select item_json from okr_review_items where request_id=?", (task_id,)).fetchone()[0] == '{"adopted":"business"}'
-    loaded = store.get_professional_run(run)
-    assert loaded["native_available"] is True
-    assert loaded["tool_events_available"] is True
-    assert json.loads(loaded["envelope_json"])["kind"] == "okr_review"
-    assert loaded["audit_summary"] == "native audit"
+    with store._connect() as db:
+        ref = native_run_ref(db, run, "okr_review_runs")
+    envelope_json, reason = okr_envelope(ref)
+    assert reason == ""
+    assert _meeting_tool_events(ref)[1] is True
+    assert json.loads(envelope_json)["kind"] == "okr_review"
+    assert json.loads(envelope_json)["audit"]["summary"] == "native audit"
     with store._connect() as db:
         db.execute("update runtime_attempts set status='failed' where id=?", (attempt.id,))
-    unavailable = store.get_professional_run(run)
-    assert unavailable["native_available"] is False
-    assert unavailable["native_reason"] == "native_reference_unavailable"
-    assert unavailable["tool_events_available"] is False
+    with store._connect() as db:
+        ref = native_run_ref(db, run, "okr_review_runs")
+    envelope_json, reason = okr_envelope(ref)
+    assert reason == "native_reference_unavailable"
+    assert envelope_json == "{}"
 
 
 def test_okr_runs_for_same_request_read_only_their_own_completed_attempt(tmp_path, monkeypatch):
@@ -452,15 +461,18 @@ def test_okr_runs_for_same_request_read_only_their_own_completed_attempt(tmp_pat
         store.complete_agent_runtime_attempt(attempt.id, session, "token", 0, 1, owner=f"okr_review:{task_id}", now=NOW)
         store.bind_okr_review_runtime_attempt(task_id=task_id, run_id=run, attempt_id=attempt.id)
         attempts.append(attempt.id)
-    assert store.get_professional_run(first)["audit_summary"] == "first review"
-    assert store.get_professional_run(second)["audit_summary"] == "second review"
+    with store._connect() as db:
+        assert json.loads(okr_envelope(native_run_ref(db, first, "okr_review_runs"))[0])["audit"]["summary"] == "first review"
+    with store._connect() as db:
+        assert json.loads(okr_envelope(native_run_ref(db, second, "okr_review_runs"))[0])["audit"]["summary"] == "second review"
 
     paths["first-session"] = None
-    missing = store.get_professional_run(first)
-    assert missing["native_available"] is False
-    assert missing["native_reason"] == "native_source_unavailable"
-    assert missing["envelope_json"] == "{}"
-    assert store.get_professional_run(second)["audit_summary"] == "second review"
+    with store._connect() as db:
+        envelope_json, reason = okr_envelope(native_run_ref(db, first, "okr_review_runs"))
+    assert reason == "native_source_unavailable"
+    assert envelope_json == "{}"
+    with store._connect() as db:
+        assert json.loads(okr_envelope(native_run_ref(db, second, "okr_review_runs"))[0])["audit"]["summary"] == "second review"
 
 
 def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch):
@@ -490,9 +502,9 @@ def test_okr_run_uses_completed_friday_provider_reference(tmp_path, monkeypatch)
     store.mark_agent_runtime_attempt_running_once(attempt.id, owner=f"okr_review:{task_id}", now=NOW)
     store.complete_agent_runtime_attempt(attempt.id, "friday_thread:okr-thread", "token", 0, 0, owner=f"okr_review:{task_id}", now=NOW)
     store.bind_okr_review_runtime_attempt(task_id=task_id, run_id=run, attempt_id=attempt.id)
-    loaded = store.get_professional_run(run)
-    assert loaded["native_available"] is True
-    assert loaded["audit_summary"] == "Friday review"
-    assert loaded["audit_tool_events_json"] == "[]"
-    assert loaded["tool_events_available"] is False
-    assert loaded["tool_events_reason"] == "native_tool_stream_unavailable"
+    with store._connect() as db:
+        ref = native_run_ref(db, run, "okr_review_runs")
+    envelope_json, reason = okr_envelope(ref)
+    assert reason == ""
+    assert json.loads(envelope_json)["audit"]["summary"] == "Friday review"
+    assert _meeting_tool_events(ref) == ("[]", False, "native_tool_stream_unavailable")

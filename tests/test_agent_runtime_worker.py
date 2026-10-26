@@ -1,3 +1,4 @@
+from tests.support.reply_action_snapshot import reply_action_snapshot
 import json
 import shlex
 from dataclasses import dataclass
@@ -3351,7 +3352,7 @@ def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
     assert exhausted.attempts == 2
     attempts = [
         attempt
-        for attempt in worker.store.list_reply_attempts(limit=10)
+        for attempt in reply_action_snapshot(worker.store)[:10]
         if attempt.trigger_message_id == trigger.open_message_id
     ]
     assert len(attempts) == 1
@@ -4185,7 +4186,7 @@ def test_worker_exception_path_does_not_requeue_nonretryable_source_failure(tmp_
     monkeypatch.setattr(runner, "process", fail_source)
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.get_reply_task(task_id).status == "failed"
-    attempts = worker.store.list_reply_attempts()
+    attempts = reply_action_snapshot(worker.store)
     assert len(attempts) == 1
     assert attempts[0].agent_run_id == failed_ids[0]
     assert attempts[0].send_status == "failed"

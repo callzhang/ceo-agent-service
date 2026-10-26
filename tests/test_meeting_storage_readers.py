@@ -1,5 +1,7 @@
 """Meeting Store readers use native Task and Run identities."""
 
+from app.run_entity_storage import get_run
+
 from datetime import datetime
 
 import pytest
@@ -72,10 +74,13 @@ def test_meeting_run_projects_native_parent(tmp_path):
     store.update_meeting_alignment_job(job_id, status="processing")
     run_id = store.claim_professional_run(job_id)
     store.finish_professional_run(run_id, status="ready_to_send", session_id="session-1")
-    metadata = store.get_professional_run(run_id, load_native=False)
+    with store._connect() as db:
+        metadata = get_run(db, run_id)
     assert metadata is not None and metadata["task_id"] == job_id
     assert metadata["session_id"] == "session-1"
-    assert metadata["decision_json"] == "{}" and metadata["audit_tool_events_json"] == "[]"
+    from app.native_standalone import native_run_ref
+    with store._connect() as db:
+        assert native_run_ref(db, run_id, "meeting_alignment_runs") is None
     assert [run.id for run in store.list_meeting_alignment_runs(job_id)] == [run_id]
     with store._connect() as db:
         plan = db.execute(
