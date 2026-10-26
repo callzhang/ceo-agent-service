@@ -182,7 +182,7 @@ def create_direct_email_action(db, values):
     if old is not None:
         current = get_action(db, int(old['id']))
         if any(current[key] != value for key, value in fields.items()
-               if key not in {'status', 'next_attempt_at', 'started_at', 'updated_at'}):
+               if key not in {'status', 'next_attempt_at', 'started_at', 'created_at', 'updated_at'}):
             raise ValueError('direct email Action identity conflicts with existing owner')
         return current
     return create_action(db, values=fields)
