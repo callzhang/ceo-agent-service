@@ -373,6 +373,8 @@ tests/test_email_context_source.py
 tests/test_store_connection_reuse.py
 tests/test_work_summary_retry_budget.py
 tests/test_agent_metadata_lock_boundary.py
+tests/test_wechat_failed_reconciliation.py
+tests/wechat/test_store.py
 tests/test_oa_manual_rerun_skill_refresh.py
 tests/test_email_training_evidence.py
 tests/test_minutes_access.py

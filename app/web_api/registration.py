@@ -925,6 +925,26 @@ def register_console_routes(
             return JSONResponse({"ok": False, "code": "rerun_failed", "message": "无法重跑该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
         return command_result(message="重跑已提交")
 
+    @app.post("/api/console/history/{attempt_id}/retry")
+    async def console_history_retry(attempt_id: int, request: Request):
+        """Retry failed WeChat work through exact Reader reconciliation, without sending."""
+        del request
+        from app.wechat_reconciliation import reconcile_failed_wechat_attempt
+
+        try:
+            result = reconcile_failed_wechat_attempt(store_factory(), attempt_id)
+        except ValueError as exc:
+            return JSONResponse(
+                {"ok": False, "code": "retry_not_applicable", "message": str(exc), "details": {}},
+                status_code=409,
+            )
+        if result.get("outcome") not in {"done", "skipped"}:
+            return JSONResponse(
+                {"ok": False, "code": "retry_unresolved", "message": "当前失败无法由精确读回安全恢复", "details": result},
+                status_code=409,
+            )
+        return command_result(message="已通过原生读回恢复该任务", item=result)
+
     @app.post("/api/console/history/{attempt_id}/resend-wechat")
     async def console_history_resend_wechat(attempt_id: int, request: Request):
         from app.audit_web import handle_rerun_attempt_post

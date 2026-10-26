@@ -3662,3 +3662,43 @@ def test_sent_wechat_history_has_separate_exact_message_resend_route(tmp_path: P
         assert response.status_code == 200
         assert response.json()["ok"] is True
     assert store.get_reply_task(task.id).execution_generation != original_generation
+
+
+def test_wechat_history_retry_uses_reconciliation_result_without_confirmation_card(
+    tmp_path: Path, monkeypatch,
+):
+    calls = []
+
+    def reconcile(store, attempt_id):
+        calls.append((store, attempt_id))
+        return {"outcome": "done", "task_id": 417557, "delivery_id": 146}
+
+    monkeypatch.setattr(
+        "app.wechat_reconciliation.reconcile_failed_wechat_attempt", reconcile,
+    )
+    with _client(tmp_path) as client:
+        response = client.post("/api/console/history/16128/retry")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["item"]["outcome"] == "done"
+    assert calls and calls[0][1] == 16128
+
+
+def test_console_history_rerun_is_direct_task_api_without_chat_confirmation(
+    tmp_path: Path, monkeypatch,
+):
+    calls = []
+
+    def rerun(store, attempt_id, **kwargs):
+        calls.append((store, attempt_id, kwargs))
+        return 303, {"Location": "/attempts/16128"}, ""
+
+    monkeypatch.setattr("app.audit_web.handle_rerun_attempt_post", rerun)
+    with _client(tmp_path) as client:
+        response = client.post("/api/console/history/16128/rerun")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert response.json()["message"] == "重跑已提交"
+    assert calls and calls[0][1] == 16128

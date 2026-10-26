@@ -16554,6 +16554,168 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
+    def settle_failed_wechat_task_from_delivery(
+        self,
+        task_id: int,
+        *,
+        expected_execution_generation: str,
+        delivery_id: int,
+        task_status: str,
+        evidence: dict[str, Any],
+        successor_task_id: int = 0,
+    ) -> bool:
+        """Settle a failed WeChat Task from a generation-bound native readback.
+
+        ``done`` requires the exact sent delivery's outbound message. ``skipped``
+        requires a supersession chain that reaches a sent successor, an exact
+        readback of that successor, and a complete bounded readback with no
+        match for the obsolete body's delivery window. The failed Attempt and
+        its action history are left intact.
+        """
+        if task_status not in {"done", "skipped"} or not expected_execution_generation.strip():
+            raise ValueError("invalid WeChat settlement")
+        if not isinstance(evidence, dict) or evidence.get("delivery_id") != delivery_id:
+            raise ValueError("WeChat settlement evidence does not match delivery")
+        with self._immediate_write_transaction() as db:
+            task = db.execute(
+                f"select id,status,error,execution_generation,channel,conversation_id,trigger_message_id "
+                f"from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where id=?",
+                (task_id,),
+            ).fetchone()
+            delivery = db.execute(
+                f"select * from ({WECHAT_DELIVERY_SQL}) where id=?",
+                (delivery_id,),
+            ).fetchone()
+            if (task is None or task["status"] != "failed"
+                    or task["error"] != "external_action_failed"
+                    or task["execution_generation"] != expected_execution_generation
+                    or task["channel"] != "wechat"
+                    or delivery is None or int(delivery["reply_task_id"]) != task_id
+                    or delivery["execution_generation"] != expected_execution_generation):
+                return False
+            if task_status == "done":
+                readback = evidence.get("readback")
+                readback_time = None
+                action_time = None
+                if isinstance(readback, dict):
+                    try:
+                        readback_time = datetime.fromisoformat(
+                            str(readback.get("sent_at", "")).replace("Z", "+00:00")
+                        )
+                        action_time = datetime.fromisoformat(
+                            str(delivery["action_started_at"]).replace("Z", "+00:00")
+                        )
+                    except ValueError:
+                        readback_time = action_time = None
+                    if readback_time is not None and readback_time.tzinfo is None:
+                        readback_time = readback_time.replace(tzinfo=timezone.utc)
+                    if action_time is not None and action_time.tzinfo is None:
+                        action_time = action_time.replace(tzinfo=timezone.utc)
+                if (delivery["status"] != "sent" or not isinstance(readback, dict)
+                        or not readback.get("message_id")
+                        or readback.get("account_id") != delivery["account_id"]
+                        or readback.get("conversation_id") != delivery["conversation_id"]
+                        or readback.get("direction") != "outbound"
+                        or readback.get("text") != delivery["reply_text"]
+                        or readback_time is None or action_time is None
+                        or readback_time.astimezone(timezone.utc) < action_time.astimezone(timezone.utc)):
+                    raise ValueError("sent WeChat delivery lacks an exact outbound readback")
+                settlement_reason = "verified_wechat_delivery_readback"
+            else:
+                prefix = "superseded_by_newer_wechat_trigger:"
+                try:
+                    immediate_successor = int(str(delivery["error"])[len(prefix):])
+                except ValueError:
+                    raise ValueError("superseded WeChat delivery link is invalid") from None
+                if delivery["status"] != "superseded" or not str(delivery["error"]).startswith(prefix):
+                    raise ValueError("WeChat delivery is not superseded by a newer trigger")
+                old_readback = evidence.get("old_delivery_readback")
+                successor_readback = evidence.get("successor_readback")
+                chain = evidence.get("successor_delivery_chain")
+                if (not successor_task_id or not isinstance(old_readback, dict)
+                        or old_readback.get("delivery_id") != delivery_id
+                        or old_readback.get("match_count") != 0
+                        or old_readback.get("window_complete") is not True
+                        or not isinstance(successor_readback, dict)
+                        or not isinstance(successor_readback.get("readback"), dict)
+                        or not successor_readback["readback"].get("message_id")
+                        or not isinstance(chain, list)):
+                    raise ValueError("superseded WeChat settlement lacks complete readback evidence")
+                target_task_id = immediate_successor
+                visited = {task_id}
+                observed_chain = [delivery_id]
+                target_delivery = None
+                for _ in range(10):
+                    if target_task_id in visited:
+                        raise ValueError("superseded WeChat chain contains a cycle")
+                    visited.add(target_task_id)
+                    target_delivery = db.execute(
+                        f"select * from ({WECHAT_DELIVERY_SQL}) where reply_task_id=? "
+                        "order by id desc limit 1", (target_task_id,),
+                    ).fetchone()
+                    if target_delivery is None:
+                        raise ValueError("superseded WeChat successor delivery is missing")
+                    observed_chain.append(int(target_delivery["id"]))
+                    if target_delivery["status"] == "sent":
+                        break
+                    next_error = str(target_delivery["error"] or "")
+                    if target_delivery["status"] != "superseded" or not next_error.startswith(prefix):
+                        raise ValueError("superseded WeChat chain has no sent successor")
+                    try:
+                        target_task_id = int(next_error[len(prefix):])
+                    except ValueError:
+                        raise ValueError("superseded WeChat successor link is invalid") from None
+                if (target_delivery is None or target_delivery["status"] != "sent"
+                        or int(target_delivery["reply_task_id"]) != successor_task_id
+                        or observed_chain != chain
+                        or successor_readback.get("delivery_id") != int(target_delivery["id"])
+                        or successor_readback["readback"].get("conversation_id") != delivery["conversation_id"]
+                        or successor_readback["readback"].get("account_id") != delivery["account_id"]
+                        or successor_readback["readback"].get("direction") != "outbound"
+                        or successor_readback["readback"].get("text") != target_delivery["reply_text"]
+                        or delivery["account_id"] != target_delivery["account_id"]
+                        or delivery["target_type"] != target_delivery["target_type"]
+                        or delivery["target_id"] != target_delivery["target_id"]
+                        or delivery["conversation_id"] != target_delivery["conversation_id"]
+                        or int(target_delivery["id"]) not in chain):
+                    raise ValueError("superseded WeChat successor readback does not match")
+                successor_time = datetime.fromisoformat(
+                    successor_readback["readback"]["sent_at"].replace("Z", "+00:00")
+                )
+                successor_action_time = datetime.fromisoformat(
+                    str(target_delivery["action_started_at"]).replace("Z", "+00:00")
+                )
+                if successor_time.tzinfo is None:
+                    successor_time = successor_time.replace(tzinfo=timezone.utc)
+                if successor_action_time.tzinfo is None:
+                    successor_action_time = successor_action_time.replace(tzinfo=timezone.utc)
+                if successor_time.astimezone(timezone.utc) < successor_action_time.astimezone(timezone.utc):
+                    raise ValueError("successor WeChat readback predates its send action")
+                settlement_reason = "superseded_by_verified_wechat_delivery"
+
+            from app import task_entity_storage
+            changed = task_entity_storage.update_task_cas(
+                db, task_id=task_id,
+                expected={"status": "failed", "error": "external_action_failed",
+                          "execution_generation": expected_execution_generation},
+                changes={"status": task_status,
+                         "error": "" if task_status == "done" else settlement_reason,
+                         "available_at": "", "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+            )
+            if changed is None:
+                return False
+            detail = json.dumps(evidence, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            insert_error_action(db, {
+                "conversation_id": task["conversation_id"],
+                "message_id": task["trigger_message_id"],
+                "kind": f"wechat_reply_task_{task_status}_reconciled",
+                "detail": detail,
+                "resolution": settlement_reason,
+            }, resolved_at_now=True)
+            self._compact_settled_reply_task_input(db, task_id)
+            return True
+
     def skip_unresolved_reply_task(
         self,
         task_id: int,
