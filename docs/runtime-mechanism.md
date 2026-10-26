@@ -2142,7 +2142,7 @@ Session 可用性测试同样按真实 `AgentRun` 提供业务 `status`；缺失
 Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
 的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
-对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
+对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。已经开始的精确动作，其结果（verified／confirmed_no_effect／uncertain／failed）在 Task 的 execution_generation 已轮换之后仍然记录到该动作的原 Attempt，规则与供应商回执一致；轮换不会让已对外执行的动作停在未确认状态。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
 
 `needs_human` 的有效绑定选项对应已审核的 task-class 规则分支，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。历史 `requested_input` 或新增事实作为新输入进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案，也不能将历史输入问题重新激活成当前 `needs_human`。旧无绑定选项不可执行，未收到规则反馈时不猜测决定。
 
@@ -5091,7 +5091,9 @@ in emails.message_source_reference_json (full UTF-8 hash/length, exact native or
 provider location and serialization form). The explicit Store compactor first
 checks actual native task attempts, then verifies the accurate provider original.
 Only processed rows without unfinished classification/reply/action/dispatch
-input dependencies can retire their original bytes; missing/changed sources keep
+input dependencies can retire their original bytes (a direct Action is a
+`record_type='action'` row with an email operation whose `action_status` is not
+`done`/`skipped`; the original stays until the last one finishes); missing/changed sources keep
 the bytes. The update compares the original, state, source clocks and current
 plan, preserving model features, business results and receipts. Native original references remain authoritative byte proofs; Console views and
 structured execution context obtain real provider headers for recipient roles

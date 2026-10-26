@@ -4,7 +4,6 @@ from dataclasses import replace
 import pytest
 import sqlite3
 
-from app.action_storage import update_email_action
 from app.email_classifier_contracts import EmailAction
 from app.email_store import EMAIL_DIRECT_ACTION_LOCATOR_SQL, EmailStore
 from app.email_action_reconcile import ExistingReadOnlyEmailStore, release_source_verified_retry
@@ -282,13 +281,7 @@ def test_read_only_preview_never_initializes_or_writes(tmp_path: Path, monkeypat
     )
     with pytest.raises(sqlite3.OperationalError, match="readonly"):
         with preview._connect() as db:
-            action_rows = db.execute(
-                f"select rowid from ({EMAIL_DIRECT_ACTION_LOCATOR_SQL})"
-            ).fetchall()
-            for action_row in action_rows:
-                update_email_action(db, "email_actions", action_row["rowid"], {
-                    "next_attempt_at": "changed",
-                })
+            db.execute("update actions set payload_json=payload_json where record_type='action'")
 
 
 @pytest.mark.parametrize("change", [{"action_plan_id": "changed-plan"}, {"config_version": "changed-config"}, {"parameters": {"target_folder": "Other"}}])

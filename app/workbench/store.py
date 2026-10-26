@@ -865,7 +865,7 @@ class WorkbenchStore(AutoReplyStore):
             cursor_sql = ""
             turn_parameters: list[Any] = [int(task_id)]
             if before_sequence is not None:
-                cursor_sql = "where task_sequence<?"
+                cursor_sql = "and task_sequence<?"
                 turn_parameters.append(before_sequence)
             turn_parameters.append(turn_limit + 1)
             turn_rows = db.execute(

@@ -9946,10 +9946,13 @@ class EmailStore:
             and not exists(select 1 from ({REPLY_TASK_CURRENT_SQL}) t where t.channel='email'
                 and json_extract(t.trigger_message_json,'$.classification_id')=emails.classification_id
                 and t.status not in ('done','skipped'))
-            and not exists(select 1 from actions a where a.email_classification_id=emails.classification_id
-                and ((a.record_type='email_actions' and a.email_status not in ('done','skipped'))
-                  or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
-                      and a.email_status<>'done')))"""
+            and not exists(select 1 from actions a where
+                (a.record_type='action' and a.action_classification_id=emails.classification_id
+                  and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')
+                  and a.action_status not in ('done','skipped'))
+                or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
+                  and a.email_classification_id=emails.classification_id
+                  and a.email_status<>'done'))"""
 
     def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
         """Retire one completed original with an exact source and no unfinished dependency."""
