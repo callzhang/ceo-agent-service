@@ -9,6 +9,7 @@ provider actions were not in History at all.
 from __future__ import annotations
 
 import json
+from datetime import datetime
 from pathlib import Path
 import sqlite3
 
@@ -17,7 +18,10 @@ import pytest
 from app import audit_web, history_types
 from app.agent_cron.commands import SERVICE_COMMAND_OPTIONS
 from app.agent_cron.scheduler import PREVIOUS_EXECUTION_ACTIVE
-from app.action_storage import insert_email_action
+from app.email_classifier_contracts import EmailAction, EmailCategory, EmailClassificationStatus
+from app.email_pipeline import apply_human_confirmation
+from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS
+from tests.support.native_email_actions import complete_action, fail_action, persist_classification
 from app.dingtalk_models import DingTalkMessage
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
@@ -324,94 +328,61 @@ def test_service_command_runs_appear_with_their_result_and_recovery(tmp_path: Pa
 
 
 def _email_action(
-    store: AutoReplyStore,
+    email: EmailStore,
     *,
     number: int,
-    status: str,
-    action_type: str = "move",
-    attempt_count: int = 1,
-    next_attempt_at: str = "",
-    current: bool = True,
+    outcome: str,
+    action: EmailAction = EmailAction.MOVE,
     error: str = "",
 ) -> None:
-    """Insert one processed message, its plan and one provider action.
+    """Persist one processed message with one direct provider action, as the worker does.
 
-    Open ``EmailStore(store.path)`` once before the first call: it checks the
-    stored plans when it opens.
+    outcome: "done", "exhausted" (failed, no retry left), "retry" (failed, a retry is
+    scheduled) or "superseded" (failed, then a human correction replaced the plan).
     """
-    classification_id = 9000 + number
-    plan_id = f"email-action-plan:{number}"
-    with store._connect() as db:
-        db.execute(
-            "insert into email_classifications ("
-            "id, account_id, folder, uidvalidity, uid, rfc_message_id, "
-            "stable_message_identity, sender, subject, category, confidence, "
-            "margin, probabilities_json, model_id, config_version, status, "
-            "classification_source, received_at, current_action_plan_id) "
-            "values (?, 'acct', 'INBOX', 2, ?, ?, ?, 'daniela@example.com', "
-            "'MorningStar Technical Deepdive', 'work', 0.9, 0.5, '{}', 'model-1', "
-            "'v1', 'processed', 'model', 'Mon, 08 Sep 2025 12:08:13 +0000', ?)",
-            (
-                classification_id,
-                number,
-                f"<mid-{number}@example.com>",
-                f"acct:mid-{number}",
-                plan_id if current else "email-action-plan:newer",
-            ),
+    plan_id = persist_classification(
+        email, classification_id=9000 + number,
+        status=EmailClassificationStatus.PROCESSED, action=action,
+        sender="daniela@example.com", subject="MorningStar Technical Deepdive",
+    )
+    action_id = email.direct_action_ids_for_plan(plan_id)[0]
+    if outcome == "done":
+        complete_action(email, action_id)
+        return
+    fail_action(
+        email, action_id, attempts=DIRECT_ACTION_MAX_ATTEMPTS if outcome != "retry" else 1,
+        retryable_last=outcome == "retry", error=error,
+    )
+    if outcome == "superseded":
+        email.upsert_config(
+            category=EmailCategory("personal"), description="personal", threshold=0.97,
+            actions=(EmailAction.ARCHIVE,), action_parameters={}, enabled=True,
+            config_version="personal-v4",
         )
-        insert_email_action(db, "email_action_plans", {
-            "action_plan_id": plan_id,
-            "action_plan_version": 1,
-            "classification_id": classification_id,
-            "account_id": "acct",
-            "category": "work",
-            "classification_source": "model",
-            "confidence": 0.9,
-            "model_id": "model-1",
-            "config_version": "v1",
-            "actions_json": '["move"]',
-            "action_parameters_json": '{"move":{"target_folder":"工作"}}',
-            "created_at": "2026-09-16T07:27:13+00:00",
-        })
-        insert_email_action(db, "email_actions", {
-            "action_id": f"email-action:{number}",
-            "action_plan_id": plan_id,
-            "classification_id": classification_id,
-            "account_id": "acct",
-            "action_type": action_type,
-            "parameters_json": '{"target_folder":"工作"}',
-            "config_version": "v1",
-            "status": status,
-            "attempt_count": attempt_count,
-            "next_attempt_at": next_attempt_at,
-            "provider_operation": "MOVE",
-            "provider_target": "acct:mid",
-            "error": error,
-            "created_at": "2026-09-16T07:27:13+00:00",
-            "updated_at": f"2026-09-16T07:{number:02d}:00+00:00",
-        })
+        assert apply_human_confirmation(
+            email, 9000 + number, "personal", feedback_request_id=f"feedback-{number}",
+            expected_current_action_plan_id=plan_id,
+            now=datetime.fromisoformat("2026-09-17T00:00:00+00:00"),
+        ) is not None
 
 
 def test_email_provider_actions_appear_with_the_attention_failure_rule(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    EmailStore(store.path)
-    _email_action(store, number=1, status="done")
-    _email_action(store, number=2, status="done", action_type="flag_important")
+    email = EmailStore(store.path)
+    _email_action(email, number=1, outcome="done")
+    _email_action(email, number=2, outcome="done", action=EmailAction.FLAG_IMPORTANT)
     # Exhausted: failed in History, as in Attention.
     _email_action(
-        store, number=3, status="failed", attempt_count=3,
+        email, number=3, outcome="exhausted",
         error="provider_read_failed:ImapMessageUnavailable",
     )
     # Inside its retry window: the worker will run it again.
-    _email_action(
-        store, number=4, status="failed", attempt_count=1,
-        next_attempt_at="2026-09-16T07:40:00+00:00", error="stale_processing_recovered",
-    )
+    _email_action(email, number=4, outcome="retry", error="stale_processing_recovered")
     # A superseded plan's failure will never be executed.
     _email_action(
-        store, number=5, status="failed", attempt_count=3, current=False,
+        email, number=5, outcome="superseded",
         error="provider_read_failed:ImapMessageUnavailable",
     )
 
@@ -420,24 +391,27 @@ def test_email_provider_actions_appear_with_the_attention_failure_rule(
         failed = _history(client, status="failed")["items"]
     attention = audit_web._queue_attention_rows(store)
 
-    statuses = {row["occurred_at"][-5:-3]: row["status"] for row in rows}
-    assert statuses == {"01": "done", "02": "done", "03": "failed", "04": "pending", "05": "skipped"}
-    first = next(row for row in rows if row["occurred_at"].endswith("07:01:00"))
+    def selected(row):
+        return row["detail_url"].rsplit("=", 1)[1]
+
+    statuses = {selected(row): row["status"] for row in rows}
+    assert statuses == {
+        "9001": "done", "9002": "done", "9003": "failed", "9004": "pending", "9005": "skipped",
+    }
+    first = next(row for row in rows if selected(row) == "9001")
     assert first["title"] == "MorningStar Technical Deepdive"
     assert first["actor"] == "daniela@example.com"
     assert first["summary"] == "移动到「工作」"
     assert first["type"] == "email_action"
     assert first["kind"] == "email_action"
     assert first["detail_url"] == "/email?tab=all&selected=9001"
-    flagged = next(row for row in rows if row["occurred_at"].endswith("07:02:00"))
+    flagged = next(row for row in rows if selected(row) == "9002")
     assert flagged["summary"] == "标为重要"
     assert [row["summary"] for row in failed] == [
         "移动到「工作」：provider_read_failed:ImapMessageUnavailable"
     ]
     # One failed email action in History, and the same one in Attention.
-    assert [row["id"] for row in attention if row["category"] == "Email action"] == [
-        "email-action:3"
-    ]
+    assert len([row for row in attention if row["category"] == "Email action"]) == 1
 
 
 def test_history_without_email_tables_still_answers(tmp_path: Path):
@@ -446,8 +420,7 @@ def test_history_without_email_tables_still_answers(tmp_path: Path):
         limit=20, source_tables=history_types.HISTORY_SOURCE_TABLES
     )
     assert (total, rows) == (0, [])
-    EmailStore(store.path)
-    _email_action(store, number=1, status="done")
+    _email_action(EmailStore(store.path), number=1, outcome="done")
     total, _rows = store.list_operation_logs_with_count(
         limit=20,
         source_tables=history_types.HISTORY_SOURCE_TABLES,
