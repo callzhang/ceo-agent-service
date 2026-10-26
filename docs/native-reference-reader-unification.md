@@ -38,10 +38,29 @@ retry, execution states, delivery or provider policy.
   remain factual reads; failed/running attempts do not fall back to a stale Run.
 - No schema/version/data migration or production write is part of this change.
 
-## Release boundary
+## Production acceptance and cleanup
 
-Independent read-only review approves implementation/SPEC, with current-contract
-updates required in the same commit; those updates are included. Standard exact-
-target gate, deployment, production UI/API/queue readback and authorized backup/
-test-artifact cleanup remain pending. The current-data comparison and real
-trajectory probes are read-only; they are not production deployment evidence.
+Independent implementation/SPEC review approved. Normal main integration kept
+separately owned changes intact. Standard exact-target deployment completed
+`f143f5f7f → 134af324c`; its mandatory clean-clone gate passed under the unchanged
+2GB/5minute test budget. At10:02 UTC, PID29433 read back health200/ok, status,
+Attention and History200; failed36/Attention9 match the immediate pre-release
+baseline. The complete476-object schema hash is unchanged and FK findings remain
+empty.795 search metadata rows remain. The retired helpers are absent from the
+installed production module.
+
+Real production APIs for398104 and399558 now return native_available=true with
+empty native_reason. Chrome opened both actual pages and confirmed execution
+explanations were visible, with the former native-process-unavailable notice
+absent. Run190042 still correctly reports unavailable native source and retains
+its historical Job4908; no process record was fabricated. No real test send or
+business replay was performed. The change introduced no schema or business-data
+migration. Metadata membership and scoring were verified by the current-data
+locator comparison and focused actual-caller tests, not by inventing a new
+production Task.
+
+The obsolete baseline source copy/bytecode were deleted immediately after the
+comparison. After production readback, the whole task temporary root and the
+integrity-verified workflow backup were removed and path absence verified.
+Production/native trajectory originals are preserved. Exact body-free evidence:
+[readback](validation/2026-10-26-native-reference-readers.json).
