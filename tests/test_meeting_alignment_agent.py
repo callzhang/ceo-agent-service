@@ -527,7 +527,8 @@ def test_prompt_asks_member_authorization_only_for_personnel_sensitive_content()
         source(), work_profile="", work_profile_source="profile"
     )
     assert "普通业务内容不要求逐一证明群成员的披露授权" in prompt
-    assert "仅当内容含人员敏感信息时，才须逐一核实完整群成员" in prompt
+    assert "必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示" in prompt
+    assert "普通业务群选群不逐一核实成员披露授权" in prompt
     assert "完整群成员中每一位是否拥有本条消息实际内容的披露权限" not in prompt
     assert "仍须核验本次完整群成员、实际内容及每位成员的授权" not in prompt
 
@@ -545,8 +546,8 @@ def test_prompt_schema_does_not_override_generic_audience_policy():
 
     schema = MeetingAlignmentDecision.model_json_schema()
     properties = schema["properties"]
-    assert "相同已核验且合适受众" in properties["final_message"]["description"]
-    assert "仅当内容需要不同已核验受众" in properties["sensitive_private_message"]["description"]
+    assert "普通业务群选群无需逐一核验成员披露授权" in properties["final_message"]["description"]
+    assert "只要存在人员敏感内容就必须独立私聊" in properties["sensitive_private_message"]["description"]
     assert "业务私信必须非空" in properties["target"]["description"]
     assert "业务私信必须非空" in schema["$defs"]["DeliveryTarget"]["properties"]["direct_user_id"]["description"]
 
@@ -657,7 +658,7 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "业务总结" in prompt and "敏感私聊消息" in prompt
     assert "人员评价、绩效、薪酬、晋升、去留、候选人结论" in prompt
     assert "缺少披露授权不能用私聊兜底" in prompt
-    assert "相同已核验且合适的受众只生成 final_message" in prompt
+    assert "必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示" in prompt
     assert "sensitive_private_message" in prompt
     assert "每场会议最多生成一条合并消息" not in prompt
     assert "群内所有人员都必须属于本次会议参会人" not in prompt
@@ -670,7 +671,7 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "`- ` 列表" in prompt
 
 
-def test_prompt_allows_shared_sensitive_content_only_for_verified_appropriate_audience():
+def test_prompt_always_splits_personnel_sensitive_content_from_business_group():
     prompt = build_meeting_alignment_prompt(
         source(),
         work_profile="重视端到端结果",
@@ -678,9 +679,26 @@ def test_prompt_allows_shared_sensitive_content_only_for_verified_appropriate_au
     )
 
     assert "HR 职务不是自动披露授权" in prompt
-    assert "核对内容与实际披露授权" in prompt
-    assert "相同已核验且合适的受众只生成 final_message" in prompt
-    assert "sensitive_private_message=null" in prompt
+    assert "必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示" in prompt
+    assert "即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息" in prompt
+    assert "敏感信息按具体内容发给职责和披露授权均有实时证据的个人" in prompt
+
+
+def test_meeting_audit_prompt_overrides_shared_sensitive_group_rule():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    digest = meeting_alignment_decision_digest(decision)
+    routed = FakeRoutedMeetingExecution(json.dumps({
+        "outcome": "approve", "candidate_sha256": digest,
+        "summary": "candidate is supported", "feedback": None,
+    }))
+    runner = MeetingAlignmentCodexRunner(routed_execution=routed)
+
+    MeetingAlignmentAgent(runner).audit(source(), decision, run_id=9)
+
+    prompt = routed.calls[0]["prompt"]
+    assert "会议总结中的人员敏感内容必须始终从业务群正文和标题中拆出" in prompt
+    assert "不逐一核实成员对普通业务内容的披露授权" in prompt
+    assert prompt.rfind("即使目标群是 HR 群或参会人匹配度高") > prompt.rfind("every member")
 
 
 def test_loaded_meeting_skill_keeps_no_self_audience_contract():
@@ -757,11 +775,12 @@ def test_prompt_requires_content_based_group_discovery_before_direct_fallback():
     assert "使用原文中的中文业务词与英文术语分别搜索" in prompt
     assert "搜索会议标题和核心议题对应的群消息" in prompt
     assert "核对群内讨论是否涉及同一工作线" in prompt
-    assert "写清候选群的来源、业务承接关系和受众证据" in prompt
+    assert "写清候选群的来源、业务承接关系、成员匹配和受众证据" in prompt
     assert "排除仅名称相似、成员重合但业务不符的群" in prompt
     assert "没有预置候选或首次搜索零命中，不等于业务群发现失败" in prompt
     assert "不得为完成发送而选择宽泛群" in prompt
-    assert "候选群中含非授权受众" in prompt
+    assert "普通业务群选群不逐一核实成员披露授权" in prompt
+    assert "候选群中含非授权受众时" not in prompt
 
 
 def test_candidate_audience_instruction_is_shared_once_without_changing_empty_case():
