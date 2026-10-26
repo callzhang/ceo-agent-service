@@ -1,4 +1,5 @@
 from datetime import datetime, timezone
+from types import SimpleNamespace
 import json
 import sqlite3
 
@@ -148,8 +149,8 @@ def test_latest_snapshot_and_provider_truth_use_set_queries_and_lookup_index(
     statements: list[str] = []
     original_open_connection = store._open_connection
 
-    def traced_open_connection():
-        db = original_open_connection()
+    def traced_open_connection(**kwargs):
+        db = original_open_connection(**kwargs)
         db.set_trace_callback(statements.append)
         return db
 
@@ -248,8 +249,8 @@ def test_latest_snapshot_projects_counts_and_provider_folder_truth(tmp_path):
     statements: list[str] = []
     original_open_connection = store._open_connection
 
-    def traced_open_connection():
-        db = original_open_connection()
+    def traced_open_connection(**kwargs):
+        db = original_open_connection(**kwargs)
         db.set_trace_callback(statements.append)
         return db
 
@@ -465,7 +466,14 @@ def test_current_provider_truth_reconciles_disappearance_and_preserves_unavailab
     from app.web_api.email import register_email_routes
 
     app = FastAPI()
-    register_email_routes(app, lambda: store)
+    view = {"message_text": "Legal", "cc": "", "recipients": []}
+    register_email_routes(
+        app, lambda: store,
+        email_source_reader_factory=lambda: SimpleNamespace(
+            read_view=lambda account, identity: view,
+            read_views=lambda account, identities: {i: view for i in identities},
+        ),
+    )
     detail = TestClient(app).get("/api/console/email/classifications/93")
     assert detail.status_code == 200
     assert detail.json()["provider_classification"] == {
