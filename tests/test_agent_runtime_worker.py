@@ -25,13 +25,14 @@ from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsClient
 from app.native_cli_metadata import describe_native_command
 from tests.support.native_task_fields import set_native_task_fields
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 from app.process_runner import ProcessRunResult
 from app.runtime_environment import central_python
 from app.worker import ORCHESTRATION_ATTEMPT_STATUS, DingTalkAutoReplyWorker
 from tests.support.image_bytes import TINY_PNG
-from tests.test_agent_contracts import _decision_options
+from tests.test_agent_contracts import _decision_options as _contract_decision_options
 from tests.support.native_protocol import install_protocol_native_trajectories
 
 from app.business_skills import bundled_business_skills_root
@@ -899,6 +900,46 @@ def test_native_audit_fixture_keeps_binding_owned_by_service(forbidden_field, va
         AuditAgentWireResult.model_validate({**payload, forbidden_field: value})
 
 
+def _decision_options():
+    # A needs_human result offers two to four reusable rules for the task class.
+    return [{**option, "applies_to": "task_class"} for option in _contract_decision_options()]
+
+
+def _native_audit_stream(output: str) -> str:
+    """Nest an Audit wire result's outcome and feedback under "decision", as native Audit output does.
+
+    Assertion values are dynamic JSON, encoded as key/value entries.
+    """
+    lines = []
+    for line in output.splitlines():
+        try:
+            event = json.loads(line)
+            item = event.get("item") if isinstance(event, dict) else None
+            if isinstance(item, dict) and item.get("type") == "agent_message":
+                value = json.loads(item["text"])
+                if (isinstance(value, dict) and "decision" not in value
+                        and value.get("outcome") in {"approve", "return", "reject", "failed"}):
+                    feedback = value.pop("feedback", None)
+                    for assertion in (feedback or {}).get("candidate_field_assertions", ()):
+                        assertion["value"] = _encode_dynamic_json(assertion["value"])
+                    value["decision"] = {"outcome": value.pop("outcome"), "feedback": feedback}
+                    item["text"] = json.dumps(value)
+                    line = json.dumps(event)
+        except (ValueError, TypeError, KeyError, AttributeError):
+            pass
+        lines.append(line)
+    return "\n".join(lines)
+
+
+def _encode_dynamic_json(value):
+    if isinstance(value, dict):
+        return {"entries": [{"key": key, "value": _encode_dynamic_json(item)}
+                            for key, item in value.items()]}
+    if isinstance(value, list):
+        return [_encode_dynamic_json(item) for item in value]
+    return value
+
+
 def _agent_result_event(result) -> dict[str, object]:
     if isinstance(result, ConsumerAgentResult):
         error = result.error
@@ -952,6 +993,15 @@ def _agent_result_event(result) -> dict[str, object]:
             result.decision_basis.model_dump(mode="json")
             if result.decision_basis is not None
             else None
+        )
+    if isinstance(result, ConsumerAgentResult):
+        # The Consumer wire carries action/reason/target/payload instead of outcome/proposal.
+        outcome = payload.pop("outcome")
+        proposal = payload.pop("proposal")
+        payload.update(
+            action="plan" if outcome == "proposal" else outcome,
+            reason=payload["summary"], target={},
+            payload=proposal if outcome == "proposal" else {}, evidence_refs=[],
         )
     return {
         "type": "item.completed",
@@ -1151,7 +1201,9 @@ class ProtocolCodexExecutor:
             },
             *self._records_with_consumer_skill_receipt(prompt),
         ]
-        output = "\n".join(json.dumps(record) for record in records)
+        output = _native_audit_stream(native_consumer_stream_for_command(
+            "\n".join(json.dumps(record) for record in records), list(command),
+        ))
         callback = kwargs["on_stdout_line"]
         for line in output.splitlines():
             callback(line)
@@ -1203,7 +1255,7 @@ class ProtocolCodexExecutor:
                     payload = json.loads(str(item.get("text") or ""))
                 except json.JSONDecodeError:
                     continue
-                if payload.get("outcome") in {"proposal", "no_action", "needs_human"}:
+                if payload.get("outcome") in {"proposal", "no_action", "needs_human"} or "action" in payload:
                     records[index] = _agent_result_event(_audit_protocol_result(
                         "approve", int(candidate["proposal_revision"]),
                         "Reviewed the unchanged Consumer candidate.",
@@ -2542,7 +2594,9 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
             {"type": "thread.started", "thread_id": thread_id},
             *self._records_with_consumer_skill_receipt(prompt),
         ]
-        output = "\n".join(json.dumps(record) for record in records)
+        output = _native_audit_stream(native_consumer_stream_for_command(
+            "\n".join(json.dumps(record) for record in records), list(_command),
+        ))
         callback = kwargs["on_stdout_line"]
         for line in output.splitlines():
             callback(line)
