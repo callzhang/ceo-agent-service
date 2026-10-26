@@ -194,3 +194,48 @@ failed with `codex_result_invalid` / `native result failed current Consumer wire
 contract` before Audit. Zero completed work is not a zero-claim observation. A
 synthetic protocol-fixture correction is being investigated; no production
 worker, authorization or retry-policy change has been made.
+
+## Historical tool and publication-window corrections
+
+The release owner froze the explicit Store25.1/Email54→25.2/Email54 trigger tool
+at 479 source objects (`eb0d83ce…`) and478 target objects (`7b4c9187…`). It verifies
+its own historical target, never the later current manifest. The automatic
+selector rejects25.1 and retains only the precise25.2/54→25.3 Signal transition.
+The duplicated selector snapshot was removed; one read-only transaction still
+reads marker and ledger together.
+
+Independent review found an additional real pre-publication defect: the quiet
+reader still selected25.1, then its first25.2 correction also inherited an Email53
+exception. The final branch requires both Store25.2 and Email54 plus the full
+frozen schema. The owner reproduced the Email53 hole with a failing negative,
+then passed the positive0→1 in-flight check and missing-object/Email53/empty-ledger
+no-write regressions (4). The explicit historical selector rejection and real
+empty-file constructor-failure nodes each passed (1+1). These changes do not alter
+admission, lease, generation or in-flight predicates. Final independent SPEC and
+QUALITY approve the combined correction. The architecture/runtime and historical
+trigger validation docs distinguish explicit history from current publication.
+
+## Worker protocol fixture acceptance
+
+Current native Consumer and Audit parsers require the native decision envelope;
+the scripted worker fixture was still emitting historical domain output. Its
+replacement uses the existing schema-aware Consumer fixture encoder, preserves
+all explicit malformed purpose values for rejection, and emits the existing
+Audit native envelope. Service-owned candidate binding remains absent from model
+output and is injected by the service. No application/Audit/authorization/retry
+policy changed.
+
+New regressions cover flat→native→parser proposal round-trip, rejection of an
+unchanged malformed explicit purpose, and nested needs-human option-plan plus
+reason/basis preservation. Narrow Audit-binding/Consumer/auth checks passed4;
+CI calendar/image representatives passed5; the needs-human round-trip passed1.
+These counts overlap the file and are not summed as unique cases.
+
+One full related-file run completed within the fixed budgets:99 passed,4 failed
+in119.41 seconds. Persisted readback showed three remaining old Audit-turn fixture
+discriminator failures and one test-subclass counter omission. Only the four
+failed function families were rerun after the exact fixture corrections:8
+parameterized cases passed in16.21 seconds. The original expected lifecycle,
+Audit counts, external effects and retry limits remain unchanged. No second full
+file run was performed; final candidate CI is still a distinct gate. Final independent SPEC
+and QUALITY increment reviews approved.
