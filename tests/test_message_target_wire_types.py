@@ -9,6 +9,8 @@ from pydantic import ValidationError
 from app.agent_contracts import parse_persisted_consumer_result
 from app.consumer_agent import ConsumerAgentRunner
 from tests import test_consumer_agent as consumer_tests
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
+from app.process_runner import ProcessRunResult
 from app.agent_result import ResultParseError
 from app.native_agent_output import native_output_schema
 from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
@@ -102,6 +104,19 @@ def test_new_wire_validates_executable_human_branches():
 store = consumer_tests.store
 task = consumer_tests.task
 context = consumer_tests.context
+
+
+class NumericTargetExecutor(consumer_tests.CapturingExecutor):
+    """Emit the native form of a valid result, with the recipient id turned into a number."""
+
+    def __call__(self, command, *, on_stdout_line, **kwargs):
+        self.prompts.append(str(kwargs["prompt"]))
+        self.commands.append(command)
+        stdout = native_consumer_stream_for_command(self.stdout, command)
+        stdout = stdout.replace('\\"104265682397\\"', "104265682397")
+        for line in stdout.splitlines():
+            on_stdout_line(line)
+        return ProcessRunResult(0, stdout, "")
 
 
 def test_numeric_identifier_enters_existing_result_correction_before_audit(
