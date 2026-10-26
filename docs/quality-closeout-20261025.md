@@ -546,3 +546,11 @@ retain exact update/delete error assertions. Nested live collection removes
 only the parent shard selector: an independent parent3/8 probe collects all9
 live nodes and executes none. Current principal prose still requires Alex and
 rejects Derek. Additional explicit inverse/body scope passes29 cases14.13s.
+
+The remaining composed-cycle fixture is now closed: after genuine predecessor
+Task/Run/adoption forwards, it installs the four exact retained Reply receipt-
+reference declarations already present in the current assembly (introduced
+after the frozen source). No source schema is fabricated. The original full
+Reply result/receipt and two portable inverse/reforward cycles pass1 in3.03s.
+Together with the prior144 passing nodes, the145-node three-file scope is
+covered without repeating its86-second green set.

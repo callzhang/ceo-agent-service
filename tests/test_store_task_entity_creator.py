@@ -959,6 +959,21 @@ def test_native_reply_failure_result_and_receipt_survive_composed_portable_cycle
             db, context["adoption_source"], task_metadata=context["task_metadata"],
             run_metadata=context["run_metadata"],
         )
+        # This retained owner was published after the frozen predecessor used
+        # by _populated_source. Install its exact current assembly declarations
+        # after the explicit Task/Run/Action forwards, never in the old source.
+        current_assembly = task_run_entity_assembly_objects()
+        receipt_reference_objects = (
+            "reply_attempt_receipt_refs",
+            "idx_reply_attempt_receipt_refs_receipt",
+            "trg_reply_attempt_receipt_ref_insert",
+            "trg_reply_attempt_receipt_ref_update",
+        )
+        assert db.execute(
+            "select name from sqlite_schema where name='reply_attempt_receipt_refs'"
+        ).fetchone() is None
+        for name in receipt_reference_objects:
+            db.execute(current_assembly[name])
         db.commit()
         task_id = next(
             edge["target_id"] for edge in context["task_metadata"]["identity_edges"]
