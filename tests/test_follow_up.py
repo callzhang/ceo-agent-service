@@ -5,7 +5,7 @@ import pytest
 from app.dws_client import DwsUserProfile
 from app.follow_up import FollowUpNotSendable, send_business_task_follow_up
 from app.store import AutoReplyStore
-from app.task_storage import WORK_SUMMARY_INPUT_SQL
+from app.store import WORK_SUMMARY_INPUT_SQL
 
 
 class FakeDws:
