@@ -492,3 +492,20 @@ finalization/no-schema-mutation cases then pass3.59s. Orchestration-only
 maintenance fakes include the existing in-flight probe; real maintenance tests
 retain actual probes and backup assertions. Worker native Run/notification
 fixtures pass4 in2.67s with no application or retry-policy change.
+
+### Scheduled Attention expression seek — 2026-10-26
+
+A true query-plan regression scanned5000 unrelated occurrence links (~30300 VM
+steps). Exact current-copy probes show lowercase CAST type token `integer`
+does not match the existing `INTEGER` expression index in this SQLite; using
+the declared token yields SEARCH (<expr>=?) and ~300 steps, without changing
+conversion or business predicates. The original2k-step bound plus a stricter
+SEARCH assertion pass; all5 expression/cast cases pass2.15s, independently
+repeated failed node1.87s. No DDL/index migration or Attention policy change.
+
+Main f867d5c43 integration preserves current DTO type parity, WeChat stable
+public Action identity, deterministic assembly artifacts and Meeting inverse
+coverage after independent retirement review. Truly removed intermediate
+publication/index-repair scaffolds are retired only where behavior no longer
+ships or stronger native cycle tests remain. Conflict files pass307 cases32.17s
+and27 Email key nodes20.97s.

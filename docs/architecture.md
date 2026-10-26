@@ -4388,3 +4388,9 @@ predecessor Actions against the existing frozen Signal-source declaration,
 rather than the evolving runtime Actions declaration. The exact source catalog
 and all row/type/identity/receipt/inverse checks remain required. These tools
 are not constructor or runtime compatibility paths.
+
+Scheduled Reply Attention uses the exact declared `CAST(execution_id AS INTEGER)`
+expression to seek the existing schedule-occurrence expression index. SQLite
+compares the CAST type token for expression-index matching; its casing is kept
+identical to the declaration. Existing integer conversion, latest-dispatched
+selection and Attention eligibility are unchanged.
