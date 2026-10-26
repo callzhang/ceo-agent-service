@@ -1,6 +1,6 @@
 from pathlib import Path
 import json
-from app.store import REPLY_TASK_SQL
+from app.store import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 import sqlite3
 from datetime import datetime, timezone
 
@@ -10,16 +10,53 @@ from app.audit_web import _queue_attention_rows, _reply_task_queue_snapshot, _wo
 from app.action_storage import update_action
 import app.store as store_module
 from app.store import AgentRole, AutoReplyStore
-from app.task8_storage import task8_insert_parts
-from app.task20_definitions import task20_column
-from app.work_summary_payload import decode_work_summary_payload
+from app.task_entity_storage import append_task_input, bind_current_input, create_task
+from app.work_summary_payload import decode_work_summary_payload, encode_work_summary_payload
 from tests.support.native_task_fields import _TASK_KINDS, set_native_task_fields
 
 
 
 def insert_task(db, kind, values):
-    parts = task8_insert_parts(kind, values)
-    return db.execute(f"insert into tasks({parts.columns}) values({parts.values})", parts.parameters)
+    if kind == "reply_tasks":
+        now = values.get("created_at", "2026-10-06T00:00:00Z")
+        task = create_task(db, values={
+            "kind": "reply", "status": values.get("status", "pending"),
+            "error": values.get("error", ""), "input_version": 1,
+            "created_at": now, "updated_at": now,
+        })
+        input_values = {
+            "channel": values.get("channel", "dingtalk"),
+            "conversation_id": values["conversation_id"],
+            "conversation_title": values["conversation_title"],
+            "single_chat": values["single_chat"],
+            "trigger_message_id": values["trigger_message_id"],
+            "trigger_create_time": values["trigger_create_time"],
+            "trigger_sender": values["trigger_sender"],
+            "trigger_text": values.get("trigger_text", ""),
+            "trigger_message_json": values.get("trigger_message_json", "{}"),
+            "business_object_key": values.get("business_object_key", ""),
+            "input_revision_key": "",
+            "created_at": now,
+        }
+        task_input, _ = append_task_input(db, task_id=task["id"], values=input_values)
+        assert bind_current_input(
+            db, task_id=task["id"], input_id=task_input["id"],
+            expected_input_version=1, input_version=2,
+        )
+        return int(task["id"])
+    if kind == "work_summary_inputs":
+        now = values.get("created_at", "2026-10-06T00:00:00Z")
+        task = create_task(db, values={
+            "kind": "work_summary", "status": values.get("status", "pending"),
+            "error": values.get("error", ""), "created_at": now, "updated_at": now,
+        })
+        db.execute(
+            "insert into work_summary_inputs(task_id,source_type,source_ref,payload_json) values(?,?,?,?)",
+            (task["id"], values["source_type"], values["source_ref"],
+             encode_work_summary_payload(values["payload_json"])),
+        )
+        return int(task["id"])
+    raise AssertionError(f"unsupported fixture task kind: {kind}")
 
 
 def _update_task(db, kind, values, where="1", parameters=()):
@@ -53,21 +90,13 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
     task = _failed_task(store, "failed")
     with store._connect() as db:
         for index in range(unrelated_count):
-            parent = insert_task(db, "reply_tasks", {
+            insert_task(db, "reply_tasks", {
                 "conversation_id": f"irrelevant-{index}", "trigger_message_id": str(index),
                 "status": "done", "conversation_title": "Unrelated", "single_chat": 1,
                 "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
-            }).lastrowid
-            canonical = insert_task(db, "reply_task_inputs", {
-                "legacy_key": 100000 + index, "parent_id": parent, "channel": "dingtalk",
-                "conversation_id": f"unrelated-input-{index}", "conversation_title": "Unrelated",
-                "single_chat": 1, "trigger_message_id": str(index),
-                "trigger_create_time": "2026-10-12T00:00:00Z", "trigger_sender": "sender",
-                "business_object_key": "",
                 "trigger_text": "irrelevant body " * 200,
                 "trigger_message_json": '{"body":"unrelated"}',
-            }).lastrowid
-            db.execute("update tasks set current_input_id=? where id=?", (canonical, parent))
+            })
     statements: list[str] = []
     original_open = store._open_connection
 
@@ -86,9 +115,7 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
     )
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
-    assert any("SEARCH tasks USING INDEX idx_task20_numeric_identity" in step for step in plan), plan
-    assert any("SEARCH p USING INTEGER PRIMARY KEY" in step for step in plan), plan
-    assert any("SCAN tasks USING INDEX idx_task20_published_1" in step for step in plan), plan
+    assert any("SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan), plan
     assert not any(
         step.startswith(("SCAN tasks", "SCAN t"))
         and "USING INDEX" not in step
@@ -115,11 +142,10 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
             return sqlite3.SQLITE_OK
 
         db.set_authorizer(capture_selector_reads)
-        db.execute("select cast(legacy_key as integer) from tasks indexed by "
-                   "idx_task20_published_1 where record_type='reply_tasks' "
-                   f"and lower({task20_column('reply_tasks', 'status')})='failed'").fetchall()
+        db.execute("select id from tasks indexed by idx_tasks_claim_due "
+                   "where kind='reply' and lower(status)='failed'").fetchall()
     assert {column for table, column in selector_reads if table == "tasks"} <= {
-        "legacy_key", "record_type", task20_column("reply_tasks", "status").strip('"'),
+        "id", "kind", "status",
     }
 
 
@@ -157,12 +183,11 @@ def test_attention_excludes_typed_unsubscribe_failures_but_keeps_failed_history(
     ordinary_email = _failed_task(store, "FAILED")
     with store._connect() as db:
         for task, action_type in ((unsubscribe, "unsubscribe"), (ordinary_email, "reply")):
-            values = {"channel": "email", "conversation_title": "Email action",
-                      "trigger_message_id": f"email-action:{task.id}"}
-            _update_task(db, "reply_tasks", values, "id=?", (task.id,))
-            _update_task(db, "reply_task_inputs", values | {
+            _update_task(db, "reply_tasks", {
+                "channel": "email", "conversation_title": "Email action",
+                "trigger_message_id": f"email-action:{task.id}",
                 "trigger_message_json": json.dumps({"schema": "email_agent_action.v1", "action_type": action_type}),
-            }, "parent_id=?", (task.id,))
+            }, "id=?", (task.id,))
         _update_task(db, "reply_tasks", {"error": "unsubscribe_operation_rejected:ValueError"}, "id=?", (unsubscribe.id,))
 
     rows = _queue_attention_rows(store)
@@ -210,7 +235,7 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
             with store._connect() as db:
                 if surface == "work_error":
                     assert _work_summary_input_queue_snapshot(db)["latest_error"] == ""
-                    needle = "select " + task20_column("work_summary_inputs", "error") + " as error from tasks"
+                    needle = f"select error from ({WORK_SUMMARY_INPUT_SQL}) where lower(status)='failed'"
                     table = "tasks"
                 else:
                     assert _reply_task_queue_snapshot(db)["latest_error"] == "service failure"
@@ -227,14 +252,14 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
     if surface == 'reply_error':
         # Main evaluates the current-business projection once. Its table scan
         # reads scalar metadata, and never joins canonical input bodies.
-        assert ('tasks', task20_column('reply_tasks', 'error').strip('"')) in read_columns
+        assert ('tasks', 'error') in read_columns
         assert not {'payload_json', 'trigger_text', 'trigger_message_json'} & {
             column for name, column in read_columns if name == 'tasks'
         }
         assert any('MATERIALIZE current' in step for step in plan), plan
         return
     if surface == 'work_attention':
-        assert any("SCAN tasks USING INDEX idx_task20_published_8" in step for step in plan), plan
+        assert any("SEARCH t USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan), plan
         with store._connect() as db:
             selector_reads = set()
 
@@ -244,16 +269,14 @@ def test_failure_diagnostics_do_not_scan_queue_payloads(
                 return sqlite3.SQLITE_OK
 
             db.set_authorizer(capture_selector)
-            db.execute("select cast(legacy_key as integer) from tasks "
-                       "where record_type='work_summary_inputs' "
-                       f"and lower({task20_column('work_summary_inputs', 'status')})='failed'").fetchall()
+            db.execute("select id from tasks indexed by idx_tasks_claim_due "
+                       "where kind='work_summary' and lower(status)='failed'").fetchall()
         assert {column for name, column in selector_reads if name == 'tasks'} <= {
-            "legacy_key", "record_type", task20_column("work_summary_inputs", "status").strip('"'),
+            "id", "kind", "status",
         }
     else:
-        assert ('tasks', task20_column('work_summary_inputs', 'error').strip('"')) in read_columns
-        assert ('tasks', 'payload_json') not in read_columns
-        assert any("SCAN tasks USING INDEX idx_task20_published_8" in step for step in plan), plan
+        assert ('tasks', 'error') in read_columns
+        assert any("SEARCH t USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan), plan
     assert not any(step.startswith(f"SCAN {table}") and "USING INDEX" not in step for step in plan), plan
 
 
@@ -311,20 +334,24 @@ def test_reply_queue_snapshot_reads_metadata_in_one_source_pass(
     queries = [sql for sql in statements if "with current as materialized" in sql]
     assert len(queries) == 1
     query = queries[0]
-    assert "trigger_message_json" not in query
-    assert "trigger_text" not in query
+    current_projection = query.split("from (", maxsplit=1)[0]
+    assert "tasks.id" in current_projection
+    assert "tasks.updated_at" in current_projection
+    assert "tasks.error" in current_projection
+    assert "trigger_message_json" not in current_projection
+    assert "trigger_text" not in current_projection
+    assert "payload_json" not in current_projection
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
-    assert sum(step.startswith("SCAN tasks") for step in plan) == 1, plan
+    assert sum("SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan) == 1, plan
 
-    assert ("tasks", task20_column("reply_tasks", "error").strip('"')) in read_columns
+    assert ("tasks", "error") in read_columns
     assert {column for name, column in read_columns if name == "tasks"} <= {
-        "id", "legacy_key", "record_type", "parent_id",
-        *(task20_column("reply_tasks", name).strip('"') for name in ("status", "updated_at", "error", "business_object_key")),
-        *(task20_column("business_object_tasks", name).strip('"')
-          for name in ("business_object_key", "reply_task_id", "created_at", "updated_at")),
+        "id", "kind", "status", "updated_at", "error", "attempts", "available_at",
+        "claimed_input_id", "claimed_input_version", "created_at", "current_input_id",
+        "execution_generation", "input_version", "locked_at", "parameters_json",
     }
-    assert not any(name == "reply_task_inputs" for name, column in read_columns)
+    assert any(name == "task_inputs" for name, column in read_columns)
     assert any("MATERIALIZE current" in step for step in plan), plan
 
 
