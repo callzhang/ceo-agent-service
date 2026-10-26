@@ -591,3 +591,14 @@ proved the two old branch sets and the new bound are equal; existing timing,
 lease, live-owner, terminal/backoff and Meeting phase controls remain. All15
 lifecycle cases pass1.67s. Plan assertions accept covering-index spelling while
 still requiring the exact kind/status SEARCH and rejecting scans/materialization.
+
+The complete b4 run ends with17 failing nodes (five are Task adapter plan
+parameters);32 of48 Python shards pass, with no resource-budget stops. Its
+remaining Worker fixtures now use native Audit IDs, canonical sent Actions and
+actual immutable OA receipt references;3 exact cases pass2.43s with stale
+recovery, verified quote and one-send reminder assertions preserved.
+Receipt caller expectations follow separately mergedfe9530838: dispatched late
+outcomes keep the original provider receipt across Task generation rotation,
+while conflicting bodies still reject and the new Task stays pending. Email
+constructor lock-order test excludes pytest template bootstrap, not business
+calls;3 cases pass1.57s and2 related receipt controls pass1.00s.

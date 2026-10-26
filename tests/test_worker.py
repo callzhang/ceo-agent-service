@@ -57,7 +57,7 @@ from app.dws_client import (
     DwsUserProfile,
 )
 from app.outbound_postfix import compose_outbound_postfix
-from app.action_storage import insert_action, update_action
+from app.action_storage import update_action
 from app.store import AgentRole, AutoReplyStore, REPLY_TASK_SQL
 from app.skill_features import FeatureRegistry
 from app.runtime_environment import central_python
@@ -1889,25 +1889,42 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
 def test_worker_marks_quote_of_verified_agent_message_as_recovery_context(
     tmp_path, monkeypatch,
 ):
+    from tests.sent_fixtures import historical_sent_delivery
+
     worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
     trigger = message("这是回复", message_id="incoming", quoted_content="Agent 原消息")
     trigger.quoted_message_id = "agent-output-id"
-    with worker.store._connect() as db:
-        insert_action(db, "sent_replies", {
-            "conversation_id": trigger.open_conversation_id,
-            "trigger_message_id": "earlier-input",
-            "reply_text": "Agent 原消息",
-            "send_result_json": json.dumps({
-                "verification": {
-                    "state": "sent",
-                    "status_result": {"result": {
-                        "openMessageId": "agent-output-id",
-                        "sendStatus": "SUCCESS",
-                    }},
-                },
-            }),
-            "channel": "dingtalk",
-        })
+    worker.store.enqueue_reply_task(
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        trigger_message_id="earlier-input",
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        trigger_text="earlier input",
+    )
+    sent_task = worker.store.claim_reply_tasks(limit=1)[0]
+    sent_run = _claim_audit_run(
+        worker.store, sent_task.id, sent_task.execution_generation,
+        owner="verified-send",
+    ).run
+    historical_sent_delivery(
+        worker.store,
+        agent_run_id=sent_run.id,
+        external_action_key="verified-agent-message:agent-output-id",
+        conversation_id=trigger.open_conversation_id,
+        trigger_message_id="earlier-input",
+        reply_text="Agent 原消息",
+        provider_result={
+            "verification": {
+                "state": "sent",
+                "status_result": {"result": {
+                    "openMessageId": "agent-output-id",
+                    "sendStatus": "SUCCESS",
+                }},
+            },
+        },
+    )
     assert worker.store.enqueue_reply_task(
         conversation_id=trigger.open_conversation_id,
         conversation_title=trigger.conversation_title,
@@ -6774,10 +6791,11 @@ def test_consume_once_records_stale_processing_tasks_before_requeue(
             db, claimed[0].id,
             update_sql={"locked_at": "datetime('now', '-31 minutes')"},
         )
-        db.execute(
-            "update runs set lease_expires_at=datetime('now', '-1 minute') where record_type='agent_runs' and cast(legacy_key as integer)=?",
+        assert db.execute(
+            "update runs set lease_expires_at=datetime('now', '-1 minute') "
+            "where id=? and role='audit'",
             (agent_claim.run.id,),
-        )
+        ).rowcount == 1
     dws = FakeDws([conversation()], {"cid-1": []})
     codex = FakeCodex(
         CodexDecision(action=CodexAction.NO_REPLY, audit_summary="无需回复。")
@@ -10538,6 +10556,7 @@ def test_confirmed_oa_result_replies_to_chat_reminder_once(
         candidate_id=candidate["id"], review_id=review["id"],
     )
     metadata = worker._orchestration_oa_metadata(task, result)
+    receipt_id = int(metadata.pop("oa_action_receipt_id"))
     attempt_id = worker.store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,
@@ -10546,6 +10565,17 @@ def test_confirmed_oa_result_replies_to_chat_reminder_once(
         trigger_text=task.trigger_text,
         action="oa_approval", sensitivity_kind="internal_personnel",
         send_status="completed", **metadata,
+    )
+    from app.reply_receipt_reference import add_reference
+    with worker.store._connect() as db:
+        add_reference(
+            db, attempt_id=attempt_id, receipt_id=receipt_id,
+            expected_body=metadata["oa_action_result_json"],
+        )
+        update_action(db, "reply_attempts", attempt_id, {"oa_action_result_json": ""})
+    assert (
+        worker.store.get_reply_attempt(attempt_id).oa_action_result_json
+        == metadata["oa_action_result_json"]
     )
     worker._deliver_oa_reminder_results(
         task=task, attempt_id=attempt_id, result=result, audit_run=audit_run,

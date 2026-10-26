@@ -68,15 +68,12 @@ def test_candidate_receipt_idempotency_conflicts_and_late_result(receipt_store, 
         acknowledged["status"], acknowledged["result_json"],
         acknowledged["provider_receipt_id"], acknowledged["agent_run_id"],
     ) == ("verified", '{"receipt":"原始"}', saved["provider_receipt_id"], candidate["id"])
-    if late:
-        with pytest.raises(ValueError, match="candidate generation mismatch"):
-            store.record_candidate_action_outcome(
-                execution["id"], "worker", 0, "verified", {"receipt": "原始"},
-            )
-    else:
-        store.record_candidate_action_outcome(
-            execution["id"], "worker", 0, "verified", {"receipt": "原始"},
-        )
+    outcome = store.record_candidate_action_outcome(
+        execution["id"], "worker", 0, "verified", {"receipt": "原始"},
+    )
+    assert (
+        outcome["status"], outcome["result_json"], outcome["provider_receipt_id"]
+    ) == ("verified", '{"receipt":"原始"}', saved["provider_receipt_id"])
     assert store.finish_candidate_execution(execution["id"], "worker", "done", {})["status"] == "done"
     if late:
         assert store.get_reply_task(task.id).status == "pending"

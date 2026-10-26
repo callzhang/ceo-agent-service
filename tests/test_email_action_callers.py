@@ -205,6 +205,7 @@ def test_email_first_calls_real_store_once_outside_email_lock(tmp_path, monkeypa
     import app.email_store as email_module
     from contextlib import contextmanager
 
+    _build_with_real_constructor(monkeypatch)
     events = []
     actual_store = AutoReplyStore
     actual_lock = email_module.schema_initialize_lock
