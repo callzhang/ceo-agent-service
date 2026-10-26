@@ -87,8 +87,8 @@ def test_explicit_retry_after_root_cause_fix_gets_a_new_budget(tmp_path):
     input_id = store.enqueue_work_summary_input("ai_minutes", "meeting", "{}")
     for _ in range(cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS):
         store.claim_work_summary_inputs(limit=1)
-        run_id = store.claim_logical_run("task_agent_runs", input_id)
-        store.finish_logical_run("task_agent_runs", run_id, status="failed", error="processing failure")
+        run_id = store.claim_professional_run(input_id)
+        store.finish_professional_run(run_id, status="failed", error="processing failure")
         store.mark_work_summary_input_failed(input_id, "processing failure")
         if _ < cli.WORK_SUMMARY_TRANSIENT_RETRY_ATTEMPTS - 1:
             store.schedule_work_summary_input_retry(input_id, "processing failure", available_at="")
