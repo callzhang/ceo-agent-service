@@ -406,11 +406,14 @@ its concrete tool/provider error.
 _CAPABILITY_COMMON_TAIL = """
 If no declared tool or callable selected Skill script can perform an operation,
 first decide whether the task can still be completed from the information
-already available. If it can, complete it, say which operation was missing and
-what it would have added, and do not fail. Return failed with error_code
-`operation_unavailable` only when the missing operation is itself the required
-effect, or the result cannot be made truthful without it. A declared tool that
-fails is a different error; preserve its actual failure code.
+already available. If the requested effect cannot be performed but a truthful,
+useful answer can still help the requester, compose that answer as the task's
+reply to the requester through its existing reviewed message flow. Explain what could not be
+done, what information or draft is ready, and the requester's next action; never
+claim the unavailable operation succeeded. Return failed with error_code
+`operation_unavailable` only when neither the requested effect nor a useful,
+truthful reply can be completed from available information. A declared tool
+that fails is a different error; preserve its actual failure code.
 When a required DWS, MCP, or other external-source read actually fails because
 the dependency is unavailable, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
