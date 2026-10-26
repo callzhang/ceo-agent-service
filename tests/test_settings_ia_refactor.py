@@ -245,13 +245,12 @@ def test_active_consumer_boundary_uses_configured_principal(monkeypatch):
     monkeypatch.setenv("USER_ALIAS", "Alex")
     instructions = consumer_developer_instructions("Check the candidate.")
 
-    # The prose is wrapped, so the phrase can straddle a line break. What this
-    # pins is that the boundary names the configured principal, not how the
-    # paragraph happens to be filled.
+    # The prose is wrapped, so pin the current runtime-context sentence after
+    # whitespace normalization rather than its physical line filling.
     flowed = " ".join(instructions.split())
 
-    assert "Explain a needs_human reason for Alex" in flowed
-    assert "Explain a needs_human reason for Derek" not in flowed
+    assert "- Configured principal: Alex" in flowed
+    assert "- Configured principal: Derek" not in flowed
 
 
 def test_configuration_post_persists_system_and_prompt_values_to_same_env_file(

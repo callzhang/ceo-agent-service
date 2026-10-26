@@ -1,3 +1,4 @@
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -8,9 +9,12 @@ LIVE_TEST = "tests/test_meeting_alignment_eval.py"
 
 
 def _collect(*args: str) -> subprocess.CompletedProcess[str]:
+    env = os.environ.copy()
+    env.pop("CEO_PYTEST_SHARD", None)
     return subprocess.run(
         [sys.executable, "-m", "pytest", *args, "--collect-only", "-q", LIVE_TEST],
         cwd=REPO_ROOT,
+        env=env,
         capture_output=True,
         text=True,
         check=False,

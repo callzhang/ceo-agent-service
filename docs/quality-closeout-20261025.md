@@ -539,3 +539,10 @@ Reply DTO BLOB/type/input parsing parity uses the actual frozen Task20 input
 projection. All5 original nodes pass4.93s; the three-file run passes144 and
 reveals one separate composed-cycle fixture missing reply_attempt_receipt_refs.
 That remaining node is registered for correction, not declared green.
+
+Final configuration/isolation fixtures pass97 cases19.53s. All three exact
+account blockers now use real EmailStore plan/classification/claim owners and
+retain exact update/delete error assertions. Nested live collection removes
+only the parent shard selector: an independent parent3/8 probe collects all9
+live nodes and executes none. Current principal prose still requires Alex and
+rejects Derek. Additional explicit inverse/body scope passes29 cases14.13s.
