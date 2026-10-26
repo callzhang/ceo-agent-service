@@ -2135,6 +2135,8 @@ def test_reopen_processing_raises_typed_error_without_mutation(tmp_path: Path):
 def test_reopen_incomplete_history_rolls_back_atomically(tmp_path: Path, damage: str):
     store = AutoReplyStore(tmp_path / f"reopen-incomplete-{damage}.sqlite3")
     round_id = _seed_resolved_feedback_round(store, "feedback-1")
+    if damage == "wrong-owner":
+        store.upsert_feedback_event(key="other", feedback_token="token-other")
     with store._connect() as db:
         if damage == "missing":
             _delete_feedback_owner(db, "feedback_processing_rounds", round_id)

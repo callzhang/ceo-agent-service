@@ -361,7 +361,7 @@ class Fixture:
                     if name == "consumer_document_write":
                         docs = self.documents()
                         docs[result["node_id"]].update(artifact_name=arguments["artifact_name"],
-                            readback_name=result["readback"]["artifact_name"])
+                            readback_name=(result.get("readback") or {}).get("artifact_name", ""))
                         self.docs_path.write_text(json.dumps(docs, ensure_ascii=False))
                     return self.record(name, arguments, result)
                 return call

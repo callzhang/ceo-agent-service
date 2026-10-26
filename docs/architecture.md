@@ -4400,3 +4400,11 @@ existing pending-phase and processing branches. This lets the existing
 kind/status/available-at index seek without scanning terminal history hidden
 behind the normalized lifecycle CASE. The same pending-phase owner is reused;
 all original source eligibility, time, lease and live-owner checks remain.
+
+After reconciling parallel dispatcher fixes, Task-backed dispatcher projections
+expose the original physical status directly. Pending eligibility uses the same
+existing Meeting waiting/pending/retry phases (pending elsewhere), and expired
+processing leases retain the same separate branch. The temporary normalized
+status CASE and its redundant eligibility predicates are retired together;
+no source phase or eligibility is reinterpreted. Email plan/operation readers
+and their status-map lookups use the same native integer Action identity.

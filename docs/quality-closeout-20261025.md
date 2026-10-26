@@ -610,3 +610,24 @@ with exact purpose/tool/name/description assertions. The2 cases pass1.60s and
 all15 preview cases pass9.24s. All17 b4 failure nodes now have focused passing
 evidence; a new complete Quality at the integrated commit is still required.
 Complete app/tests Ruff and diff checks pass.
+
+### PR merge-reference reconciliation — 2026-10-26
+
+The e710 CI checkout is GitHub merge ref7100c03ed, merging the branch into new
+maind0cdcf861. Its newbd2f95ee4 caller change stringifies Action IDs, while
+this branch's actual native status map has integer keys. This cross-file
+semantic conflict has no text conflict; four receipt recovery/race cases fail
+by attempting to reclaim an already-done MOVE. Their assertions remain intact.
+Normal integration through main193ddd06b keeps integer keys and integer callers.
+Email store/worker resolve byte-for-byte to the already validated branch
+owners; source guards and receipt bindings remain unchanged.
+
+Main's dispatcher projection removes the temporary normalized status CASE.
+Its adapters are reconciled with the same raw pending phases and processing
+branch, so Meeting waiting/retry stay eligible and terminal states stay out.
+Independent review confirms the sole dispatcher consumer and exact eligible
+set. No DDL or new statuses. Six test-conflict scopes pass18 cases7.63s, two
+more pass2 in0.80s, Email owners/history pass15 in20.56s, native identity/status
+plans pass7 in2.63s, and raw Meeting/status/schema-registry scope passes35 in1.62s.
+Merged duplicate snapshot entries are deduplicated without dropping the typed
+Meeting schema owner. Complete app/tests Ruff passes.

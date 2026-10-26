@@ -35,6 +35,7 @@ def _options(store: AutoReplyStore, root: Path) -> ScheduledTaskOptionService:
         "stardust-oa-people-review",
         "stardust-oa-attendance-travel-review",
         "stardust-oa-cloud-resource-review",
+        "dingtang-okr-review",
     ):
         skill_path = operation_root / name / "SKILL.md"
         skill_path.parent.mkdir(parents=True, exist_ok=True)

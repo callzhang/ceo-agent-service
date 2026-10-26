@@ -109,6 +109,7 @@ NO_SINGLE_MODEL: dict[str, str] = {
     "wechat_memory_dedupe.schema.json": (
         "envelope around a list of app.wechat.memory_import.DurableMemoryMatch"
     ),
+
 }
 
 

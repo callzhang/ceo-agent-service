@@ -79,6 +79,7 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
     assert "Independently inspect every score of 80 or more" in skill
     assert "routine same-team adoption" in skill
+    assert "For each manifest appendix run the same destination script" in skill
     assert "confirm successful provider write receipts for the current manifest" in skill
     assert "each appendix's parent is the main node" in skill
     assert "No automatic content readback or full-body comparison is required" in skill

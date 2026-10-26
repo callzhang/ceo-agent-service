@@ -410,7 +410,7 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
 
     def _pending(self, alias="task"):
         phases = "(" + ",".join(repr(status) for status in self._pending_statuses()) + ")"
-        return alias + ".task_status='pending' and " + alias + ".status in " + phases
+        return alias + ".status in " + phases
 
     def _due(self, now_text, alias="task"):
         due = ""
@@ -428,7 +428,7 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
         eligible_statuses = "(" + ",".join(repr(status) for status in
                                              (*self._pending_statuses(), "processing")) + ")"
         return (self._channel_clause(alias) + " and " + alias + ".status in " + eligible_statuses
-            + " and " + alias + ".task_status in ('pending','processing') and ((" + self._pending(alias) + due
+            + " and ((" + self._pending(alias) + due
             + " and (" + alias + ".claim_owner is null or " + alias + ".claim_owner='' or " + alias + ".claim_expires_at<=?))"
             + " or (" + alias + ".status='processing' and " + alias + ".claim_owner<>'' and " + alias + ".claim_expires_at<=?))",
             (*params, now_text, now_text))
