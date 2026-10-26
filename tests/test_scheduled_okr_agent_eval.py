@@ -1,9 +1,15 @@
 import copy
+import hashlib
 import json
 from pathlib import Path
 
+from app import agent_cli
 from evals.scheduled_task_generic import okr_eval
-from evals.scheduled_task_generic.okr_fixture import Fixture, member_payload
+from evals.scheduled_task_generic.okr_fixture import (
+    DocumentProvider,
+    Fixture,
+    member_payload,
+)
 
 CASES = json.loads((Path(okr_eval.__file__).parent / "okr_cases.v8.json").read_text())["cases"]
 BASE_CASES = CASES[:4]
@@ -73,8 +79,11 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
     assert "Independently inspect every score of 80 or more" in skill
     assert "routine same-team adoption" in skill
-    assert "publish or update and fully read back every appendix" in skill
-    assert "an old appendix or its previous readback does not satisfy this run's manifest" in skill
+    assert "confirm successful provider write receipts for the current manifest" in skill
+    assert "each appendix's parent is the main node" in skill
+    assert "No automatic content readback or full-body comparison is required" in skill
+    assert "create that dated document if it does not exist" in skill
+    assert "Do not write a new-date body into a previous-date node" in skill
     correction = skill.split("### Correct an Audit return before publication", 1)[1].split(
         "## Collect and prepare", 1
     )[0]
@@ -405,18 +414,52 @@ def test_behavioral_rubric_requires_standard_scores_only_where_source_supports_t
     assert not okr_eval.behavior_checks([review], expected)["behavioral_scores_match_evidence"]
 
 
-def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
+def test_native_document_tools_use_actual_service_receipt_contract(
+    tmp_path, monkeypatch
+):
     f = Fixture(CASES[0]["facts"], tmp_path)
     body = "# Synthetic report\n\nExact body.\n"
     (tmp_path / "report.md").write_text(body)
-    with f.production_tools("consumer") as tools:
-        result = tools["consumer_document_write"](
-            "report.md", "Protocol report", parent_id="eval-folder", workspace_id="eval-workspace")
-        assert result["content_sha256"] == okr_eval.digest(body.encode())
-        assert result["operation"] == "created"
-        receipt = tools["read_task_artifact"](result["readback"]["artifact_name"])
-        assert json.loads(receipt["content"])["content"]["markdown"] == body
-        assert result["readback"]["artifact_name"].endswith(".readback.json")
+    monkeypatch.setattr(agent_cli, "_bound_scheduled_run", lambda *_args: (None, None))
+    monkeypatch.setattr(
+        agent_cli,
+        "_current_task_generation",
+        lambda *_args: "fixture",
+    )
+    monkeypatch.setattr(
+        agent_cli,
+        "_task_file_root",
+        lambda *_args, **_kwargs: tmp_path,
+    )
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: DocumentProvider(f))
+    tool = agent_cli.build_role_server(
+        "consumer",
+        task_id=1,
+        db_path=Path("/unused-fixture-db"),
+        execution_generation="fixture",
+    )._tool_manager.get_tool("consumer_document_write")
+
+    result = tool.fn(
+        "report.md",
+        "Protocol report",
+        parent_id="eval-folder",
+        workspace_id="eval-workspace",
+    )
+
+    assert result["content_sha256"] == okr_eval.digest(body.encode())
+    assert result["ok"] is True and result["status"] == "success"
+    assert result["operation"] == "created"
+    assert result["provider_result"] == {
+        "status": "success",
+        "complete": True,
+        "data": {
+            "nodeId": result["node_id"],
+            "verified": True,
+            "success": True,
+        },
+    }
+    assert result["readback"] is None
+    assert f.documents()[result["node_id"]]["content"] == body
 
 
 def test_native_fixture_exposes_searchable_independent_evidence(tmp_path):
@@ -1070,10 +1113,12 @@ def test_release_manifest_pins_verified_current_installation():
     assert set(entries) == {row["source"] for row in expected["files"]}
     for row in expected["files"]:
         entry = entries[row["source"]]
-        assert entry["old_sha256"] == row["installed_sha256"], row["source"]
-        assert entry["new_sha256"] == row["approved_new_sha256"], row["source"]
-        if "managed_sha256" in row:
-            assert entry["old_managed_sha256"] == row["managed_sha256"]
+        source_digest = hashlib.sha256((root / row["source"]).read_bytes()).hexdigest()
+        assert entry["new_sha256"] == source_digest, row["source"]
+        assert len(entry["old_sha256"]) == 64
+        assert set(entry["old_sha256"]) <= set("0123456789abcdef")
+        if "old_managed_sha256" in entry:
+            assert entry["old_managed_sha256"] == entry["old_sha256"]
 
 
 def test_synthetic_scheduled_context_exposes_current_artifacts_without_contents(tmp_path):

@@ -27,7 +27,17 @@ def test_consumer_tool_rejects_sender_before_starting_a_process(monkeypatch) -> 
         tool.fn("ceo-wechat", "scripts/sender.py", ["approve", "--id", "1"])
 
 
-def test_report_skill_only_exposes_reviewed_entrypoints() -> None:
+def test_report_skill_only_exposes_reviewed_entrypoints(
+    tmp_path, monkeypatch
+) -> None:
+    source = Path(__file__).resolve().parent.parent / "ci/shared-skills"
+    monkeypatch.setattr("app.agent_cli.CONSUMER_SCRIPT_SOURCE_ROOT", source)
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path))
+    shutil.copytree(
+        source / "ceo-weekly-report",
+        tmp_path / ".agents/skills/ceo-weekly-report",
+    )
+
     assert _approved_consumer_skill_script(
         "ceo-weekly-report", "scripts/materials.py"
     ).is_file()

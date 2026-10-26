@@ -993,9 +993,10 @@ def test_scheduled_audit_receives_exact_consumer_document_return(tmp_path, monke
                 "type": "mcp_tool_call", "server": "agent_cli",
                 "tool": "consumer_document_write", "id": "write-1",
                 "result": {"structuredContent": {
+                    "ok": True, "status": "success",
                     "operation": "updated", "node_id": "document-9", "title": "Report",
                     "provider_result": {"nodeId": "document-9"},
-                    "readback": {"content": "private synthetic report body"},
+                    "readback": None,
                 }},
             }}
             captured_events[claimed.run.id] = event
@@ -1069,8 +1070,10 @@ def test_scheduled_audit_retains_document_return_across_feedback_revision(tmp_pa
                     "type": "mcp_tool_call", "server": "agent_cli",
                     "tool": "consumer_document_write", "id": "write-1",
                     "result": {"structuredContent": {
+                        "ok": True, "status": "success",
                         "operation": "updated", "node_id": "document-9", "title": "Report",
-                        "readback": {"content": "private synthetic report body"},
+                        "provider_result": {"nodeId": "document-9"},
+                        "readback": None,
                     }},
                 }}
             self.store.complete_agent_run(

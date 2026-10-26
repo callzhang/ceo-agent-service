@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from app.action_storage import insert_email_action
+from app import shared_action_lifecycle
 from app.audit_web import _email_action_queue_snapshot, _reply_task_queue_snapshot
 from app.current_database_schema import create_current_database_schema
 from app.email_canonical_storage import insert_email_classification, insert_email_message
@@ -128,7 +128,7 @@ def _insert_email_classification(db, classification_id, plan_id, status):
 
 
 def _insert_email_plan(db, plan_id, classification_id, version=1):
-    insert_email_action(db, "email_action_plans", {
+    shared_action_lifecycle.persist_plan(db, "email", {
         "action_plan_id": plan_id,
         "action_plan_version": version,
         "classification_id": classification_id,
@@ -140,28 +140,63 @@ def _insert_email_plan(db, plan_id, classification_id, version=1):
         "config_version": "config",
         "actions_json": '["archive","move","trash","label","mark_read"]',
         "action_parameters_json": "{}",
+        "authorization_snapshot_json": "[]",
+        "legacy_serialization_pre_v16": 0,
         "created_at": "2026-10-12",
     })
 
 
-def _insert_email_action_row(db, *, action_id, plan_id, classification_id,
-                             status, attempts, next_attempt_at, updated_at, error,
-                             action_type="archive"):
-    insert_email_action(db, "email_actions", {
-        "action_id": action_id,
+def _insert_email_action_row(db, *, plan_id, classification_id, status, attempts,
+                             next_attempt_at, updated_at, error,
+                             action_type="archive") -> int:
+    if not db.in_transaction:
+        db.execute("begin")
+    action = shared_action_lifecycle.create_direct_email_action(db, {
         "action_plan_id": plan_id,
         "classification_id": classification_id,
         "account_id": "account",
         "action_type": action_type,
         "parameters_json": "{}",
-        "config_version": "config",
-        "status": status,
-        "attempt_count": attempts,
-        "next_attempt_at": next_attempt_at,
+        "status": "pending" if status in {"done", "failed", "skipped"} else status,
+        "next_attempt_at": next_attempt_at or None,
         "created_at": updated_at,
         "updated_at": updated_at,
-        "error": error,
     })
+    action_id = int(action["id"])
+    terminal_attempts = max(attempts, int(status in {"done", "failed", "skipped"}))
+    current_status = str(action["status"])
+    for attempt_number in range(1, terminal_attempts + 1):
+        claimed_at = f"{updated_at}T00:00:{attempt_number:02d}+00:00"
+        claimed = shared_action_lifecycle.claim_direct_email_action(
+            db,
+            action_id=action_id,
+            expected_status=current_status,
+            expected_started_at=None,
+            attempt_count=attempt_number - 1,
+            claimed_at=claimed_at,
+        )
+        assert claimed is not None
+        attempt_status = status if attempt_number == terminal_attempts else "failed"
+        recorded = shared_action_lifecycle.record_direct_email_action_outcome(
+            db,
+            action_id=action_id,
+            expected_status="processing",
+            expected_started_at=claimed_at,
+            expected_attempt_count=attempt_number - 1,
+            attempt_number=attempt_number,
+            status=attempt_status,
+            provider_operation=action_type,
+            provider_target=f"message-{classification_id}",
+            provider_result_id="" if attempt_status == "failed" else f"receipt-{action_id}",
+            error=error if attempt_number == terminal_attempts else "earlier failure",
+            started_at=claimed_at,
+            finished_at=updated_at,
+            next_attempt_at=next_attempt_at or None,
+            updated_at=updated_at,
+        )
+        assert recorded is not None
+        current_status = attempt_status
+    return action_id
 
 
 @pytest.mark.parametrize("snapshot", [_reply_task_queue_snapshot, _email_action_queue_snapshot])
@@ -209,7 +244,7 @@ def test_email_summary_rejects_retired_status_values(database):
     _insert_email_plan(database, "current", 1)
     with pytest.raises(sqlite3.IntegrityError):
         _insert_email_action_row(
-            database, action_id="uppercase", plan_id="current", classification_id=1,
+            database, plan_id="current", classification_id=1,
             status="FAILED", attempts=0, next_attempt_at="", updated_at="2026-10-12",
             error="uppercase status",
         )
@@ -240,7 +275,8 @@ def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
     _insert_email_message(database, 2)
     _insert_email_classification(database, 2, "inactive", "pending_feedback")
     _insert_email_plan(database, "inactive", 2)
-    for action_id, classification_id, plan_id, status, attempts, next_at, updated, error, action_type in (
+    action_ids = {}
+    for action_key, classification_id, plan_id, status, attempts, next_at, updated, error, action_type in (
         ("old", 1, "retired", "processing", 0, "", "2026-10-12", "retired error", "archive"),
         ("retry", 1, "current", "failed", DIRECT_ACTION_MAX_ATTEMPTS - 1,
          "2026-10-11T00:00:00+00:00", "2026-10-10", "retryable", "archive"),
@@ -251,11 +287,12 @@ def test_email_summary_preserves_plan_retry_and_latest_row_semantics(database):
         ("z", 1, "current", "done", 1, "", "2026-10-11", "最新\x1f错误", "mark_read"),
         ("inactive", 2, "inactive", "pending", 0, "", "2026-10-12", "inactive", "archive"),
     ):
-        _insert_email_action_row(
-            database, action_id=action_id, plan_id=plan_id,
+        action_ids[action_key] = _insert_email_action_row(
+            database, plan_id=plan_id,
             classification_id=classification_id, status=status, attempts=attempts,
             next_attempt_at=next_at, updated_at=updated, error=error, action_type=action_type,
         )
+    assert action_ids["z"] > action_ids["b"]
     result = _email_action_queue_snapshot(database)
     assert result["counts"] == {"done": 2, "failed": 3}
     assert result["retryable"] == 1
@@ -270,7 +307,7 @@ def test_email_summary_uses_indexed_actions_and_classification_lookup(database):
     _insert_email_classification(database, 1, "current", "processed")
     _insert_email_plan(database, "current", 1)
     _insert_email_action_row(
-        database, action_id="one", plan_id="current", classification_id=1,
+        database, plan_id="current", classification_id=1,
         status="done", attempts=1, next_attempt_at="", updated_at="2026-10-14", error="",
     )
 

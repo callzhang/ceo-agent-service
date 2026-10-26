@@ -458,3 +458,17 @@ remain unchanged. Cross-line Basic redaction uses a genuine user:password
 credential; arbitrary base64 text remains governed by the existing redactor.
 Both current-role cases and all three credential cases pass5 in0.93s, retaining
 no copied result, no adopted candidate, failed preparation and no-secret checks.
+
+Scheduled/Skill current-contract fixtures: seven files pass200 cases10.90s,
+with the installed-Skill boundary isolated into a test-owned reviewed copy and
+its5 cases rerun0.42s. Current publication checks require successful provider
+write receipts, exact appendix parent and date, and exact saved body; retired
+automatic-readback expectations are removed only from fixtures after the
+separately approved upstream contract change. Consumer/Audit document identity
+and cross-revision assertions remain. Root reviewed the contract and no-policy
+application diff; no application/Skill/release asset edits are in this unit.
+
+Status snapshot fixtures use the same canonical direct Action lifecycle as the
+worker, including typed integer tie order. All9 cases pass2.17s, preserving
+uppercase-status rejection, current-plan/classification, retry exhaustion,
+invalid dates, latest error and real query-plan assertions.
