@@ -1,12 +1,12 @@
 """Attention exposes original current-run diagnostics without changing policy."""
 
+from tests.support.native_run_rows import insert_run_row
 import json
 
 import pytest
 
 import app.audit_web as audit_web
 from app.action_storage import SENT_REPLY_SQL
-from app.run_storage import insert_run
 from app.store import AgentRole, AutoReplyStore
 
 
@@ -62,7 +62,7 @@ def test_reply_attention_shows_original_current_run_error_without_effect_claim(t
 def test_reply_attention_keeps_task_error_when_current_run_diagnostics_unusable(tmp_path, raw_error):
     store, _, run = _failed_task_and_run(tmp_path, {"code": "agent_reported_failure"})
     with store._connect() as db:
-        db.execute("update runs set structured_error_json=? where record_type='agent_runs' and cast(legacy_key as integer)=?", (raw_error, run.id))
+        db.execute("update runs set structured_error_json=? where id=?", (raw_error, run.id))
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["error"] == "agent_reported_failure"
     assert row.get("error_code", "") in ("", "agent_reported_failure")
@@ -73,7 +73,7 @@ def test_reply_attention_does_not_use_another_generation_error(tmp_path):
         "code": "agent_reported_failure", "source_code": "old-provider-code", "retryable": False,
     })
     with store._connect() as db:
-        db.execute("update runs set execution_generation='old' where record_type='agent_runs' and cast(legacy_key as integer)=?", (run.id,))
+        db.execute("update runs set execution_generation='old' where id=?", (run.id,))
     [row] = [row for row in audit_web._queue_attention_rows(store) if row["category"] == "Reply task"]
     assert row["error"] == "agent_reported_failure"
     assert "old-provider-code" not in str(row)
@@ -84,8 +84,7 @@ def test_reply_attention_uses_latest_run_in_current_generation(tmp_path):
         "code": "agent_reported_failure", "source_code": "earlier-code", "retryable": False,
     })
     with store._connect() as db:
-        insert_run(
-            db, 'agent_runs', {
+        insert_run_row(db, {
                 'task_id': task.id,
                 'execution_generation': task.execution_generation,
                 'role': 'consumer',
