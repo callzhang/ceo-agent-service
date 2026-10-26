@@ -8,7 +8,11 @@ from pathlib import Path
 
 import pytest
 
-from app.agent_orchestrator import AgentOrchestrator
+from app.agent_orchestrator import (
+    MAX_CONSECUTIVE_FAILED_TURNS,
+    MAX_ROLE_ATTEMPTS_PER_PROCESS,
+    AgentOrchestrator,
+)
 from app.agent_result import ResultParseError
 from app.consumer_agent import ConsumerAgentRunner
 from tests import test_consumer_agent as consumer_tests
