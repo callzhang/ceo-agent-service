@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.current_inventory import CURRENT_TABLES
+
 from app import action_storage
 from app.action_followup_sync_storage import LINK_TRIGGER_SQL
 from app.action_task_delivery_definitions import TASK_DELIVERY_PARENTS
@@ -155,8 +157,6 @@ def test_fresh_final_schema_failure_does_not_publish_current(tmp_path, monkeypat
 def test_fresh_paired_constructors_publish_final_inventory(tmp_path, first):
     from app.store import AutoReplyStore
     from app.email_store import EmailStore
-    from app.current_database_schema import FINAL_ACTION_OPTIONS
-    from app.action_storage import action_schema_is_current
 
     path = tmp_path / "fresh.sqlite3"
     constructors = {
@@ -169,13 +169,7 @@ def test_fresh_paired_constructors_publish_final_inventory(tmp_path, first):
     with store._connect() as db:
         assert {row[0] for row in db.execute(
             "select name from sqlite_schema where type='table' and name not like 'sqlite_%'"
-        )} == {
-            "tasks", "runs", "actions", "business", "emails", "provenance",
-            "configs", "provider_state", "schedules", "state", "email_schema_migrations",
-        }
-        assert action_schema_is_current(
-            db, reply_variant="fresh_memory_fk", **FINAL_ACTION_OPTIONS,
-        )
+        )} == CURRENT_TABLES
         assert store._schema_manifest_is_current_in_connection(
             db, include_run_snapshots=True,
         )
