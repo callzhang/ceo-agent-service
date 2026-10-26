@@ -24,6 +24,7 @@ from app.dws_client import is_transient_dependency_error
 from app.external_retry import retry_delay_seconds
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 from app.store import AutoReplyStore, ReplyTask
+from app.notification import send_macos_notification
 
 
 SERVICE_COMMAND_FAILED = "scheduled_task_service_command_failed"
@@ -49,11 +50,13 @@ class ScheduledTaskTriggerConsumer:
         option_service,
         commands: ServiceCommandRegistry,
         now=None,
+        notification_sender=send_macos_notification,
     ) -> None:
         self._store = store
         self._builder = ScheduledAgentContextBuilder(option_service)
         self._commands = commands
         self._now = now or (lambda: datetime.now(UTC))
+        self._notification_sender = notification_sender
 
     def __call__(self, envelope: DispatchEnvelope, guard: ClaimGuard) -> None:
         now = self._now().astimezone(UTC)
@@ -148,6 +151,10 @@ class ScheduledTaskTriggerConsumer:
                     f"command {command} failed for event {run.event_id}: {exc}",
                 )
             guard.finish_source(failed_at, status="failed", reason=reason)
+            self._notification_sender(
+                title=f"定时任务失败：{run.snapshot.name}",
+                message=f"{run.snapshot.name} 执行失败：{exc}",
+            )
             return
         now = self._now().astimezone(UTC)
         self._store.link_scheduled_task_run_execution(
@@ -161,6 +168,10 @@ class ScheduledTaskTriggerConsumer:
             run.id, command_result=command_result,
         )
         self._store.resolve_errors_recovered_by_scheduled_service_command()
+        self._notification_sender(
+            title=f"定时任务完成：{run.snapshot.name}",
+            message=command_result.summary or f"{run.snapshot.name} 执行成功",
+        )
         logger.info(
             "scheduled_task_service_command_completed",
             extra={
@@ -179,11 +190,13 @@ class ScheduledAgentConsumer:
         self, *, store: AutoReplyStore, option_service,
         orchestrator_factory: Callable[[ScheduledAgentContext], ScheduledOrchestrator],
         now: Callable[[], datetime] | None = None,
+        notification_sender=send_macos_notification,
     ) -> None:
         self._store = store
         self._option_service = option_service
         self._orchestrator_factory = orchestrator_factory
         self._now = now or (lambda: datetime.now(UTC))
+        self._notification_sender = notification_sender
 
     def __call__(self, envelope: DispatchEnvelope, guard: ClaimGuard) -> None:
         now = self._now().astimezone(UTC)
@@ -295,6 +308,12 @@ class ScheduledAgentConsumer:
                 codex_reason=result.summary, audit_summary=result.summary,
                 send_status=send_status, send_error=error, channel="scheduled",
             )
+            if task_status in {"done", "failed"}:
+                self._notification_sender(
+                    title=("定时任务完成" if task_status == "done" else "定时任务失败")
+                    + f"：{run.snapshot.name}",
+                    message=result.summary or run.snapshot.name,
+                )
             from app.task_artifacts import cleanup_terminal_task_artifacts
 
             cleanup_terminal_task_artifacts(self._store, task.id)
@@ -320,6 +339,12 @@ class ScheduledAgentConsumer:
             ),
             send_status=send_status, send_error=error, channel="scheduled",
         )
+        if task_status in {"done", "failed"}:
+            self._notification_sender(
+                title=("定时任务完成" if task_status == "done" else "定时任务失败")
+                + f"：{run.snapshot.name}",
+                message=result.summary or run.snapshot.name,
+            )
         from app.task_artifacts import cleanup_terminal_task_artifacts
 
         cleanup_terminal_task_artifacts(self._store, task.id)

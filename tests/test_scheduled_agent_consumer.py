@@ -144,12 +144,12 @@ def commands(produce_once=lambda: unknown_service_result("produce-once queued=0"
     })
 
 
-def dispatch(store, run, options, *, registry=None, now=NOW):
+def dispatch(store, run, options, *, registry=None, now=NOW, notification_sender=None):
     adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, run.id, "trigger", now=now)
     ScheduledTaskTriggerConsumer(
         store=store, option_service=options, commands=registry or commands(),
-        now=lambda: now,
+        now=lambda: now, **({"notification_sender": notification_sender} if notification_sender else {}),
     )(envelope, guard)
     return store.get_scheduled_task_run(run.id)
 
@@ -449,13 +449,15 @@ def test_command_trigger_runs_in_process_and_never_creates_an_agent_input(tmp_pa
         calls.append("produce-once")
         return unknown_service_result("produce-once queued=2")
 
-    persisted = dispatch(store, run, None, registry=commands(produce_once))
+    notifications = []
+    persisted = dispatch(store, run, None, registry=commands(produce_once), notification_sender=lambda **kwargs: notifications.append(kwargs))
 
     assert calls == ["produce-once"]
     assert persisted.dispatch_status == "dispatched"
     assert persisted.execution_kind == SERVICE_COMMAND_EXECUTION_KIND
     assert persisted.execution_id == "produce-once"
     assert persisted.dispatched_at == NOW
+    assert notifications == [{"title": "定时任务完成：Producer", "message": "produce-once queued=2"}]
     assert store.list_reply_tasks(channel="scheduled") == []
     assert ScheduledExecutionQueueAdapter(store).claim(
         NOW, owner="execution", owner_pid=42, lease=timedelta(minutes=5)
@@ -601,7 +603,8 @@ def test_command_trigger_failure_ends_the_trigger_and_raises_attention(tmp_path)
     def produce_once():
         raise RuntimeError("dws unreachable")
 
-    persisted = dispatch(store, run, None, registry=commands(produce_once))
+    notifications = []
+    persisted = dispatch(store, run, None, registry=commands(produce_once), notification_sender=lambda **kwargs: notifications.append(kwargs))
 
     assert persisted.dispatch_status == "failed"
     assert persisted.skip_or_error_reason == (
@@ -614,6 +617,7 @@ def test_command_trigger_failure_ends_the_trigger_and_raises_attention(tmp_path)
     assert rows[0]["conversation_id"] == f"scheduled-task:{run.scheduled_task_id}"
     assert rows[0]["message_id"] == run.event_id
     assert "produce-once" in rows[0]["detail"] and "dws unreachable" in rows[0]["detail"]
+    assert notifications == [{"title": "定时任务失败：Producer", "message": "Producer 执行失败：dws unreachable"}]
 
 
 def test_a_briefly_unreachable_dependency_does_not_raise_attention(tmp_path):
@@ -961,9 +965,11 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, execution_id, "execution")
+    notifications = []
     ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
+        notification_sender=lambda **kwargs: notifications.append(kwargs),
     )(envelope, guard)
     task = store.get_reply_task(execution_id)
     runs = store.list_agent_runs_for_task_generation(execution_id, task.execution_generation)
@@ -974,6 +980,7 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     assert json.loads(runs[0].adopted_result_json)["proposal"]["actions"][0]["action_identity"] == "stable-action"
     assert json.loads(runs[2].adopted_result_json)["outcome"] == "no_action"
     assert task.status == "done"
+    assert notifications == [{"title": "定时任务完成：Check", "message": "R1"}]
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
 
 
