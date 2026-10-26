@@ -1,5 +1,4 @@
 from __future__ import annotations
-from app.run_storage import SCHEDULED_RUN_SQL
 from app.configs_definitions import config_projection
 from app.schedules_storage import update_schedule
 
@@ -96,16 +95,16 @@ def test_schema_manifest_creates_current_schedules_and_config_indexes(
     assert {
         "schedules",
         "configs",
-        "runs",
+        "schedule_occurrences",
     } <= tables
     assert {
         "idx_schedules_migration_key",
         "idx_schedules_enabled",
         "idx_configs_schedule_ref_position",
-        "idx_scheduled_task_runs_scheduled_instant",
-        "idx_scheduled_task_runs_dispatch",
-        "idx_scheduled_task_runs_claim",
-        "idx_scheduled_task_runs_latest",
+        "idx_schedule_occurrences_scheduled_instant",
+        "idx_schedule_occurrences_dispatch",
+        "idx_schedule_occurrences_claim",
+        "idx_schedule_occurrences_latest",
     } <= indexes
     assert store._schema_is_current() is True
 
@@ -683,7 +682,7 @@ def test_scheduled_run_attempt_lineage_reads_only_three_canonical_paths(
     }
     assert store.latest_scheduled_task_run_with_attempt(task.id) == runs[2]
     lineage_queries = tuple(
-        statement for statement in executed_sql if "reply_task_inputs" in statement
+        statement for statement in executed_sql if "task_inputs" in statement
     )
     assert len(lineage_queries) == 2
     assert all("json_tree" not in statement for statement in lineage_queries)
@@ -862,7 +861,7 @@ def test_run_snapshot_rejects_corrupt_persisted_json(tmp_path: Path) -> None:
     )
     with sqlite3.connect(store.path) as db:
         db.execute(
-            f"update configs set payload_json=json_set(payload_json,'$.snapshot_json','{{}}') where record_type='scheduled_task_config_versions' and legacy_key=cast((select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?) as text)",
+            "update configs set payload_json=json_set(payload_json,'$.snapshot_json','{}') where record_type='scheduled_task_config_versions' and schedule_snapshot_public_id=(select snapshot_id from schedule_occurrences where id=?)",
             (run.id,),
         )
 
@@ -893,7 +892,7 @@ def test_run_reader_rejects_snapshot_bound_to_another_persisted_task(
     )
     with sqlite3.connect(store.path) as db:
         db.execute(
-            "update runs set scheduled_task_id=? where record_type='scheduled_task_runs' and cast(legacy_key as integer)=?",
+            "update schedule_occurrences set scheduled_task_id=? where id=?",
             (second.id, run.id),
         )
 
@@ -944,7 +943,7 @@ def test_run_snapshot_rejects_semantically_tampered_skill_refs(
     tampered_json = json.dumps(payload, ensure_ascii=False, sort_keys=True)
     with sqlite3.connect(store.path) as db:
         db.execute(
-            f"update configs set payload_json=json_set(payload_json,'$.snapshot_json',?) where record_type='scheduled_task_config_versions' and legacy_key=cast((select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?) as text)",
+            "update configs set payload_json=json_set(payload_json,'$.snapshot_json',?) where record_type='scheduled_task_config_versions' and schedule_snapshot_public_id=(select snapshot_id from schedule_occurrences where id=?)",
             (tampered_json, run.id),
         )
 
@@ -960,14 +959,14 @@ def test_claim_query_index_starts_with_status_schedule_and_id(tmp_path: Path) ->
     with store._connect() as db:
         columns = tuple(
             str(row["name"])
-            for row in db.execute("pragma index_info(idx_scheduled_task_runs_claim)")
+            for row in db.execute("pragma index_info(idx_schedule_occurrences_claim)")
         )
         plan = tuple(
             str(row["detail"])
             for row in db.execute(
-                f"""
+                """
                 explain query plan
-                select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
+                select id from schedule_occurrences as scheduled_task_runs
                  where dispatch_status='pending'
                    and scheduled_for <= ?
                    and (lease_owner='' or lease_expires_at <= ?)
@@ -978,11 +977,11 @@ def test_claim_query_index_starts_with_status_schedule_and_id(tmp_path: Path) ->
             )
         )
 
-    assert columns == ("dispatch_status", "scheduled_for", "None")
+    assert columns == ("dispatch_status", "scheduled_for", "id")
     with store._connect() as db:
-        index_sql = db.execute("select sql from sqlite_master where name='idx_scheduled_task_runs_claim'").fetchone()[0]
-    assert "cast(legacy_key as integer)" in index_sql.lower()
-    assert any("idx_scheduled_task_runs_claim" in detail for detail in plan)
+        index_sql = db.execute("select sql from sqlite_master where name='idx_schedule_occurrences_claim'").fetchone()[0]
+    assert "(dispatch_status,scheduled_for,id)" in index_sql.lower().replace(" ", "")
+    assert any("idx_schedule_occurrences_claim" in detail for detail in plan)
 
 
 def test_latest_runs_are_batched_and_page_query_uses_latest_index(tmp_path: Path) -> None:
@@ -1028,26 +1027,26 @@ def test_latest_runs_are_batched_and_page_query_uses_latest_index(tmp_path: Path
         columns = tuple(
             str(row["name"])
             for row in db.execute(
-                "pragma index_info(idx_scheduled_task_runs_latest)"
+                "pragma index_info(idx_schedule_occurrences_latest)"
             )
         )
         plan = tuple(
             str(row["detail"])
             for row in db.execute(
-                f"""
+                """
                 explain query plan
-                select id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs
+                select id from schedule_occurrences as scheduled_task_runs
                  where scheduled_task_id=? and id < ?
                  order by id desc limit ?
                 """,
                 (first.id, 999, 20),
             )
         )
-    assert columns == ("scheduled_task_id", "None")
+    assert columns == ("scheduled_task_id", "id")
     with store._connect() as db:
-        index_sql = db.execute("select sql from sqlite_master where name='idx_scheduled_task_runs_latest'").fetchone()[0]
-    assert "cast(legacy_key as integer) desc" in index_sql.lower()
-    assert any("idx_scheduled_task_runs_latest" in detail for detail in plan)
+        index_sql = db.execute("select sql from sqlite_master where name='idx_schedule_occurrences_latest'").fetchone()[0]
+    assert "(scheduled_task_id,iddesc)" in index_sql.lower().replace(" ", "")
+    assert any("idx_schedule_occurrences_latest" in detail for detail in plan)
 
 
 def test_runtime_capability_bridge_is_exactly_scoped_to_process_pid(
@@ -1142,13 +1141,9 @@ def test_current_schema_refuses_missing_schedule_command_column(
     _create_task(previous)
     with previous._connect() as db:
         db.execute("alter table schedules drop column command")
-        db.execute(
-            "update service_state set value=? where key=?",
-            (store_module.STORE_SCHEMA_VERSION, store_module.STORE_SCHEMA_VERSION_KEY),
-        )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
 
-    with pytest.raises(sqlite3.IntegrityError, match="malformed current Store-first config declaration"):
+    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed Store source schema"):
         AutoReplyStore(db_path)
     with sqlite3.connect(db_path) as db:
         assert "command" not in {row[1] for row in db.execute("pragma table_info(schedules)")}
@@ -1285,7 +1280,7 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
     )
     with store._connect() as db:
         db.execute(
-            f"update configs set payload_json=json_set(payload_json,'$.snapshot_json',?) where record_type='scheduled_task_config_versions' and legacy_key=cast((select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?) as text)",
+            "update configs set payload_json=json_set(payload_json,'$.snapshot_json',?) where record_type='scheduled_task_config_versions' and schedule_snapshot_public_id=(select snapshot_id from schedule_occurrences where id=?)",
             ("{not valid json", run.id),
         )
     store_module._INITIALIZED_STORE_PATHS.discard(db_path.resolve())
@@ -1296,7 +1291,7 @@ def test_corrupt_run_snapshot_neither_crashes_startup_nor_loops_migration(
 
     with reopened._connect() as db:
         stored = db.execute(
-            f"select snapshot_json from ({config_projection('scheduled_task_config_versions')}) where id=(select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where id=?)", (run.id,)
+            f"select snapshot_json from ({config_projection('scheduled_task_config_versions')}) where id=(select snapshot_id from schedule_occurrences as scheduled_task_runs where id=?)", (run.id,)
         ).fetchone()
     assert stored["snapshot_json"] == "{not valid json"
     # Healthy rows stay readable alongside the corrupt one.
@@ -1341,67 +1336,8 @@ def test_store_construction_does_not_read_run_snapshots_on_the_fast_path(
     # `pragma table_info` only reads the schema, which a damaged data page
     # cannot affect; what must not happen is a row read.
     offending = [
-        text for text in statements if "from runs" in text.lower()
-        and "record_type='scheduled_task_runs'" in text.lower()
+        text for text in statements
+        if "from schedule_occurrences" in text.lower()
     ]
     assert not offending, f"fast path still reads rows: {offending[:2]}"
 
-
-def test_scheduled_mutations_preserve_public_id_when_physical_id_differs(tmp_path):
-    from app.run_storage import insert_run
-
-    store = AutoReplyStore(tmp_path / "public-id.sqlite3")
-    task = _create_task(store)
-    snapshot = ScheduledTaskSnapshot.from_task(task)
-    with store._connect() as db:
-        from app.scheduled_config_storage import intern_scheduled_config
-
-        db.execute("begin immediate")
-        physical_id = insert_run(
-            db,
-            "scheduled_task_runs",
-            {
-                "legacy_key": 417,
-                "event_id": "public-run",
-                "scheduled_task_id": task.id,
-                "trigger_kind": "manual",
-                "scheduled_for": NOW.isoformat(timespec="seconds"),
-                "first_scheduled_for": NOW.isoformat(timespec="seconds"),
-                "snapshot_id": intern_scheduled_config(db, snapshot.to_json()),
-            },
-        ).lastrowid
-        assert physical_id != 417
-    from app.dispatcher.adapters import ScheduledTaskQueueAdapter
-
-    adapter = ScheduledTaskQueueAdapter(store)
-    envelope = adapter.claim(NOW, owner="worker", lease=timedelta(minutes=5))
-    assert envelope.source_id == "417"
-    adapter.renew(
-        envelope,
-        owner="worker",
-        now=NOW + timedelta(seconds=1),
-        lease=timedelta(minutes=5),
-    )
-    adapter.assert_current(envelope, owner="worker", now=NOW + timedelta(seconds=2))
-    adapter.release(envelope, owner="worker", now=NOW + timedelta(seconds=3))
-    run = store.claim_scheduled_task_run(
-        417, owner="next", lease_seconds=60, now=NOW + timedelta(seconds=4)
-    )
-    assert run.id == 417
-    linked = store.link_scheduled_task_run_execution(
-        417,
-        owner="next",
-        execution_kind="service_command",
-        execution_id="command-1",
-        now=NOW + timedelta(seconds=5),
-    )
-    assert linked.execution_id == "command-1"
-    finished = store.finish_scheduled_task_dispatch(
-        417, owner="next", status="dispatched", now=NOW + timedelta(seconds=6)
-    )
-    assert finished.id == 417
-    with store._connect() as db:
-        row = db.execute(
-            "select id,legacy_key,dispatch_status from runs where record_type='scheduled_task_runs'"
-        ).fetchone()
-        assert tuple(row) == (physical_id, "417", "dispatched")

@@ -27,6 +27,9 @@ def test_completed_delivery_keeps_one_provider_body_and_public_projection(tmp_pa
         conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
         reply_text='Delivered', provider_result={'receipt': 'substitute'})
     with store._connect() as connection:
+        assert "send_result_json" not in {
+            row[1] for row in connection.execute("pragma table_xinfo(actions)")
+        }
         action = connection.execute(
             "select id,action_external_action_key,action_delivery_receipt_id "
             "from actions where record_type='action'"
@@ -146,6 +149,9 @@ def test_existing_native_readback_repairs_explicit_sent_result_without_resending
     sent = store.get_sent_reply(task.conversation_id, task.trigger_message_id)
     assert sent.send_result_json == expected
     with store._connect() as connection:
+        assert "send_result_json" not in {
+            row[1] for row in connection.execute("pragma table_xinfo(actions)")
+        }
         action = connection.execute(
             "select id,action_delivery_receipt_id from actions "
             "where record_type='action' and action_external_action_key=?",

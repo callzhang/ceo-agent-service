@@ -65,15 +65,15 @@ def test_exited_child_drains_stdout_after_stderr_ready(monkeypatch, tmp_path, va
     from tests.test_routed_codex_execution import FakeAdapter, config, make_router
 
     store = AutoReplyStore(tmp_path / 'runtime.sqlite3')
-    from app.task_storage import insert_task
+    assert store.enqueue_reply_task(
+        conversation_id='email:test', conversation_title='test', single_chat=True,
+        trigger_message_id='email-action:' + 'a' * 64, trigger_create_time='',
+        trigger_sender='test', trigger_text='', channel='email',
+    )
+    from tests.support.native_task_fields import set_native_task_fields
     with store._connect() as db:
-        insert_task(db, 'reply_tasks', {
-            'conversation_id': 'email:test', 'channel': 'email',
-            'conversation_title': 'test', 'single_chat': 1,
-            'trigger_create_time': '', 'trigger_sender': 'test',
-            'trigger_message_id': 'email-action:' + 'a' * 64,
-            'status': 'processing',
-        })
+        task_id = db.execute("select id from tasks where kind='reply'").fetchone()[0]
+        set_native_task_fields(db, 'reply_tasks', task_id, {'status': 'processing'})
     routes = config.__wrapped__()
 
     def execute_child(_command, **kwargs):
@@ -94,9 +94,8 @@ def test_exited_child_drains_stdout_after_stderr_ready(monkeypatch, tmp_path, va
     else:
         with pytest.raises(RoutedCodexExecutionError, match='runtime_result_invalid'):
             judge('email-action:' + 'a' * 64, 'example.test', 'expired link', [])
-    from app.run_storage import RUNTIME_ATTEMPT_SQL
     with store._connect() as db:
-        row = db.execute('select * from (' + RUNTIME_ATTEMPT_SQL + ')').fetchone()
+        row = db.execute('select * from runtime_attempts').fetchone()
     assert row['session_id'] == session
     assert row['transcript_reference'] == 'codex_session:' + session
     assert row['transcript_end'] >= 2

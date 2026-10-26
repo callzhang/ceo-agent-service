@@ -355,3 +355,14 @@ The obsolete3556-character capability budget is replaced by exact common-rule
 nonduplication and one Task storage contract; tool contracts remain asserted.
 Consumer/Audit outbound constraints are asserted using their current actual
 instructions, without restoring superseded wording or altering application policy.
+
+Latest main reconciliation retains the branch's native Email Attention fixture,
+nullable failed input, ordering/limit and stronger indexed payload lookup checks;
+Sent tests retain exact canonical body/pointer/SQLite-type/immutability and
+idempotent no-resend checks. Model-result tests use the current native receipt
+projections. Main's old published-database DAO parity wrappers retire with their
+runtime model; externally used frozen helpers and current positive cases remain.
+The five directly affected files pass20 cases after all markers are resolved.
+The merged consumer asset manifest verifies26 installed inputs with2 changed
+sources, and frozen Signal source478/target476 digests still match. No production
+migration or deploy has occurred at this checkpoint.

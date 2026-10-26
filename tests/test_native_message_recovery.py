@@ -121,9 +121,7 @@ def test_native_missing_receipt_never_resends_and_respects_readback_completeness
         import sqlite3
 
         with sqlite3.connect(path) as db:
-            from app.action_storage import CANDIDATE_ACTION_ATTEMPT_SQL, update_action
-            for (public_id,) in db.execute(f"select id from ({CANDIDATE_ACTION_ATTEMPT_SQL})").fetchall():
-                update_action(db, 'candidate_action_attempts', public_id, {'created_at': '2026-10-05 00:00:00'})
+            db.execute("update action_receipts set created_at='2026-10-05 00:00:00' where attempt_number is not null")
 
     reopened = AutoReplyStore(path)
     still_unknown = SystemExecutor(reopened, dws=client).execute(

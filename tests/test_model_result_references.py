@@ -1,42 +1,10 @@
 """Confirmed provider bodies have one owner; inverse uses current receipts."""
+import json
+
 import pytest
 
 from app import action_storage as actions
-from app.model_action_schema import migrate_selection_references
-from tests.test_model_action_schema import _add, _seed, _snapshot
-
-
-SOURCE_HASHES = {
-    'actual_no_memory_fk': '317eb42c3c0a24e2f210d5ba52d11888b3c1a1cf74217979e3bce2a240893f04',
-    'fresh_memory_fk': 'ad99aad17823c90a058947ba61d261e6da6ffbf9c9290a8a67b8aa825d9190ad',
-}
-BODY = ' { "receipt": "exact provider bytes α" } '
-
-
-def _receipt(db, key, body=BODY):
-    actions.insert_action(db, 'external_action_results', dict(external_action_key=key,
-        business_object_key='object', action_identity=key, operation='send',
-        target_identifiers_json='{}', provider_result_json=body, result_digest='digest',
-        first_agent_run_id=2))
-
-
-def _attempt(db, physical, public, status, body, key, index):
-    _add(db, 'candidate_action_attempts', physical, public,
-         dict(action_index=index, external_action_key=key, status=status,
-              result_json=body, created_at='created', updated_at='updated'),
-         references={'execution_id': 601}, target=True)
-
-
-def _source(db):
-    _seed(db)
-    migrate_selection_references(db)
-    _receipt(db, 'equal')
-    _receipt(db, 'distinct')
-    _attempt(db, 1001, 71, 'verified', BODY, 'equal', 0)
-    _attempt(db, 1002, 72, 'verified', '{}', 'distinct', 1)
-    _attempt(db, 1003, 73, 'failed', ' { "error": 1 } ', 'failure', 2)
-    _attempt(db, 1004, 74, 'uncertain', '{"unknown":true}', 'uncertain', 3)
-    _attempt(db, 1005, 75, 'verified', '{}', 'missing-receipt', 4)
+from tests.test_model_action_schema import _snapshot
 
 
 def _stored_attempt_outcome(db, attempt_id):
@@ -164,7 +132,7 @@ def test_receipt_correction_rolls_back_reference_materialization(tmp_path, monke
     reached_after_receipt_write = False
     def fail_before_observation_completion(db, **kwargs):
         nonlocal reached_after_receipt_write
-        current = actions.EXTERNAL_ACTION_RESULT_SQL
+        current = actions.NATIVE_EXTERNAL_ACTION_RESULT_SQL
         row = db.execute(
             f"select provider_result_json from ({current}) where external_action_key=?",
             ('receipt',),
@@ -231,7 +199,7 @@ def test_prior_reconciliation_writes_one_owner_in_same_transaction(tmp_path):
     with store._connect() as connection:
         assert _stored_attempt_outcome(connection, prior['id']) is None
         assert connection.execute(
-            f"select count(*) from ({actions.EXTERNAL_ACTION_RESULT_SQL})"
+            f"select count(*) from ({actions.NATIVE_EXTERNAL_ACTION_RESULT_SQL})"
         ).fetchone()[0] == 1
 
 
@@ -276,12 +244,12 @@ def test_prior_reconciliation_keeps_different_existing_canonical_local_to_real_a
     assert reconciled['result_json'] == '{"provider_result":"prior-readback"}'
     with store._connect() as connection:
         row = connection.execute(
-            f"select provider_result_json from ({actions.EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
+            f"select provider_result_json from ({actions.NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?",
             ('receipt',),
         ).fetchone()
         assert row[0] == sent.send_result_json
         persisted = connection.execute(
-            f"select provider_receipt_id from ({actions.CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?",
+            f"select provider_receipt_id from ({actions.NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?",
             (prior['id'],),
         ).fetchone()
         assert _stored_attempt_outcome(connection, prior['id']) == reconciled['result_json']
@@ -289,23 +257,26 @@ def test_prior_reconciliation_keeps_different_existing_canonical_local_to_real_a
 
 
 @pytest.mark.parametrize('provider_body', ['{}', '{"receipt":"substitute"}'])
-def test_existing_receipt_reuse_preserves_distinct_default_only(tmp_path, provider_body):
+def test_existing_receipt_reuse_references_receipt_and_failed_outcome_keeps_own_body(tmp_path, provider_body):
     from app.store import AutoReplyStore
     from tests.test_reviewed_candidate_store import _reviewed
     store = AutoReplyStore(tmp_path/'reuse.sqlite3')
     task, candidate, review, _ = _reviewed(store, options=False)
     execution = store.claim_candidate_execution(candidate['id'], review['id'], 'worker', 60)
-    with store._immediate_write_transaction() as connection:
-        actions.insert_action(connection, 'external_action_results', dict(external_action_key='receipt',
-            business_object_key=task.business_object_key, action_identity='a', operation='send',
-            target_identifiers_json='{"user_id":"x"}', provider_result_json=provider_body,
-            result_digest='fixture', first_agent_run_id=candidate['consumer_run_id']))
+    store.record_completed_agent_message_delivery(
+        agent_run_id=candidate['consumer_run_id'], external_action_key='receipt',
+        business_object_key=task.business_object_key, action_identity='a', operation='send',
+        target_identifiers={'user_id': 'x'}, conversation_id=task.conversation_id,
+        trigger_message_id=task.trigger_message_id, reply_text='Delivered',
+        provider_result=json.loads(provider_body),
+    )
     attempt = store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')
     assert attempt['status'] == 'verified'
-    assert attempt['result_json'] == '{}'
+    assert attempt['result_json'] == provider_body
     with store._connect() as connection:
-        assert _stored_attempt_outcome(connection, attempt['id']) == (None if provider_body == '{}' else '{}')
+        assert _stored_attempt_outcome(connection, attempt['id']) is None
     store.record_candidate_action_outcome(execution['id'], 'worker', 0, 'failed', {})
+    # A non-verified outcome keeps its own body even when it equals the receipt.
     assert store.begin_candidate_action(execution['id'], 'worker', 0, 'receipt')['result_json'] == '{}'
     with store._connect() as connection:
-        assert _stored_attempt_outcome(connection, attempt['id']) == (None if provider_body == '{}' else '{}')
+        assert _stored_attempt_outcome(connection, attempt['id']) == '{}'

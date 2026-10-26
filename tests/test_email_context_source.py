@@ -490,6 +490,16 @@ def test_thread_source_batch_needs_no_stored_body_and_never_returns_partial_cont
             return {"from": {"email": "source@example.com"}, "subject": "Source subject",
                     "textBody": stable_message_identity + "完整正文" * 30000}
 
+        def fetch_messages(self, requests):
+            # Like the IMAP source: a missing original is a LookupError at its identity.
+            result = {}
+            for locator, identity in requests:
+                try:
+                    result[identity] = self.fetch_message(locator, stable_message_identity=identity)
+                except LookupError as exc:
+                    result[identity] = exc
+            return result
+
         def logout(self):
             calls.append("logout")
 

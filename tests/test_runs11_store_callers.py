@@ -3,8 +3,7 @@ import inspect
 import sqlite3
 
 from app.meeting_alignment import _index_meeting_codex_session
-from app.runs11_definitions import RUN11_SOURCE_PROFILES, run11_projection
-from app.runs11_storage import insert_run11_fact
+from app.runs11_definitions import RUN11_SOURCE_PROFILES
 from app.store import AutoReplyStore
 
 
@@ -18,7 +17,7 @@ def test_metadata_aliases_update_and_title_search(tmp_path):
             session_id=session, source_type="meeting_alignment",
             source_id="45", title=title,
         )
-    projection = "(" + run11_projection("codex_session_search_index") + ")"
+    projection = "codex_session_search_index"
     with store._connect() as db:
         before = [dict(row) for row in db.execute(
             f"select * from {projection} order by id")]
@@ -27,8 +26,8 @@ def test_metadata_aliases_update_and_title_search(tmp_path):
                 for row in before] == [
                     ("alias-a", "45", "alpha"), ("alias-b", "45", "bravo")]
         assert all(row["created_at"] and row["updated_at"] for row in before)
-        assert db.execute("select count(*) from runs where record_type='codex_session_search_index'").fetchone()[0] == 2
-        assert not db.execute("select 1 from sqlite_schema where name like 'codex_session_search_%'").fetchall()
+        assert db.execute("select count(*) from codex_session_search_index").fetchone()[0] == 2
+        assert not db.execute("select 1 from sqlite_schema where name like 'codex_session_search_fts%'").fetchall()
     store.upsert_codex_session_search_index(
         session_id="alias-a", source_type="meeting_alignment",
         source_id="60", title="charlie",
@@ -48,57 +47,38 @@ def test_metadata_aliases_update_and_title_search(tmp_path):
     assert "embedding_client" not in inspect.signature(_index_meeting_codex_session).parameters
 
 
-def test_metadata_update_uses_existing_public_id_index(tmp_path):
+def test_metadata_update_uses_unique_session_index(tmp_path):
     store = _migrated_store(tmp_path)
     store.upsert_codex_session_search_index(
         session_id="session", source_type="meeting_alignment",
         source_id="45", title="old",
     )
     statement = (
-        "update runs set source_type=?,source_id=?,title=?,updated_at=current_timestamp "
-        "where record_type='codex_session_search_index' "
-        "and cast(legacy_key as integer)=?"
+        "update codex_session_search_index set source_type=?,source_id=?,title=?,"
+        "updated_at=current_timestamp where session_id=?"
     )
     source = inspect.getsource(AutoReplyStore.upsert_codex_session_search_index)
-    assert "and cast(legacy_key as integer)=?" in source
+    assert "on conflict(session_id)" in source
     with store._connect() as db:
         details = [row[3] for row in db.execute(
             "explain query plan " + statement,
-            ("meeting_alignment", "60", "new", 1),
+            ("meeting_alignment", "60", "new", "session"),
         )]
-    assert any("SEARCH runs USING INDEX idx_runs_public_id" in item for item in details)
-    assert not any("SCAN runs" in item for item in details)
+    assert any("USING INDEX sqlite_autoindex_codex_session_search_index_1" in item for item in details)
+    assert not any("SCAN codex_session_search_index" in item for item in details)
 
 
 def test_search_tied_timestamp_uses_native_public_id_order(tmp_path):
     store = _migrated_store(tmp_path)
-    source = sqlite3.connect(":memory:")
-    for _, _, sql in sorted(RUN11_SOURCE_PROFILES["fresh"]["codex_session_search_index"],
-                            key=lambda row: row[0] != "table"):
-        if "codex_session_search_fts" not in sql:
-            source.execute(sql)
     for session in ("one", "two"):
-        source.execute(
-            "insert into codex_session_search_index(session_id,source_type,source_id,title) "
-            "values (?,'meeting_alignment','45','same')", (session,))
         store.upsert_codex_session_search_index(
             session_id=session, source_type="meeting_alignment",
             source_id="45", title="same",
         )
-    projection = "(" + run11_projection("codex_session_search_index") + ")"
-    source.execute("update codex_session_search_index set updated_at='2000-01-01 00:00:00'")
-    assert source.execute(
-        "select id,session_id,title,updated_at from codex_session_search_index order by id"
-    ).fetchall() == [
-        (1, "one", "same", "2000-01-01 00:00:00"),
-        (2, "two", "same", "2000-01-01 00:00:00"),
-    ]
     with store._connect() as db:
-        db.execute("update runs set updated_at='2000-01-01 00:00:00' "
-                   "where record_type='codex_session_search_index'")
+        db.execute("update codex_session_search_index set updated_at='2000-01-01 00:00:00'")
         assert [row[0] for row in db.execute(
-            f"select id from {projection} order by updated_at desc,id asc")] == [1, 2]
-    source.close()
+            "select id from codex_session_search_index order by updated_at desc,id asc")] == [1, 2]
     # Equal-score Python sort is stable; the explicit metadata input order wins.
     assert [row.session_id for row in store.search_codex_sessions(
         fts_query="same", limit=2)] == ["one", "two"]
@@ -128,10 +108,10 @@ def test_setup_public_values_filters_and_rollback(tmp_path):
     assert all_rows[1]["status"] == "custom" and all_rows[1]["finished_at"]
     with store._connect() as db:
         db.execute("begin")
-        result = insert_run11_fact(db, "setup_wizard_events", {
-            "step_id": "rollback", "action_id": "test", "status": "running"},
-            insert_sql={"finished_at": "case when ? = 'running' then '' else current_timestamp end"},
-            insert_parameters=("running",),
+        result = db.execute(
+            "insert into setup_wizard_events(step_id,action_id,status,finished_at) "
+            "values('rollback','test','running',case when ? = 'running' then '' else current_timestamp end)",
+            ("running",),
         )
         assert result.lastrowid == 4
         db.rollback()

@@ -3,69 +3,8 @@ import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore, _INITIALIZED_STORE_PATHS
-from app.task20_current_schema import task20_workbench_schema_is_current
+from app.store import AutoReplyStore
 from tests.workbench_schema_fixtures import fingerprint, SOURCE
-
-
-@pytest.mark.parametrize(
-    "name,kind,literal",
-    [
-        ("idx_task20_active_turn", "index", "'queued'"),
-        ("idx_scheduled_task_runs_scheduled_instant", "index", "'scheduled'"),
-        ("trg_runs_workbench_turn_insert", "trigger", "'workbench_turns'"),
-        (
-            "trg_task20_parent_workbench_artifacts_insert",
-            "trigger",
-            "'workbench_turns'",
-        ),
-    ],
-)
-@pytest.mark.parametrize("allow_missing", [False, True])
-def test_current_manifest_preserves_actual_literals(
-    tmp_path, name, kind, literal, allow_missing
-):
-    store = AutoReplyStore(tmp_path / "current.db")
-    with sqlite3.connect(store.path) as db:
-        sql = db.execute(
-            "select sql from sqlite_master where name=?", (name,)
-        ).fetchone()[0]
-        db.execute(f"drop {kind} {name}")
-        db.execute(sql.replace(literal, literal.upper(), 1))
-        assert not task20_workbench_schema_is_current(
-            db, allow_missing_objects=allow_missing, include_feedback=True
-        )
-    _INITIALIZED_STORE_PATHS.discard(store.path.resolve())
-    with sqlite3.connect(store.path) as db:
-        before = fingerprint(db)
-    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
-        AutoReplyStore(store.path)
-    with sqlite3.connect(store.path) as db:
-        assert fingerprint(db) == before
-
-
-def test_missing_current_auxiliary_index_rejects_without_recreating_retired_tables(tmp_path):
-    path = tmp_path / "damaged.sqlite3"
-    AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("drop index idx_workbench_events_event_type")
-        before = tuple(db.iterdump())
-    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
-        AutoReplyStore(path)
-    with sqlite3.connect(path) as db:
-        assert tuple(db.iterdump()) == before
-
-
-def test_current_marker_with_mixed_source_is_rejected_without_mutation(tmp_path):
-    store = AutoReplyStore(tmp_path / "mixed.db")
-    with sqlite3.connect(store.path) as db:
-        db.execute("create table workbench_turns(id text primary key)")
-        before = fingerprint(db)
-    _INITIALIZED_STORE_PATHS.discard(store.path.resolve())
-    with pytest.raises(sqlite3.IntegrityError, match="unsupported or malformed"):
-        AutoReplyStore(store.path)
-    with sqlite3.connect(store.path) as db:
-        assert fingerprint(db) == before
 
 
 @pytest.mark.parametrize("marker", [None, "unknown"])

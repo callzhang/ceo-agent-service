@@ -1,9 +1,8 @@
-from app.run_storage import SCHEDULED_RUN_SQL
 import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
-from app.task_storage import task_physical_id
+from tests.support.native_task_fields import set_native_task_fields
 from app.scheduled_config_storage import intern_scheduled_config
 
 
@@ -33,15 +32,12 @@ def test_reply_recovery_does_not_scan_other_execution_links(tmp_path, monkeypatc
         cron_expression="* * * * *",
         timezone_name="UTC",
     )
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         snapshot_id = intern_scheduled_config(db, "{}")
-        db.execute(
-            "update tasks set status='failed',error='failed' where record_type='reply_tasks' and id=?",
-            (task_physical_id(db, "reply_tasks", failed.id),),
-        )
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (task_physical_id(db, "reply_tasks", other.id),))
+        set_native_task_fields(db, "reply_tasks", failed.id, {"status": "failed", "error": "failed"})
+        set_native_task_fields(db, "reply_tasks", other.id, {"status": "done"})
         db.executemany(
-            "insert into runs (skip_or_error_reason,lease_owner,created_at,occurrence_count,result_summary,record_type,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values ('','',current_timestamp,1,'','scheduled_task_runs',?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched',?,'reply_task',?)",
+            "insert into schedule_occurrences (skip_or_error_reason,lease_owner,created_at,occurrence_count,result_summary,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values ('','',current_timestamp,1,'',?,?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched',?,'reply_task',?)",
             [(f"event-{i}", schedule.id, snapshot_id, str(other.id)) for i in range(5000)],
         )
     statements = []
@@ -71,7 +67,7 @@ def test_reply_recovery_does_not_scan_other_execution_links(tmp_path, monkeypatc
             db.set_progress_handler(None, 0)
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert any(
-        "runs USING INDEX idx_scheduled_task_runs_reply_execution" in step
+        "schedule_occurrences USING INDEX idx_schedule_occurrences_reply_execution" in step
         for step in plan
     ), plan
 
@@ -87,15 +83,15 @@ def test_execution_expression_index_keeps_existing_integer_cast_semantics(
         cron_expression="* * * * *",
         timezone_name="UTC",
     )
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         snapshot_id = intern_scheduled_config(db, "{}")
         db.execute(
-            "insert into runs (skip_or_error_reason,lease_owner,created_at,occurrence_count,result_summary,record_type,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values ('','',current_timestamp,1,'','scheduled_task_runs','event',?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched',?,'reply_task',?)",
+            "insert into schedule_occurrences (skip_or_error_reason,lease_owner,created_at,occurrence_count,result_summary,event_id,scheduled_task_id,trigger_kind,scheduled_for,first_scheduled_for,dispatch_status,snapshot_id,execution_kind,execution_id) values ('','',current_timestamp,1,'','event',?,'manual','2026-10-08T00:00:00Z','2026-10-08T00:00:00Z','dispatched',?,'reply_task',?)",
             (schedule.id, snapshot_id, execution_id),
         )
         assert (
             db.execute(
-                f"select count(*) from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs where execution_kind='reply_task' and cast(execution_id as integer)=1"
+                "select count(*) from schedule_occurrences where execution_kind='reply_task' and cast(execution_id as integer)=1"
             ).fetchone()[0]
             == 1
         )

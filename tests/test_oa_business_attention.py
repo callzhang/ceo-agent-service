@@ -19,7 +19,7 @@ def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
         business_object_key="oa:instance:node",
     )
     with store._connect() as db:
-        db.execute("update tasks set status='done' where id=?", (task.id,))
+        db.execute("update tasks set status='done', updated_at='2026-10-13 00:00:00' where id=?", (task.id,))
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T01:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": ["oa:instance:node"]}),
         last_error="")
@@ -27,7 +27,7 @@ def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
     assert [(r["category"], r["id"]) for r in rows] == [("OA approval", str(task.id))]
     assert rows[0]["status"] == "pending"
     assert rows[0]["error"] == (
-        "DingTalk still reports this OA process as pending; the latest scan has not observed a terminal state."
+        "DingTalk still reports this OA process as pending; the tracked task has had no update for over one hour."
     )
     assert "no final approval or return receipt" not in rows[0]["error"]
     assert "principal OA node is still pending" not in rows[0]["error"]
@@ -72,15 +72,14 @@ def test_completed_oa_from_previous_cursor_is_removed_from_attention(tmp_path):
     assert cursor["pending_business_object_keys"] == []
 
 
-def test_verified_pending_node_is_visible_before_local_task_is_enqueued(tmp_path):
+def test_verified_pending_node_without_a_local_task_is_not_attention_yet(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T01:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": ["oa:instance:second"]}),
         last_error="")
-    rows = _queue_attention_rows(store)
-    assert [(row["category"], row["id"]) for row in rows] == [("OA approval", "oa:instance:second")]
-    assert "DingTalk still reports this OA process as pending" in rows[0]["error"]
-    assert "principal OA node" not in rows[0]["error"]
+    # Attention lists a pending node through its tracked Task, and only once that
+    # Task has been quiet for an hour (fe50e1176); no Task yet means nothing to show.
+    assert _queue_attention_rows(store) == []
 
 
 def test_scanner_retains_pending_nodes_when_detail_read_fails_after_pending_disappears(tmp_path):
@@ -106,10 +105,7 @@ def test_scanner_retains_pending_nodes_when_detail_read_fails_after_pending_disa
     scan_pending_oa_approvals(store, provider)
     cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
     assert cursor["pending_business_object_keys"] == ["oa:instance:node"]
-    assert any(
-        row["category"] == "OA approval" and row["id"] == "oa:instance:node"
-        for row in _queue_attention_rows(store)
-    )
+    assert not any(row["category"] == "OA approval" for row in _queue_attention_rows(store))
 
 
 def test_pending_list_failure_cannot_erase_last_verified_pending_nodes(tmp_path):

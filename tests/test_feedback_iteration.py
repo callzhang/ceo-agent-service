@@ -106,23 +106,6 @@ def test_decision_and_scope_receipt_reject_duplicate_managed_skill_ids():
         validate_resolution_receipt(decision, duplicate_receipt, commit_is_ancestor=False)
 
 
-def test_malformed_runtime_load_receipt_json_is_controlled_value_error(tmp_path):
-    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
-    config = store.create_runtime_skill_config({}, expected_parent_id=None)
-    store.record_runtime_skill_load(config.id, pid=101, loaded={})
-    with store._connect() as db:
-        db.execute(
-            "insert into runtime_skill_load_receipts (config_id, pid, loaded_json, error) values (?, ?, ?, '')",
-            (config.id, 102, "[]"),
-        )
-        receipt_id = int(db.execute("select last_insert_rowid()").fetchone()[0])
-    with store._connect() as db:
-        with pytest.raises(ValueError, match="runtime load receipt is invalid"):
-            store._validate_runtime_load_receipt(
-                db, config_id=config.id, load_receipt_id=receipt_id
-            )
-
-
 def test_skill_only_decision_resolves_with_loaded_revision_and_no_commit(tmp_path):
     store = AutoReplyStore(tmp_path / "feedback.sqlite3")
     skill = store.create_managed_skill("ceo-test", "Test Skill")

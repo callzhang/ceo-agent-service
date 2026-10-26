@@ -1,19 +1,23 @@
-from app.task8_storage import task8_set_parts
 import json
 from pathlib import Path
 from urllib.parse import urlencode
 
-from app.run_storage import AGENT_RUN_SQL
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult, RiskLevel
 from app.agent_orchestrator import AgentOrchestrator
 from app.audit_web import handle_needs_human_decision_post, _is_valid_rerun_trigger_json
 from app.audit_web import _human_decision_attention_rows
 from app.quality_gate import scan_hourly_quality
 from app.reviewed_candidates import candidate_digest
-from app.store import AgentRole, AutoReplyStore
+from app.store import (
+    CANDIDATE_EXECUTION_SQL,
+    CANDIDATE_SELECTION_SQL,
+    AgentRole,
+    AutoReplyStore,
+)
+from tests.support.native_task_fields import set_native_task_fields
 from app.web_api.attempts import build_attempt_detail
 
-from app.action_storage import CANDIDATE_EXECUTION_SQL, CANDIDATE_SELECTION_SQL, CANDIDATE_SUPPLEMENT_SQL, update_action
+from app.action_storage import update_action
 
 
 def _question():
@@ -92,7 +96,7 @@ def _approved_question(path: Path, *, historical_scores=False):
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
-        db.execute(f"update tasks set {task8_set_parts('reply_tasks', {'status': 'needs_human'}).sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*task8_set_parts('reply_tasks', {'status': 'needs_human'}).parameters, task.id))
+        set_native_task_fields(db, 'reply_tasks', task.id, {'status': 'needs_human'})
     return store, task, candidate, review, attempt_id
 
 
@@ -186,7 +190,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
-        db.execute(f"update tasks set {task8_set_parts('reply_tasks', {'status': 'needs_human'}).sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*task8_set_parts('reply_tasks', {'status': 'needs_human'}).parameters, task.id))
+        set_native_task_fields(db, 'reply_tasks', task.id, {'status': 'needs_human'})
     reopened = AutoReplyStore(path)
     assert reopened.reconcile_invalid_needs_human_projections() == 0
     assert reopened.reconcile_valid_needs_human_projections() == 0
@@ -199,8 +203,7 @@ def test_unbound_legacy_task_class_choices_survive_restart_without_becoming_exec
     assert json.loads(reopened.get_reply_attempt(attempt_id).human_decision_options_json) == options
     assert reopened.get_reply_task(task.id).status == "needs_human"
     assert json.loads(reopened.get_agent_run(run.id).adopted_result_json) == body
-    with reopened._connect() as db:
-        assert db.execute(f'select final_result_json from ({AGENT_RUN_SQL}) where id=?', (run.id,)).fetchone()[0] == ""
+    assert reopened.get_agent_run(run.id).final_result_json == ""
     with reopened._connect() as db:
         assert db.execute(f"select count(*) from ({CANDIDATE_SELECTION_SQL})").fetchone()[0] == 0
         assert db.execute(f"select count(*) from ({CANDIDATE_EXECUTION_SQL})").fetchone()[0] == 0
@@ -260,15 +263,14 @@ def test_pre_gate_unqualified_current_human_result_is_not_actionable(tmp_path):
 def test_supplement_missing_execution_source_does_not_change_choice(tmp_path):
     store, task, candidate, review, attempt_id = _approved_question(tmp_path / "missing.sqlite3")
     with store._connect() as db:
-        parts = task8_set_parts("reply_task_inputs", {"trigger_message_json": "{}"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)", (*parts.parameters, task.id))
+        set_native_task_fields(db, "reply_tasks", task.id, {"trigger_message_json": "{}"})
     fields = dict(kind="supplement", candidate_id=candidate["id"],
                   review_id=review["id"], instruction="One new fact")
     assert _submit(store, attempt_id, **fields)[0] == 409
     assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
     assert store.get_reply_task(task.id).execution_generation == task.execution_generation
     with store._connect() as db:
-        assert db.execute(f"select count(*) from ({CANDIDATE_SUPPLEMENT_SQL})").fetchone()[0] == 0
+        assert db.execute("select count(*) from run_adopted_supplements").fetchone()[0] == 0
 
 
 def test_supplement_and_generation_rerun_commit_together(tmp_path, monkeypatch):
@@ -285,14 +287,14 @@ def test_supplement_and_generation_rerun_commit_together(tmp_path, monkeypatch):
     assert store.get_review_candidate(candidate["id"])["invalidated_at"] == ""
     assert store.get_reply_task(task.id).execution_generation == task.execution_generation
     with store._connect() as db:
-        assert db.execute(f"select count(*) from ({CANDIDATE_SUPPLEMENT_SQL})").fetchone()[0] == 0
+        assert db.execute("select count(*) from run_adopted_supplements").fetchone()[0] == 0
 
     monkeypatch.setattr(store, "_enqueue_manual_rerun_reply_task_in_connection", original)
     assert _submit(store, attempt_id, **fields)[0] == 303
     assert store.get_review_candidate(candidate["id"])["invalidated_at"]
     assert store.get_reply_task(task.id).execution_generation != task.execution_generation
     with store._connect() as db:
-        assert db.execute(f"select instruction from ({CANDIDATE_SUPPLEMENT_SQL})").fetchone()[0] == "One new fact"
+        assert db.execute("select instruction from run_adopted_supplements").fetchone()[0] == "One new fact"
 
 
 def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_path):
@@ -309,10 +311,7 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
         "workspace": str(tmp_path), "reasoning_effort": "medium", "skill_protocol": "test",
     }
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"channel": "scheduled"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task.id))
-        parts = task8_set_parts("reply_task_inputs", {"channel": "scheduled", "trigger_message_json": json.dumps(saved_execution)})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_task_inputs' and id=(select current_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)", (*parts.parameters, task.id))
+        set_native_task_fields(db, "reply_tasks", task.id, {"channel": "scheduled", "trigger_message_json": json.dumps(saved_execution)})
         update_action(db, "reply_attempts", attempt_id, {"channel": "scheduled"})
     scheduled_task = store.get_reply_task_for_message(task.conversation_id, task.trigger_message_id, channel="scheduled")
     assert scheduled_task is not None
@@ -324,8 +323,7 @@ def test_scheduled_reviewed_question_accepts_exact_selection_and_new_facts(tmp_p
 
     second, _task, candidate, review, attempt_id = _approved_question(tmp_path / "scheduled-choice.sqlite3")
     with second._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"channel": "scheduled"})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, _task.id))
+        set_native_task_fields(db, "reply_tasks", _task.id, {"channel": "scheduled"})
         update_action(db, "reply_attempts", attempt_id, {"channel": "scheduled"})
     assert _submit(second, attempt_id, kind="select", candidate_id=candidate["id"],
                    review_id=review["id"], option_key="stop")[0] == 303
@@ -343,8 +341,7 @@ def test_selected_execution_refusal_keeps_block_reason_in_status(tmp_path):
     store.record_candidate_action_outcome(execution["id"], "executor", 0, "failed", error)
     store.finish_candidate_execution(execution["id"], "executor", "failed", {"error": error})
     with store._connect() as db:
-        parts = task8_set_parts("reply_tasks", {"status": "failed", "error": error["code"]})
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?", (*parts.parameters, task.id))
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "failed", "error": error["code"]})
         update_action(db, "reply_attempts", attempt_id,
                       {"send_status": "failed", "send_error": error["code"]})
     original_task = store.get_reply_task(task.id)

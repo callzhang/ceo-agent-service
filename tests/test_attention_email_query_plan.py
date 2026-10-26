@@ -73,6 +73,8 @@ def test_email_attention_reads_payloads_only_for_failed_ids(tmp_path):
     assert [(row["id"], row["summary"]) for row in limited] == [
         (nullable_id, "nullable identity")
     ]
-    assert any("idx_tasks_claim_due" in p
-               for p in plans), plans
-    assert not any("SCAN tasks" in p for p in plans)
+    # Failed ids come from a compact (kind, status) index; payloads are then
+    # read by primary key, never by scanning the input table.
+    assert any(p.startswith("SEARCH t USING INDEX") and "status=?" in p for p in plans), plans
+    assert any("SEARCH i USING INTEGER PRIMARY KEY" in p for p in plans), plans
+    assert not any(p.startswith("SCAN") for p in plans), plans

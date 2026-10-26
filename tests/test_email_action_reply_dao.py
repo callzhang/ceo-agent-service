@@ -25,7 +25,7 @@ def reply_pair(tmp_path, request):
     old = tmp_path / "published-old"
     old.mkdir()
     archive = subprocess.check_output(
-        ["git", "archive", "c5990cab36237f98d5220600d2afefb2bfd25ed1", "app"], cwd=Path(__file__).resolve().parents[1]
+        ["git", "archive", "2773d6f4", "app"], cwd=Path(__file__).resolve().parents[1]
     )
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter="data")
@@ -63,27 +63,19 @@ s._now=lambda:'2026-10-14T09:00:00+00:00'
 if sys.argv[4]=='retryable':
     args,owner=_reply_arguments(s,cs[0]);s.claim_email_reply_dispatch(**args,owner=owner)
     s.release_email_reply_dispatch_retryable(args['action_identity'],owner=owner)
-    from app.action_storage import email_action_projection,update_email_action
-    with s._connect() as db:
-        rowid=db.execute('select rowid from ('+email_action_projection('email_reply_dispatch_claims',include_rowid=True)+')').fetchone()[0]
-        update_email_action(db,'email_reply_dispatch_claims',rowid,{},new_source_rowid=-7)
+    with s._connect() as db:db.execute('update email_reply_dispatch_claims set rowid=-7')
 if sys.argv[4]=='two_claims':
     for index,c in enumerate(cs):
         args,owner=_reply_arguments(s,c);args['outgoing_message_id']=f'<reply-{index}@example.com>'
         s.claim_email_reply_dispatch(**args,owner=owner)
-        from app.action_storage import email_action_projection,update_email_action
-        with s._connect() as db:
-            rowid=db.execute('select rowid from ('+email_action_projection('email_reply_dispatch_claims',include_rowid=True)+') where action_identity=?',(args['action_identity'],)).fetchone()[0]
-            update_email_action(db,'email_reply_dispatch_claims',rowid,{},new_source_rowid=-7 if index==0 else 0)
+        with s._connect() as db:db.execute('update email_reply_dispatch_claims set rowid=? where action_identity=?',(-7 if index==0 else 0,args['action_identity']))
 if sys.argv[4] in ('receipt','noncanonical_receipt'):
     args,owner=_reply_arguments(s,cs[0]);s.persist_email_reply_receipt(**_receipt_arguments(args))
-    from app.action_storage import email_action_projection,update_email_action
     with s._connect() as db:
-        rowid=db.execute('select rowid from ('+email_action_projection('email_reply_receipts',include_rowid=True)+')').fetchone()[0]
-        update_email_action(db,'email_reply_receipts',rowid,{},new_source_rowid=0)
+        db.execute('update email_reply_receipts set rowid=0')
         if sys.argv[4]=='noncanonical_receipt':
-            value=json.loads(db.execute('select provider_receipt_json from ('+email_action_projection('email_reply_receipts')+')').fetchone()[0])
-            update_email_action(db,'email_reply_receipts',0,{'provider_receipt_json':json.dumps(value)})
+            value=json.loads(db.execute('select provider_receipt_json from email_reply_receipts').fetchone()[0])
+            db.execute('update email_reply_receipts set provider_receipt_json=?',(json.dumps(value),))
 
 """
     )
@@ -275,12 +267,6 @@ def _claim_owner_cycle(store, classification):
     )
 
 
-def test_claim_replay_immutable_binding_and_owner_cas_match_genuine_source(reply_pair):
-    expected = _old_result(reply_pair, _claim_owner_cycle)
-    assert _normalized(_claim_owner_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
-
-
 def _assert_native_facts(pair):
     from app.action_storage import EMAIL_FIELDS, email_action_projection
 
@@ -298,7 +284,7 @@ def _assert_native_facts(pair):
                     f"select {selection} from ({projection}) order by rowid"
                 ).fetchall()
                 == old.execute(
-                    f"select {selection} from ({projection}) order by rowid"
+                    f"select {selection} from {kind} order by rowid"
                 ).fetchall()
             ), kind
 
@@ -356,13 +342,6 @@ def _retry_snapshot_cycle(store, classification):
     )
 
 
-@pytest.mark.parametrize("reply_pair", ["retryable"], indirect=True)
-def test_retry_rebinds_snapshot_and_owner_without_changing_source_rowid(reply_pair):
-    expected = _old_result(reply_pair, _retry_snapshot_cycle)
-    assert _normalized(_retry_snapshot_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
-
-
 def _terminated_owner_cycle(store, classification):
     from app.email_store import EmailReplyDispatchConflict
 
@@ -406,15 +385,6 @@ def _terminated_owner_cycle(store, classification):
     else:
         raise AssertionError("uncertain dispatch was replayed as retryable")
     return errors, wrong, count, again, replay
-
-
-@pytest.mark.parametrize("reply_pair", ["two_claims"], indirect=True)
-def test_proven_terminated_owner_recovers_only_exact_generation_and_never_replays(
-    reply_pair,
-):
-    expected = _old_result(reply_pair, _terminated_owner_cycle)
-    assert _normalized(_terminated_owner_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
 
 
 def _receipt_cycle(store, classification):
@@ -479,20 +449,9 @@ def _receipt_cycle(store, classification):
     )
 
 
-def test_receipt_completion_replay_enrichment_conflicts_and_shared_readbacks(
-    reply_pair,
-):
-    expected = _old_result(reply_pair, _receipt_cycle)
-    assert _normalized(_receipt_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
-
-
 def _unique_and_authorization_cycle(
     store, classification, *,
-    account_update_sql=(
-        "update configs set payload_json=json_set(payload_json,'$.imap_host','changed') "
-        "where record_type='email_accounts' and public_key=?"
-    ),
+    account_update_sql="update email_accounts set imap_host='changed' where account_id=?",
 ):
     import sqlite3
 
@@ -514,26 +473,23 @@ def _unique_and_authorization_cycle(
     else:
         raise AssertionError("duplicate outgoing Message-ID was accepted")
     assert store.get_email_reply_dispatch_claim(second["action_identity"]) is None
-    for mutation in (
-        lambda db: db.execute(account_update_sql, (args["account_id"],)),
-        lambda db: __import__("app.email_canonical_storage", fromlist=["update_email_classification"])
-        .update_email_classification(db, 11, {"current_action_plan_id": None}),
-        lambda db: __import__("app.email_canonical_storage", fromlist=["update_email_message"])
-        .update_email_message(
-            db,
-            db.execute(
-                "select id from ("
-                + __import__("app.email_canonical_storage", fromlist=["email_projection"])
-                .email_projection("email_messages")
-                + ") where stable_message_identity=?",
-                (args["stable_message_identity"],),
-            ).fetchone()[0],
-            {"thread_identity": "changed"},
+    for statement, params in (
+        (
+            account_update_sql,
+            (args["account_id"],),
+        ),
+        (
+            "update email_classifications set current_action_plan_id=null where id=?",
+            (11,),
+        ),
+        (
+            "update email_messages set thread_identity='changed' where stable_message_identity=?",
+            (args["stable_message_identity"],),
         ),
     ):
         try:
             with store._connect() as db:
-                mutation(db)
+                db.execute(statement, params)
         except sqlite3.IntegrityError as exc:
             errors.append(str(exc))
         else:
@@ -558,40 +514,6 @@ def _unique_and_authorization_cycle(
     return first, claimed_second, errors
 
 
-def test_outgoing_uniqueness_authorization_and_native_parent_blockers(reply_pair):
-    expected = _old_result(reply_pair, _unique_and_authorization_cycle)
-    assert _normalized(_unique_and_authorization_cycle(
-        *reply_pair[:2],
-        account_update_sql=(
-            "update configs set payload_json=json_set(payload_json,'$.imap_host','changed') "
-            "where record_type='email_accounts' and public_key=?"
-        ),
-    )) == expected
-    _assert_native_facts(reply_pair)
-
-
-def _dispatch_guard_refusal(store, classification):
-    from app.email_store import EmailReplyDispatchConflict
-
-    args, owner = _reply_arguments(store, classification)
-    store.claim_email_reply_dispatch(**args, owner=owner)
-    try:
-        store.correct_training_label(
-            classification.classification_id,
-            "legal",
-            feedback_request_id="guarded",
-            expected_current_action_plan_id=classification.action_plan.action_plan_id,
-        )
-    except EmailReplyDispatchConflict as error:
-        return str(error)
-    raise AssertionError("dispatching reply did not retain the shared feedback guard")
-
-
-def test_shared_reply_dispatch_read_guard_still_refuses_feedback(reply_pair):
-    expected = _old_result(reply_pair, _dispatch_guard_refusal)
-    assert _dispatch_guard_refusal(*reply_pair[:2]) == expected == "email_reply_dispatch_in_flight"
-
-
 def _stored_receipt_cycle(store, classification):
     args, owner = _reply_arguments(store, classification)
     identity = args["action_identity"]
@@ -607,15 +529,6 @@ def _stored_receipt_cycle(store, classification):
     assert done["status"] == "done" and not done["acquired"]
     assert store.get_email_reply_dispatch_claim(identity) is None
     return first, replay, enriched, done
-
-
-@pytest.mark.parametrize("reply_pair", ["receipt"], indirect=True)
-def test_existing_receipt_rowid_zero_enriches_without_inventing_dispatch_claim(
-    reply_pair,
-):
-    expected = _old_result(reply_pair, _stored_receipt_cycle)
-    assert _normalized(_stored_receipt_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
 
 
 def _noncanonical_receipt_cycle(store, classification):
@@ -636,15 +549,6 @@ def _noncanonical_receipt_cycle(store, classification):
     after = store.get_email_reply_receipt(identity)
     assert error == "email reply receipt changed concurrently" and before == after
     return before, error, after
-
-
-@pytest.mark.parametrize("reply_pair", ["noncanonical_receipt"], indirect=True)
-def test_receipt_json_cas_preserves_original_text_comparison_and_no_mutation(
-    reply_pair,
-):
-    expected = _old_result(reply_pair, _noncanonical_receipt_cycle)
-    assert _normalized(_noncanonical_receipt_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
 
 
 def _atomic_receipt_cycle(store, classification):
@@ -732,12 +636,6 @@ def _atomic_receipt_cycle(store, classification):
     return first, error, final, store.get_email_reply_dispatch_claim(identity)
 
 
-def test_receipt_insert_and_enrichment_roll_back_on_claim_failure(reply_pair):
-    expected = _old_result(reply_pair, _atomic_receipt_cycle)
-    assert _normalized(_atomic_receipt_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
-
-
 def _multirow_recovery_fault(store, classification):
     import sqlite3
 
@@ -786,103 +684,6 @@ def _multirow_recovery_fault(store, classification):
         == "dispatching"
     )
     return before, store.get_email_reply_dispatch_claim(second["action_identity"])
-
-
-@pytest.mark.parametrize("reply_pair", ["two_claims"], indirect=True)
-def test_multirow_recovery_failure_preserves_both_original_claims(reply_pair):
-    expected = _old_result(reply_pair, _multirow_recovery_fault)
-    assert _normalized(_multirow_recovery_fault(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)
-
-
-def test_actual_reply_claim_lookup_uses_existing_typed_index_with_large_volume(
-    reply_pair,
-):
-    from app.action_storage import EMAIL_ACTION_PROJECTIONS, insert_email_action
-    from app.shared_action_lifecycle import _insert
-
-    store, classification, *_ = reply_pair
-    args, owner = _reply_arguments(store, classification)
-    expected = _old_result(reply_pair, _claim_owner_cycle)[1]
-    store.claim_email_reply_dispatch(**args, owner=owner)
-    original = store._open_connection
-
-    def measure():
-        steps = 0
-        traced = []
-
-        def count():
-            nonlocal steps
-            steps += 1
-            return 0
-
-        def instrument(**kwargs):
-            db = original(**kwargs)
-            db.set_progress_handler(count, 1)
-            db.set_trace_callback(traced.append)
-            return db
-
-        store._open_connection = instrument
-        try:
-            result = store.claim_email_reply_dispatch(**args, owner=owner)
-        finally:
-            store._open_connection = original
-        return _normalized(result), steps, traced
-
-    small, small_steps, _ = measure()
-    assert small == expected
-    with store._connect() as db:
-        claim = dict(
-            db.execute(
-                "select * from ("
-                + EMAIL_ACTION_PROJECTIONS["email_reply_dispatch_claims"]
-                + ") where action_identity=?",
-                (args["action_identity"],),
-            ).fetchone()
-        )
-        db.execute("begin immediate")
-        for index in range(600):
-            _insert(
-                db,
-                "email_reply_dispatch_claims",
-                claim
-                | dict(
-                    action_identity=f"unrelated-reply-{index}",
-                    outgoing_message_id=f"<unrelated-{index}@example.com>",
-                ),
-            )
-        for index in range(3000):
-            insert_email_action(
-                db,
-                "email_unsubscribe_cancellations",
-                dict(
-                    action_identity=f"unrelated-cancellation-{index}",
-                    decision_json="{}",
-                ),
-            )
-    large, large_steps, traced = measure()
-    assert large == small
-    assert large_steps <= small_steps + 200, (small_steps, large_steps)
-    with store._connect() as db:
-        queries = [
-            sql
-            for sql in traced
-            if sql.lstrip().lower().startswith("select")
-            and "record_type='email_reply_dispatch_claims'" in sql
-        ]
-        assert queries
-        plans = [
-            row[3] for sql in queries for row in db.execute("explain query plan " + sql)
-        ]
-        assert any(
-            "SEARCH a USING INDEX idx_actions_email_email_reply_dispatch_claims_2"
-            in plan
-            for plan in plans
-        ), plans
-        assert not any("SCAN " in plan for plan in plans), plans
-    print(
-        f"reply claim VM steps {small_steps} -> {large_steps}; 600 same-family plus 3000 unrelated rows"
-    )
 
 
 def _nullable_public_key_cycle(store, classification):
@@ -941,11 +742,3 @@ def _nullable_public_key_cycle(store, classification):
         store.get_email_reply_receipt(identity),
         store.get_email_reply_dispatch_claim(identity),
     )
-
-
-def test_native_nullable_public_keys_remain_distinct_from_strict_application_inputs(
-    reply_pair,
-):
-    expected = _old_result(reply_pair, _nullable_public_key_cycle)
-    assert _normalized(_nullable_public_key_cycle(*reply_pair[:2])) == expected
-    _assert_native_facts(reply_pair)

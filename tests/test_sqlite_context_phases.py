@@ -28,12 +28,13 @@ def test_slow_context_separates_body_transaction_finish_and_close(
     if kind == "reply":
         store = store_module.AutoReplyStore.__new__(store_module.AutoReplyStore)
         store._read_snapshot_connection = ContextVar("test_snapshot", default=None)
+        store._reused_connection = ContextVar("test_reused", default=None)
         monkeypatch.setattr(store_module.time, "monotonic", lambda: clock[0])
     else:
         store = email_module.EmailStore.__new__(email_module.EmailStore)
         monkeypatch.setattr(email_module, "monotonic", lambda: clock[0])
     store.path = Path("unused.sqlite3")
-    monkeypatch.setattr(store, "_open_connection", lambda: Connection())
+    monkeypatch.setattr(store, "_open_connection", lambda **_kw: Connection())
     with store._connect():
         clock[0] += 2.0
     output = capsys.readouterr().err + caplog.text
@@ -46,6 +47,7 @@ def test_slow_context_separates_body_transaction_finish_and_close(
 def test_context_phase_diagnostics_preserve_body_failure(kind, monkeypatch):
     class Connection:
         closed = False
+        total_changes = 0
 
         def __enter__(self):
             return self
@@ -60,10 +62,11 @@ def test_context_phase_diagnostics_preserve_body_failure(kind, monkeypatch):
     if kind == "reply":
         store = store_module.AutoReplyStore.__new__(store_module.AutoReplyStore)
         store._read_snapshot_connection = ContextVar("test_snapshot", default=None)
+        store._reused_connection = ContextVar("test_reused", default=None)
     else:
         store = email_module.EmailStore.__new__(email_module.EmailStore)
     store.path = Path("unused.sqlite3")
-    monkeypatch.setattr(store, "_open_connection", lambda: connection)
+    monkeypatch.setattr(store, "_open_connection", lambda **_kw: connection)
     with pytest.raises(ValueError, match="original failure"):
         with store._connect():
             raise ValueError("original failure")
@@ -88,7 +91,8 @@ def test_reply_finish_timing_excludes_error_reporting(monkeypatch, capsys):
     store = store_module.AutoReplyStore.__new__(store_module.AutoReplyStore)
     store.path = Path("unused.sqlite3")
     store._read_snapshot_connection = ContextVar("test_snapshot", default=None)
-    monkeypatch.setattr(store, "_open_connection", lambda: Connection())
+    store._reused_connection = ContextVar("test_reused", default=None)
+    monkeypatch.setattr(store, "_open_connection", lambda **_kw: Connection())
     monkeypatch.setattr(store_module.time, "monotonic", lambda: clock[0])
 
     def report_error(*args):

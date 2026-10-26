@@ -1212,6 +1212,7 @@ def run_agent_cron_dispatcher_loop(
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.task_agent import TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS, TASK_AGENT_MAX_TIMEOUT_SECONDS
+    from app import config as _config
     from app.wechat import service as wechat_service
     from app.wechat.consumer import WechatReplyConsumer
     from app.wechat.decision_runner import WechatDecisionRunner
@@ -1261,6 +1262,16 @@ def run_agent_cron_dispatcher_loop(
             return
         if task.channel != "wechat":
             raise ValueError(f"unsupported reply dispatch channel: {task.channel}")
+        if task.conversation_id in _config.wechat_standard_pipeline_targets():
+            state = wechat_service.ready_account_state(store)
+            if state is None:
+                guard.release(datetime.now(timezone.utc))
+                return
+            reply_worker.process_claimed_wechat_task(
+                task, reader=wechat_service.build_reader(),
+                account=wechat_service.account_from_state(state), claim_guard=guard,
+            )
+            return
         if wechat_consumer is None:
             state = wechat_service.ready_account_state(store)
             if state is None:
