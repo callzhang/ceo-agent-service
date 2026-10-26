@@ -1,0 +1,303 @@
+{
+  "scope": "G2 Codex Audit native-format and explicitly authorized native-session continuation candidate in draft PR325; no policy/tools/prompts/retry-limit changes. G1 remains pending natural sample.",
+  "source_base": "a15dc205f5ed63bd9ebe913b9b9bf79a1df42c1f",
+  "candidate_changes": [
+    "remove credential-specific native Audit schema exclusion",
+    "decode native Audit on every Codex credential mode",
+    "bind native Audit recovery fingerprint to current schema bytes"
+  ],
+  "local_tests": {
+    "fail_first": [
+      "service API approve missing --output-schema",
+      "service API return missing --output-schema",
+      "Audit recovery fingerprint did not change with schema bytes"
+    ],
+    "focused_result": "5 passed,70 deselected; actual API runner command + strict native decoder + candidate revision/digest binding + schema/recovery selectors",
+    "ruff": "pass",
+    "diff_check": "pass",
+    "independent_review": "No correctness blocker in native format candidate; approved for draft only. Followup read-only review confirms new completed-attempt recovery integration closes the local coverage gap. Reviewer reran no tests or models.",
+    "completed_attempt_recovery": "1 passed,31 deselected in 1.89s; full AgentTurnProcess.execute recovers completed native API Audit using identical submitted contract, original candidate binding and exact saved stream; model executor forbidden. Previous 5 tests not rerun.",
+    "total_passed": 6
+  },
+  "reused_evidence": {
+    "qwen_consumer": "final acceptance sections12-13; no rerun",
+    "oauth_and_G3": "previous passed cases; no rerun",
+    "qwen_audit_full_role": {
+      "session": "01a16f62-9cfd-7951-9809-d66c12895639",
+      "cold": {
+        "lines": 58,
+        "sha256": "846b2cd18a9593cdf422302d926f7fdc7f6a8df0f177313b2cfa6b7c7ca61309",
+        "tool_calls": 6
+      },
+      "resume": {
+        "lines": 184,
+        "sha256": "4c4cd21a66390301a4c34fb9c4a1f7943051120adb19efa17f715c4ac2a6e9d9",
+        "tool_calls": 19
+      },
+      "scope": "isolated CLI full native schema; not proof of service session selection or production activation"
+    },
+    "audit_schema_sha256": "ca522ed193ce692fae5a06177240203e4a3c0cf803b93b7e977382eebacd6937",
+    "current_codex_cli": "0.163.0",
+    "current_qwen_parser_sha256": "9bcfe24914a52cb4f4cd2fc45f47cdc0f62f1c4695172b0815f953a4b2d2be5f",
+    "parser_hash_matches_previously_verified_fix": true
+  },
+  "api_capacity_check": {
+    "phase": "continue",
+    "session_id": "01a16f8f-b637-7cc1-9686-315a03e40aeb",
+    "exit_code": 1,
+    "canonical_valid": false,
+    "native_lines": 38,
+    "native_sha256": "4abecfeaf92a5229366fff007752793c9e309f9cbc2b86dd7b6787baad082132",
+    "tool_calls": 0,
+    "terminal_error": "exceeded retry limit, last status: 429 Too Many Requests",
+    "codex_error_info": {
+      "response_too_many_failed_attempts": {
+        "http_status_code": 429
+      }
+    },
+    "scope": "one original failed Consumer session continue only; no valid cold-start or resume pass; no repeated role/route calls"
+  },
+  "existing_service_session_gap": {
+    "function": "AgentTurnProcess._session_for_route",
+    "fact": "For Audit, requested session is returned only when route.name == codex_oauth; all other routes return None. Candidate does not alter this mechanism.",
+    "read_only_diagnostic": {
+      "route": "qwen_gpu4",
+      "requested": "anonymous-existing-session",
+      "selected": null
+    },
+    "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
+    "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
+  },
+  "release_status": "Current CLI acceptance reused and verified; API gate explicitly removed by latest user scope decision. PR325 publication pending normal merge/deployment gate/readback. Shared lint findings remain separately documented, not silently marked green.",
+  "session_continuation_followup": {
+    "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
+    "changes": [
+      "select latest Audit-owned native attempt for same Task/generation and current or previous revision/Run",
+      "require same route, runtime kind, credential mode and model",
+      "persist existing Run session projection for CLI-native Audit session events to preserve repeated-failure fresh rule",
+      "honor forced fresh and explicit noncontinuable previous revision; Consumer session slots and retry limits unchanged"
+    ],
+    "fail_first": [
+      "API Audit retry did not resume",
+      "API Audit revision did not resume",
+      "same-session invalid-result loop bypassed established fresh rule",
+      "previous revision explicit noncontinuable session was selected"
+    ],
+    "final_local_tests": {
+      "command": "pytest tests/test_audit_agent.py -k 'non_oauth_audit or audit_native_session_selection_requires_same_owner or audit_revision_resumes_audit_owned_session or audit_repeated_result_failure_starts_and_binds_fresh_session or audit_retry_does_not_resume_explicit_noncontinuable_session'",
+      "passed": 10,
+      "deselected": 26,
+      "duration_seconds": 9.91,
+      "scope": "4 new nodes plus 6 directly affected existing nodes; rerun only when session implementation changed"
+    },
+    "schema_and_model_cases_rerun": false,
+    "api_requests_this_followup": 0,
+    "api_status": "Existing429 blocker unchanged; no retry",
+    "review": "Independent read-only review passed; repeated-invalid-result fresh rule and cross-revision noncontinuable blockers resolved. No reviewer test/model calls."
+  },
+  "release_closeout_20261025": {
+    "source_commit": "250c398675849f0ef1b0f1d17933741009a2f456",
+    "checked_at": "2026-10-25T18:03:46.021021-07:00",
+    "api_retry": {
+      "route": "codex_api",
+      "model": "gpt-5.6-luna",
+      "case": "mail-already-handled",
+      "phase": "continue",
+      "session_id": "01a16f8f-b637-7cc1-9686-315a03e40aeb",
+      "reused_session": true,
+      "exit_code": 1,
+      "canonical_valid": false,
+      "tool_calls": 0,
+      "native_lines": 47,
+      "native_sha256": "6c0e06713e9240938fa953e200c7f9d304bd2673b3f2fa8affba356aa120a869",
+      "native_terminal_error": {
+        "message": "exceeded retry limit, last status: 429 Too Many Requests",
+        "codex_error_info": {
+          "response_too_many_failed_attempts": {
+            "http_status_code": 429
+          }
+        }
+      },
+      "requests_scope": "one bounded invocation; no loop or additional role/cold/resume attempts"
+    },
+    "quality_gate": {
+      "run_url": "https://github.com/callzhang/ceo-agent-service/actions/runs/40248553539",
+      "head": "250c398675849f0ef1b0f1d17933741009a2f456",
+      "conclusion": "failure in Ruff before tests",
+      "baseline_main": "dd3c4933bbf02b7b89f74d704bb2368bc028bc05",
+      "lint_errors": 44,
+      "affected_files": 12,
+      "all_error_files_identical_to_current_main": true,
+      "errors_in_pr_changed_files": 0,
+      "error_files": [
+        "app/agent_contracts.py",
+        "app/dispatcher/adapters.py",
+        "app/reply_task_deferral.py",
+        "app/store.py",
+        "app/task_source_documents.py",
+        "app/web_api/dashboard.py",
+        "tests/conftest.py",
+        "tests/test_action_business_storage.py",
+        "tests/test_email_action_external_consumers.py",
+        "tests/test_error_code_migration.py",
+        "tests/test_store.py",
+        "tests/wechat/test_store.py"
+      ],
+      "error_codes": {
+        "F401": 30,
+        "F811": 2,
+        "F541": 2,
+        "E402": 9,
+        "F841": 1
+      }
+    },
+    "reused_evidence": "Prior6 native-schema/wiring tests,10 session tests, independent reviews and Qwen/OAuth/G3 cases retained; no test/model case reruns except the one previously failing API continue.",
+    "merge": "not attempted; release prerequisites unmet",
+    "deploy": "not started; another existing deploy process50850 was observed, and prerequisites remain unmet",
+    "next_minimal_steps": [
+      "After API capacity is restored, validate only missing configured API valid cold/resume Consumer/Audit cases.",
+      "Resolve shared main Quality lint gate in its owning scope or reuse upstream correction; do not bundle unrelated12-file cleanup into PR325.",
+      "Once gates pass, update branch, merge PR325 and use formal deployment gate and production readback."
+    ]
+  },
+  "blocker_root_cause_20261025": {
+    "provider": {
+      "checked_at": "2026-10-26T01:07:56.705299+00:00",
+      "route": "codex_api",
+      "base_url": "https://api.kksj.org/v1",
+      "model": "gpt-5.6-luna",
+      "scope": "one minimal Responses POST, no schema/tools/business facts; one read-only models GET; no retries",
+      "responses": {
+        "status": 429,
+        "headers": {
+          "date": "Mon, 26 Oct 2026 01:07:59 GMT"
+        },
+        "error": {
+          "type": "new_api_error",
+          "code": "model_not_found",
+          "message": "No available channel for model gpt-5.6-luna under group default (distributor) (request id: 202610260107593008780698268d9d6gjl1su4r)",
+          "param": ""
+        }
+      },
+      "models": {
+        "status": 200,
+        "headers": {
+          "date": "Mon, 26 Oct 2026 01:07:59 GMT"
+        },
+        "count": 227,
+        "configured_model_listed": true,
+        "similar_listed_models": [
+          "gpt-5.6-luna",
+          "gpt-5.6-sol",
+          "gpt-5.6-terra",
+          "gpt-6-astra",
+          "gpt-6-luna",
+          "gpt-6-sol",
+          "gpt-6.1-sol"
+        ]
+      }
+    },
+    "conclusion": "The configured relay returns429/new_api_error/model_not_found: no available channel for configured gpt-5.6-luna in default distributor group. Minimal request has no schema or tools; no source evidence for ordinary frequency throttling or insufficient balance. Model catalog presence is not channel availability. Underlying channel inventory/health/group mapping needs provider administrative evidence.",
+    "quality": {
+      "counts": {
+        "F401": 30,
+        "F811": 2,
+        "F541": 2,
+        "E402": 9,
+        "F841": 1
+      },
+      "examples": [
+        {
+          "file": "app/agent_contracts.py",
+          "line": 1,
+          "code": "F401",
+          "line_commit": "1498683bbd7ff5dc95b1ceab6ff34b0252e350e7",
+          "commit_summary": "feat(memory): the Consumer names durable memories, the service writes them",
+          "source": "from datetime import datetime"
+        },
+        {
+          "file": "app/reply_task_deferral.py",
+          "line": 28,
+          "code": "F811",
+          "line_commit": "b78604e32ce7165e714d2f0e31edadadc49d9804",
+          "commit_summary": "Complete shared Task Run publication checkpoint",
+          "source": "AGENT_EFFECT_INTENT_SQL,"
+        },
+        {
+          "file": "app/reply_task_deferral.py",
+          "line": 288,
+          "code": "F541",
+          "line_commit": "b78604e32ce7165e714d2f0e31edadadc49d9804",
+          "commit_summary": "Complete shared Task Run publication checkpoint",
+          "source": "db.execute(f\"\"\"update tasks set status='pending',available_at=?,locked_at=null,updated_at=? where id=? and kind='reply' and status in ('pending','processing')\"\"\","
+        },
+        {
+          "file": "tests/conftest.py",
+          "line": 47,
+          "code": "E402",
+          "line_commit": "cfe3a1686b0fc48e37d598a16717384764ec01e5",
+          "commit_summary": "test: end any test process that passes a fixed 3 GB memory ceiling",
+          "source": "from tests.support.memory_limit import MemoryLimit"
+        },
+        {
+          "file": "tests/test_action_business_storage.py",
+          "line": 3,
+          "code": "F401",
+          "line_commit": "7ecee0a6927e385143a70358acb41ee652a719e8",
+          "commit_summary": "feat(storage): consolidate core schema and exact source references",
+          "source": "import hashlib"
+        },
+        {
+          "file": "tests/test_email_action_external_consumers.py",
+          "line": 3,
+          "code": "F401",
+          "line_commit": "7dcbe2278e615341effc10790d097ef4a22453dc",
+          "commit_summary": "Convert active Email action consumers to typed current sources",
+          "source": "import sqlite3"
+        },
+        {
+          "file": "tests/test_error_code_migration.py",
+          "line": 31,
+          "code": "F841",
+          "line_commit": "1fd657e91afe1c8f36bac67f8fe8c62249d94187",
+          "commit_summary": "Merge remote-tracking branch 'origin/main' into codex/task-run-entity-phase2-speed-20261023",
+          "source": "run_id = store.create_professional_run(job_id, status=\"failed\", error=\"runtime_effect_policy_violation\")"
+        },
+        {
+          "file": "tests/test_store.py",
+          "line": 36,
+          "code": "E402",
+          "line_commit": "f2db64d6a95961062aa4fe738ed05f76c31c0165",
+          "commit_summary": "test(database): adapt Store fixtures to final typed storage",
+          "source": "from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL"
+        }
+      ],
+      "conclusion": "44static lint errors across12files identical to main. Confirmed leftover imports after deletions2ef930ee3 and feb963fc2, duplicate imports and placeholder-free f-strings from b78604e32, import-order violations and unused assignment. No PR325 code introduced them.",
+      "gate_distinction": "GitHub npm test runs Ruff before pytest. app.deploy TEST_GATE_ARGS runs pytest only; a passing deploy test gate does not establish Ruff success. No gate changes proposed or made."
+    },
+    "actions_taken": "diagnostics and evidence only; no routing/model/config change, unrelated lint edits, passed model-case reruns, merge or deployment",
+    "minimal_resolution": [
+      "Provider operator must supply an available channel for gpt-5.6-luna in this key group, or separately authorize and validate another configured model/route. No silent switch.",
+      "Separate shared lint cleanup must retain side-effecting setup calls,3GB ceiling and production-checkout refusal; rerun static check, without treating it as behavioral acceptance.",
+      "After provider channel is usable, run only still-missing API cold/resume checks; then normal merge/deploy/readback."
+    ]
+  },
+  "current_acceptance_scope": {
+    "decision": "User explicitly requires only current Codex CLI local OAuth/gpt-6-luna, superseding all-configured-routes acceptance.",
+    "route": "codex_oauth",
+    "model": "gpt-6-luna",
+    "api_gate_removed": true,
+    "route_config_unchanged": true,
+    "evidence_reused": {
+      "consumer_session": "01a16cf9-864c-7b11-8a2b-5e3982577263",
+      "consumer_45_line_prefix_sha_matches": true,
+      "audit_session": "01a16cf2-63d7-7720-b89d-a9b58d436ef9",
+      "audit_49_line_prefix_sha_matches": true,
+      "current_schema_hashes_unchanged": true,
+      "prior_local_native_wiring_passes": 6,
+      "prior_local_session_passes": 10,
+      "model_reruns": 0
+    },
+    "release": "pending ordinary merge, formal deployment gate and production readback; no API wait or unrelated lint cleanup"
+  }
+}
