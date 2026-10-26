@@ -882,6 +882,8 @@ CREATE TRIGGER trg_actions_business_task_signals_sequence before insert on actio
 
 CREATE TRIGGER trg_actions_email_retry_immutable_delete before delete on actions when old._kind=26 begin select raise(abort,'email_direct_retry_request_immutable'); end;
 
+CREATE TRIGGER trg_actions_email_retry_immutable_insert before insert on actions when new._kind=26 and exists(select 1 from actions where record_type='email_direct_retry_requests' and email_action_id=new.email_action_id and email_attempt_number=new.email_attempt_number) begin select raise(abort,'email_direct_retry_request_immutable'); end;
+
 CREATE TRIGGER trg_actions_email_retry_immutable_update before update on actions when old._kind=26 begin select raise(abort,'email_direct_retry_request_immutable'); end;
 
 CREATE TRIGGER trg_actions_email_retry_parent_insert before insert on actions when new._kind=26 and not exists(select 1 from actions p where p.id=cast(new.email_action_id as integer) and p.record_type='action') begin select raise(abort,'FOREIGN KEY constraint failed'); end;

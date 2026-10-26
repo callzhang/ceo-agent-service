@@ -521,3 +521,11 @@ cases28.52s; unchanged prompt-preview/runtime nodes are also green. Root
 reviewed canonical Workbench IDs, native round-pointer corruption, purpose-wire
 digest identity, prepared delivery owner and outer error projection assertions.
 No model, provider call, Audit, authorization or retry-policy edits.
+
+Current DDL artifacts now exactly match the existing generators (two schedule
+indices and the already-declared immutable retry insert trigger); no runtime
+DDL changes. The native-copy harness rejects any catalog difference from the
+476-object current manifest and compares the exact48-table set; its core count
+is the actual47 excluding the ledger, replacing the obsolete10/11 assumption.
+Three focused files pass31 in3.86s; independent rerun31 in3.76s and exact
+artifact/catalog review pass.

@@ -272,4 +272,3 @@ def test_actual_fresh_11_2_task_template_is_not_a_supported_source(tmp_path):
         _replace_source_table(db, "task_agent_runs", ddl)
         db.commit()
         _assert_source_rejected_before_mutation(db)
-

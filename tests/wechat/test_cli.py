@@ -299,5 +299,3 @@ def test_automatic_once_commands_reject_ready_account_without_self_id(
 
     assert command(SimpleNamespace(db=str(db))) == 1
     assert "no single ready account" in capsys.readouterr().out
-
-

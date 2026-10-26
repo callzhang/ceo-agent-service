@@ -320,5 +320,3 @@ def test_reviewed_dingtalk_reply_handler_uses_claimed_message_after_new_input(
     )
     assert result.status == "verified"
     assert observed == ["message"]
-
-
