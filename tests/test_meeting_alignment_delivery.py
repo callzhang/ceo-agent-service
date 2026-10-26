@@ -24,21 +24,6 @@ class _MemoryPostfixStore:
         self.receipts = {}
         self.targets = {}
 
-    def resolve_meeting_alignment_delivery_key(
-        self, delivery_key, *, target_kind, target_id
-    ):
-        key = ("dingtalk", delivery_key.strip())
-        target = (target_kind, target_id.strip())
-        if self.targets.get(key) == target and key in self.messages:
-            return delivery_key.strip()
-        if key in self.targets and key not in self.messages:
-            raise ValueError("meeting prepared target binding conflicts")
-        if key not in self.targets and (key in self.messages or key in self.receipts):
-            raise ValueError("meeting prepared target is unverified")
-        target_json = json.dumps({"kind": target_kind, "id": target_id.strip()}, sort_keys=True)
-        digest = sha256(target_json.encode("utf-8")).hexdigest()
-        return f"{delivery_key.strip()}:target:{digest}"
-
     def prepare_meeting_alignment_message(self, *, delivery_key, target_kind, target_id, body, original_text, **kwargs):
         key = ("dingtalk", delivery_key)
         target = (target_kind, target_id.strip())
@@ -49,6 +34,21 @@ class _MemoryPostfixStore:
         prepared = self.prepare_outbound_postfix("dingtalk", delivery_key, body, original_text, **kwargs)
         self.targets[key] = target
         return prepared
+
+    def resolve_meeting_alignment_delivery_key(self, delivery_key, *, target_kind, target_id):
+        legacy_key = delivery_key.strip()
+        key = ("dingtalk", legacy_key)
+        target = (target_kind, target_id.strip())
+        bound = self.targets.get(key)
+        prepared = self.messages.get(key)
+        if bound == target and prepared is not None:
+            return legacy_key
+        if bound is not None and prepared is None:
+            raise ValueError("meeting prepared target binding conflicts")
+        if bound is None and (prepared is not None or key in self.receipts):
+            raise ValueError("meeting prepared target is unverified")
+        target_json = json.dumps({"kind": target_kind, "id": target[1]}, sort_keys=True)
+        return f"{legacy_key}:target:{sha256(target_json.encode()).hexdigest()}"
 
     def verify_meeting_alignment_target(self, delivery_key, *, target_kind, target_id):
         if self.targets.get(("dingtalk", delivery_key)) != (target_kind, target_id.strip()):

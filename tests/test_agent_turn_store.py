@@ -28,6 +28,7 @@ from app.agent_turn_runner import (
     _required_runtime_capabilities,
 )
 from app.agent_wire_contracts import (
+    consumer_wire_model,
     parse_audit_agent_wire_result,
     parse_consumer_agent_wire_result,
 )
@@ -36,13 +37,49 @@ from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayExecutionResult
 from app.process_runner import ProcessRunResult
 from app.service_codex_config import ServiceMcpServer
-from app.run_storage import AGENT_RUN_SQL
 from app.store import (
     AgentRole,
     AgentRuntimeAttemptStartConflictError,
     AutoReplyStore,
 )
 from tests.runtime_route_env import claude_api_env, codex_api_env
+from tests.support.native_consumer_output_fixture import (
+    native_consumer_stream_for_command,
+)
+
+
+def _consumer_wire_result(
+    *,
+    action: str,
+    summary: str,
+    payload: dict | None = None,
+    decision_options: list[dict] | None = None,
+    needs_human_reason: str | None = None,
+    decision_basis: dict | None = None,
+    risk: str = "low",
+    confidence: float = 1.0,
+) -> dict:
+    wire = consumer_wire_model("general").model_validate(
+        {
+            "action": action,
+            "reason": summary,
+            "target": {},
+            "payload": {} if payload is None else payload,
+            "evidence_refs": [],
+            "summary": summary,
+            "decision_options": decision_options or [],
+            "needs_human_reason": needs_human_reason,
+            "decision_basis": decision_basis,
+            "risk": risk,
+            "confidence": confidence,
+            "rule_coverage": 1.0,
+            "information_completeness": 1.0,
+            "error_code": "",
+            "error_retryable": False,
+            "error_authorization_required": False,
+        }
+    )
+    return wire.root.model_dump(mode="json")
 
 
 def _task(store: AutoReplyStore):
@@ -157,13 +194,9 @@ def test_failed_compact_attempt_retries_same_session_with_full_input(tmp_path):
         def next_route(self, **_kwargs):
             raise AssertionError("the first provider-full failure retries the same route")
 
-    wire_result = {
-        "outcome": "no_action", "summary": "Nothing to do.", "proposal": None,
-        "decision_options": [], "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0,
-        "error_code": "", "error_retryable": False,
-        "error_authorization_required": False, 
-    }
+    wire_result = _consumer_wire_result(
+        action="no_action", summary="Nothing to do."
+    )
     success = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": "session-a"}),
         json.dumps({"type": "item.completed", "item": {
@@ -173,13 +206,14 @@ def test_failed_compact_attempt_retries_same_session_with_full_input(tmp_path):
     submitted_prompts = []
     waits = []
 
-    def executor(_command, *, prompt, on_stdout_line, **_kwargs):
+    def executor(command, *, prompt, on_stdout_line, **_kwargs):
         submitted_prompts.append(prompt)
         if len(submitted_prompts) == 1:
             return ProcessRunResult(1, "", "Selected model is at capacity.")
-        for line in success.splitlines():
+        native_success = native_consumer_stream_for_command(success, list(command))
+        for line in native_success.splitlines():
             on_stdout_line(line)
-        return ProcessRunResult(0, success, "")
+        return ProcessRunResult(0, native_success, "")
 
     run = _claim_consumer(store, task).run
     result = AgentTurnProcess(
@@ -366,20 +400,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             return RuntimeRouteDecision(route, False, "eligible_route")
 
     raw_result = json.dumps(
-        {
-            "outcome": "no_action",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "Nothing to do.",
-            "proposal": None,
-            "decision_options": [],
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-            
-        },
+        _consumer_wire_result(action="no_action", summary="Nothing to do."),
         separators=(",", ":"),
     )
     session_id = "collision-codex-session"
@@ -523,14 +544,10 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     body_marker = "consumer-business-body-marker"
     url_marker = "https://business.example.test/private/source"
     proposal_result = json.dumps(
-        {
-            "outcome": "proposal",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "Prepared the reviewed proposal.",
-            "proposal": {
+        _consumer_wire_result(
+            action="plan",
+            summary="Prepared the reviewed proposal.",
+            payload={
                 "objective": "Send the reviewed update.",
                 "actions": [
                     {
@@ -548,12 +565,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
                 "sourced_facts": [],
                 "authored_judgment": "Ready.",
             },
-            "decision_options": [],
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-            
-        },
+        ),
         separators=(",", ":"),
     )
     executor.stream = stream_for_result(proposal_result)
@@ -564,11 +576,12 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
     )
     [proposal_attempt] = store.list_agent_runtime_attempts(proposal_run.id)
     assert proposal_run.status == "completed"
-    assert proposal_attempt.result_envelope_json == ""
+    proposal_attempt_json = json.dumps(proposal_attempt.model_dump(mode="json"))
+    assert "result_envelope_json" not in type(proposal_attempt).model_fields
     adopted = store.adopted_candidate_for_consumer_run(proposal_run.id)
     assert body_marker in adopted["candidate_json"]
-    assert body_marker not in proposal_attempt.result_envelope_json
-    assert url_marker not in proposal_attempt.result_envelope_json
+    assert body_marker not in proposal_attempt_json
+    assert url_marker not in proposal_attempt_json
     assert body_marker in proposal_run.final_result_json
     assert url_marker in proposal_run.final_result_json
 
@@ -608,20 +621,9 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch)
         snapshots=snapshots,
     )
     result_json = json.dumps(
-        {
-            "outcome": "no_action",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "Claude completed the read-only turn.",
-            "proposal": None,
-            "decision_options": [],
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-            
-        },
+        _consumer_wire_result(
+            action="no_action", summary="Claude completed the read-only turn."
+        ),
         separators=(",", ":"),
     )
     claude_session = "claude-consumer-session"
@@ -780,20 +782,9 @@ def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
     }
     router = AgentRuntimeRouter(routes=config.routes, store=store, snapshots=snapshots)
     result_json = json.dumps(
-        {
-            "outcome": "no_action",
-            "risk": "low",
-            "confidence": 1.0,
-            "rule_coverage": 1.0,
-            "information_completeness": 1.0,
-            "summary": "Friday completed the turn.",
-            "proposal": None,
-            "decision_options": [],
-            "error_code": "",
-            "error_retryable": False,
-            "error_authorization_required": False,
-            
-        },
+        _consumer_wire_result(
+            action="no_action", summary="Friday completed the turn."
+        ),
         separators=(",", ":"),
     )
 
@@ -950,20 +941,9 @@ def test_runtime_domain_result_codec_rejects_private_values(
                 "item": {
                     "type": "agent_message",
                     "text": json.dumps(
-                        {
-                            "outcome": "no_action",
-                            "risk": "low",
-                            "confidence": 1.0,
-                            "rule_coverage": 1.0,
-                            "information_completeness": 1.0,
-                            "summary": unsafe_summary,
-                            "proposal": None,
-                            "decision_options": [],
-                            "error_code": "",
-                            "error_retryable": False,
-                            "error_authorization_required": False,
-                            
-                        }
+                        _consumer_wire_result(
+                            action="no_action", summary=unsafe_summary
+                        )
                     ),
                 },
             }
@@ -1160,14 +1140,10 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
                 "item": {
                     "type": "agent_message",
                     "text": json.dumps(
-                        {
-                            "outcome": "proposal",
-                            "risk": "low",
-                            "confidence": 1.0,
-                            "rule_coverage": 1.0,
-                            "information_completeness": 1.0,
-                            "summary": "Prepared a proposal.",
-                            "proposal": {
+                        _consumer_wire_result(
+                            action="plan",
+                            summary="Prepared a proposal.",
+                            payload={
                                 "objective": "Send the reviewed update.",
                                 "actions": [
                                     {
@@ -1186,12 +1162,7 @@ def test_runtime_domain_result_codec_rejects_consumer_document_payload():
                                 "sourced_facts": [],
                                 "authored_judgment": "Ready.",
                             },
-                            "decision_options": [],
-                            "error_code": "",
-                            "error_retryable": False,
-                            "error_authorization_required": False,
-                            
-                        }
+                        )
                     ),
                 },
             }
@@ -1227,20 +1198,9 @@ def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evi
                 "item": {
                     "type": "agent_message",
                     "text": json.dumps(
-                        {
-                            "outcome": "no_action",
-                            "risk": "low",
-                            "confidence": 1.0,
-                            "rule_coverage": 1.0,
-                            "information_completeness": 1.0,
-                            "summary": "Nothing to do.",
-                            "proposal": None,
-                            "decision_options": [],
-                            "error_code": "",
-                            "error_retryable": False,
-                            "error_authorization_required": False,
-                            
-                        }
+                        _consumer_wire_result(
+                            action="no_action", summary="Nothing to do."
+                        )
                     ),
                 },
             }
@@ -1290,7 +1250,7 @@ def test_runtime_attempt_completion_does_not_treat_provider_events_as_result_evi
     persisted_attempt = store.get_agent_runtime_attempt(attempt.id)
     assert persisted_attempt is not None
     assert persisted_attempt.status == "completed"
-    assert persisted_attempt.result_envelope_json == ""
+    assert "result_envelope_json" not in type(persisted_attempt).model_fields
     assert persisted_attempt.result_schema_id == schema_id
 
 
@@ -1352,18 +1312,18 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                 "item": {
                     "type": "agent_message",
                     "text": json.dumps(
-                        {
-                            "outcome": outcome,
-                            "summary": summary,
-                            "proposal": None,
-                            "decision_options": options,
-                            **(
+                        _consumer_wire_result(
+                            action=outcome,
+                            summary=summary,
+                            decision_options=options,
+                            needs_human_reason=(
+                                "The high-risk, low-confidence fixture requires "
+                                "a human decision."
+                                if outcome == "needs_human"
+                                else None
+                            ),
+                            decision_basis=(
                                 {
-                                    "needs_human_reason": (
-                                        "The high-risk, low-confidence fixture "
-                                        "requires a human decision."
-                                    ),
-                                    "decision_basis": {
                                         "verified_facts": [
                                             {
                                                 "assertion": (
@@ -1396,20 +1356,13 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
                                             }
                                         ],
                                         "conclusion": "Await a human decision.",
-                                    },
                                 }
                                 if outcome == "needs_human"
-                                else {}
+                                else None
                             ),
-                            "risk": "high" if outcome == "needs_human" else "low",
-                            "confidence": 0.0 if outcome == "needs_human" else 1.0,
-                            "rule_coverage": 1.0,
-                            "information_completeness": 1.0,
-                            "error_code": "",
-                            "error_retryable": False,
-                            "error_authorization_required": False,
-                            
-                        }
+                            risk="high" if outcome == "needs_human" else "low",
+                            confidence=0.0 if outcome == "needs_human" else 1.0,
+                        )
                     ),
                 },
             }
@@ -1454,7 +1407,8 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     rolled_back_attempt = store.get_agent_runtime_attempt(attempt.id)
     rolled_back_run = store.get_agent_run(run.id)
     assert rolled_back_attempt is not None and rolled_back_attempt.status == "running"
-    assert rolled_back_attempt.result_envelope_json == ""
+    assert "result_envelope_json" not in type(rolled_back_attempt).model_fields
+    assert rolled_back_attempt.result_schema_id == ""
     assert rolled_back_run is not None and rolled_back_run.status == "running"
     assert rolled_back_run.final_result_json == ""
     assert store.get_conversation_runtime_session(
@@ -1479,14 +1433,17 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     completed_attempt = store.get_agent_runtime_attempt(attempt.id)
     completed_run = store.get_agent_run(run.id)
     assert completed_attempt is not None and completed_attempt.status == "completed"
-    assert summary not in completed_attempt.result_envelope_json
+    assert summary not in json.dumps(completed_attempt.model_dump(mode="json"))
     assert completed_run is not None and completed_run.status == "completed"
     assert completed_run.final_result_json == ""
     adopted = store.adopted_candidate_for_consumer_run(run.id)
     assert json.loads(adopted["candidate_json"]) == result.model_dump(mode="json")
     assert summary in adopted["candidate_json"]
     with store._connect() as db:
-        assert db.execute(f"select final_result_json from ({AGENT_RUN_SQL}) where id=?", (run.id,)).fetchone()[0] == ""
+        run_columns = {
+            row["name"] for row in db.execute("pragma table_info(runs)").fetchall()
+        }
+    assert "final_result_json" not in run_columns
     assert store.get_conversation_runtime_session(
         task.conversation_id,
         "claude_api",

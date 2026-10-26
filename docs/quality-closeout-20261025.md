@@ -268,3 +268,34 @@ skill changes. Weekly-report old hashes match installed main; WeChat already
 matches its new source hash, so its old installed hash is advanced to that same
 verified value for the publisher's strict preflight. Current-head remote Quality,
 standard release, live readback and final artifact cleanup are still pending.
+
+## Next Quality failures after CI HOME repair
+
+Quality `40268307304` at `7623826d5` passed lint/frontend/browser and advanced past
+the formerly blocked Worker/E2E cases. Its twelve Python shards then stopped on
+current fixture/contract issues, not resource ceilings. File owners repair these
+without changing application review or execution policy:
+
+- Main4ab869's current Email/History/maintenance fixture corrections integrate by
+  normal merge. Meeting retains exact target-key/receipt/no-backfill/no-resend
+  checks; the public exception is MeetingDeliveryError, and76 cases pass.
+- RuntimeAttempt fixture uses the real parent_id owner. Cross-line Basic uses an
+  actual user:password credential, retaining the no-secret/redaction assertions;
+  five focused tests including benign Basic-information handling pass.
+- Runtime-turn fixtures use current Consumer purpose wire and the existing Codex
+  native encoder.56 initial file cases pass; four stale DTO/physical Run checks
+  then pass individually. Adopted business results remain available while absent
+  duplicate envelope/body columns are asserted absent, rather than revived.
+- CLI unavailable-original fixtures update the native TaskInput owner. All five
+  affected DingTalk/email refusal cases pass with no enqueue or send.
+- The original Action field-contract SQL exactly matched the retained25.2
+  declaration, not the25.3 Signal declaration. Its explicit tooling renderer is
+  frozen accordingly; only its two comment lines change. The separate full
+  current-release SQL is regenerated at476 objects and its field-map SHA is
+  updated.13 contract cases pass, and the new exact text+digest regression passes;
+  the final two header/digest-sensitive cases also pass. Independent review
+  identified and corrected the initially stale digest instead of accepting a
+  misleading artifact. No app schema or migration mapping changes here.
+
+Attention query-plan corrections and the next complete candidate Quality result
+remain pending; these focused counts do not turn the failed run green.
