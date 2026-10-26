@@ -968,12 +968,21 @@ def build_attempt_detail(
         store.get_candidate_execution(current_task_reviewed["id"])
         if current_task_reviewed is not None else None
     )
+    # A task already stopped on its execution result (failed or uncertain)
+    # reads as failed; only a still-open uncertain execution reads as uncertain.
+    task_stopped_on_execution = (
+        reply_task is not None and reply_task.status == "failed"
+        and reply_task.error in {"external_action_uncertain", "external_action_failed"}
+    )
     projected_status = project_attempt_status(
         attempt,
         reply_task,
         current_agent_runs,
         delivery=wechat_delivery,
-        current_execution_status=str((current_execution or {}).get("status") or ""),
+        current_execution_status=(
+            "" if task_stopped_on_execution
+            else str((current_execution or {}).get("status") or "")
+        ),
     )
     if current_needs_human_decision is not None and reply_task is not None:
         if reply_task.status == "needs_human" and current_reviewed["selection_id"] is None:
@@ -984,7 +993,8 @@ def build_attempt_detail(
         reply_task is not None and terminal_run is not None
         and reply_task.execution_generation != terminal_run.execution_generation
     )
-    if current_generation_changed and current_execution is not None and current_execution["status"] == "uncertain":
+    if (current_generation_changed and current_execution is not None
+            and current_execution["status"] == "uncertain" and not task_stopped_on_execution):
         projected_status = "uncertain"
     display_runs = current_agent_runs if current_generation_changed else agent_runs
     display_reviewed = current_task_reviewed if current_generation_changed else decision_reviewed
