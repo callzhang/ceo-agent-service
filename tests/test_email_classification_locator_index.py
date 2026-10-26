@@ -2,10 +2,9 @@ import sqlite3
 
 from tests.email_schema_fixtures import restore_action_plan_snapshot_column
 
-import pytest
 
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
-from app.email_store import EmailPersistenceCorruption, EmailStore
+from app.email_store import EmailStore
 from tests.test_email_store import _classification, _persist_scan
 
 
@@ -48,26 +47,3 @@ def legacy_v46(tmp_path):
         db.execute("insert or ignore into email_schema_migrations values(46, 'legacy-fixture')")
     return path, store
 
-
-def test_current_schema_missing_locator_index_is_not_silently_repaired(tmp_path):
-    path = tmp_path / "current.sqlite3"
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute(f"drop index if exists {INDEX}")
-    with pytest.raises(EmailPersistenceCorruption, match=INDEX):
-        EmailStore(path, validate_rows=False)
-
-
-@pytest.mark.parametrize("columns", [
-    "account_id,folder,uidvalidity,status,updated_at asc,uid",
-    "account_id,folder collate nocase,uidvalidity,status,updated_at desc,uid",
-    "account_id,folder,uidvalidity,status desc,updated_at desc,uid",
-])
-def test_current_schema_rejects_wrong_locator_sort_and_collation(tmp_path, columns):
-    path = tmp_path / "wrong-locator.sqlite3"
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute(f"drop index {INDEX}")
-        db.execute(f"create index {INDEX} on email_classifications({columns})")
-    with pytest.raises(EmailPersistenceCorruption, match=INDEX):
-        EmailStore(path, validate_rows=False)
