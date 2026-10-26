@@ -9,8 +9,6 @@ from pathlib import Path
 import pytest
 
 from app.agent_orchestrator import (
-    MAX_CONSECUTIVE_FAILED_TURNS,
-    MAX_ROLE_ATTEMPTS_PER_PROCESS,
     AgentOrchestrator,
 )
 from app.agent_result import ResultParseError
