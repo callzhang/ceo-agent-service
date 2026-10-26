@@ -2831,15 +2831,18 @@ def test_meeting_audit_feedback_exhaustion_escalates_after_three_revisions(tmp_p
 
     runner = NeverApprovedRunner(summary_decision())
     now = NOW
-    for _ in range(4):
+    from app.agent_orchestrator import MAX_CONTENT_FEEDBACK_CYCLES
+
+    turns = MAX_CONTENT_FEEDBACK_CYCLES + 1
+    for _ in range(turns):
         consume_meeting_alignment_jobs(store, dws, runner, now=now, limit=1)
         now += timedelta(minutes=2)
 
     job = store.get_meeting_alignment_job(job_id)
     assert job.status == "needs_human"
     assert dws.send_calls == []
-    assert json.loads(job.decision_json)["_service_audit"]["feedback_cycles"] == 4
-    assert len(store.list_meeting_alignment_runs(job_id)) == 4
+    assert json.loads(job.decision_json)["_service_audit"]["feedback_cycles"] == turns
+    assert len(store.list_meeting_alignment_runs(job_id)) == turns
 
 
 def test_calendar_summary_non_organizer_permission_marks_sent_without_retry(tmp_path):
