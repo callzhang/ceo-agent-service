@@ -241,6 +241,14 @@ class MeetingAlignmentAgent:
             + MESSAGE_AUDIENCE_CONTRACT
             + ("\n\n## Task-specific prompt\n" + consumer_prompt if consumer_prompt.strip() else "")
             + ("\n\n## Selected meeting Skill rules\n" + skill_protocol if skill_protocol.strip() else "")
+            + "\n\n## Meeting-specific audience rule (applies over general audience rules above)\n"
+            + "会议总结中的人员敏感内容必须始终从业务群正文和标题中拆出；即使目标群是 HR 群或参会人匹配度高，也不得把敏感详情放入群消息。普通业务群选群根据群讨论和参会人成员匹配，不逐一核实成员对普通业务内容的披露授权。\n"
+            + "Meeting summaries always separate personnel-sensitive content from the business group message. "
+            + "Never include sensitive details or indirect hints in the group body or title, even when the group is HR-only or attendee matching is high. "
+            + "Send the sanitized ordinary summary to the business group selected from relevant group discussion and exact attendee-member matching; do not review each group member's individual disclosure authorization for ordinary business content. "
+            + "Put sensitive details only in sensitive_private_message, addressed to an explicitly matched person whose current responsibility and authorization for that exact content are evidenced. "
+            + "If no such person is established, omit the sensitive details and record the unresolved gap in audit_summary; do not merge them into the group message or use the principal as fallback. "
+            + "When sensitive details appear in the meeting source but the private message is missing, approve only when the gap is explicitly recorded and those details are absent from the group title and body."
             + "\n\n"
             "## Read-only source and candidate\n"
             + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
@@ -550,12 +558,12 @@ def build_meeting_alignment_prompt(
     target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
 - 业务内容返回 audience_scope=business，会议总结必须选择经过核验的业务群（target.kind=group）；不得把普通业务总结私发给组织者、参会人或其他个人。使用 DWS 做群发现，以实际内容、业务目的和披露范围选择群；人数和群名称不决定受众。
 - 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
-- 对每个可能的群，核对群内讨论是否涉及同一工作线、谁在承接本次行动、完整群成员名单是否可读。讨论摘录没有时间戳、群是否可发送（服务在投递时核验）都不是选群条件，普通业务内容不得据此拒绝。普通业务内容不要求逐一证明群成员的披露授权；仅当内容含人员敏感信息时，才须逐一核实完整群成员（含未参会者）对该内容的披露权限。为每个有效候选写清候选群的来源、业务承接关系和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群；候选群中含非授权受众时，不得把敏感内容带入群消息。
-- 在 audit_summary 写清实际内容、近期讨论、业务承接依据、群成员名单读取情况及排除原因；含人员敏感信息时另写稳定身份、当前职务和职责、披露授权；缺少实质受众证据时明确记录缺口，不猜测接收人。敏感私聊只能显式选择来源中稳定 user_id 唯一匹配的参会人，且不得是 current_user_id 或其已核验别名。不得按姓名模糊搜索目标，也不得从发言人推断组织者；群不可发送时不得自动转发组织者。
-- prior_sent_count 只表示同名会议的历史投递次数，不证明本次业务承接、人员匹配或披露权限；仍须核验本次群内近期讨论与实际内容，含人员敏感信息时还须核验每位成员的授权，不得仅凭历史投递选群。
-- topic_discussion_evidence 是群内近期消息与本次会议摘要的词项交集线索，必须阅读其具体内容、时间和业务负责人，再判断是否承接本次议题。人员匹配只看 member_precision=匹配参会人数/完整群成员数（3/N），不得使用参会人召回率（3/3）；参考参会名单不完整时同时保留缺口。准确率不证明业务归属或任何成员的披露权限；群成员多不代表更合适。优先选择讨论过同一工作线、负责本次行动且受众合适的群。
+- 对每个可能的群，核对群内讨论是否涉及同一工作线、行动承接情况，以及参会人与完整群成员的准确匹配。普通业务内容不要求逐一证明群成员的披露授权；普通业务群选群不逐一核实成员披露授权，无需为每个成员单独判断是否适合接收普通业务总结。为每个有效候选写清候选群的来源、业务承接关系、成员匹配和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群。讨论摘录没有时间戳、群是否可发送（服务在投递时核验）都不是选群条件。
+- 在 audit_summary 写清实际内容、近期群讨论、业务承接依据和参会人成员匹配；缺少实质受众证据时明确记录缺口，不猜测接收人。敏感私聊只能显式选择来源中稳定 user_id 唯一匹配的参会人，且不得是 current_user_id 或其已核验别名。不得按姓名模糊搜索目标，也不得从发言人推断组织者；群不可发送时不得自动转发组织者。
+- prior_sent_count 只表示同名会议的历史投递次数，不证明本次业务承接或人员匹配，不得仅凭历史投递选群。
+- topic_discussion_evidence 是群内近期消息与本次会议摘要的词项交集线索，必须阅读其具体内容和业务负责人，再判断是否承接本次议题。人员匹配只看 member_precision=匹配参会人数/完整群成员数（3/N），不得使用参会人召回率（3/3）；参考参会名单不完整时保留缺口。准确率不证明业务归属；群成员多不代表更合适。优先选择讨论过同一工作线、负责本次行动且参会人匹配度较高的群。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
-- 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，核对内容与实际披露授权；相同合适受众只生成一条消息，sensitive_private_message=null，仅当内容需要不同受众时拆成业务总结与敏感私聊。HR 职务不是自动披露授权，私信不天然安全。
+- 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示，并放入独立 sensitive_private_message；即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息。敏感信息按具体内容发给职责和披露授权均有实时证据的个人；没有合适且已授权的个人时不发送该部分并记录未解决缺口，缺少披露授权不能用私聊兜底。HR 职务不是自动披露授权，私信不天然安全。
 - sensitive_private_message.target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，禁止 current_user_id 及其已核验别名。recipient_evidence 必须记录实时身份、当前职务职责及实际内容的披露授权。接收人无法核验时记录缺口，不得按姓名猜测，不得私聊本人兜底。
 - 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
 - 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
@@ -628,7 +636,7 @@ def build_meeting_alignment_prompt(
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
 - action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
-- 没有人员敏感内容时 sensitive_private_message 必须为 null；存在混合内容时，相同已核验且合适的受众只生成 final_message；仅当内容需要不同已核验受众时，生成脱敏后的 final_message 和独立 sensitive_private_message。缺少披露授权不能用私聊兜底。
+- 没有人员敏感内容时 sensitive_private_message 必须为 null；只要存在人员敏感内容，就必须生成已脱敏的 final_message 和独立 sensitive_private_message，不因业务群成员与敏感内容相关而合并。缺少披露授权时不得用私聊兜底。
 
 {render_meeting_alignment_cross_field_rules()}
 
