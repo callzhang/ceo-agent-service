@@ -625,7 +625,8 @@ Current Work Item JSON:
 {transcript_limitation}
 The Work Item's summary above is its source text. Historical sources are in
 source_documents; each Signal in source_signals names its document by "doc" and
-keeps only its id, context_json and created_at. The document holds what its
+keeps only its id, created_at and "context", the number of its context_json
+text in signal_contexts (Signals often share one). The document holds what its
 Signals share: source_type, source_ref, source_time, conversation and author
 (a Signal repeats one of those fields only when its value differs). When you
 cite a Signal, give its id and its document's source_ref. A document with

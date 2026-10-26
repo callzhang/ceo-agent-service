@@ -163,9 +163,10 @@ def test_shared_source_bundle_keeps_every_signal_and_one_body_per_exact_version(
     for signal, reference in zip(signals, result["source_signals"]):
         assert "evidence_text" not in reference
         assert reference == {
-            "id": signal.id, "doc": 1,
-            "context_json": signal.context_json, "created_at": signal.created_at,
+            "id": signal.id, "doc": 1, "context": 1, "created_at": signal.created_at,
         }
+    # Eighty Signals with the same context_json carry its text once.
+    assert result["signal_contexts"] == {"1": signals[0].context_json}
     assert "source_metrics" not in result
 
 
@@ -344,3 +345,22 @@ def test_shared_source_bundle_locates_decoded_quote_without_joining_json_fields(
         {"path": ["report", "line"], "start": 0, "end": 7, "text": "张三负责\n交付"}
     ]
     assert sum(len(span["text"]) for span in (*doc["visible_ranges"], *doc["decoded_excerpts"])) <= 2048
+
+
+def test_signals_with_different_context_json_point_at_their_own_text(tmp_path):
+    store = AutoReplyStore(tmp_path / "contexts.sqlite3")
+    contexts = ['{"work_item_title":"甲"}', '{"work_item_title":"乙"}', '{"work_item_title":"甲"}']
+    ids = [
+        store.create_business_task_signal(
+            **(SOURCE | {"source_ref": f"m:{i}"}), context_json=text, dedupe_key=f"c:{i}"
+        )
+        for i, text in enumerate(contexts)
+    ]
+    signals = tuple(store.get_business_task_signal(id) for id in ids)
+
+    result = _bundle(store, signals)
+
+    assert [reference["context"] for reference in result["source_signals"]] == [1, 2, 1]
+    assert result["signal_contexts"] == {"1": contexts[0], "2": contexts[1]}
+    for signal, reference in zip(signals, result["source_signals"]):
+        assert result["signal_contexts"][str(reference["context"])] == signal.context_json
