@@ -67,7 +67,7 @@ def test_inline_protocol_also_requires_a_complete_native_match(consumer_source):
 @pytest.fixture
 def meeting_store(consumer_source, tmp_path):
     from app.store import AutoReplyStore
-    from app.run_storage import insert_run
+    from tests.support.native_run_rows import insert_runtime_attempt_row
 
     _, source, attempt, _ = consumer_source
     store = AutoReplyStore(tmp_path / "meeting.sqlite3")
@@ -76,12 +76,14 @@ def meeting_store(consumer_source, tmp_path):
         participants_json="[]", ended_at="2026-10-18T00:00:00Z",
         eligible_at="2026-10-18T00:00:00Z", status="processing",
     )
-    run_id = store.claim_logical_run('meeting_alignment_runs', job_id)
-    store.finish_logical_run('meeting_alignment_runs', run_id, status="ready_to_send")
+    run_id = store.create_professional_run(
+        job_id, session_id=attempt["session_id"], status="ready_to_send",
+        transcript_start=0, transcript_end=1,
+    )
     with store._connect() as db:
         db.execute("begin immediate")
-        insert_run(db, "agent_runtime_attempts", {
-            "workload_kind": "meeting", "workload_key": str(run_id),
+        insert_runtime_attempt_row(db, {
+            "parent_id": run_id, "workload_kind": "meeting", "workload_key": str(run_id),
             "attempt_number": 1, "route_name": "route", "runtime_kind": "codex_cli",
             "credential_mode": "local_oauth", "model": "model", "status": "completed",
             "session_id": attempt["session_id"], "transcript_start": 0, "transcript_end": 1,
@@ -125,11 +127,9 @@ def test_source_changed_during_native_read_is_not_overwritten(meeting_store, mon
 
     store, job_id = meeting_store
     # Set the terminal state without invoking the normal post-commit compactor.
-    from app.task8_storage import task8_set_parts
+    from tests.support.native_task_fields import set_native_task_fields
     with store._connect() as db:
-        parts = task8_set_parts("meeting_alignment_jobs", {"status": "sent"})
-        db.execute("update tasks set " + parts.sql + " where record_type='meeting_alignment_jobs'",
-                   parts.parameters)
+        set_native_task_fields(db, "meeting_alignment_jobs", job_id, {"status": "sent"})
     prepare = sources.compact_meeting_consumer
     newer_source = '{"meeting_id":"meeting-1","current_fact":true}'
 
@@ -203,13 +203,11 @@ def test_native_match_does_not_read_upstream_configuration(consumer_source):
 
 
 def test_explicit_migration_batch_compacts_only_terminal_jobs(meeting_store):
-    from app.task8_storage import task8_set_parts
+    from tests.support.native_task_fields import set_native_task_fields
 
     store, job_id = meeting_store
     with store._connect() as db:
-        parts = task8_set_parts("meeting_alignment_jobs", {"status": "sent"})
-        db.execute("update tasks set " + parts.sql + " where record_type='meeting_alignment_jobs'",
-                   parts.parameters)
+        set_native_task_fields(db, "meeting_alignment_jobs", job_id, {"status": "sent"})
     assert store.compact_terminal_meeting_consumer_inputs() == {"examined": 1, "compacted": 1}
     assert store.compact_terminal_meeting_consumer_inputs() == {"examined": 1, "compacted": 0}
 
