@@ -62,6 +62,7 @@ from app.web_api.common import (
     json_safe,
     normalize_display_value,
 )
+from tests.wechat.support import create_wechat_delivery
 
 
 class NonExecutingExecutor:
@@ -196,7 +197,7 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
         trigger_create_time="2026-09-08 19:00:00", trigger_sender="Morgan",
         trigger_text="Can you help later?",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="melody", conversation_id="melody", reply_text="Yes.",
     )
@@ -3486,7 +3487,7 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
         trigger_text="Can you help later?",
     )
     task = store.get_reply_task_for_message("melody", "message-1", channel="wechat")
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct-1", target_type="direct",
         target_id="melody", conversation_id="melody", reply_text="Yes.",
     )

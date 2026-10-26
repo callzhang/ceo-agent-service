@@ -25,7 +25,7 @@ Derek 明确要求：所有系统审核项都必须对应实际系统任务；�
 
 只有这些任务实际提交的业务候选才适用对应的 Consumer/Audit/System 契约。纯扫描、下载或登录命令仍走已配置的服务命令及其技术结果验证，不因列在本表而新增 Audit Agent 回合。任务是否需要某个读取能力，仍由该任务的实际事实决定。
 
-本表列出任务职责及审核应对应的业务对象，不表示所有列出的任务都已接入新的审核执行契约。Task3 的生产 dispatcher 调用 WechatReplyConsumer 与 WechatDecisionRunner，持久化候选后由独立发送循环处理 delivery；其中 audit_summary 是既有决策字段，不是独立 Audit 审核回执。本次保留这条既有路径，没有新增微信审核回合，也没有将微信 producer 切换到新 SystemExecutor。
+本表列出任务职责及审核应对应的业务对象，不表示所有列出的任务都已接入新的审核执行契约。Task3（微信回复）的生产 dispatcher 走标准流程：Consumer 提议唯一一个 `wechat / send_message`，独立 Audit 审核，通过后由 SystemExecutor 的 `WechatSendMessageHandler` 经 delivery 放行判定发送（Derek 2026-10-25 起，不再有独立的微信决策、审核路径）。
 
 ## 每个业务审核项的证据
 

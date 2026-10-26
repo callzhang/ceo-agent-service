@@ -52,26 +52,6 @@ def cmd_status(args) -> int:
     return 0
 
 
-def cmd_consume_once(args) -> int:
-    store = AutoReplyStore(Path(args.db))
-    state = service.ready_account_state(store)
-    if state is None:
-        print("no single ready account; run status first")
-        return 1
-    account = service.account_from_state(state)
-    from app.wechat.decision_runner import WechatDecisionRunner
-
-    runner = WechatDecisionRunner(
-        workspace=config.workspace_path(),
-        store=store,
-    )
-    n = service.run_consume_once(
-        store, runner, _reader(), account
-    )
-    print(f"processed {n} wechat reply task(s)")
-    return 0
-
-
 def cmd_read_recent(args) -> int:
     store = AutoReplyStore(Path(args.db))
     state = service.capability_ready_account_state(store)
@@ -212,9 +192,6 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("produce-once")
     p.add_argument("--db", default=DEFAULT_DB)
     p.set_defaults(fn=cmd_produce_once)
-    p = sub.add_parser("consume-once")
-    p.add_argument("--db", default=DEFAULT_DB)
-    p.set_defaults(fn=cmd_consume_once)
     p = sub.add_parser("pending")
     p.add_argument("--db", default=DEFAULT_DB)
     p.set_defaults(fn=cmd_pending)
@@ -246,7 +223,7 @@ def main(argv=None) -> int:
     parser = build_parser()
 
     args = parser.parse_args(argv)
-    if args.cmd in {"consume-once", "import-memory"}:
+    if args.cmd == "import-memory":
         from app.agent_runtime_production import build_production_runtime_refresher
 
         build_production_runtime_refresher(

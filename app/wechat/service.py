@@ -92,12 +92,6 @@ def run_produce_once(store, reader, account, *, self_user_id: str) -> int:
     ).run_once()
 
 
-def run_consume_once(store, runner, reader, account) -> int:
-    from app.wechat.consumer import WechatReplyConsumer
-
-    return WechatReplyConsumer(store, runner, reader, account).run_once()
-
-
 def recover_before_sender(store, reader, account=None, sender=None) -> list:
     """Recover safe pre-action failures and reconcile uncertain sends."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
@@ -176,7 +170,6 @@ def process_ready_wechat_deliveries(
     sender_enabled: bool,
     reader=None,
     account=None,
-    auditor=None,
 ) -> int:
     """Auto mode + sender enabled: send every ready_to_send delivery. Confirm mode
     (or sender disabled): send nothing — hold them for explicit approval. Returns
@@ -187,9 +180,6 @@ def process_ready_wechat_deliveries(
         account=account,
         sender=getattr(sender, "runner", None),
     )
-    if auditor is not None:
-        for delivery in pending_wechat_deliveries(store):
-            auditor.review(delivery)
     if not sender_enabled or mode != "auto":
         return 0
     deliveries = pending_wechat_deliveries(store)

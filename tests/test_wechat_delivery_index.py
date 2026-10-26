@@ -3,6 +3,7 @@
 import app.audit_web as audit_web
 import app.store as store_module
 from app.store import WECHAT_DELIVERY_SQL, AutoReplyStore
+from tests.wechat.support import create_wechat_delivery
 
 
 INDEX_NAME = "idx_actions_td_wechat_task_generation"
@@ -17,7 +18,7 @@ def test_latest_wechat_delivery_index_survives_schema_initialization(tmp_path):
         trigger_sender="Morgan", trigger_text="Can you help?",
     )
     task = store.get_reply_task_for_message("chat", "message", channel="wechat")
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct", target_type="direct", target_id="chat",
         conversation_id="chat", reply_text="Yes.",
     )

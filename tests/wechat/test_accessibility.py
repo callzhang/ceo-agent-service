@@ -18,6 +18,7 @@ from app.wechat.accessibility import (
 )
 from app.wechat.models import WechatReplyScope
 from tests.wechat.support import approve_delivery
+from tests.wechat.support import create_wechat_delivery
 
 
 class FakeRunner:
@@ -139,7 +140,7 @@ def _seed_delivery(store):
         single_chat=True, trigger_message_id="m1",
         trigger_create_time="2026-07-17T10:00:00", trigger_sender="Alex", trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text="收到",
         evidence={"trigger_text": "hi"},

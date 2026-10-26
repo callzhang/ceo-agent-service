@@ -14,6 +14,7 @@ from app.action_storage import (
 from app.store import WECHAT_DELIVERY_SQL, AutoReplyStore
 from app.web_api.attempts import build_attempt_detail
 from tests.test_console_web_api import _client
+from tests.wechat.support import create_wechat_delivery
 
 
 WECHAT_DELIVERIES = f"select * from ({WECHAT_DELIVERY_SQL})"
@@ -45,7 +46,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
         trigger_text="Can you help later?",
     )
     task = store.get_reply_task_for_message("wechat-current", "message-1", channel="wechat")
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct-1", target_type="direct",
         target_id="wechat-current", conversation_id="wechat-current", reply_text="Yes.",
     )

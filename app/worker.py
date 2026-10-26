@@ -2171,11 +2171,6 @@ class DingTalkAutoReplyWorker:
             )
             if not runs:
                 recovery_error = "stale_before_agent_start"
-                if (
-                    task.channel == "wechat"
-                    and task.error == "wechat_read_only_decision_running"
-                ):
-                    recovery_error = "interrupted_read_only_decision"
                 self.store.requeue_reply_task(
                     task.id,
                     recovery_error,
