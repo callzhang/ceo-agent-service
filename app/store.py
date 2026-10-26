@@ -22533,11 +22533,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         limit: int = 3,
         meeting_native_only: bool = False,
     ) -> list[CodexSessionSearchResult]:
-        from app.native_standalone import latest_standalone_ref
+        from app.native_standalone import native_run_ref
 
         with self._connect() as db:
             if meeting_native_only:
-                from app.native_standalone import native_run_ref
                 rows = db.execute(
                     "select r.id,r.session_id,'meeting_alignment' as source_type,cast(r.id as text) as source_id,"
                     "json_extract(t.parameters_json,'$.title') as title,"
@@ -22567,8 +22566,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     placeholders = ",".join("?" for _ in source_ids)
                     runs = {str(run["id"]): run for run in db.execute(
                         "select run.id,run.session_id as codex_session_id,"
-                        "run.transcript_start as codex_transcript_start_line,"
-                        "run.transcript_end as codex_transcript_end_line,"
                         "json_extract(task.parameters_json,'$.meeting_id') as meeting_id,"
                         "json_extract(task.parameters_json,'$.title') as title "
                         "from runs run join run_provenance provenance on provenance.run_id=run.id "
@@ -22577,11 +22574,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         source_ids,
                     ).fetchall()}
                 references = {
-                    source_id: latest_standalone_ref(
-                        db, workload_kind="meeting", workload_key=source_id,
-                        legacy_row=runs.get(source_id),
-                    )
-                    for source_id in source_ids
+                    source_id: native_run_ref(db, run["id"], "meeting_alignment_runs")
+                    for source_id, run in runs.items()
                 }
         corpus = [self._native_meeting_search_corpus(
             row, runs.get(str(row["source_id"])), references.get(str(row["source_id"]))

@@ -196,8 +196,10 @@ turn／operation／lease／start，仍为 SQL NULL；Task 缺少的 transcript r
 lease；workload_kind／完整 workload_key／parent_id 原值不变。plain Task Run key
 与 `decision_repair.N` 仍指向该 typed Run；`deadline_backfill[.N]` 和
 `memory_backfill` 分别保留旧 Todo／Project 父归属。operation attempt 的 parent_id
-保持 NULL，其 owner/expiry fence 不变。native 读取保留原 latest_task_ref、
-latest_standalone_ref 和 exact_standalone_ref 选择；来源不可用继续明确返回不可用。
+保持 NULL，其 owner/expiry fence 不变。该阶段使用的 latest/exact standalone
+包装已退休；当前专业运行与会议搜索共用 `native_run_ref`。它按当前
+RuntimeAttempt 的 parent_id 和执行 workload_kind 读取；Task 用 task、Meeting
+用 meeting，不把 meeting_audit 当成执行结果。来源不可用仍明确返回不可用。
 
 C2 的配对发布只接受准确 Store19.9／Email53，目标 Store19.10／Email53。
 逆迁从当前共同 owner 重建旧来源事实，包括正迁后的新 Run；只用 TEMP 暂存，
@@ -1827,7 +1829,7 @@ Skill。
 
 Consumer 新会话的 Developer 只给出通用 Skill 使用指令；当前 Task 中的目录携带已安装业务
 Skill 的名称、读取入口和至少一次业务 Skill 读取的协议前置条件。目录只声明可用能力，不替 Agent
-选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源兼容、且原生会话保存的 Pydantic wire schema 与本轮 purpose schema 相同时续用该路线 session；旧 schema 或无法核实来源时，在该路线开启带完整当前输入的新 session。普通 prompt 文案和目录展示变化不因此重置兼容会话；Audit 会话不受此 Consumer 判断影响。
+选择领域；选择仍由 A 根据完整上下文完成。Codex 续会话沿用原生会话开场保存的 Developer，而本轮 Task 指令重新提交。Consumer 仅在已选 Skill 来源、当前 Developer 指令合同及原生会话保存的 Pydantic wire schema 均兼容时续用该路线 session；任一不匹配或无法核实时，在该路线开启带完整当前输入的新 session，避免旧 Developer 指令覆盖本轮规则。目录展示变化不重置兼容会话；Audit 会话不受此 Consumer 判断影响。
 
 Service 也不读取正文后替 Agent 解释业务材料。它只传递 trigger、上下文、原始 process/task ID、
 链接、本地受控材料引用和可执行的精确读取命令。文档、文件夹、图片、表格、日历、听记和 OA
@@ -4451,6 +4453,20 @@ finding set is empty; schema and runtime behavior are unchanged. Exact dated
 copy/rollback/cold-read and production/UI evidence is in
 `orphan-meeting-run-reference-repair.md`.
 
+### Native reference owner unification — 2026-10-26
+
+Meeting detail and both search surfaces use the same current `native_run_ref`.
+Task/Meeting execution references require their Run parent and existing execution
+workload kind; completed-first/id order remains unchanged. Audit attempts remain
+independent observed calls and are not decoded as execution output. No Audit,
+authorization, retry or provider policy changes. Current Run session/range facts
+remain available when there is no recorded Meeting execution attempt; failed or
+running execution attempts remain unavailable. OKR exact-parent/session semantics
+are unchanged. History metadata search and Meeting-native candidate enumeration
+remain distinct; metadata membership/order/session binding and FTS/embedding are
+unchanged. The redundant latest_standalone_ref/exact_standalone_ref/legacy_codex_ref
+helpers and their old alias projections are retired. `latest_task_ref` remains
+used by current Task inspection/replay tools. See `native-reference-reader-unification.md`.
 
 ### DWS document permission pagination (2026-10-26)
 

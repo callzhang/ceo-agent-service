@@ -3,7 +3,7 @@ import sqlite3
 
 import pytest
 
-from app.native_standalone import exact_standalone_ref, latest_standalone_ref, latest_task_ref
+from app.native_standalone import native_run_ref, latest_task_ref
 from app.workbench.native_events import _attempts
 
 
@@ -16,6 +16,10 @@ def db():
         runtime_kind text, session_id text, transcript_start integer, transcript_end integer,
         status text
     )''')
+    from app.run_entity_definitions import TABLES
+
+    connection.execute(TABLES["runs"])
+    connection.execute(TABLES["run_provenance"])
     yield connection
     connection.close()
 
@@ -41,19 +45,19 @@ def test_task_reader_preserves_repair_namespace_and_original_attempt_order(db):
 def test_exact_okr_reader_does_not_substitute_later_request_result(db):
     seed_attempt(db, 40, workload_kind='structured', workload_key='8', session='old', start=1, end=3)
     seed_attempt(db, 41, workload_kind='structured', workload_key='8', session='new', start=5, end=7)
-    row = {'codex_session_id': 'old', 'codex_transcript_start_line': 1,
-           'codex_transcript_end_line': 3}
-    ref = exact_standalone_ref(db, workload_kind='structured', workload_key='8', row=row)
+    db.execute("insert into runs(id,task_id,session_id,transcript_start,transcript_end) values(80,8,'old',1,3)")
+    db.execute("insert into run_provenance(run_id,source_type) values(80,'okr_review_runs')")
+    ref = native_run_ref(db, 80, "okr_review_runs")
     assert (ref.session_id, ref.start, ref.end) == ('old', 1, 3)
-    row['codex_transcript_end_line'] = 4
-    assert exact_standalone_ref(db, workload_kind='structured', workload_key='8', row=row) is None
+    db.execute("update runs set transcript_end=4 where id=80")
+    assert native_run_ref(db, 80, "okr_review_runs") is None
 
 
 def test_failed_meeting_attempt_remains_unavailable_without_completed_source(db):
-    seed_attempt(db, 50, workload_kind='meeting', workload_key='9', session='failed', start=1, end=2, status='failed')
-    legacy = {'codex_session_id': 'legacy', 'codex_transcript_start_line': 1,
-              'codex_transcript_end_line': 2}
-    assert latest_standalone_ref(db, workload_kind='meeting', workload_key='9', legacy_row=legacy) is None
+    seed_attempt(db, 50, workload_kind='meeting', workload_key='9', session='failed', start=1, end=2, status='failed', parent_id=9)
+    db.execute("insert into runs(id,session_id,transcript_start,transcript_end) values(9,'saved-run',1,2)")
+    db.execute("insert into run_provenance(run_id,source_type,job_id) values(9,'meeting_alignment_runs',4908)")
+    assert native_run_ref(db, 9, 'meeting_alignment_runs') is None
 
 
 def test_workbench_reader_uses_exact_turn_uuid(db):

@@ -378,3 +378,4 @@ tests/test_dispatcher_idle_claims.py
 tests/test_task_storage.py
 tests/test_attempt_what_happened.py
 tests/test_project_candidate_refresh.py
+tests/test_consumer_session_prompt_fingerprint.py
