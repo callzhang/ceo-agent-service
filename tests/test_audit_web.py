@@ -8585,6 +8585,7 @@ def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
         store.path,
         workbench_asset_dir=asset_dir,
         workbench_workspace=tmp_path,
+        spa_enabled=True,
     )
 
     with TestClient(app) as client:
@@ -8644,10 +8645,13 @@ def test_fastapi_app_serves_built_workbench_assets_with_secure_boundaries(
     assert api.status_code == 404
     assert api.content != index
     assert history.status_code == 200
-    assert "CEO Agent Audit" in history.text
+    assert history.content == index
     assert tasks.status_code == 200
+    assert tasks.content == index
     assert workers.status_code == 200
+    assert workers.content == index
     assert settings.status_code == 200
+    assert settings.content == index
 
 
 def test_fastapi_spa_serves_scheduled_tasks_deep_link(tmp_path: Path):

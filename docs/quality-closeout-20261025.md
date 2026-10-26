@@ -571,3 +571,14 @@ removes either the Email table or its version facts. Both cases reject with the
 exact existing IntegrityError and preserve the input catalog/ledger;2 pass1.69s.
 The supported53→54 transition is deliberately not used as a negative case.
 No app, publication guard or schema acceptance rule changed.
+
+Four remaining fixtures are corrected without app changes. History now binds
+the native Task's actual current input and retains exact4 rows/current-generation
+IDs and physical/public identity separation. Static assets explicitly enable
+SPA mode and assert exact fixture HTML while retaining all404/traversal/symlink/
+API/header boundaries; these3 focused cases pass3.32s. Calendar recovery has an
+independent recent activity anchor after terminal input compaction, while its
+revised card remains unseen and requeue/no-repeat assertions stay exact. FD
+measurement samples one fixed watcher cycle and includes an explicit+1 open
+sentinel and exact close control; final executor FD non-growth is unchanged.
+Those2 cases pass3.07s.

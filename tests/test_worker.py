@@ -14582,6 +14582,12 @@ def test_single_chat_recovery_requeues_revised_pending_calendar_card(
         task_id,
         expected_execution_generation=claimed.execution_generation,
     )
+    # Terminal TaskInput bodies are compacted and intentionally excluded from
+    # the recent-conversation projection. A separate recent activity fact is
+    # what makes this conversation eligible for the recovery scan in current
+    # storage; the revised calendar message itself remains unseen.
+    worker.store.mark_seen("msg-calendar-recovery-anchor", "cid-1")
+    assert worker.store.has_seen("msg-calendar-recovery-anchor")
     assert not worker.store.has_seen(original.open_message_id)
     before = worker.store.get_reply_task(task_id)
     assert before is not None and before.status == "done"
