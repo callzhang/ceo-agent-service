@@ -136,6 +136,8 @@ def test_fresh_final_schema_failure_does_not_publish_current(tmp_path, monkeypat
     from app import current_database_schema, store as store_module
 
     path = tmp_path / "fresh.sqlite3"
+    path.touch()
+
     def fail_conversion(*_args, **_kwargs):
         raise RuntimeError("conversion interrupted")
 
@@ -166,10 +168,20 @@ def test_fresh_paired_constructors_publish_final_inventory(tmp_path, first):
     constructors[first](path)
     constructors["email" if first == "store" else "store"](path)
     store = AutoReplyStore(path)
+    from app.current_schema_manifest import current_objects, schema_objects
+
     with store._connect() as db:
-        assert {row[0] for row in db.execute(
-            "select name from sqlite_schema where type='table' and name not like 'sqlite_%'"
-        )} == CURRENT_TABLES
+        expected_tables = {
+            name for kind, name, _table, _sql in current_objects(email_ledger=True)
+            if kind == "table"
+        }
+        actual_tables = {
+            name for kind, name, _table, _sql in schema_objects(db)
+            if kind == "table"
+        }
+        assert expected_tables == CURRENT_TABLES
+        assert actual_tables == CURRENT_TABLES
+        assert schema_objects(db) == current_objects(email_ledger=True)
         assert store._schema_manifest_is_current_in_connection(
             db, include_run_snapshots=True,
         )

@@ -742,4 +742,3 @@ def _nullable_public_key_cycle(store, classification):
         store.get_email_reply_receipt(identity),
         store.get_email_reply_dispatch_claim(identity),
     )
-

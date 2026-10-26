@@ -666,7 +666,7 @@ v50–v68 轨迹定位出实际报告问题：固定渲染器曾把没有来源�
 
 生产 History 显示手动 run **394267**（task6 v23 / managed Skill revision223）派发到 reply task **416922**，终态 `failed`。四次 Consumer 尝试（runtime run **394476、394493、394496、394499**）全部以 `analysis_incomplete` 结束；第一轮已读 18 人名册、15 人有效 Q4 源和 3 项 `goals_missing`，`prepare` 成功生成 source/plan/schema，但没有保存任何成员分析，随后没有 Audit、文档写入或通知。最终 History 标记 `agent_reported_failure (analysis_incomplete)`，`what_happened.reached_the_outside_world=false`，没有外部副作用。
 
-完整 trajectory 中，第一轮尝试读取一个未配置的本地绩效制度文件，工具返回路径不存在；随后虽读了 schema 并查阅历史记忆，仍未继续分析。后续重试又读取了同一批成员源，最终都停在未完成分析。根因是 Agent 把未找到的补充制度材料当成了分析阻断条件，而本任务 Skill 和 `$dingtang-okr-review` 已有足够的正式评分口径。该次失败是实际 Consumer 行为问题，不是评测误报或数据源故障。
+完整 trajectory 中，第一轮尝试读取一个未配置的本地绩效制度文件，工具返回路径不存在；随后虽读了 schema 并查阅历史记忆，仍未继续分析。第二轮另一次读取 Q4 执行清单工作簿失败，DWS 返回 XLSX 内部路径 `xl//xl/worksheets/sheet1.xml` 不存在；后两次重新读完18份成员来源，却仍未开始逐人评分。四轮均以 `analysis_incomplete` 结束，没有 Audit、文档写入或通知。根因不是评测误报：Consumer 把额外材料读取错误当成阻断，并在已有15份有效 OKR 来源后仍未按冻结的评分 Skill 完成分析；工作簿错误是实际工具读取故障，但没有导致外部写入。
 
 已在 Skill 中明确：不要求额外本地制度文件；如找到的补充材料无法读取，应把它记录为证据限制，继续使用已声明的评分口径，不阻止分析或发布。没有降低 0/20/40/60/80/100 评分档、证据要求、Audit、完整读回或通知门槛。Skill 回归断言加入后，`tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` 定向套件为 **126 passed**；改动文件 Ruff 与 `git diff --check` 通过。原生综合验收 `okr_results.v70.json` **4/4 passed**，覆盖完整报告、来源变化恢复、日期变化恢复及共享来源认证失败保护；它仍未模拟线上缺失本地制度文件的具体调用，根因修复需由下一条真实 task6 运行验证。此修复未部署；不重放 394267，待发布门槛收敛后创建一条新的 task6 手动验收运行。
 
@@ -688,10 +688,105 @@ v74–v75 发现合成 Audit 没收到生产审核上下文中的上一轮退回
 
 v76 后的定向测试为 `tests/test_weekly_okr_report.py` 与 `tests/test_scheduled_okr_agent_eval.py` **136 passed**，Consumer Skill 脚本边界 **5 passed**，完整 `tests/test_consumer_system_release.py` **27 passed**；改动文件 Ruff 与 `git diff --check` 通过。共享 Skill/脚本摘要已同步到 release manifest、脚本审核清单及匹配的生产安装/managed 旧摘要前置文件。production 尚未部署，也尚未创建 run394267 的替代运行。
 
+### 2026-10-23 生产摘要复核与 task6 手动运行进度
+
+13:15 UTC 只读确认生产提交 `a5616cf9d2196fabacae830e2c53210fcbfd3deb`、healthz HTTP 200、Runtime Skill config 370。task6 当前为 v30 / managed Skill revision240，Skill SHA-256 `49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`；task14 Skill revision224 的 SHA-256 为 `32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62`。日报 Skill、OKR `scripts/report.py`（SHA-256 `119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d`）及其余资产均与线上安装文件一致。
+
+旧前置快照仍记录 Runtime config 368、task6 revision235，以及两项已发布 OA Skill 的旧安装摘要。已按当前生产读回刷新快照到 config370/commit `a5616cf`；并同步更新发布清单中这两项已部署 OA Skill 的 `old_sha256`。候选正文与发布策略未变。完整检查确认26项安装资产都满足清单旧摘要、批准新摘要及线上文件三方一致；`test_release_manifest_pins_verified_current_installation` 与 `tests/test_consumer_system_release.py` 共 **29 passed**，`git diff --check` 通过。这是发布基线证据更新，不代表新报告业务验收或外部发布。
+
+同日授权手动 task6 run **395969**（reply task **417176**）仍在处理中，快照为 task6 v30 / managed revision240。初次 Consumer attempt 395970 失败后，attempt 396024 完成；其后 Audit 396109、第二轮 Consumer 396112、Audit 396125 已完成。13:18:43 UTC，第三轮 Consumer 396135 已完成，第三轮 Audit 396140 开始运行。reply task 417176 仍为 `processing`，尚无终态；不创建第二个运行，不把进行中的报告记为通过。
+
 ### PR #277 的远端检查结果
 
 PR #277 已打开，固定 v75/v76 case、模型/CLI 和 grader 对照及本地回归均附在 PR/无正文证据中。GitHub Quality 在 `npm test` 的首步全仓 Ruff lint 中失败，报 **16 项**、位于 7 个测试文件；逐个确认这 7 个文件与 `origin/main` 字节相同，单独在当前代码和这些原样文件上复现同一 lint 错误。后续 npm、workbench 和浏览器步骤因此未运行。Vercel 预览因账号额度限制失败，平台提示 24 小时后可重试。改动文件 Ruff、OKR 定向测试、Consumer 脚本审核测试及 release-manifest 测试均通过；没有为清绿而改动无关测试、降低门槛或跳过 OKR 验收。production 尚未部署；需先处理或获准接受上述远端基线阻塞，再继续正式合并/部署和新 task6 运行。
 
+
+### 2026-10-23 task6 手动运行 395969 结果
+
+手动 run **395969**（reply task **417176**）于 13:19:47 UTC 结束为 `done`，History Attempt **15985** 为 `done`；使用 task6 配置 v30 / managed `ceo-weekly-okr-report` revision240，SHA-256 `49ba4b0bdafdd2ba54989f6bd1ad6b799417464f2dad2cbeefb721eb85a32f8e`。Consumer revisions 395970/396024/396112/396135 与 Audit revisions 396109/396125/396140 的完整 trajectory 已检查；末轮 Audit 批准，系统执行 1/1 个动作且已验证。
+
+真实文档结果已由 provider 完整读回：主报告“CEO-2 管理者 OKR 进度周报（2026 Q4 至今：2026-10-01—2026-10-23）”及其 18 份评分附录均返回 `complete=true`、`status=success`、`content.success=true` 和非空正文。群摘要发送的持久回执为 `sent`，provider 返回真实 `openMessageId=msg0PxuI5Ab9ITYNfkW5WSCmw==`；History 中 `verified_actions=1/1`。最终摘要已按 Audit revision 2 修正覆盖范围措辞，不含个人姓名、评分或个人报告链接。
+
+该轨迹里 `consumer_document_write` 共 62 次：9 次成功、53 次失败。其中 52 次 DWS 返回 `doc_write_verification_failed`，其明示含义是“写入已经执行，但回读验证失败”；另一次把 30 字符文档 node ID 传给 `wiki +node-list --folder`，DWS 拒绝该 ID 格式。多个失败写入后，Consumer 随即读取对应文档；最终主报告和 18 份附录的 provider 正文读回完整，所以实际报告已交付，但这不能证明每次工具写入通过了格式保真校验。
+
+随后逐项把 52 次失败写入和 provider 版本对应起来：更新操作使用命令中的精确 `--node`，创建操作使用精确标题，再按各文档自己的版本顺序核对；各文档写入数和版本数相符，52/52 均有精确版本。52 个版本均成功读回 JSONML；对源 Markdown 与 JSONML 文本按同一规则规范化后，52/52 的可见文字顺序相同，且都保留了表格结构。这些结果说明失败来自 DWS Markdown 投影与写后校验的序列化不一致，不能据此判定正文丢失；Markdown 回读并非逐字节相同。
+
+曾怀疑有一个评分附录单元格丢失了换行，后按正确的文档节点和精确版本重新核对：源单元格的 6 个 `<br>` 在 provider JSONML 中呈现为 7 个段落，源与读回的单元格可见文字一致，分句边界仍在。因此“换行实际丢失”的结论是错误的，先前把其他节点的版本与该写入关联造成误判。已撤回将 `<br>` 改成全角分号的 Skill 修改及对应测试；业务报告格式不应因这次误判而改变。仍独立保留失败诊断中 `--content`/`--content-file` 正文脱敏修复候选。无正文统计见 `okr-production-readback.json` 的 `manual_authorized_run_395969.write_verification_investigation`。
+
+完整 Consumer trajectory 还显示 DWS 将 `--content` 下的文档正文写进了失败诊断；这是独立的诊断隐私问题，PR #294 候选已为 `--content`/`--content-file` 参数增加脱敏回归，尚未合并部署。当前本机 DWS 为 v1.0.65；其他版本上相似验证问题的上游报告不能单独证明本次全部根因。本记录不把本次手动运行算作自然调度验收，也不据此关闭 task14/task13 自然报告及睡眠恢复补跑验收。
+
+无正文证据：[okr-production-readback.json](../evals/scheduled_task_generic/okr-production-readback.json) 中 `manual_authorized_run_395969`。
+
+后续只读复核确认 run395969 已终结，完整读回主报告和18份评分附录，Audit 批准，provider 通知状态 `sent` 并有真实 `openMessageId`。因此不为同一报告周期再创建手动运行，也不重放失败的 run394267。该成功运行采用 v30/revision240，不能替代自然 task6 在当前配置下的验收；下一自然 OKR 周报仍是独立验收。
+
+### 2026-10-23 23:30 UTC 生产服务状态异常
+
+只读检查发现生产 checkout 为 `215802c21a1127bb9cd8aff9f7689b7828ecb5a6`，但 `127.0.0.1:8765/healthz` 拒绝连接，service/supervisor 进程均不存在，LaunchAgent 文件仍在且显示 enabled，但 launchd domain 中未加载该 label。现有 `/tmp/ceo-agent-service-main.{out,err}.log` 文件不存在，无法从当前可读日志确认是谁或为何卸载/停止服务；根因标记为未查实。没有手动 bootstrap、kickstart 或重启。上线发布前需先通过正式 deploy 路径检查并恢复服务，再读回 PID、health、队列、Attention、History 和任务配置；自然调度验收在恢复前保持未完成。
+
+
+### task6 文档创建父级核对修复候选（2026-10-23）
+
+run395969 trajectory 中的 `wiki +node-list --folder` 错误可在系统层复现：文档父级是 30 字符文档 nodeId，Wiki 节点列表接口只接受 dentryUuid。对同一个真实父级执行只读 `dws doc +list --folder <parent_id> --page-all --format json` 返回 `status=success`、`complete=true`、`hasMore=false`、18 个附录节点；真实成功的 `doc +create` 回执也提供 `data.nodeId` 和 `data.verified=true`。因此服务原实现调用了错误列表接口，并忽略创建回执中已有的节点 ID。
+
+候选修复已改为：创建前用 Doc 列表接口完整核对同名目标；创建后只使用成功、完整且 verified 的 provider 回执 nodeId 进行读回。保留同名拦截、显式目标、正文、revision 冲突和版本保存行为。`tests/test_generic_scheduled_work.py`、`tests/test_agent_cli_report_receipt.py` 与 `tests/test_scheduled_okr_agent_eval.py` 共 **77 passed**；相关 Python 文件 Ruff 与 `git diff --check` 通过。第一轮同时运行的 `tests/test_agent_cli_artifacts.py` 有 11 项旧数据库夹具失败（均在工具运行前报 `table tasks has no column named status`），未改动该不相关夹具。
+
+此修复尚未合并或部署，尚未由新 task6 运行验证；它只处理错误的父级目录查询和 create nodeId 解析，不解释 52 次 DWS `doc_write_verification_failed` 的根因。
+
+### 2026-10-23 task14 自然运行 396111：外部发布完成，业务验收未通过
+
+task14 自然运行 **396111**（scheduled_for `2026-10-23T13:00:00Z`，洛杉矶 06:00）派发到 reply task **417179**，终态 `done`；不可变快照 ID **260** 固定 task14 v58、`America/Los_Angeles` 和 managed `ceo-daily-report` revision **224**（SHA-256 `32d24bb5f53b60bcf67b8a91582db258a05cac59c789391c862d3bd95719fc62`）。完整 Consumer/Audit trajectory：Consumer 396123 → Audit 396152（退回）→ Consumer 396154 → Audit 396157（退回）→ Consumer 396159 → Audit 396163（批准）。
+
+Consumer 首轮按脚本输出使用滚动窗口 `[2026-10-22T13:00Z, 2026-10-23T13:00Z)`，对应相邻洛杉矶每日 06:00 触发间隔。完整会话清单有 47 个群；首轮 53 次消息读取覆盖全部 47 个清单群 ID（另有 4 个清单外 ID），所有读取均 `complete=true`、`partial=false`、`truncated=false`、`failedCount=0`。群聊必需读取标准在此轮没有失败，run392889 的“枚举但未尝试读取”问题没有复现。
+
+Audit 两次退回后，要求将窗口改成北京时间零点到零点；Consumer 照做并用 `[2026-10-22T16:00Z, 2026-10-23T16:00Z)` 重新取数。这个结束时刻比本次触发晚三小时，不能作为本次已完成的事实窗口。第三轮 Audit 却批准了这个候选，系统真实更新了文档并投递通知。因此 **run396111 外部发布完成，但业务验收未通过**。最终 provider 文档为《CEO 每日总结 2026-10-23》，节点 `jb9Y4gmKWrEarRzjirlXn44X8GXn6lpz`；Audit 完整读回 12,206 字节 Markdown，SHA-256 `7717bf2d4c524f46f08f9bf5de54a2aba253c4990a86e7f667933f42a4c6164d`。系统执行私聊 1/1，持久回执 `verified`；provider 状态查询为 `sent`，真实 `openMessageId=msgLBUcMEslUpzdonZK98leaw==`。这些证明外部操作真实完成，不代表业务验收通过；不重放、不补发。
+
+为区分窗口判断错误与 Skill 绑定错误，另从 Consumer 和 Audit 的原生会话逐一读回 `read_task_skill` 结果。两边工具结果都带四行 revision 元数据头，声明 revision224 / SHA-256 `32d24bb5…`；剥去这四行后，正文哈希均为 `32d24bb5…`，与运行快照和 managed revision224 完全一致。Audit 确实加载了正确 Skill，失误是它的窗口判断与该 Skill 的脚本契约相矛盾，并在第三轮批准了结束时间晚于触发时刻的窗口；不是评测器把旧内容误判为缺失。详细无正文证据记录在 JSON 的 `trajectory.loaded_skill_evidence`。
+
+根因是脚本与 Skill/Audit 契约冲突：`scripts/window.py` 按批准过的迁移要求提供滚动区间（首次回看24小时，之后从上次成功触发点续接，漏发区间并入下一份，同日重跑保留原起点）；Skill 却称“一个北京时间日”，Audit 因此强制改成午夜边界。不是脚本计算错误。候选修复明确脚本是唯一窗口来源：报告标题按脚本 `report_date`，所有事实与群消息严格使用其 `[start,end)`，正文写出精确北京时间起止时刻；Audit 不再改成午夜区间。群聊覆盖、审核、完整文档读回和投递要求不变。候选 Skill SHA 为 `dd355212ba37f02ace76c1659e6a4449f376fd3045c97ff9f8a662ec5547fafb`；已用定向契约回归确认，日报事实 + 相关摘要门禁 **41 passed**，`tests/test_scheduled_okr_agent_eval.py::test_release_manifest_pins_verified_current_installation` 独立复核、Ruff 和 `git diff --check` 通过。更新 managed revision 并部署后，下一自然日报 **2026-10-24 13:00 UTC** 才可验证修复。
+
+生产只读复核：commit `682c7893ee6393246f7fa3c9d923b31c5aad7c59`、healthz HTTP 200、worker PID 22383；task14 v58/revision224、task13 v51/revision202、task6 v30/revision240 均启用。task13 下次 **2026-10-24 19:00 UTC**，task6 下次 **2026-10-25 10:00 UTC**。睡眠恢复补跑仍未观察。
+
+无正文证据：[task14 自然运行 396111](../evals/scheduled_task_generic/okr-production-readback.json)。
+
+### 发布摘要核对：生产基线已收敛
+
+2026-10-23 13:41 UTC 只读复核 production commit `682c7893ee6393246f7fa3c9d923b31c5aad7c59`、runtime Skill config 370、healthz HTTP 200；task6 当前 v30 / managed OKR Skill revision240。此前候选前置文件仍把 task6 已安装基线记为 revision235 / SHA `d7584ca0…`。已获 Derek 明确授权后，只更新 `okr-release-preconditions.json` 中的基线元数据与 task6 已安装/managed SHA、revision 字段到线上当前值；approved candidate 仍为 SHA `49ba4b0b…`。
+
+逐项重算结果：日报已安装基线/revision224 的 source、installed、manifest old SHA、precondition installed SHA 都是 `32d24bb5…`；OKR revision240 的 source、installed、manifest、precondition SHA 都是 `49ba4b0b…`；OKR Consumer scripts 源码和已安装目录的脚本树 SHA 都是 `7e8fb42e…`，与 `consumer-scripts.json` 一致。因此没有改写 OKR 脚本摘要。日报 Skill 契约澄清后，release manifest 的 `new_sha256` 和 precondition 的 `approved_new_sha256` 已同步为 `dd355212…`，installed/old baseline 保持 `32d24bb5…`。没有更改 OKR 评分规则、群覆盖、审核、完整读回或投递门槛。同步后的无正文读回见 `okr-production-readback.json` 的 `release_artifact_convergence`。该摘要核对与代码候选合并、部署和自然 OKR 结果验收分开记录。
+
+### 2026-10-23 线上状态复读：PR #298 后
+
+14:33 UTC 只读复查显示，PR #298 合入后的生产 HEAD 为 `944138f6a4169a145d51b6f960ec778c2ae74e7d`，healthz HTTP 200，进程 PID 为 supervisor 39441、service worker 39445、audit-web 39446、email-worker 39447；线上仍有 14 项定时任务。task6 当前 v31 / managed `ceo-weekly-okr-report` revision240，下一次 10月25日 10:00 UTC；task13 v52 / revision202，下一次10月24日 19:00 UTC；task14 v59 / revision224，下一次10月24日 13:00 UTC。最近运行仍分别是 task6 手动395969、task13 手动391278、task14 自然396111，没有新的报告运行。此状态读回只说明新生产提交健康且任务配置保留；PR #294 仍未合并、未部署，也没有新增自然业务验收结果。无正文快照见 `okr-production-readback.json` 的 `latest_production_readback_2026_10_23`。
+
+### 2026-10-23 16:33 UTC 生产与发布基线复读
+
+只读复核生产 HEAD `5a6a3d6fbe1243a451713add06387774042fdda6`、healthz HTTP 200、Runtime Skill config 372（parent 371）、14 项任务；进程 PID 为 supervisor 86371、service worker 86378、audit-web 86379、email-worker 86380。当前 task6 v32 / managed `ceo-weekly-okr-report` revision240（SHA `49ba4b0b…`），下次 10月25日 10:00 UTC；task13 v53 / `ceo-weekly-report` revision202（SHA `ececf8bf…`），下次10月24日19:00 UTC；task14 v60 / `ceo-daily-report` revision224（SHA `32d24bb5…`），下次10月24日13:00 UTC。最近运行仍是 task6手动395969（done）、task13手动391278（skipped）、task14自然396111（done，但业务验收失败）；未发现新报告运行。
+
+发布清单逐项核对26个目标文件：已安装旧摘要和候选源新摘要全部匹配。发布前置快照此前仍记录旧的生产 commit/config 和 OA 出勤 Skill 摘要；根据当前安装读回已刷新为 commit `5a6a3d6`、config372、出勤 Skill SHA `12fe5ae6…`。此更新仅修复发布基线证据，不改任务 Skill 或报告逻辑。PR #294 仍未合并、未部署；没有触发报告或产生外部副作用。完整无正文数据见 `okr-production-readback.json` 的 `latest_production_readback_2026_10_23` 和 `okr-release-preconditions.json`。
+
+### 2026-10-23 18:45 UTC 生产基线复读
+
+只读重新核对 production HEAD `75c5929deec3ac9e6771c012d571e1cbad62312a`、healthz HTTP 200、Runtime Skill config 372（parent 371），进程 PID supervisor 6581、service worker 6585、audit-web 6586、email-worker 6587。14 项定时任务仍在，task6 v32/revision240 下次 10月25日10:00 UTC，task13 v53/revision202 下次10月24日19:00 UTC，task14 v60/revision224 下次10月24日13:00 UTC。最近运行没有变化：task6 手动395969、task13 手动391278（skipped）、task14 自然396111（实际发布完成但窗口越过 scheduled_for 三小时，业务验收失败）；不重放这些运行。
+
+逐项核对发布前置中的26个目标：25个已安装 managed Skill 文件与1个 audit_rules 目标的 installed SHA 全匹配，26个仓库候选源 SHA 也全匹配。仅将 `okr-release-preconditions.json` 的观察时间和 production commit 更新为本次实测值；所有 installed SHA、approved candidate SHA、managed revision 和任务配置保持原值。此次只读复核没有创建运行或外部副作用。完整无正文证据见 `okr-production-readback.json` 中的 `production_readback_2026_10_23_16_33_42Z` 历史快照及更新后的 `latest_production_readback_2026_10_23`。
+
+代码/合成验收与生产读回分开：PR #294 最新提交 `c1a2e1f1` 的 Quality run `40003848416` 仍在运行；PR 未合并或部署。下一步等该 exact-head Quality 终态，再按正式流程合并、部署、读回；部署后仅执行用户已授权的 task6 手动验收，避免重放已完成或 skipped 的报告。
+
+### 2026-10-23 latest-main release-summary reconciliation
+
+After this acceptance snapshot, PR #294's base advanced to upstream 8f3a5a4c0 (PRs #283 and #306). It was merged normally into the isolated PR branch as merge commit 4611abd1c; no conflicts or history rewrite. The upstream release manifest changed the candidate digest for dingtalk-oa-approval/SKILL.md from the prior installed SHA to c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb. Recomputed source SHA matches the manifest exactly. Reconciled only approved_new_sha256 in okr-release-preconditions.json to this verified candidate; the installed baseline remains 981e443d…, matching the production readback. No task configuration, acceptance threshold, report behavior, external state, or installed production data changed. This is a release-candidate digest update, not evidence that the OA Skill candidate is deployed.
+
+At the start of the merge, exact-head Quality run 40006355891 was still executing npm test for the previous PR head c26ee4e40; it cannot validate the merged head. A new exact-head Quality run is required after pushing the reconciled merge. PR #294 remains unmerged and undeployed, and no report run or external effect was created.
+
+## 2026-10-23 19:42 UTC production and release baseline refresh
+
+PR #309 merged to main as `ce841e3826b62cddd068eb9eb36d17deb07de156`; its full Quality run `40011245295` was still in progress. The production service was already running that commit (healthz HTTP 200, supervisor PID 49517). Read-only scheduled-task API reads show task6 v34 bound to managed OKR revision245/SHA `038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9`, task13 v54/revision202, and task14 v61/revision224. The newest runs remain task6 manual395969, task13 manual391278 (skipped), and task14 natural396111 (completed, but not acceptable because its final read window extended three hours beyond `scheduled_for`; do not replay).
+
+The production installed release targets now match the current candidate for the two previously stale entries: DingTalk OA Approval and CEO Weekly OKR Skill. For the OKR Skill, installed, source, manifest old/new, managed revision245, and precondition digest all read back as `038973933c0e8ff70f9c87b2912107a5d3ae0efcb53aeaf308e9bd3f091c01b9`. For DingTalk OA Approval, installed and source digests both read back as `c8130e8dcfb4c6d40980d63a27b2d2c501eba7c4b89497339dcbbf8ead230ccb`. Refreshed only these verified old/installed digest fields and the production observation timestamp/commit; no candidate bytes, acceptance thresholds, schedules, or external state changed. The body-free snapshot is `evals/scheduled_task_generic/okr-production-readback.json` key `production_readback_2026_10_23_19_42_35Z`.
+
+PR #294 was normally merged with current main in its isolated worktree. No report was triggered. The authorized task6 manual acceptance remains pending until PR #294 passes its exact-head checks and is deployed; natural task14/task13/task6 outcomes and passive sleep-resume catch-up remain separate gates.
+
+The reconciled PR #294 head is `ff219d87961ba76b13ad5d14e0126d136372a5a9`, normally merged with production main `ce841e3826b62cddd068eb9eb36d17deb07de156`. Targeted release/OKR tests pass 80/80; Ruff, `git diff --check`, JSON validation, and the 26-entry old/installed + new/approved + managed/source digest comparison pass. The first run found one stale literal in the OA release test: production had already installed the exact candidate `c8130e8d…`, while the assertion still pinned its former `981e443d…` baseline. Updated the expected digest to the independently read installed value; no runtime guard or acceptance criterion was removed. Exact-head Quality run `40014583517` is in progress. Vercel preview is rate-limited and no frontend files are changed. PR #309 Quality run `40011245295` also remains in progress; neither run is being counted as passed. PR #294 is not merged/deployed, and no report or external action was triggered.
 ### 2026-10-23 18 人空搜索验收复核
 
 匿名冻结案例 `empty-search-18-managers-incremental-analysis`：18 人中 15 人有 live OKR、3 人成功读取但目标列表为空；15 次独立文档搜索均无匹配。v82 完整轨迹发现，Consumer 写入第 1 位成员分析后先读取了第 2 位成员 source/schema，之后才读回第 1 位；Audit 仍批准候选。根因是 Skill 同时要求逐人读回和 prepare 后预读所有成员材料。现已改为按名册逐人延迟读取，grader 也会拦查下一位的 source/schema、搜索是否早于当前分析读回。
@@ -705,3 +800,58 @@ PR #311 合入 `c4bfea2` 后，第一次自然空闲发布在 Consumer/Skill 预
 第二次使用正常静默等待发布成功，deploy operation `deploy-4bf5d989-3b81-4ef8-bd38-542e62ffc422` 的 Consumer/Skill 回执为 `verified`。生产 checkout 位于该提交且干净；launchd supervisor PID `99938`，service worker `99942`，Audit web `99943`，email worker `99944`；`/healthz` 返回 HTTP 200。运行配置 `377` 为 active（父配置 `376`），task6 的 managed `ceo-weekly-okr-report` 引用更新到 revision `248`，其数据库与安装文件 SHA-256 均为 `54d3e45e…`。当前 worker 对配置 377 的加载回执无错误，26 项发布资产全部摘要匹配，task6 任务引用读回一致。没有新建 task6 运行，也没有重放失败 run。
 
 发布后只读运行快照：所有业务任务 processing 为 0，email provider 队列 pending 599；Attention 14；History 的 failed 筛选共 29 项。`/healthz` 正常之外，System Health 页面显示 degraded（7 项违规，native delivery 结果 378 项可读、48 项不可读）；该健康告警与本次 Skill 发布分开记录，不能用 HTTP 200 覆盖。
+
+### 2026-10-23 日报窗口契约更新
+
+Derek 明确确认日报按北京时间报告日期取数：主窗口从该日 00:00 到本次实际 `scheduled_for`，不得越过触发时刻；漏掉的报告日期作为独立 catch-up 覆盖呈现，不并入当天主窗口。按此新确认的业务契约复核 run396111：其首轮采用旧的滚动窗口，最终候选又被改成北京时间零点到次日零点（比触发时刻晚三小时），所以该自然结果仍不通过。历史运行和外部发布证据不变，不重放、不补发。
+
+最新实现由 `scripts/window.py` 同时提供当日报告窗口和单独的漏日补充窗口；Skill 将两者分别标注。日报 Skill 候选 SHA-256 `a7c7caaedc5fc63446e20f53ca4bf69d643cca50578c2eda723dfc6f6d9a810e`，窗口脚本候选 SHA-256 `4f30d1b82c43076f74bb1c3c16137a905a6c03e14a35b79a59fb8b324ac6126d`。定向窗口/事实、Consumer 发布和脚本边界验收共 58 项通过；仍需 exact-head Quality、正式发布及后续自然结果核查。此前“滚动窗口是最终约定”的记录描述的是当时旧契约；本节记录后续确认的约定。
+
+### 2026-10-23 latest-main 合并后质量门禁状态
+
+PR #294 已将 `origin/main` `08e6692f4a2c13dd2f81a038c221f06a0f0a0c46` 以正常 merge 纳入，合并提交为 `75257f9d298a00377ea26206216409f40818b1dd`。冲突文件已逐项保留两侧有效内容，日报 Skill 与摘要按北京自然日契约收敛；四个定向套件 107 项通过。旧 Quality run `40028538559` 仍在旧 head `4c3a7b554` 执行 npm test，无法验证新提交，已请求取消并于 23:15 UTC 结束为 `cancelled`。截至本记录，GitHub 尚未为合并提交生成新的 Quality run；故正式质量门禁、PR 合并和部署均未完成。未触发报告、通知或其它外部业务动作。
+
+### 2026-10-23 23:49 UTC 生产恢复和 Quality 复核
+
+最新只读复核仍显示生产 checkout 为 `215802c21a1127bb9cd8aff9f7689b7828ecb5a6`；healthz 无法连接，LaunchAgent label 在 gui/501 中未加载但仍为 enabled，服务进程不存在。只读 SQLite 检查发现唯一阻止静默重启的工作是本地 Email action **120060**：operation 为 `move`，状态仍为 `processing`，started/updated 均为 `2026-10-23T23:18:11Z`，本地 `action_delivery_receipt_id` 为空。provider 侧状态尚未核验，因此不能据此断定 move 是否已发生。
+
+已通过仓库规定的 `python -m app.deploy --restart` 请求恢复服务。命令在 `wait_until_quiet` 中因这一个 processing Email action 保持等待；在确认尚未执行 restart/bootstrap 之后中断本次等待，释放 deployment drain 锁。没有手动调用 launchctl。该记录证明 restart 被现有外部动作保护逻辑拦住，不证明是谁或为何卸载了 launchd 服务；服务停止的发起原因仍未查实。不得直接清除 action 状态或重试 move。需要先按其原有 task/Consumer/Audit 与 provider 事实确认外部效果，再用正式恢复流程处理；生产服务恢复后再继续报告调度验收。
+
+PR #294 的 exact-head Quality run `40040357025`（head `6533329f00d2edcb5286250d2333407bc6e7c3e4`）attempt 2 在 `npm test` 的 pytest 约 4% 时被 GitHub 标为 cancelled，job 结论为 failure；日志只记录 `The operation was canceled`，没有取消来源或 pytest 汇总。相同 main commit 的 Quality run `40038497470` 也在 pytest 约 13 分钟后以同样的 cancelled 步骤结束。它们都不能算作测试失败的根因结论，也不能算通过。PR 的 108 项定向测试与 Ruff 仍通过；完整 Quality、PR 合并和发布保持未完成。无正文恢复读回见 `okr-production-readback.json` 的 `production_recovery_2026_10_23_23_49_33Z`。
+
+为核实 move 的 provider 状态，按 `dingtalk-mail` 流程只读读取了当前 mailbox 列表：返回 2 个邮箱，但没有一个邮箱标识与 action 关联记录中的 `account_id` 精确匹配。没有猜测账号或 messageId，因此没有对任何邮箱调用 `message get`。provider move 状态仍未查实，action 不能被清理或重放。
+
+### 2026-10-24 00:02 UTC 生产动作对账与服务恢复
+
+后续用配置中的精确邮件账号映射到已登录的 Gmail connector，并按本地 RFC Message-ID 精确查询到唯一邮件。Gmail 元数据确认目标文件夹标签存在且 INBOX 标签不存在；随后通过服务自带的只读 IMAP 对账器检查相同消息，结果为 `verified`。没有执行第二次 move。先用 `recover_stale_processing_actions` 将唯一过期的 action 120060 从 `processing` 记录为 `failed/startup_recovery`，紧接着只对 action 120060 运行既有 `reconcile-email-actions --apply` 状态机；它追加第 2 次 `done/reconciled_readback` 记录并更新邮件定位，原始尝试保留。action 终态为 `done`，没有待重试时间。
+
+之后 `python -m app.deploy --restart` 正常完成；LaunchAgent 为 running，PID 33577，healthz HTTP 200。生产 HEAD 为 `f9649ab6b1f65499a6b00492020025773a76941a`。部署读回包含 14 个启用定时任务；task6 v36 / managed Skill revision 248，下次 2026-10-25 10:00 UTC；task13 v56 / revision 202，下次 2026-10-24 19:00 UTC；task14 v63 / revision 250，下次 2026-10-24 13:00 UTC。Workers API 的队列快照显示 Email provider actions 615 pending、0 processing、0 failed、8 retryable；scheduled 与 scheduled_execution 队列 pending/due/running 均为 0。History 总数 37,782。Attention 共 13 条；系统健康为 degraded、7 项 violations，仍有原有异常需要单独跟进。这些是恢复时读数，不表示 13 条 Attention 均由本次恢复造成。
+
+本次只修复已有邮件动作的本地状态并恢复服务，没有创建或发送报告、邮件或额外通知。PR #294 仍未合并；exact-head Quality 尚无 uncancelled 通过结果。task14/task13/task6 新版自然或授权手动报告验收、真实睡眠恢复补跑分支及完整 Quality 均未完成。
+
+### 2026-10-24 task13 自然运行 401164：提前以 operation_unavailable 失败
+
+task13 自然运行 **401164** 在 2026-10-24T19:00Z 触发，使用不可变任务配置 v64 / managed `ceo-weekly-report` revision 202，派发到 reply task 417411；Consumer attempt 16010 对应 consumer run 399303，终态 failed。完整 Consumer trajectory 表明，它读取了计划窗口、会议活动和文档定位材料，但在未调用分钟清单、群聊窗口或业务材料搜索/读取工具的情况下，把缺少 CRM、财务、业务线报告与群聊证据报成 `operation_unavailable` 并停止。
+
+相关工具已注册在 Consumer 能力集合中：`list_dingtalk_minutes`、`read_dingtalk_minutes`、`recent_dingtalk_conversations`、`read_dingtalk_messages_in_window`、`search_dingtalk_documents`、`read_dingtalk_document_full`。轨迹里没有这些查询的 provider 错误或调用记录。因此这是实际执行过早终止，不是工具不可用，也不是 Audit/验收器误报。运行未写周报文档、未获 Audit 批准、没有通知提案或持久发送回执；保持 run 401164 原终态，不重放、不补发。
+
+修复把完整来源核查顺序和缺口分类写入周报 Skill：分别记录未搜索、搜索无结果、实际读取失败和成功读取；要求先查分钟、会话及业务文档来源，只有工具返回的具体错误才算读取失败；材料缺失按现有报告契约继续评估（缺证据实际值仍写 `无数据`，业务线未提交披露但不因此阻塞）。新增 eval case 17 和定向契约测试，防止再出现“未调用工具即 operation_unavailable”。本修复没有改变来源覆盖、评分、审核、文档完整读回或投递标准。
+
+当前生产只读快照（2026-10-24 约20:30 UTC）：healthz HTTP 200，worker PID 51240，task13 v65，managed Skill revision 202，下次触发 2026-10-31T19:00Z。修复尚未正式发布；不得以本地文本或定向测试代替托管 revision 读回。发布后仍需等下一次自然运行验证工具调用、来源覆盖、Consumer/Audit 终态、完整文档读回及通知回执；不手动创建或触发替代报告。
+
+无正文证据：[task13 run 401164](../evals/scheduled_task_generic/task13-run401164-evidence.json)。
+
+2026-10-25 续核实：runbook 中确有 401164 需要的分钟、会话、群聊与业务文档查询顺序；完整 trajectory 显示 Consumer 没有调用这些已注册工具，且没有任何 provider 错误。因此根因是 Agent 在查询前自行结束，网络不是本次失败原因。修复候选 Skill SHA-256 为 `64f0f6bf0494d492dcd8eb8c7cabf76acd10a988fd9bc4c2a89a7f7ec7955f51`，runbook SHA-256 为 `7f7941046608c835ec03db8c2d10cc4c8d5a9bda61360b02d79b60c83d992171`。本地契约与发布摘要测试 **33 项通过**，其中包含“未实际查询不得返回 `operation_unavailable`”和候选文件摘要一致性；这不是原生 Agent 行为验收，候选仍未发布，也未声称 401164 已修复。完整候选自然运行仍待下一次正常 task13 调度核验。
+
+
+### 2026-10-24/25 task13 手动运行与 task14 自然日报复核
+
+只读 API 在 2026-10-25 00:38 UTC 确认：生产 healthz HTTP 200、14 项定时任务仍在；task6 v47 下次 10:00 UTC，task13 v67 下次 10月31日 19:00 UTC，task14 v74 下次 13:00 UTC。最新运行 ID 分别为 task6 395969、task13 401579、task14 399936。
+
+task14 自然运行 **399936**（10月24日 13:00 UTC）使用冻结配置 v71 / `ceo-daily-report` managed revision250，Consumer/Audit 两轮均完成，最终终态 `done`。Consumer 完整读回一次，Audit 在最终版本上完整读回两次；持久通知回执状态 `done`，provider 查询确认 `sendStatus=SUCCESS`、状态 `sent` 和真实消息 ID。因此本次 task14 自然链路通过；正文不写入证据。
+
+task13 运行 **401579** 是另一位操作者触发的手动运行，不是自然调度，也不是本 Agent 重放。不可变快照为 task13 v67、managed `ceo-weekly-report` revision262、SHA-256 `a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b`。报告文档确实写入并完整读回，但 Consumer 未完成 CRM、财务和产品遥测等来源核查；Audit 读取材料不能替代 Consumer 来源覆盖。没有通知要求。故该运行的业务验收失败，不得重放。其使用的是 PR 候选修复前的 revision262（SHA 与当前 PR candidate 不同），不能用来判断候选修复有效或无效。
+
+PR #294 的远端仍未合并；远端 head `bd5cc63dd5dc54ac669675ce10b057265948af17` 对应 Quality `40131731034` 失败。此次将工作分支与 origin/main `ae92ebef` 合并后，Ruff 已通过；定向报告/发布、Task/Run reader 与 Audit suites 的首轮共有 397 项通过，余下两项都在 meeting replay 的 prepared outbound 防重放断言。该失败涉及已有外发安全行为，保留原断言，不作弱化；当前功能修复与这一安全范围分开处理。origin/main 后续已推进至 `82ac79f7`，仍需先同步最新主线并完成 PR 当前 head 的完整 Quality，才可合并部署。周报 Skill 的 source 与 managed baseline 已按 live revision262/installed SHA `a4f4fe22401c5e119715cda1d34d278f7c679d4605e0ec542e4d80b4f6209a8b` 收敛；仅更新该 manifest entry 的 old 摘要，候选摘要保持与仓库 Skill 文件一致。报告流程/发布定向套件现为 33 passed，Ruff 全目录通过。
+
+无正文运行证据见 [`okr-production-readback.json`](../evals/scheduled_task_generic/okr-production-readback.json) 中的 `natural_task14_run_399936`、`manual_task13_run_401579` 和 `latest_live_task_schedule_readback_2026_10_25`。自然日报、他人手动周报、合成测试和代码门禁继续分开计数。

@@ -1259,7 +1259,7 @@ def test_attention_resolution_retains_evidence_and_events(store):
 
 def test_list_indexes_are_present_and_in_the_required_manifest(store):
     expected = {
-        "idx_actions_signal_inline_source",
+        "idx_provenance_source",
         "idx_actions_signal_shared",
         "idx_business_task_updated",
         "idx_business_task_stage",
@@ -1388,11 +1388,17 @@ def test_cited_provenance_does_not_share_observed_source_body(store, source_type
     assert cited.source.identity_key != observed.source.identity_key
     assert cited.source_type == source_type
     with store._connect() as db:
-        assert db.execute("select count(*) from provenance").fetchone()[0] == 0
-        assert db.execute(
-            "select count(distinct ba_task_signals_identity_key) from actions "
-            "where record_type='business_task_signals'"
-        ).fetchone()[0] == 2
+        assert db.execute("select count(*) from provenance").fetchone()[0] == 2
+        rows = db.execute(
+            "select p.identity_key,a.ba_task_signals_provenance_id "
+            "from actions a join provenance p on p.id=a.ba_task_signals_provenance_id "
+            "where a.record_type='business_task_signals' order by a.id"
+        ).fetchall()
+        assert {row[0] for row in rows} == {
+            cited.source.identity_key, observed.source.identity_key,
+        }
+        assert len({row[1] for row in rows}) == 2
+        assert all(row[1] is not None for row in rows)
 
 
 def insert_preexisting_orphan_meeting_run(db):
@@ -1433,12 +1439,14 @@ def test_persisted_source_versions_keep_distinct_bindings(store, change):
         assert first.source.body_utf8_bytes == second.source.body_utf8_bytes
     with store._connect() as db:
         rows = db.execute(
-            "select ba_task_signals_identity_key,ba_task_signals_provenance_id "
-            "from actions where record_type='business_task_signals' order by id"
+            "select p.identity_key,a.ba_task_signals_provenance_id "
+            "from actions a join provenance p on p.id=a.ba_task_signals_provenance_id "
+            "where a.record_type='business_task_signals' order by a.id"
         ).fetchall()
         assert rows[0][0] != rows[1][0]
-        assert rows[0][1] is None and rows[1][1] is None
-        assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+        assert rows[0][1] is not None and rows[1][1] is not None
+        assert rows[0][1] != rows[1][1]
+        assert db.execute("select count(*) from provenance").fetchone()[0] == 2
 
 
 def test_duplicate_signal_failure_preserves_the_original_body_binding(store):
@@ -1455,7 +1463,7 @@ def test_duplicate_signal_failure_preserves_the_original_body_binding(store):
         assert fact == original
         assert body == original_body
     with store._connect() as db:
-        assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+        assert db.execute("select count(*) from provenance").fetchone()[0] == 1
         assert db.execute(
             "select count(*) from actions where record_type='business_task_signals'"
         ).fetchone()[0] == 1

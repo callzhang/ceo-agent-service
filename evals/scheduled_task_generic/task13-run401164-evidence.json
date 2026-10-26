@@ -1,0 +1,57 @@
+{
+  "run_id": 401164,
+  "scheduled_for": "2026-10-24T19:00:00Z",
+  "task_id": 13,
+  "run_kind": "natural_schedule",
+  "immutable_task_config": {
+    "version": 64,
+    "managed_skill": "ceo-weekly-report",
+    "managed_skill_revision": 202
+  },
+  "execution": {
+    "reply_task_id": 417411,
+    "consumer_attempt_id": 16010,
+    "consumer_run_id": 399303,
+    "terminal_state": "failed",
+    "failure_code": "operation_unavailable"
+  },
+  "trajectory_findings": {
+    "meeting_activity_read": true,
+    "required_source_queries_attempted": false,
+    "registered_but_not_called_tools": [
+      "list_dingtalk_minutes",
+      "read_dingtalk_minutes",
+      "recent_dingtalk_conversations",
+      "read_dingtalk_messages_in_window",
+      "search_dingtalk_documents",
+      "read_dingtalk_document_full"
+    ],
+    "provider_errors_for_those_tools": 0,
+    "classification": "actual_agent_execution_failure"
+  },
+  "external_effects": {
+    "document_write": false,
+    "audit_approval": false,
+    "notification_proposal": false,
+    "persistent_notification_receipt": false,
+    "replay_permitted": false
+  },
+  "acceptance": {
+    "result": "failed",
+    "root_cause": "The Consumer treated missing evidence in its initial context as an unavailable operation without attempting the registered source inventory/search/read tools.",
+    "fix_scope": "Weekly-report Skill evidence workflow only; retain source coverage, business rules, Audit, full document readback, and delivery requirements.",
+    "fix_published": false,
+    "candidate_skill_sha256": "64f0f6bf0494d492dcd8eb8c7cabf76acd10a988fd9bc4c2a89a7f7ec7955f51",
+    "candidate_runbook_sha256": "7f7941046608c835ec03db8c2d10cc4c8d5a9bda61360b02d79b60c83d992171",
+    "local_contract_and_release_tests": "33 passed; no native Agent execution or live publication claimed",
+    "next_business_validation": "Next naturally scheduled task13 execution; do not create a replacement report for run 401164."
+  },
+  "live_readback_after_failure": {
+    "read_at": "2026-10-24T20:30:00Z",
+    "healthz_http_status": 200,
+    "worker_pid": 51240,
+    "task13_config_version": 65,
+    "task13_managed_skill_revision": 202,
+    "task13_next_scheduled_for": "2026-10-31T19:00:00Z"
+  }
+}

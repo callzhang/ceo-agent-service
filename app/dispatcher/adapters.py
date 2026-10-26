@@ -6,7 +6,7 @@ from app.state_storage import state_json_field, update_state, upsert_state
 from app import task_lifecycle_storage as task_claims
 from app.task_lifecycle_definitions import DISPATCH_TASK_KINDS, dispatch_task_projection
 from app.action_followup_sync_definitions import SYNC_ACTION_PROJECTIONS
-from app.action_storage import update_sync_action, task_delivery_projection, task_delivery_set_parts
+from app.action_storage import update_sync_action
 
 
 import sqlite3
@@ -405,15 +405,12 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
     def _channel_clause(self, alias="task"):
         return "1"
 
+    def _pending_statuses(self):
+        return ("waiting", "pending", "retry") if self.kind == "meeting_alignment" else ("pending",)
+
     def _pending(self, alias="task"):
-        # Compare the stored status itself so the planner can seek (kind, status) on idx_tasks_claim_due.
-        return alias + ".status in " + self._pending_phases()
-
-    def _claimable_phases(self):
-        return self._pending_phases()[:-1] + ",'processing')"
-
-    def _pending_phases(self):
-        return "('waiting','pending','retry')" if self.kind == "meeting_alignment" else "('pending')"
+        phases = "(" + ",".join(repr(status) for status in self._pending_statuses()) + ")"
+        return alias + ".status in " + phases
 
     def _due(self, now_text, alias="task"):
         due = ""
@@ -428,7 +425,10 @@ class _TaskQueueAdapter(_LedgerClaimLifecycle):
         elif self.kind != "okr_review":
             due += " and (" + alias + ".available_at='' or datetime(" + alias + ".available_at)<=datetime(?))"
             params.append(now_text)
-        return (self._channel_clause(alias) + " and " + alias + ".status in " + self._claimable_phases() + " and ((" + self._pending(alias) + due
+        eligible_statuses = "(" + ",".join(repr(status) for status in
+                                             (*self._pending_statuses(), "processing")) + ")"
+        return (self._channel_clause(alias) + " and " + alias + ".status in " + eligible_statuses
+            + " and ((" + self._pending(alias) + due
             + " and (" + alias + ".claim_owner is null or " + alias + ".claim_owner='' or " + alias + ".claim_expires_at<=?))"
             + " or (" + alias + ".status='processing' and " + alias + ".claim_owner<>'' and " + alias + ".claim_expires_at<=?))",
             (*params, now_text, now_text))

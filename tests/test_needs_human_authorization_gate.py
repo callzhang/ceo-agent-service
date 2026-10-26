@@ -9,12 +9,12 @@ def _business_choice():
     fact = {"assertion": "The current OA task is open.", "references": ["task:1"]}
     return {
         "outcome": "needs_human",
-        "summary": "Derek must choose whether to return this OA task.",
+        "summary": "Choose a reusable rule for matching OA task returns.",
         "proposal": None,
         "decision_options": [
             {
-                "key": "return", "label": "Return this task",
-                "instruction": "Return this one OA task.",
+                "applies_to": "task_class", "key": "return", "label": "Return this task",
+                "instruction": "Return matching OA tasks to their supervisor under this rule.",
                 "consequence": "This task returns to its supervisor.",
                 "plan": {
                     "objective": "Return the current task to its supervisor.",
@@ -30,19 +30,19 @@ def _business_choice():
                 },
             },
             {
-                "key": "stop", "label": "Leave this task unchanged",
-                "instruction": "Stop this instance.", "consequence": "No external action occurs.",
+                "applies_to": "task_class", "key": "stop", "label": "Leave this task unchanged",
+                "instruction": "Leave matching OA tasks unchanged under this rule.", "consequence": "No external action occurs.",
                 "terminal_outcome": "skipped", "reason": "Derek chose to leave the task unchanged.",
             },
         ],
         "risk": "high", "confidence": 0.8, "rule_coverage": 0.4,
         "information_completeness": 1.0,
         "error": {"code": "", "retryable": False, "authorization_required": False},
-        "needs_human_reason": "Only Derek can choose the treatment of this instance.",
+        "needs_human_reason": "A reusable handling rule for this task class is missing.",
         "decision_basis": {
             "verified_facts": [fact], "rule_evidence": [fact],
-            "quality_explanation": "The facts are complete; the business preference is missing.",
-            "no_external_action_evidence": [fact], "conclusion": "Ask Derek about this task.",
+            "quality_explanation": "The facts are complete; the reusable task-class rule is missing.",
+            "no_external_action_evidence": [fact], "conclusion": "Ask Derek for a reusable rule for this task class.",
         },
     }
 

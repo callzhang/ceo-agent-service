@@ -49,6 +49,29 @@ def test_action_sequence_restores_source_highwater_after_retired_maximum_is_remo
     assert new_id == 102
 
 
+def test_adoption_source_oracle_is_the_frozen_predecessor_not_current_actions():
+    import sqlite3
+
+    from app.current_action_schema import current_action_objects, signal_source_action_objects
+    from app.predecessor_database_schema import create_store_2026_10_21_1_schema
+    from app.task8_storage import register_task8_functions
+
+    with sqlite3.connect(":memory:") as db:
+        register_task8_functions(db)
+        create_store_2026_10_21_1_schema(db)
+        actual = sorted(tuple(row) for row in db.execute(
+            "select type,name,sql from sqlite_schema where tbl_name='actions' "
+            "and type in ('table','index','trigger') and name not like 'sqlite_%'"
+        ))
+    frozen = sorted((row["type"], row["name"], row["sql"])
+                    for row in signal_source_action_objects())
+    current = sorted((row["type"], row["name"], row["sql"])
+                     for row in current_action_objects())
+    assert len(actual) == len(frozen) == 215
+    assert actual == frozen
+    assert actual != current
+
+
 def _source_snapshot(db):
     tables = ("tasks", "runs", "actions", "action_receipts", "action_observers")
     catalog = tuple(db.execute(

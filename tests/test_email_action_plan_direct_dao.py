@@ -784,4 +784,3 @@ def _dispatch_guard_refusal(store, classification, target=False):
     except EmailReplyDispatchConflict as error:
         return str(error)
     raise AssertionError("dispatching reply did not retain the shared feedback guard")
-

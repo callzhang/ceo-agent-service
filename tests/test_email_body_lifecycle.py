@@ -100,9 +100,11 @@ def test_real_store_retires_after_last_action_and_reopen_does_not_reexecute(tmp_
 
     store = EmailStore(tmp_path / 'lifecycle.sqlite3')
     message, context = _historical_junk_fixture()
+    message = {**message, 'providerUnread': True}
     accepted = worker.persist_model_primary_classification(store, SimpleNamespace(produce=lambda *args: None),
-        message=message, prediction=_accepted_model_prediction(), context=context, model_id='test-model',
-        model_text='retained model features', unsubscribe_entries=())
+        message=message, prediction=_accepted_model_prediction(category='junk', important=False),
+        context=context, model_id='test-model',
+        model_text='retained model features', unsubscribe_entries=(), preserve_read=True)
     classification_id = accepted.persisted['id']
     with store._connect() as db:
         original_model_input = db.execute('select class_model_text from emails').fetchone()[0]

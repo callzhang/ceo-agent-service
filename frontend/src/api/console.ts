@@ -87,7 +87,6 @@ function query(params: Record<string, string | number | undefined>) {
   return search.size ? `?${search.toString()}` : "";
 }
 
-export interface TaskSummary { id: string; title: string; status: string; category: string; owner: string; progress: string; todo_count: number; state_summary: string; next_summary: string; integrity_issues?: string[]; }
 export type TaskView = "attention" | "formal" | "candidates" | "all" | "projects" | "projects_by_customer";
 export type AttentionCategory = "fyi" | "watch" | "decision" | "push";
 export interface BusinessAttentionSummary {
@@ -258,9 +257,7 @@ export interface BusinessProjectDetail {
   evidence_meta: ConsoleListMeta;
   context_revision_meta: ConsoleListMeta;
 }
-export interface TaskFilters { categories: string[]; task_states: string[]; }
-export interface TaskList extends ConsoleList<TaskSummary> { filters: TaskFilters; }
-export interface TaskDetail extends TaskSummary { description: string; background: string; blocker: string; tags: string[]; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; source_conversations: unknown[]; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
+export interface LegacyProjectDetail { id: string; title: string; status: string; owner: string; description: string; facts: Array<{ id: string; description: unknown; source: unknown; created: string; updated: string }>; source_conversations: unknown[]; todos: Array<Record<string, unknown>>; updates: Array<Record<string, unknown>>; evidence_candidates: Array<Record<string, unknown>>; unlinked_follow_ups: Array<Record<string, unknown>>; }
 export interface HistoryItem { id: string; occurred_at: string; title: string; type: string; status: string; summary: unknown; actor: string; detail_url: string; kind?: string; input?: string; output?: string; action?: string; task_id?: number; run_count?: number; }
 /** One History type as the service names it (Derek 2026-09-25: the filter lists every kind of work the service runs). */
 export interface HistoryTypeOption { value: string; label: string; }
@@ -790,67 +787,15 @@ function resolveOwnerDisplay(project: Record<string, unknown>, todos: Array<Reco
   return "未提供";
 }
 
-function isCompletedEvidence(value: unknown): boolean {
-  if (!isRecord(value)) return false;
-  return ["source", "reason", "completed_at"].some((key) => typeof value[key] === "string" && value[key].trim() !== "");
-}
-
-function todoDone(todo: Record<string, unknown>): boolean {
-  if (todo.done === true) return true;
-  if (todo.status === "done") return true;
-  if (todo.status === "cancelled") return false;
-  if (isCompletedEvidence(todo.completion_evidence)) return true;
-  const followUps = Array.isArray(todo.follow_ups) ? todo.follow_ups.map(asRecord) : [];
-  if (followUps.some((followUp) => followUp.status === "completed")) return true;
-  const dingtalkTodos = Array.isArray(todo.dingtalk_todos) ? todo.dingtalk_todos.map(asRecord) : [];
-  return dingtalkTodos.some((link) => link.status === "done" || link.last_dingtalk_done === true);
-}
-
-function progressFromTodos(todos: Array<Record<string, unknown>>) {
-  const total = todos.length;
-  const done = todos.filter(todoDone).length;
-  const ratio = total ? Math.round((done * 100) / total) : 0;
-  return { done, total, ratio };
-}
-
-function mapTaskSummary(value: unknown): TaskSummary {
-  const row = asRecord(value);
-  const done = Number(row.progress_count || 0);
-  const total = Number(row.progress_total || row.todo_count || 0);
-  return {
-    id: String(row.id ?? ""), title: displayValue(row.title),
-    status: displayValue(row.status), category: displayValue(row.category),
-    owner: resolveOwnerDisplay(row),
-    progress: `${done}/${total}（${Number(row.progress_ratio || 0)}%）`,
-    todo_count: Number(row.todo_count || 0),
-    state_summary: displayValue(row.current_state),
-    next_summary: displayValue(row.next_step),
-    integrity_issues: Array.isArray(row.integrity_issues)
-      ? row.integrity_issues.map(displayValue).filter((item) => item !== "未提供")
-      : [],
-  };
-}
-
-function mapTaskDetail(value: unknown): TaskDetail {
+function mapLegacyProjectDetail(value: unknown): LegacyProjectDetail {
   const payload = asRecord(value);
   const project = asRecord(payload.project);
   const facts = Array.isArray(project.facts) ? project.facts : [];
   const todos = Array.isArray(payload.todos) ? payload.todos.map(asRecord) : [];
-  const progress = progressFromTodos(todos);
   return {
-    ...mapTaskSummary({
-      id: project.id, title: project.title, status: project.status,
-      category: project.category,
-      owner: resolveOwnerDisplay(project, todos),
-      progress_count: progress.done,
-      progress_total: progress.total,
-      progress_ratio: progress.ratio,
-      todo_count: progress.total,
-      current_state: project.current_state, next_step: project.next_step,
-    }),
+    id: String(project.id ?? ""), title: displayValue(project.title), status: displayValue(project.status),
+    owner: resolveOwnerDisplay(project, todos),
     description: displayValue(project.goal || project.description),
-    background: displayValue(project.background), blocker: displayValue(project.blocker),
-    tags: Array.isArray(project.tags) ? project.tags.map(displayValue) : [],
     facts: facts.map((fact, index) => { const item = asRecord(fact); return { id: String(item.id ?? index), description: item.description, source: item.source, created: displayValue(item.created || item.created_at), updated: displayValue(item.updated || item.updated_at) }; }),
     source_conversations: Array.isArray(project.source_conversations) ? project.source_conversations : [],
     todos,
@@ -858,17 +803,6 @@ function mapTaskDetail(value: unknown): TaskDetail {
     evidence_candidates: Array.isArray(payload.evidence_candidates) ? payload.evidence_candidates.map(asRecord) : [],
     unlinked_follow_ups: Array.isArray(payload.unlinked_follow_ups) ? payload.unlinked_follow_ups.map(asRecord) : [],
   };
-}
-
-export function listTasks(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
-  return request<unknown>(`/api/console/tasks${query(params)}`, { signal }).then((value) => {
-    const page = parseConsoleList(value);
-    const payload = asRecord(value);
-    const filters = asRecord(payload.filters);
-    const categories = Array.isArray(filters.categories) ? filters.categories.map(displayValue).filter((item) => item !== "未提供") : [];
-    const taskStates = Array.isArray(filters.task_states) ? filters.task_states.map(displayValue).filter((item) => item !== "未提供") : [];
-    return { ...page, items: page.items.map(mapTaskSummary), filters: { categories, task_states: taskStates } } satisfies TaskList;
-  });
 }
 
 function semanticList<T>(value: unknown, kind: "attention" | "task" | "project", valid: (item: Record<string, unknown>) => boolean): ConsoleList<T> {
@@ -981,15 +915,11 @@ export function clearBusinessProjectCrmCustomer(projectId: string) {
   return request<{ ok: boolean; item?: unknown; message: string }>(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer`, { method: "DELETE" });
 }
 export function getLegacyProjectDetail(id: string, signal?: AbortSignal) {
-  return request<ConsoleResource<unknown>>(`/api/console/tasks/legacy-projects/${encodeURIComponent(id)}`, { signal }).then((response) => ({ ...response, item: mapTaskDetail(response.item) }));
+  return request<ConsoleResource<unknown>>(`/api/console/tasks/legacy-projects/${encodeURIComponent(id)}`, { signal }).then((response) => ({ ...response, item: mapLegacyProjectDetail(response.item) }));
 }
 
 export function listSentTodos(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {
   return request<unknown>(`/api/console/tasks/sent-todos${query(params)}`, { signal }).then((value) => parseConsoleList<SentTodoItem>(value));
-}
-
-export function getTaskDetail(projectId: string, signal?: AbortSignal) {
-  return request<ConsoleResource<unknown>>(`/api/console/tasks/${encodeURIComponent(projectId)}`, { signal }).then((response) => ({ ...response, item: mapTaskDetail(response.item) }));
 }
 
 export function listHistory(params: Record<string, string | number | undefined> = {}, signal?: AbortSignal) {

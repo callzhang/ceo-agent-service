@@ -1,6 +1,5 @@
 from tests.support.legacy_todo_facts import seed_legacy_work_project
 from tests.support.native_task_fields import set_native_task_fields
-from app.task8_storage import task8_set_parts
 from app.store import WORK_SUMMARY_INPUT_SQL
 from app.action_error_definitions import error_projection
 from app.action_storage import error_set_parts, update_action
@@ -453,8 +452,11 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
         send_status="pending",
         channel="wechat",
     )
+    task = store.get_reply_task_for_message(
+        "wechat-user-1", "wechat-message-1", channel="wechat"
+    )
     delivery_id = create_wechat_delivery(store,
-        reply_task_id=1,
+        reply_task_id=task.id,
         account_id="wechat-account-1",
         target_type="direct",
         target_id="wechat-user-1",
@@ -4373,18 +4375,16 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
             original = store.get_reply_task_for_message("cid-1", "msg-1")
             provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
             with sqlite3.connect(settings.db_path) as db:
-                parts = task8_set_parts('reply_task_inputs', {
+                _update_task_fixture(db, 'reply_tasks', original.id, {
                     'input_compacted': 1, 'trigger_text': '',
                     'trigger_message_json': '', 'input_provenance_json': provenance,
                 })
-                db.execute(f"update tasks set {parts.sql} where id=?",
-                           (*parts.parameters, original.current_input_id))
         else:
             with sqlite3.connect(settings.db_path) as db:
                 original = store.get_reply_task_for_message('cid-1', 'msg-1')
-                parts = task8_set_parts('reply_task_inputs', {'trigger_message_json': '{}'})
-                db.execute(f"update tasks set {parts.sql} where id=?",
-                           (*parts.parameters, original.current_input_id))
+                _update_task_fixture(
+                    db, 'reply_tasks', original.id, {'trigger_message_json': '{}'},
+                )
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1", conversation_title="Friday",
         trigger_message_id="msg-1", trigger_sender="Phina",
@@ -4446,12 +4446,10 @@ def test_send_attempt_email_requires_exact_uncompacted_action_payload(
         original = store.get_reply_task_for_message(conversation_id, action_identity, channel="email")
         provenance = store._reply_input_provenance(original.trigger_text, original.trigger_message_json)
         with sqlite3.connect(settings.db_path) as db:
-            parts = task8_set_parts('reply_task_inputs', {
+            _update_task_fixture(db, 'reply_tasks', original.id, {
                 'input_compacted': 1, 'trigger_text': '',
                 'trigger_message_json': '', 'input_provenance_json': provenance,
             })
-            db.execute(f"update tasks set {parts.sql} where id=?",
-                       (*parts.parameters, original.current_input_id))
         with pytest.raises(SystemExit, match="original trigger is unavailable"):
             send_attempt_command(settings, attempt_id)
         assert store.get_reply_task_for_message(
@@ -4635,11 +4633,10 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
     )
     first = send_attempt_command(settings, attempt_id)
     with sqlite3.connect(settings.db_path) as db:
-        parts = task8_set_parts('reply_tasks', {
-            'error': 'reviewed_write_not_authorized', 'available_at': '2099-01-01 00:00:00',
+        _update_task_fixture(db, "reply_tasks", first["task_id"], {
+            "error": "reviewed_write_not_authorized",
+            "available_at": "2099-01-01 00:00:00",
         })
-        db.execute(f"update tasks set {parts.sql} where record_type='reply_tasks' and id=?",
-                   (*parts.parameters, first['task_id']))
     second = send_attempt_command(settings, attempt_id)
     updated = store.get_reply_task(int(second["task_id"]))
 
@@ -7939,7 +7936,7 @@ def _wechat_sender_loop_store(tmp_path, monkeypatch):
     )
     monkeypatch.setattr("app.wechat.service.build_reader", lambda *a, **k: object())
     monkeypatch.setattr("app.wechat.service.build_sender", lambda *a, **k: object())
-    return store, SimpleNamespace(db_path=db)
+    return store, WorkerSettings(db_path=db)
 
 
 class _StopLoop(Exception):
@@ -7947,17 +7944,37 @@ class _StopLoop(Exception):
 
 
 def _stop_after(monkeypatch, count):
+    import threading
     import time
 
     sleeps = []
+    original_sleep = time.sleep
+    loop_thread = threading.get_ident()
 
     def sleep(seconds):
+        if threading.get_ident() != loop_thread:
+            return original_sleep(seconds)
         sleeps.append(seconds)
         if len(sleeps) >= count:
             raise _StopLoop
 
     monkeypatch.setattr(time, "sleep", sleep)
     return sleeps
+
+
+def test_sender_sleep_fixture_preserves_background_and_records_each_business_delay(monkeypatch):
+    import threading
+    import time
+
+    sleeps = _stop_after(monkeypatch, 1)
+    background = threading.Thread(target=lambda: time.sleep(0.001))
+    background.start()
+    background.join(timeout=1)
+    assert not background.is_alive()
+    assert sleeps == []
+    with pytest.raises(_StopLoop):
+        time.sleep(0.2)
+    assert sleeps == [0.2]
 
 
 def _deliveries_raise(monkeypatch, factory):

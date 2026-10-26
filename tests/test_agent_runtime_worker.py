@@ -882,15 +882,17 @@ def _prompt_json_section(prompt: str, heading: str):
 def test_native_audit_fixture_keeps_binding_owned_by_service(forbidden_field, value):
     from pydantic import ValidationError
     from app.agent_wire_contracts import AuditAgentWireResult
+    from app.native_agent_output import parse_native_output
 
     domain = _audit_protocol_result(
         "approve", 4, "Reviewed candidate.", operation_id="operation-4",
         candidate_digest="a" * 64,
     )
     event = _agent_result_event(domain)
-    payload = json.loads(event["item"]["text"])
-    assert "proposal_revision" not in payload
-    assert "candidate_digest" not in payload
+    native_payload = json.loads(event["item"]["text"])
+    assert "proposal_revision" not in native_payload
+    assert "candidate_digest" not in native_payload
+    payload = json.loads(parse_native_output(json.dumps(event), role="audit"))
     adopted = AuditAgentWireResult.model_validate(payload).to_result(
         proposal_revision=domain.proposal_revision, candidate_digest=domain.candidate_digest,
     )
@@ -905,52 +907,40 @@ def _decision_options():
     return [{**option, "applies_to": "task_class"} for option in _contract_decision_options()]
 
 
-def _native_audit_stream(output: str) -> str:
-    """Nest an Audit wire result's outcome and feedback under "decision", as native Audit output does.
-
-    Assertion values are dynamic JSON, encoded as key/value entries.
-    """
-    lines = []
-    for line in output.splitlines():
-        try:
-            event = json.loads(line)
-            item = event.get("item") if isinstance(event, dict) else None
-            if isinstance(item, dict) and item.get("type") == "agent_message":
-                value = json.loads(item["text"])
-                if (isinstance(value, dict) and "decision" not in value
-                        and value.get("outcome") in {"approve", "return", "reject", "failed"}):
-                    feedback = value.pop("feedback", None)
-                    for assertion in (feedback or {}).get("candidate_field_assertions", ()):
-                        assertion["value"] = _encode_dynamic_json(assertion["value"])
-                    value["decision"] = {"outcome": value.pop("outcome"), "feedback": feedback}
-                    item["text"] = json.dumps(value)
-                    line = json.dumps(event)
-        except (ValueError, TypeError, KeyError, AttributeError):
-            pass
-        lines.append(line)
-    return "\n".join(lines)
-
-
-def _encode_dynamic_json(value):
-    if isinstance(value, dict):
-        return {"entries": [{"key": key, "value": _encode_dynamic_json(item)}
-                            for key, item in value.items()]}
-    if isinstance(value, list):
-        return [_encode_dynamic_json(item) for item in value]
-    return value
-
-
 def _agent_result_event(result) -> dict[str, object]:
     if isinstance(result, ConsumerAgentResult):
         error = result.error
+        if result.purpose_output is None:
+            purpose_output = {
+                "action": (
+                    "plan"
+                    if result.outcome.value == "proposal"
+                    else result.outcome.value
+                ),
+                "reason": result.summary,
+                "target": {},
+                "payload": (
+                    result.proposal.model_dump(mode="json")
+                    if result.outcome.value == "proposal"
+                    and result.proposal is not None
+                    else {}
+                ),
+                "evidence_refs": [],
+            }
+        else:
+            purpose_output = {
+                field: result.purpose_output.get(field)
+                for field in (
+                    "action",
+                    "reason",
+                    "target",
+                    "payload",
+                    "evidence_refs",
+                )
+            }
         payload = {
-            "outcome": result.outcome.value,
+            **purpose_output,
             "summary": result.summary,
-            "proposal": (
-                result.proposal.model_dump(mode="json")
-                if result.proposal is not None
-                else None
-            ),
             "decision_options": [
                 option.model_dump(mode="json") for option in result.decision_options
             ],
@@ -968,15 +958,26 @@ def _agent_result_event(result) -> dict[str, object]:
         }
     elif isinstance(result, AuditAgentResult):
         error = result.error
+        feedback = (
+            result.feedback.model_dump(mode="json")
+            if result.feedback is not None
+            else None
+        )
+        if feedback is not None:
+            feedback["candidate_field_assertions"] = [
+                {
+                    **assertion,
+                    "value": _native_dynamic_json(assertion["value"]),
+                }
+                for assertion in feedback.get("candidate_field_assertions", [])
+            ]
         payload = {
-            "outcome": result.outcome.value,
+            "decision": {
+                "outcome": result.outcome.value,
+                "feedback": feedback,
+            },
             "summary": result.summary,
             "evidence_refs": list(result.evidence_refs),
-            "feedback": (
-                result.feedback.model_dump(mode="json")
-                if result.feedback is not None
-                else None
-            ),
             "risk": result.risk.value,
             "confidence": result.confidence,
             "rule_coverage": result.rule_coverage,
@@ -994,19 +995,23 @@ def _agent_result_event(result) -> dict[str, object]:
             if result.decision_basis is not None
             else None
         )
-    if isinstance(result, ConsumerAgentResult):
-        # The Consumer wire carries action/reason/target/payload instead of outcome/proposal.
-        outcome = payload.pop("outcome")
-        proposal = payload.pop("proposal")
-        payload.update(
-            action="plan" if outcome == "proposal" else outcome,
-            reason=payload["summary"], target={},
-            payload=proposal if outcome == "proposal" else {}, evidence_refs=[],
-        )
     return {
         "type": "item.completed",
         "item": {"type": "agent_message", "text": json.dumps(payload)},
     }
+
+
+def _native_dynamic_json(value):
+    if isinstance(value, dict):
+        return {
+            "entries": [
+                {"key": key, "value": _native_dynamic_json(item)}
+                for key, item in value.items()
+            ]
+        }
+    if isinstance(value, list):
+        return [_native_dynamic_json(item) for item in value]
+    return value
 
 
 def _consumer_protocol_result(
@@ -1051,6 +1056,106 @@ def _consumer_protocol_result(
             ),
         }
     )
+
+
+def test_protocol_consumer_event_uses_current_wire_without_repairing_purpose_metadata():
+    from app.agent_wire_contracts import consumer_wire_model
+    from app.native_agent_output import parse_native_output
+    from app.native_agent_output import native_output_schema_path
+
+    result = _consumer_protocol_result(
+        "proposal",
+        "Send the reviewed reply.",
+        proposal={
+            "objective": "Send the reviewed reply.",
+            "actions": [
+                {
+                    "description": "Send the reply.",
+                    "action_identity": "fixture-send",
+                    "capability": "agent_cli.dws",
+                    "operation": "chat message send",
+                    "target": {"group": "cid-1"},
+                    "payload": {"text": "approved"},
+                }
+            ],
+            "sourced_facts": [],
+            "authored_judgment": "",
+        },
+    )
+    event = _agent_result_event(result)
+    flat_payload = json.loads(event["item"]["text"])
+    wire = consumer_wire_model("general").model_validate(flat_payload)
+    command = [
+        "codex",
+        "exec",
+        "--output-schema",
+        str(native_output_schema_path("consumer", purpose="general")),
+    ]
+    native_stream = native_consumer_stream_for_command(json.dumps(event), command)
+    native_payload = json.loads(json.loads(native_stream)["item"]["text"])
+    restored = json.loads(
+        parse_native_output(native_stream, role="consumer")
+    )
+
+    assert native_payload["decision"]["action"] == "plan"
+    assert wire.root.payload == result.proposal.model_dump(mode="json")
+    assert restored["payload"] == result.proposal.model_dump(mode="json")
+    assert "outcome" not in native_payload
+    assert "proposal" not in native_payload
+
+    malformed = result.model_copy(
+        update={
+            "purpose_output": {
+                "action": "plan",
+                "reason": "Send the reviewed reply.",
+                "target": "not-an-object",
+                "payload": result.proposal.model_dump(mode="json"),
+                "evidence_refs": [],
+            }
+        }
+    )
+    malformed_event = _agent_result_event(malformed)
+    malformed_stream = native_consumer_stream_for_command(
+        json.dumps(malformed_event),
+        command,
+    )
+    assert malformed_stream == json.dumps(malformed_event)
+    with pytest.raises(ValueError):
+        parse_native_output(malformed_stream, role="consumer")
+
+
+def test_protocol_consumer_needs_human_option_plan_round_trips_current_wire():
+    from app.agent_wire_contracts import consumer_wire_model
+    from app.native_agent_output import native_output_schema_path, parse_native_output
+
+    result = _consumer_protocol_result(
+        "needs_human",
+        "Choose whether to proceed with the verified candidate.",
+        code="decision_required",
+    )
+    event = _agent_result_event(result)
+    flat_payload = json.loads(event["item"]["text"])
+    wire = consumer_wire_model("general").model_validate(flat_payload)
+    native_stream = native_consumer_stream_for_command(
+        json.dumps(event),
+        [
+            "codex",
+            "exec",
+            "--output-schema",
+            str(native_output_schema_path("consumer", purpose="general")),
+        ],
+    )
+    restored = json.loads(parse_native_output(native_stream, role="consumer"))
+
+    expected_options = [
+        option.model_dump(mode="json") for option in result.decision_options
+    ]
+    expected_basis = result.decision_basis.model_dump(mode="json")
+    assert wire.root.needs_human_reason == result.needs_human_reason
+    assert wire.root.decision_basis.model_dump(mode="json") == expected_basis
+    assert restored["needs_human_reason"] == result.needs_human_reason
+    assert restored["decision_basis"] == expected_basis
+    assert restored["decision_options"] == expected_options
 
 
 def _audit_protocol_result(
@@ -1201,9 +1306,8 @@ class ProtocolCodexExecutor:
             },
             *self._records_with_consumer_skill_receipt(prompt),
         ]
-        output = _native_audit_stream(native_consumer_stream_for_command(
-            "\n".join(json.dumps(record) for record in records), list(command),
-        ))
+        output = "\n".join(json.dumps(record) for record in records)
+        output = native_consumer_stream_for_command(output, list(command))
         callback = kwargs["on_stdout_line"]
         for line in output.splitlines():
             callback(line)
@@ -1255,7 +1359,7 @@ class ProtocolCodexExecutor:
                     payload = json.loads(str(item.get("text") or ""))
                 except json.JSONDecodeError:
                     continue
-                if payload.get("outcome") in {"proposal", "no_action", "needs_human"} or "action" in payload:
+                if payload.get("action") in {"plan", "no_action", "needs_human"}:
                     records[index] = _agent_result_event(_audit_protocol_result(
                         "approve", int(candidate["proposal_revision"]),
                         "Reviewed the unchanged Consumer candidate.",
@@ -2582,26 +2686,6 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
         super().__init__()
         self.audit_attempts = 0
 
-    def __call__(self, _command, *, prompt: str, **kwargs) -> ProcessRunResult:
-        self.prompts.append(prompt)
-        audit_turn = "Candidate revision\n" in prompt
-        if audit_turn:
-            self.audit_attempts += 1
-            thread_id = "authorization-audit-session"
-        else:
-            thread_id = "authorization-consumer-session"
-        records = [
-            {"type": "thread.started", "thread_id": thread_id},
-            *self._records_with_consumer_skill_receipt(prompt),
-        ]
-        output = _native_audit_stream(native_consumer_stream_for_command(
-            "\n".join(json.dumps(record) for record in records), list(_command),
-        ))
-        callback = kwargs["on_stdout_line"]
-        for line in output.splitlines():
-            callback(line)
-        return ProcessRunResult(returncode=0, stdout=output, stderr="")
-
     def records(self, prompt: str) -> list[dict[str, object]]:
         if "Candidate revision\n" not in prompt:
             return [
@@ -2639,6 +2723,7 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                     )
                 )
             ]
+        self.audit_attempts += 1
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         if self.audit_attempts == 1:
             return [
@@ -2693,6 +2778,7 @@ class RetryExhaustionProtocolExecutor(AuthorizationRecoveryProtocolExecutor):
     def records(self, prompt: str) -> list[dict[str, object]]:
         if "Candidate revision\n" not in prompt:
             return super().records(prompt)
+        self.audit_attempts += 1
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         return [
             _agent_result_event(
@@ -2776,6 +2862,35 @@ def _enqueue(
     )
     assert task is not None
     return task.id
+
+
+def _protocol_worker_diagnostics(
+    worker: DingTalkAutoReplyWorker,
+    task_id: int,
+) -> dict[str, object]:
+    task = worker.store.get_reply_task(task_id)
+    if task is None:
+        return {"task": None, "runs": []}
+    runs = worker.store.list_agent_runs_for_task_generation(
+        task.id,
+        task.execution_generation,
+    )
+    return {
+        "task": {
+            "status": task.status,
+            "error": task.error,
+            "attempts": task.attempts,
+            "available_at": task.available_at,
+        },
+        "runs": [
+            {
+                "role": run.role.value,
+                "status": run.status,
+                "structured_error_json": run.structured_error_json,
+            }
+            for run in runs
+        ],
+    }
 
 
 def test_queued_task_uses_orchestrator_without_alternate_runtime(tmp_path: Path):
@@ -3189,7 +3304,10 @@ def test_authorization_recovery_respects_task_attempt_limit(
     assert completed is not None
     assert completed.status == "failed"
     assert completed.attempts == 1
-    assert executor.audit_attempts == 1
+    assert executor.audit_attempts == 1, _protocol_worker_diagnostics(
+        worker,
+        task_id,
+    )
 
 
 def test_worker_stops_retryable_orchestration_at_attempt_limit(tmp_path: Path):
@@ -4385,9 +4503,12 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
         [trigger],
         executor,
     )
-    _enqueue(worker.store, trigger)
+    task_id = _enqueue(worker.store, trigger)
 
-    assert worker.consume_once(max_tasks=1) == 1
+    assert worker.consume_once(max_tasks=1) == 1, _protocol_worker_diagnostics(
+        worker,
+        task_id,
+    )
 
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None

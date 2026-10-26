@@ -2,9 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import sqlite3
 
 from app.agent_effect_guard import provider_receipts
-from app.store import AutoReplyStore
 
 
 def _command(output, *, exit_code: int = 0, kind: str = "command_execution"):
@@ -114,14 +114,19 @@ def test_consumer_role_keeps_report_documents_without_controlled_write_tools(tmp
     """The role catalog is the execution boundary; old event diagnosis is not."""
     from app.agent_cli import build_role_server
     from app.consumer_agent import ConsumerAgentRunner
+    from app.current_database_schema import create_current_database_schema
+    from app.task_entity_storage import update_task_cas
+    from tests.support.native_task_seed import seed_native_task
 
     db_path = tmp_path / "role.sqlite3"
-    store = AutoReplyStore(db_path)
-    assert store.enqueue_reply_task(
-        conversation_id="catalog-conversation", conversation_title="Catalog test",
-        single_chat=False, trigger_message_id="catalog-message", trigger_create_time="",
-        trigger_sender="", trigger_text="", execution_generation="catalog-test",
-    )
+    with sqlite3.connect(db_path) as db:
+        db.row_factory = sqlite3.Row
+        create_current_database_schema(db)
+        seed_native_task(db, 1, "reply", "pending")
+        assert update_task_cas(
+            db, task_id=1, expected={"kind": "reply", "status": "pending"},
+            changes={"execution_generation": "catalog-test"},
+        ) is not None
     consumer = {tool.name for tool in asyncio.run(build_role_server(
         "consumer", task_id=1, db_path=db_path,
     ).list_tools())}

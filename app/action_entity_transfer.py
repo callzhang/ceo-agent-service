@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import sqlite3
-from typing import Iterable
+from typing import Iterable, Mapping
 
 from app import action_storage
 from app.action_entity_storage import append_action_receipt, create_action, add_action_observer
@@ -91,6 +91,16 @@ def _rowdict(cursor, row) -> dict:
     return dict(zip((item[0] for item in cursor.description), row, strict=True))
 
 
+def _historical_reviewed_steps(candidate: Mapping[str, object], selection: Mapping[str, object] | None):
+    """Resolve the frozen Store21.1 candidate branch without current Run readers."""
+    from app.model_action_schema import candidate_option
+
+    data = json.loads(candidate["candidate_json"])
+    proposal = data.get("proposal") if selection is None else candidate_option(
+        candidate["candidate_json"], selection["option_key"]).get("plan")
+    return proposal.get("actions", []) if isinstance(proposal, dict) else []
+
+
 def _candidate_action(db: sqlite3.Connection, execution_id: int, action_index: int) -> tuple[dict, dict]:
     """Resolve the action through its exact candidate, execution and selection FKs."""
     from app.action_storage import (
@@ -98,7 +108,6 @@ def _candidate_action(db: sqlite3.Connection, execution_id: int, action_index: i
         CANDIDATE_SELECTION_SQL,
     )
     from app.task20_definitions import task20_projection
-    from app import shared_action_lifecycle
 
     task_sql = task20_projection("reply_tasks")
     cursor = db.execute(f"""select c.*,t.business_object_key,e.review_id,e.selection_id
@@ -128,7 +137,7 @@ def _candidate_action(db: sqlite3.Connection, execution_id: int, action_index: i
                 or selected["review_id"] != candidate["review_id"]):
             raise ValueError("candidate action selection is not bound to its exact approved review")
         selection = selected
-    steps = shared_action_lifecycle.reviewed_action_steps(db, candidate, selection=selection)
+    steps = _historical_reviewed_steps(candidate, selection)
     if not 0 <= action_index < len(steps):
         raise ValueError("candidate action index is outside its exact approved plan")
     return candidate, steps[action_index]
@@ -174,7 +183,6 @@ def _prepared_candidates(db: sqlite3.Connection) -> dict[tuple[str, str], dict]:
     """Index only steps of an exact approved execution and selected branch."""
     from app.action_storage import CANDIDATE_EXECUTION_SQL, REVIEW_CANDIDATE_SQL, CANDIDATE_SELECTION_SQL
     from app.task20_definitions import task20_projection
-    from app.shared_action_lifecycle import reviewed_action_steps
 
     result = {}
     executions = db.execute(f"select id from ({CANDIDATE_EXECUTION_SQL}) order by id").fetchall()
@@ -197,7 +205,14 @@ def _prepared_candidates(db: sqlite3.Connection) -> dict[tuple[str, str], dict]:
             if (selection is None or selection["candidate_id"] != candidate["id"]
                     or selection["review_id"] != candidate["review_id"]):
                 raise ValueError("candidate execution selection is not bound to its exact review")
-        steps = reviewed_action_steps(db, candidate, selection=selection)
+        if selection is None:
+            steps = _historical_reviewed_steps(candidate, None)
+        else:
+            from app.model_action_schema import candidate_option
+
+            selected = candidate_option(candidate["candidate_json"], selection["option_key"])
+            proposal = selected.get("plan") if isinstance(selected, dict) else None
+            steps = proposal.get("actions", []) if isinstance(proposal, dict) else []
         for action_index, step in enumerate(steps):
             candidate, step = _candidate_action(db, execution_id, action_index)
             identity = step["action_identity"]

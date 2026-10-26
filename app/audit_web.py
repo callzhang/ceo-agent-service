@@ -3547,7 +3547,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                       select 1
                       from schedule_occurrences as stale_run
                      where stale_run.execution_kind='reply_task'
-                       and cast(stale_run.execution_id as integer)=reply_tasks.id
+                       and CAST(stale_run.execution_id AS INTEGER)=reply_tasks.id
                        and exists (
                            select 1
                            from schedule_occurrences as later_run
@@ -3762,7 +3762,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                       and coalesce(newer_error.resolved_at, '')=''
                   )
                   and not (
-                    error_event.conversation_id='work_summary_input'
+                    coalesce(error_event.conversation_id, '')='work_summary_input'
                     and exists (
                       select 1
                       from ({WORK_SUMMARY_INPUT_SQL}) as completed_input

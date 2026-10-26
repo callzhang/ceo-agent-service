@@ -1351,13 +1351,29 @@ def test_owned_executor_supports_non_streaming_runtime_probe_calls(tmp_path: Pat
     assert result.stdout == "probe"
 
 
+def _minimum_parent_fd_count() -> int:
+    """Exclude transient descriptors opened by process-wide watcher threads."""
+    deadline = time.monotonic() + 0.25
+    counts = []
+    while time.monotonic() < deadline:
+        counts.append(len(os.listdir("/dev/fd")))
+        time.sleep(0.005)
+    return min(counts)
+
+
 def test_repeated_fast_exit_runs_do_not_leak_parent_file_descriptors(tmp_path: Path):
     # This assertion is about descriptors owned by the executor, not delayed
     # finalizers from an earlier pytest item.  Popen/pipe wrappers can be held
     # briefly by cyclic objects in unrelated tests, so establish a deterministic
     # collection boundary before both process-global measurements.
     gc.collect()
-    initial_fd_count = len(os.listdir("/dev/fd"))
+    initial_fd_count = _minimum_parent_fd_count()
+    control_fd = os.open(__file__, os.O_RDONLY)
+    try:
+        assert _minimum_parent_fd_count() == initial_fd_count + 1
+    finally:
+        os.close(control_fd)
+    assert _minimum_parent_fd_count() == initial_fd_count
 
     for _ in range(12):
         result = _CancellableProcessExecutor(cwd=tmp_path)(
@@ -1371,7 +1387,7 @@ def test_repeated_fast_exit_runs_do_not_leak_parent_file_descriptors(tmp_path: P
         assert result.returncode == 0
 
     gc.collect()
-    assert len(os.listdir("/dev/fd")) <= initial_fd_count
+    assert _minimum_parent_fd_count() <= initial_fd_count
 
 
 def test_owned_executor_cleans_inherited_pipe_child_after_leader_exit(tmp_path: Path):

@@ -12,7 +12,11 @@ def test_native_harness_accepts_verified_final_input_without_remigration(tmp_pat
     result = _publish_email_pair(Path(__file__).resolve().parents[1], path)
     assert result['store'] == STORE_SCHEMA_VERSION
     assert result['email'] == EMAIL_SCHEMA_VERSION
-    assert result['core_tables'] == 10
+    from app.current_schema_manifest import current_objects
+    expected_tables = {name for kind, name, _owner, _sql in current_objects(email_ledger=True)
+                       if kind == "table"} - {"email_schema_migrations"}
+    assert {"task_inputs", "runtime_attempts", "schedule_occurrences"} <= expected_tables
+    assert result['core_tables'] == len(expected_tables)
     assert result['source_body_table_present'] is False
     assert result['action_types'] > 29
 

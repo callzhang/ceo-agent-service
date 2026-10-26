@@ -376,7 +376,7 @@ def test_context_overflow_fresh_retry_clears_only_the_failed_route_session():
     cleared: list[tuple[str, str, str]] = []
     failed_attempt = SimpleNamespace(
         id=73,
-        agent_run_id=19,
+        parent_id=19,
         route_name="codex_oauth",
         status="failed",
         session_mode="resume",
@@ -704,7 +704,7 @@ def test_process_failure_detail_redacts_original_lines_before_joining_fields():
 
 @pytest.mark.parametrize(("raw", "secret"), [
     ("Bearer\nabcdefghi", "abcdefghi"),
-    ("Basic\nYWJjZGVmZ2g=", "YWJjZGVmZ2g="),
+    ("Basic\ndXNlcjpwYXNzd29yZA==", "dXNlcjpwYXNzd29yZA=="),
     ("token=\nsecret-value", "secret-value"),
 ])
 def test_process_failure_detail_keeps_cross_line_credential_redaction(raw, secret):

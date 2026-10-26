@@ -662,7 +662,7 @@ def execute_historical_model_actions(
         statuses = email_store.direct_action_statuses_for_plan(
             action_plan["action_plan_id"]
         )
-        if statuses.get(str(action_id)) == "done":
+        if statuses.get(action_id) == "done":
             continue
         reused_receipts_only = False
         result = _run_next_direct_action(
@@ -2428,7 +2428,7 @@ def reconcile_historical_operations(
         complete = True
         reused_receipts_only = True
         for action_id in operation["action_ids"]:
-            if statuses.get(str(action_id)) == "done":
+            if statuses.get(action_id) == "done":
                 continue
             reused_receipts_only = False
             result = _run_next_direct_action(

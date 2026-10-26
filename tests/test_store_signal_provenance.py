@@ -101,7 +101,7 @@ def test_store_keeps_observed_and_reference_only_source_types_distinct_and_body_
     reading = store.business_source_reader().resolve(cited_fact.source)
     assert isinstance(reading, UnavailableSource)
     assert reading.reason is SourceUnavailableReason.REFERENCE_ONLY
-    assert db.execute("select count(*) from provenance").fetchone()[0] == 0
+    assert db.execute("select count(*) from provenance").fetchone()[0] == 2
     assert all(body not in row[0] for row in db.execute(
         "select json(payload_json) from actions where record_type='business_task_signals'"
     ))
@@ -146,7 +146,7 @@ def test_semantic_service_carries_exact_binding_and_deduplicates(db, binding):
     assert store.get_business_task_signal_in_transaction(signal_id=first, _db=db).source == binding
 
 
-def test_store_public_signal_reads_and_console_reconstruction(db, tmp_path, monkeypatch):
+def test_store_public_signal_reads_and_console_reconstruction(db, tmp_path):
     from app.business_source_reader import AvailableSource
     from app.business_storage import insert_business
     from app.action_business_storage import insert_business_action
@@ -157,10 +157,7 @@ def test_store_public_signal_reads_and_console_reconstruction(db, tmp_path, monk
     path = tmp_path / "final-source-component.sqlite3"
     with sqlite3.connect(path) as target:
         db.backup(target)
-    with monkeypatch.context() as patch:
-        # Current constructor selection is still a separate integration gate.
-        patch.setattr(AutoReplyStore, "_ensure_initialized", lambda self: None)
-        store = AutoReplyStore(path)
+    store = AutoReplyStore(path)
     public_id = store.create_business_task_signal(
         **{field: getattr(binding, field) for field in (
             "source_type", "source_ref", "source_time", "conversation_id",

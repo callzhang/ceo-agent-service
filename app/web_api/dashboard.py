@@ -10,17 +10,15 @@ import sqlite3
 
 from fastapi import FastAPI, Query
 
-from app.store import NATIVE_MEETING_RUN_SQL, NATIVE_MEETING_TASK_SQL
+from app.store import NATIVE_MEETING_RUN_SQL
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.action_storage import (
-    task_delivery_projection,
     SYNC_ACTION_PROJECTIONS,
 )
 from app.configs_definitions import config_projection
 from app.state_definitions import state_projection
 from app.email_canonical_storage import email_classification_projection
-from app.storage_payload import TASK_RECORD_TYPES
 
 
 # Only executable sources; parent projects, saved inputs and completed history

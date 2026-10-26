@@ -19,7 +19,6 @@ from threading import Barrier, Event, Thread, get_ident
 import pytest
 
 import app.store as store_module
-from tests.wechat.support import approve_delivery
 from tests.support.native_run_rows import (
     insert_native_run as _insert_native_run,
     insert_run_row as _insert_run_row,
@@ -32,7 +31,6 @@ from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL as EXTERNAL_ACT
 from app.action_storage import insert_email_action, update_email_action, error_set_parts, insert_error_action
 from app.store import AGENT_RUN_SQL, TASK_LOGICAL_RUN_SQL
 
-RUNTIME_ATTEMPT_SQL = "select *, parent_id as agent_run_id from runtime_attempts"
 from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL
 from app.state_storage import update_state_rows, insert_state
 from app import task_lifecycle_storage as task_claims
@@ -47,6 +45,8 @@ from app.store import (
     AutoReplyStore,
 )
 from tests.wechat.support import create_wechat_delivery
+
+RUNTIME_ATTEMPT_SQL = "select *, parent_id as agent_run_id from runtime_attempts"
 
 
 class _Inserted:
@@ -4318,20 +4318,27 @@ def test_store_connections_close_after_context_exit(tmp_path: Path):
 
 
 def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatch):
+    from app import current_database_schema
+
     calls: list[Path] = []
-    original_initialize = AutoReplyStore._initialize
+    original_create = current_database_schema.create_current_database_schema
 
-    def counted_initialize(self: AutoReplyStore) -> None:
-        calls.append(self.path)
-        original_initialize(self)
+    def counted_create(db: sqlite3.Connection) -> None:
+        main = next(row[2] for row in db.execute("pragma database_list") if row[1] == "main")
+        if main:
+            calls.append(Path(main).resolve())
+        original_create(db)
 
-    monkeypatch.setattr(AutoReplyStore, "_initialize", counted_initialize)
+    monkeypatch.setattr(current_database_schema, "create_current_database_schema", counted_create)
     db_path = tmp_path / "worker.sqlite3"
+    # Existing blank files bypass the suite's pre-built Store template, so this
+    # test observes the real strict-current constructor and its process cache.
+    db_path.touch()
 
     AutoReplyStore(db_path)
     AutoReplyStore(db_path)
 
-    assert calls == [db_path]
+    assert calls == [db_path.resolve()]
 
 
 def test_store_skips_schema_work_when_another_process_finished_it(

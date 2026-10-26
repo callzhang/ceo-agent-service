@@ -2,10 +2,16 @@
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from functools import lru_cache
+import hashlib
+import json
 from pathlib import Path
 import sqlite3
 
-from app.current_schema_manifest import current_objects, schema_objects
+from app.current_schema_manifest import schema_objects
+
+SOURCE_DIGEST = "eb0d83ce2c7f1bfa2fc6bbaac352c2672472686e3636a5c5352363d6e37a6f74"
+TARGET_DIGEST = "7b4c91875faf9cf1bc57f912fc692b7c2a3966a03b9b2e384b2d8470ce0c832b"
 
 SOURCE_STORE_VERSION = "2026-10-25.1"
 TARGET_STORE_VERSION = "2026-10-25.2"
@@ -16,10 +22,30 @@ RETIRED_TRIGGER_NAME = "trg_actions_public_reference_update"
 RETIRED_TRIGGER_SQL = "CREATE TRIGGER trg_actions_public_reference_update before update of legacy_key on actions when new.legacy_key<>old.legacy_key and exists(select 1 from actions where predecessor_review_id=old.id or candidate_id=old.id or review_id=old.id or selection_id=old.id or execution_id=old.id) begin select raise(abort,'FOREIGN KEY constraint failed'); end"
 
 
+@lru_cache(maxsize=1)
+def target_objects():
+    from app.signal_source_owner_schema_release import source_objects as store_252_objects
+
+    objects = store_252_objects()
+    digest = hashlib.sha256(json.dumps(
+        objects, ensure_ascii=False, separators=(",", ":"),
+    ).encode()).hexdigest()
+    if digest != TARGET_DIGEST:
+        raise ValueError("frozen Action trigger target declaration changed")
+    return objects
+
+
+@lru_cache(maxsize=1)
 def source_objects():
-    objects = (*current_objects(email_ledger=True),
+    objects = (*target_objects(),
                ("trigger", RETIRED_TRIGGER_NAME, "actions", RETIRED_TRIGGER_SQL))
-    return tuple(sorted(objects, key=lambda obj: (obj[0], obj[1])))
+    result = tuple(sorted(objects, key=lambda obj: (obj[0], obj[1])))
+    digest = hashlib.sha256(json.dumps(
+        result, ensure_ascii=False, separators=(",", ":"),
+    ).encode()).hexdigest()
+    if digest != SOURCE_DIGEST:
+        raise ValueError("frozen Action trigger source declaration changed")
+    return result
 
 
 def _marker(db):
@@ -46,7 +72,7 @@ class ActionReferenceTriggerRelease:
     published: bool = False
 
     def _verify(self, db, *, target):
-        expected = current_objects(email_ledger=True) if target else source_objects()
+        expected = target_objects() if target else source_objects()
         marker = _marker(db)
         valid_marker = (marker is not None and marker[0] == TARGET_STORE_VERSION) if target else marker == self.source_marker
         if (not valid_marker or schema_objects(db) != expected
@@ -77,8 +103,6 @@ class ActionReferenceTriggerRelease:
         self._convert(inverse=False)
 
     def verify_loaded(self):
-        from app.current_schema_manifest import require_current_pair
-        require_current_pair(self.database_path)
         with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("begin")
             self._verify(db, target=True)

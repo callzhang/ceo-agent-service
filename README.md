@@ -707,7 +707,7 @@ cd /path/to/ceo-agent-service
 npm test
 ```
 
-`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
+`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行完整 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。GitHub Quality 将收集到的全部 Python 用例按 node ID 稳定分到四十八个独立 runner，每个 runner 使用一个 pytest worker，并保持每进程 2 GB／5 分钟的固定限制。CI 汇总各分片全部失败并输出具体节点，不能将达到资源上限的运行视为通过；所有分片、Ruff、前端测试、构建和浏览器测试都通过才算完整检查通过。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
 
 ```bash
 npm install --prefix frontend

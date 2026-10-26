@@ -2,6 +2,14 @@
 
 ## 数据库结构与迁移合同
 
+当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本迁移和仅 Email 变化的迁移。当前 Signal 发布的上一版是 Store `2026-10-25.2`／Email54；更早的 Store `2026-10-19.12`／Email53 Action Entity 路径已退出自动发布分派。不能把旧 marker 当成可直接迁移的证据；不匹配的 schema 在任何写入前失败关闭。下方更早的阶段记录描述的是当时的候选与已完成工作，不代表当前可自动升级范围。
+
+历史 Action Entity 工具仅以固定 Store19.12／Email53 source 与 Store21.1／Email53 target 声明，并从该发布版本生成的固定 schema fixtures 读取；它保留为显式历史工具与迁移回归，不由部署选择器调用，也不声称能迁移到后续 Task／Run schema。
+
+Store25.3／Email54 的标准发布选择器只接受精确的 Store25.2／Email54 Signal 来源声明，
+调用配对的来源归属迁移并沿用现有发布、加载后核验、回滚和最终核验流程。其余旧版或
+混合版本仍失败关闭。此代码提交不代表生产切换；生产版本以标准部署读回为准。
+
 ### 历史业务读取归一（2026-10-25）
 
 当前业务库存与筛选只使用已有 Business Task／正式项目模型；旧 Project／Todo／Update
@@ -20,7 +28,8 @@ Store `2026-10-25.2`／Email54 退休唯一失效触发器
 Task/Run 统一退出 `actions`。当前声明保留全部实际外键和其他父引用触发器。
 Store25.1→25.2 是显式事务迁移，仅删除该触发器并更新版本标记；不重建表或修改
 业务行。schema inverse 恢复精确原始 SQL 和版本时钟，保留迁移后新增的数据。
-部署静默读取只接受精确上一版本 Store25.1；普通构造器仍拒绝旧/混合声明。
+当前部署静默读取只接受精确上一版本 Store25.2／Email54；Store25.1 已退役，
+普通构造器仍拒绝旧/混合声明。静默检查只读来源，不改变等待和租约判断。
 旧 A5b 工具保留其 Store23.1→25.1 固定声明，退出当前自动发布分派。
 复现、逐表事实核对、真实旧代码冷启动和发布读回见
 [触发器退休验收](action-reference-trigger-retirement-validation.md)。
@@ -253,11 +262,11 @@ created_at 及整个原始 JSONB payload 不改写。三个 nullable TEXT 物理
 只有 prepared 父类型可持有它们。SQL NULL 表示不存在的子事实，文本 `null`／`{}`
 保留为已存在的 provider 字符串；claim 与 receipt 的时钟独立于准备时钟。
 
-Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟，且 `prepared_receipt_id` 精确指向其接受回执，避免与同一 owner 的 Sent/canonical provider body 混淆。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。canonical provider 结果通过 reference-only metadata receipt 直接指向当前 immutable body；普通 provider receipt 不会仅因 ID 较新而改变该绑定。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
+Task3（2026-10-21）将 reviewed、direct-email、prepared-message 与 Sent 执行恢复切换到同一 Action owner。调用方保留原事务、审批、provider 核验和不确定结果恢复边界；prepared 的准备、claim、接受回执仍在各自原有提交边界。prepared Action 在真实发送调用时才记录 provider operation；prepared facts 不借用 Sent 或 provider 时钟，且 `prepared_receipt_id` 精确指向其接受回执，避免与同一 owner 的 Sent/canonical provider body 混淆。审查执行在每个 execution/action_index 保留一个可更新的当前观察，旧执行的观察与 provider receipt 仍独立保留。direct-email retry 复用原 Action identity 并追加各次执行观察；retry request 是不可替换的追加事实，同一 Action identity 与 attempt number 的再次插入会被拒绝。Sent 历史缺失的 canonical operation、target、digest 或 action identity 保持 NULL；已核验的 failed-Audit 恢复可把这些事实绑定到原 provider body receipt，不复制正文、不重发。canonical provider 结果通过 reference-only metadata receipt 直接指向当前 immutable body；普通 provider receipt 不会仅因 ID 较新而改变该绑定。复杂 unsubscribe 保留原专有流程；这次切换不改变任何审批、授权、核验或重试规则。
 
 Task4（2026-10-21，候选）将 direct-email History、Attention、队列快照、重要邮件清单及邮件分类可观测性读取切换到 Action 与 Action Receipt。发送详情以 Action 的物理 ID、正文、准确 Sent 回执和 `observed_at` 展示；provider 正文只从该 Action 的 provider receipt 读取，缺失的 operation/target 显示为未提供，不合成来源事实。多个 Run observer 仍对应一条发送效果。撤回只更新同一 Action 的撤回字段，不新增发送或改写原发送回执；feedback token 从同一 Action 取得，并继续按其原 conversation/trigger 身份关联消息和反馈。邮件退订仍走其专有流程。
 
-Task6B 的 Dashboard Email 队列从 `DIRECT_EMAIL_ACTION_SQL` 和当前分类投影读取 pending、processing 及按 worker 原 retry 谓词可重试的 failed Action；队列 ID 使用 common Action 物理 ID，标题、状态和空详情链接维持原 API 契约。Email Attention 的 common Action ID 以字符串输出，符合 `AttentionRow.id` 的严格响应类型；失败筛选和工作者状态投影保持现有语义。
+Task6B 的 Dashboard Email 队列从 `DIRECT_EMAIL_ACTION_SQL` 和当前分类投影读取 pending、processing 及按 worker 原 retry 谓词可重试的 failed Action；队列 ID 使用 common Action 物理 ID，标题、状态和空详情链接维持原 API 契约。Email Attention 的 common Action ID 以字符串输出，符合 `AttentionRow.id` 的严格响应类型；失败筛选和工作者状态投影保持现有语义。未解决的全局服务错误即使没有 conversation/message identity 仍显示在 Attention；SQL NULL 不得把它们排除。
 
 Task5A（2026-10-21）在当前真实 prepared-message caller 与 reviewed SystemExecutor 路径中，以 `agent_message_delivery_key` 对应的 channel/delivery key，将已准备的 Action owner 绑定到已审批选项的 reviewed Action，再由同一 owner 承载 dispatch observation、canonical provider receipt、Sent receipt 和 observer。选项 key、task generation 与 proposal revision 保持在源 delivery identity 中；provider 仍只调用一次。
 
@@ -496,10 +505,19 @@ legacy-project 深链接保留。D1b 不改变物理声明或旧记录。独立 
 Project CRM 搜索、确认和清除关联仍在原业务写事务中；搜索只存本地候选，
 不替代已确认关联，也不写外部 CRM。
 
+前端只保留专用 `LegacyProjectDetail` 历史详情适配器，不再把正式 Task 列表映射为旧 Project 摘要，也不从历史 Todo 推算当前进度。无调用的三个 Work Project/Todo 批量列表 Store API 已退休；精确历史 getter、来源、事实与回执读取保留。
+
 原 `business_source_documents` 正文表及数字容器 ID 退休。Signal DAO 仅持久化
-来源身份、精确版本、hash／字节数及 locator；一个 owner 直接内联，第二个 owner
-在原 savepoint 中把同一精确来源提升到共享 provenance，保留 Signal ID 和事实。
-推广失败时整个 savepoint 回滚。证据引语、来源关系和已采用业务事实仍保持原义。
+来源身份、精确版本、hash／字节数及 locator。Store25.3 目标把所有来源版本统一交给既有
+`provenance` owner；Signal 仅保存必需 `provenance_id` 与标题、context、dedupe_key、created_at
+四项自身事实。首个 Signal 即创建或复用 parent，第二个 Signal 不修改第一个 Signal；
+父来源与 Signal 插入失败时原 savepoint 整体回滚。运行读取只走 parent join，无 inline
+兼容或 promotion。显式25.2→25.3发布与当前数据 inverse 保留来源值/类型、公开与物理
+身份、关联和回执；旧17槽仅供迁移/回退工具。该目标尚待副本验收和标准发布，基线生产仍是25.2。
+证据引语、来源关系和已采用业务事实保持原义。详见[Signal来源归属](signal-source-owner-unification.md)。
+历史正文退休工具 `final_action_schema` 的17槽投影固定在工具内部，不能借用当前5槽 reader；
+它仍按原精确 binding/read_body 合同逆迁共享与内联来源。历史 Action ABI 测试使用独立
+Task20/Run11 fixture，当前 Signal/来源接口测试使用实际 current schema，不混用两者。
 TaskAgent 按实际生成任务的 runtime attempt、session 和记录范围检查完整原生输入；
 定位器验证 CLI 原始行 hash、JSON leaf、字符范围、完整 UTF-8 hash／字节数。
 单独直接注入的文本仅在明确选择 `plain_utf8` 时按该格式读取；通常来源使用
@@ -1337,6 +1355,9 @@ Python 的 email 包无法解析的结构化邮件头）只跳过这一条、游
 Email worker 领取、执行动作，并以服务器的应答为结果（Derek, 2026-09-25：不需要回读，服务器接受就够了）。
 每次 provider observation scan 在同一 SQLite 事务中发布消息状态、authoritative folder 的缺失对账和 folder generation 时间；generation 时间单独按账号/文件夹保存，读取仍返回该文件夹最近一次完整扫描时间。相同消息状态不重复写消息行或其索引，扫描成员先写入连接级临时表再用索引对账，避免在共享数据库写锁期间构造超长身份列表。这样保留整代原子可见性，同时限制 Email worker 对共享 SQLite 的写锁占用。
 直接邮件动作领取先从状态索引找出 pending/failed 动作，并按分类主键核对它属于已处理分类的当前 ActionPlan，再通过 `(classification_id, action_plan_id)` 索引读取该分类的全部动作组。仅旧计划残留未完成动作的分类不会加载历史计划正文；同分类旧 processing 动作仍参与阻塞判断。候选探测与 `BEGIN IMMEDIATE` 内的重核都使用这条路径。状态、账号范围、重试时间、依赖、动作优先级和条件更新保持不变，不在写锁内遍历整张 `email_actions`。
+同一个不可变 ActionPlan 再次写入时，系统按 plan 与 operation 复用已有 Action owner；初始 `created_at` 保留为来源事实，不参与 owner 身份冲突判断，也不因重放而改写。
+Direct Email 状态与回执投影保留旧公开 source action ID 的顺序；迁移后使用 Action 物理整数 ID 时，按稳定 source identity 排列查询结果。
+Direct Email attempt 写入在 Action 状态 CAS 与 receipt 插入后再次核对 owner 状态、开始时间、重试时间和更新时间；若事务内观察到 owner 被改动，整笔 attempt 写入回滚。owner 原生 NULL 与公开投影空字符串保持区分。
 当前统一 `actions` 表上的动作投影无法把分类过滤下推到动作行，对每个候选分类各读一次会各扫一遍全部直接动作：2026-10-23 有约 600 个 pending 动作时，一次领取评估约 17 秒，且 `BEGIN IMMEDIATE` 内的重核会重复一遍并持有写锁。现在候选分类的同组动作按每批 500 个分类一次读出，再在内存中分组，选择结果与逐分类读取一致（用生产库副本逐行比对），评估降到约 0.3 秒。
 稳定 Message-ID 查找若在多个文件夹命中，通常属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试。若移动动作的原 UID/UIDVALIDITY 定位失效，执行器只读检查解析后的目标文件夹；仅当该文件夹恰有一条同一稳定消息身份且满足目标状态，才以 `readback_noop` 记录已发生的移动，不再派发 MOVE。目标文件夹没有唯一匹配或状态不满足时仍保留失败，不以其他文件夹的匹配推断成功；超时、DNS 和连接错误仍可重试。
 执行前仍先读一次当前状态，已满足就不写。改标记的动作（标已读、标星、贴标签）在服务器接受 STORE 后即完成；
@@ -1538,6 +1559,8 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 
 ### 会议投递目标
 
+确认既有主消息已送达的状态恢复会保留原准备正文和 provider 回执；当持久化决策含 `_service_audit` 时，先核对 Audit `approve` 与候选 SHA-256 绑定，再由 Meeting 决策读取器解析原候选。无效封套不恢复；未带封套的历史回执继续沿既有核验路径处理。
+
 日历仅用于确认参会名单，不决定业务内容的披露受众。会议跟进使用同一 `MESSAGE_AUDIENCE_CONTRACT`：根据实际内容、近期讨论、完整当前成员、
 稳定身份、当前职位职责和具体披露范围选择群或明确私聊受众，不因业务内容或参会人数强制发群。
 相同适当受众合并一条；不同受众才拆分。明确业务私聊的稳定 `user_id` 必须唯一匹配来源参会人
@@ -1573,9 +1596,9 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 
 Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。会议原文明确把后续工作分配给精确收件人时，该分工本身可证明向其分享完成任务所需的简要结论和必要背景；不要求另有逐字发送指示，也不能据此扩大到无关或敏感内容，职位本身不构成授权。运行器传来的 Codex JSONL 先提取最终 assistant 消息；路由器已规范化的纯 JSON 则直接解析，两种输入均执行相同结果模型校验和候选 SHA-256 绑定校验。审核结果以 `_service_audit` 元数据与原候选共同保存，并绑定候选 SHA-256；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。没有发送回执、没有活动领取，且因候选与既有收件目标绑定冲突失败的旧任务，可由最新 Attempt 通过明确的 audit-only 恢复入口重新读取会议来源并审核原冻结候选；若上一次 Audit 为 `return`，同一入口可在用户明确请求后再次复核。入口要求精确候选 SHA-256，不重新生成或改写目标/正文，并先剥离旧审核封套再解析候选。只有同一候选的新独立 Audit `approve` 才以 CAS 重新进入原投递 worker；`return`、`reject`、Audit 错误或候选变化均保留失败，不触发发送。`return` 携带 rule/observation/requested_revision 并进入最多三轮的反馈修订，新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变；新会议投递键按规范化收件目标区分，旧键只有在已绑定目标与本次目标完全一致时才复用，避免跨目标误用回执。重跑与来源恢复仍会拦截已有准备动作；provider 回执与幂等投递保护不变。
 
-定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通和敏感版本的 prepared outbound 都由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
+定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通、敏感和目标绑定版本的 prepared outbound 即使还没有 provider 回执，也会阻止重放；这些动作由原有投递恢复路径处理，重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
-Meeting planner 与 Audit 的 RuntimeAttempt 分别使用 `meeting` 和 `meeting_audit` workload kind，并以准确 Meeting Run 十进制 ID 为 key；native `parent_id` 都指向该 Run。显式迁移转换器保留新 source 的数字 `meeting_audit` key，也只在转换中处理历史 `meeting` 加 `:audit` key。重放检查读取 TaskBusinessKey 中已保存的公开投递键及敏感版本，确保 Task ID 重映射后仍识别已有 prepared outbound。
+Meeting planner 与 Audit 的 RuntimeAttempt 分别使用 `meeting` 和 `meeting_audit` workload kind，并以准确 Meeting Run 十进制 ID 为 key；native `parent_id` 都指向该 Run。显式迁移转换器保留新 source 的数字 `meeting_audit` key，也只在转换中处理历史 `meeting` 加 `:audit` key。重放检查读取 TaskBusinessKey 中已保存的公开投递键，以及对应的敏感和目标派生版本，确保 Task ID 重映射后仍识别已有 prepared outbound。
 
 Meeting Codex 命令设置原生 `project_doc_max_bytes=0`，不再额外注入工作区 `AGENTS.md`。会议来源、工作人格和本轮冻结的托管 Skill 仍由服务提交；全局原生指令、Schema 和独立会话保持原样。
 
@@ -1881,6 +1904,8 @@ Task 需要来源明确的、可独立完成的交付物或行动，或由已证
 “X负责Y”仅描述职责，即使 Y 是独立业务领域，也不自动生成 Task；需要来源明确的独立行动/交付要求或真实行动项记录。
 保留 existing_attention_id 时，assessment 必须引用当前 `current_project_attention.assessment_json.evidence` 中至少一条完全相同的原始证据三元组（signal_id、source_ref、source_excerpt）；新证据只能补充，不能替代卡片原始证明。
 区别职责与行动时，“李四负责核实客户付款排期并反馈”是具体可执行 Task；“王五负责商务对账”若仅描述职能范围则是 ProjectContext。项目级风险的显示型建议可基于已保存职责，也可由唯一 overall_owner 承接跨职能协调，但不构成正式指派。
+
+以下共享正文存储与 B/C/D 未发布描述属于正文退休前的历史检查点；当前来源归属以本文前面的 Signal DAO 合同为准，现有库不保留该原文表。
 
 `business_source_documents` 保存不可变原文，Signal 通过真实 source_document_id 外键引用。
 只有来源类型/ref/时间、会话、作者 ID/姓名/类型和正文八项完全相同才共享正文；Signal ID、
@@ -4291,7 +4316,7 @@ Task3C progress-selection parity stores the selected source Selection's actual b
 
 Task3C2B3's bounded offline validator exercises the actual published predecessor's candidate DAO reads and supplement writer after current-fact inverse, database close/reopen, and two JSON-only metadata/handoff forward cycles. It also carries a new native Audit Review and Run, a supplement retirement/addition, and a current Action collision with independent provider receipt lineage through both cycles. The validator is unactivated conversion evidence; runtime constructors and provider behavior are unchanged.
 
-Task3E2 adds a native professional Run CRUD surface using canonical Task and Run IDs. Task family is inferred from `tasks.kind`; family provenance lives in `run_provenance`, Task Agent projection facts in `run_projections`, and invocation references follow `runtime_attempts.parent_id` where D1 proved the link. The native tests preserve Task Agent NULL transcript fields, Meeting source status/session/range/error, and OKR's absent lifecycle fields; historical OKR references do not gain a fabricated Run parent. Task2D1 subsequently moves the WorkSummary producer, its History/recovery readers, and WorkSummary-specific project repair reads onto native IDs. Meeting/OKR producers and History readers, Meeting Task detail hydration, generic dispatcher/runtime writer activation, CLI behavior, and release verification remain open. No constructor or production runtime activation occurred. See `task-3e2-professional-run-runtime-report.md` and `task-2d1-work-summary-runtime-report.md` for exact coverage and evidence.
+Task3E2 adds a native professional Run CRUD surface using canonical Task and Run IDs. Task family is inferred from `tasks.kind`; family provenance lives in `run_provenance`, Task Agent projection facts in `run_projections`, and invocation references follow `runtime_attempts.parent_id` where D1 proved the link. The Codex-session Meeting history reader gets its job identity from native `runs.task_id`; optional provenance `job_id` is not the Task identity source. The native tests preserve Task Agent NULL transcript fields, Meeting source status/session/range/error, and OKR's absent lifecycle fields; historical OKR references do not gain a fabricated Run parent. Task2D1 subsequently moves the WorkSummary producer, its History/recovery readers, and WorkSummary-specific project repair reads onto native IDs. Meeting/OKR producers and History readers, Meeting Task detail hydration, generic dispatcher/runtime writer activation, CLI behavior, and release verification remain open. No constructor or production runtime activation occurred. See `task-3e2-professional-run-runtime-report.md` and `task-2d1-work-summary-runtime-report.md` for exact coverage and evidence.
 
 Task3D1 extends the unactivated `runtime_attempts.parent_id` contract to permit an optional Run FK for any non-`agent_run` workload. The actual forward conversion assigns this owner only when the source workload key resolves through the typed Task Agent or Meeting Run map: plain/`decision_repair.N` Task keys and Meeting keys. Task backfill business keys and other operation keys remain unowned. The inverse verifies that each native Task/Meeting key still has its exact derivable Run owner and refuses mismatched, missing, or otherwise unrepresentable non-Agent parent facts before changing the schema; it then restores source non-Agent `parent_id` as NULL and returns the exact source public identity in `workload_key`. Two portable inverse/reforward cycles preserve the relationship after Run ID remapping. Operation-attempt leases and the active-lease index follow `workload_kind<>'agent_run'`, independently of parent ownership; tuple/ordinal and active-route keys remain unchanged. The target DDL intentionally does not impose extra workload/Run-provenance policy on non-Agent parent links. The JSON Run handoff also carries `runtime_attempt_parent_edges`, keyed by source physical attempt and Run IDs. Only a structured attempt whose canonical request Task matches an `okr_review_runs` parent may use this edge; inverse derives it from current native provenance and Task ownership, while forward validates both source endpoints and applies the typed owner map. Other unsupported parent shapes still refuse before DDL. The structured OKR producer remains outside this slice: it creates its professional Run after the validated CLI result, so the subsequent producer cutover must carry that exact returned `attempt_id`. No constructor, runtime caller, producer order, or migration is activated here.
 
@@ -4348,3 +4373,48 @@ Consumer 的原生输出段仅保留 schema 指纹及 JSON/decision 包装说明
 ### DWS 文档格式核验与字面内容
 
 Consumer共用文档工具继续提交原始Markdown/JSONML工件；已执行写入算写入成功，核验状态独立保留，不因未核验自动重写。当前本机DWS核验按钉钉Markdown的双等号高亮语义处理作者输入，要求完整JSONML证明相同文字、规范化词间边界、高亮范围与颜色，再执行整体内容及表格对齐检查；不全局删除标记或忽略内容差异。需要保留双等号的标识符使用代码格式或转义，说明位于按需读取的dingtalk-doc Skill，不增加通用prompt。DWS源码修复仅提交外部PR，本机版本化发布与自然行为验收分别记录于document-write-recovery-validation.md；无新增写入重试、Audit规则或session机制。
+
+
+Native Reply input owner correction: the existing exact Consumer-direct Email
+unsubscribe terminal operation reads channel and trigger JSON from the Task's
+current TaskInput. Task lifecycle/generation remain on the Task. Its existing
+status, generation, schema and lifecycle predicates are unchanged; the audited
+lifecycle and unrelated channels remain ineligible for that operation.
+
+Email observability reads completed Reply input identity facts from the retained
+TaskInput provenance when its body has been compacted. In-flight inputs continue
+to use their existing body. Classification/action filtering and exact account,
+plan, Task, generation and Audit bindings use that same owner; malformed or
+mismatched provenance does not expose a lineage. Input bodies are not restored.
+
+The terminal unsubscribe snapshot uses the same retained input provenance after
+compaction, including the original entry-reference bindings; Audit/owner/effect
+validation is unchanged. Direct Email plan status maps use native integer
+Action IDs, matching plan and historical-operation readers, so existing done
+receipts are recognized by the original recovery flow.
+
+Explicit Run-adoption conversion/inverse tools compare their historical
+predecessor Actions against the existing frozen Signal-source declaration,
+rather than the evolving runtime Actions declaration. The exact source catalog
+and all row/type/identity/receipt/inverse checks remain required. These tools
+are not constructor or runtime compatibility paths.
+
+Scheduled Reply Attention uses the exact declared `CAST(execution_id AS INTEGER)`
+expression to seek the existing schedule-occurrence expression index. SQLite
+compares the CAST type token for expression-index matching; its casing is kept
+identical to the declaration. Existing integer conversion, latest-dispatched
+selection and Attention eligibility are unchanged.
+
+Native Task due/metrics reads expose the physical status bound implied by the
+existing pending-phase and processing branches. This lets the existing
+kind/status/available-at index seek without scanning terminal history hidden
+behind the normalized lifecycle CASE. The same pending-phase owner is reused;
+all original source eligibility, time, lease and live-owner checks remain.
+
+After reconciling parallel dispatcher fixes, Task-backed dispatcher projections
+expose the original physical status directly. Pending eligibility uses the same
+existing Meeting waiting/pending/retry phases (pending elsewhere), and expired
+processing leases retain the same separate branch. The temporary normalized
+status CASE and its redundant eligibility predicates are retired together;
+no source phase or eligibility is reinterpreted. Email plan/operation readers
+and their status-map lookups use the same native integer Action identity.

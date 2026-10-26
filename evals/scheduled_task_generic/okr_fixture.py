@@ -170,6 +170,20 @@ class DocumentProvider:
                 if query in doc["title"].casefold()
             ]
             return {"documents": matches}
+        if command[1:3] == ["doc", "+list"]:
+            parent = command[command.index("--folder") + 1]
+            documents = [
+                {"nodeId": node, "name": doc["title"]}
+                for node, doc in self.fixture.documents().items()
+                if doc["parent_id"] == parent
+            ]
+            return {
+                "status": "success",
+                "complete": True,
+                "documents": documents,
+                "hasMore": False,
+                "failures": [],
+            }
         if command[1:3] != ["wiki", "+node-list"]:
             raise ValueError("Unconfigured synthetic provider operation")
         parent = command[command.index("--folder") + 1]
@@ -202,7 +216,11 @@ class DocumentProvider:
         node = "eval-doc-" + str(len(docs) + 1)
         docs[node] = {"title": name, "content": content, "parent_id": folder_id, "revision": 1}
         self.fixture.docs_path.write_text(json.dumps(docs, ensure_ascii=False))
-        return {"ok": True, "data": {"nodeId": node, "success": True}}
+        return {
+            "status": "success",
+            "complete": True,
+            "data": {"nodeId": node, "verified": True, "success": True},
+        }
 
     def overwrite_report_document(self, *, node_id, content, doc_format, expected_revision=None):
         if doc_format != "markdown":

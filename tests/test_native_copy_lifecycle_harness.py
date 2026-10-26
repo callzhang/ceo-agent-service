@@ -124,13 +124,29 @@ def test_native_candidate_rejects_missing_email_public_readback(tmp_path, monkey
         _exercise_current_email(path)
 
 
-def test_native_candidate_rejects_incomplete_email_pair(tmp_path):
+@pytest.mark.parametrize("damage", ["missing-table", "missing-email-version"])
+def test_native_candidate_rejects_incomplete_email_pair(tmp_path, damage):
+    from app.current_schema_manifest import schema_objects
+    from app.email_store import EmailStore
     from app.store import AutoReplyStore
 
-    path = tmp_path / "store-only.sqlite3"
+    path = tmp_path / "incomplete-pair.sqlite3"
     AutoReplyStore(path)
-    with pytest.raises((AssertionError, sqlite3.IntegrityError)):
+    EmailStore(path)
+    with sqlite3.connect(path) as db:
+        if damage == "missing-table":
+            db.execute("drop table emails")
+        else:
+            db.execute("delete from email_schema_migrations")
+        before = schema_objects(db)
+        versions = db.execute("select * from email_schema_migrations").fetchall()
+    with pytest.raises(sqlite3.IntegrityError, match=(
+        "unsupported or malformed Store" if damage == "missing-table" else "unsupported Email version"
+    )):
         _publish_email_pair(Path(__file__).resolve().parents[1], path)
+    with sqlite3.connect(path) as db:
+        assert schema_objects(db) == before
+        assert db.execute("select * from email_schema_migrations").fetchall() == versions
 
 
 @pytest.mark.parametrize("damage", ("change", "delete"))

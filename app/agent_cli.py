@@ -1755,15 +1755,12 @@ def _write_document_artifact(
                 raise ValueError(
                     "document creation requires parent_id and workspace_id without revision"
                 )
-
             def matching_nodes():
                 payload = dws.run_json(
                     [
                         dws.dws_bin,
-                        "wiki",
-                        "+node-list",
-                        "--workspace",
-                        workspace_id,
+                        "doc",
+                        "+list",
                         "--folder",
                         parent_id,
                         "--page-all",
@@ -1771,14 +1768,15 @@ def _write_document_artifact(
                         "json",
                     ]
                 )
-                data = payload.get("data")
                 if (
-                    not isinstance(data, dict)
-                    or not isinstance(data.get("nodes"), list)
-                    or data.get("hasMore")
+                    payload.get("status") != "success"
+                    or payload.get("complete") is not True
+                    or payload.get("hasMore") is not False
+                    or payload.get("failures") != []
+                    or not isinstance(payload.get("documents"), list)
                 ):
                     raise ValueError("document parent listing is incomplete")
-                return [item for item in data["nodes"] if item.get("name") == title]
+                return [item for item in payload["documents"] if item.get("name") == title]
 
             if matching_nodes():
                 raise ValueError("document target appeared before creation; reread target")
@@ -1793,8 +1791,20 @@ def _write_document_artifact(
                 raise ValueError("created document target is ambiguous")
             node_id = found[0]["nodeId"]
     except (DwsError, ValueError) as exc:
-        if result is None:
+        provider_error = exc.provider_error if isinstance(exc, DwsError) else {}
+        details = provider_error.get("details", {})
+        if not isinstance(details, dict):
+            details = {}
+        partial_write = (
+            details.get("contractVersion") == "doc.operation.v1"
+            and details.get("status") == "partial_success"
+            and provider_error.get("operation") == ("doc.update" if operation == "updated" else "doc.create")
+        )
+        if result is None and not partial_write:
             raise
+        data = details.get("data", {})
+        if isinstance(data, dict) and isinstance(data.get("nodeId"), str):
+            node_id = data["nodeId"] or node_id
         return {
             "ok": True,
             "status": "success",
@@ -1802,7 +1812,7 @@ def _write_document_artifact(
             "node_id": node_id,
             "title": title,
             "provider_result": result,
-            "error": exc.provider_error if isinstance(exc, DwsError) else {"message": str(exc)},
+            "error": provider_error or {"message": str(exc)},
             "saved_version": version,
             "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
             "readback": None,

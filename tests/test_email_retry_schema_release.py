@@ -8,7 +8,7 @@ from app.email_schema_release import prepare_email_schema_release  # noqa: F401 
 from tests.test_email_action_reconcile import ACCOUNT
 from tests.test_email_readback_retry import _seed_failed, _release
 from app.email_classifier_contracts import EmailAction
-from app.action_storage import email_action_projection
+from app.action_storage import _action_payload, email_action_projection
 
 
 def _schema50(path: Path):
@@ -45,25 +45,29 @@ def test_retry_request_cannot_be_replaced(tmp_path):
         retry_sql = email_action_projection("email_direct_retry_requests")
         original = db.execute(f"select * from ({retry_sql})").fetchone()
         physical = db.execute(
-            "select id,record_type,legacy_key,payload_json from actions "
+            "select id,_kind,legacy_key,payload_json from actions "
             "where record_type='email_direct_retry_requests'"
         ).fetchone()
         assert original is not None and physical is not None
         assert db.execute(
             "select cast(json_extract(?,'$[0]') as text),json_extract(?,'$[1]')",
             (physical[2], physical[2]),
-        ).fetchone() == original[:2]
+        ).fetchone() == (original[0], original[1])
+        replacement_payload = _action_payload(db, "email_direct_retry_requests", {
+            "source_readback_digest": "a" * 64,
+            "account_configuration_snapshot": original[3],
+            "requested_at": "2026-10-12T07:00:00+00:00",
+        })
         with pytest.raises(
             sqlite3.IntegrityError, match="email_direct_retry_request_immutable"
         ):
             db.execute(
-                "update actions set payload_json=json_set(payload_json,"
-                "'$.source_readback_digest',?,'$.requested_at',?) where id=?",
-                ("a" * 64, "2026-10-12T07:00:00+00:00", physical[0]),
+                "insert or replace into actions(_kind,legacy_key,payload_json) values(?,?,?)",
+                (physical[1], physical[2], replacement_payload),
             )
         assert db.execute(f"select * from ({retry_sql})").fetchone() == original
         assert db.execute(
-            "select id,record_type,legacy_key,payload_json from actions "
+            "select id,_kind,legacy_key,payload_json from actions "
             "where record_type='email_direct_retry_requests'"
         ).fetchone() == physical
         assert db.execute(

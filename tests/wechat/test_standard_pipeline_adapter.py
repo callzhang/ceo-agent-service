@@ -9,13 +9,13 @@ from datetime import datetime, timezone
 
 import pytest
 
-from app.agent_contracts import ConsumerAgentResult, ProposedAction
+from app.agent_contracts import ConsumerAgentResult
 from app.agent_context import AgentTaskContext
 from app.consumer_agent import ResultParseError, _prepare_outgoing_wechat_messages
 from app.store import AutoReplyStore
 from app.wechat.models import WechatAccount, WechatMessage
-from app.wechat.standard_context import build_wechat_task_context, wechat_reply_target
-from tests.wechat.test_standard_review_gate import IDENTITY, _result, _task
+from app.wechat.standard_context import build_wechat_task_context
+from tests.wechat.test_standard_review_gate import IDENTITY, _task
 
 ACCOUNT = WechatAccount(account_id="acct-1", display_name="Derek", self_user_id="self-1",
                         account_dir="/a", db_dir="/a/db_storage", app_version="4.1.10")

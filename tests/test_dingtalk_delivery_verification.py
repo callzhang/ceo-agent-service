@@ -207,6 +207,16 @@ def test_unknown_delivery_keeps_execution_uncertain_until_same_task_succeeds(tmp
         dispatched = 0
         reconciled = 0
 
+        def prepared_owner_reference(self, action, candidate):
+            task, delivery_key = super().prepared_owner_reference(action, candidate)
+            assert task is not None and delivery_key is not None
+            self.sender.prepare(
+                channel="dingtalk",
+                delivery_key=delivery_key,
+                body="Prepared uncertain delivery fixture",
+            )
+            return task, delivery_key
+
         def dispatch(self, action, **kwargs):
             self.dispatched += 1
             return self._verified(reply_receipt())

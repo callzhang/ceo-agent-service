@@ -360,6 +360,143 @@ def test_native_wechat_task_reader_keeps_task_identity_separate_from_current_inp
         assert native["trigger_message_id"] == "wechat"
 
 
+@pytest.mark.parametrize("outcome", ["approve", "return"])
+def test_native_wechat_review_reader_and_writer_use_public_action_identity(tmp_path, outcome):
+    from contextlib import contextmanager
+
+    from app import run_entity_storage
+    from app.run_adoption_schema import migrate_run_adoptions
+    from tests.test_run_adoption_schema import _populated_source
+    from tests.wechat.test_standard_review_gate import IDENTITY, _result, _reviewed, _task
+
+    db, context = _populated_source(
+        remap_tasks=True, remap_runs=True, stop_before_adoption=True,
+    )
+    db.row_factory = sqlite3.Row
+
+    @contextmanager
+    def connection():
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+    @contextmanager
+    def immediate_transaction():
+        db.execute("begin immediate")
+        try:
+            yield db
+            db.commit()
+        except BaseException:
+            db.rollback()
+            raise
+
+    store = AutoReplyStore.__new__(AutoReplyStore)
+    store.path = tmp_path / "native-wechat-review-lock.sqlite3"
+    store._connect = connection
+    store._immediate_write_transaction = immediate_transaction
+
+    try:
+        migrate_run_adoptions(
+            db, context["adoption_source"], task_metadata=context["task_metadata"],
+            run_metadata=context["run_metadata"],
+        )
+        db.commit()
+        task = _task(store, trigger=f"public-action-{outcome}")
+        candidate, review = _reviewed(
+            store, task, _result(), decision=outcome,
+        )
+        with store._immediate_write_transaction() as connection_db:
+            # Make the next WeChat public ID equal an unrelated Action's
+            # physical ID. The delivery must still resolve through legacy_key.
+            collision = create_action(connection_db, values={})
+            collision_id = int(collision["id"])
+            allocator = connection_db.execute(
+                "select rowid from sqlite_sequence where name='actions:wechat_deliveries'"
+            ).fetchall()
+            assert len(allocator) <= 1
+            if allocator:
+                connection_db.execute(
+                    "update sqlite_sequence set seq=? where name='actions:wechat_deliveries'",
+                    (collision_id - 1,),
+                )
+            else:
+                connection_db.execute(
+                    "insert into sqlite_sequence(name,seq) values('actions:wechat_deliveries',?)",
+                    (collision_id - 1,),
+                )
+
+        if outcome == "return":
+            with pytest.raises(
+                ValueError, match="not backed by an approving standard review",
+            ):
+                store.create_standard_wechat_delivery(
+                    candidate_id=candidate["id"], review_id=review["id"],
+                    action_identity=IDENTITY,
+                )
+            assert store.wechat_delivery_review_approved(collision_id) is False
+            return
+
+        expected_digest = candidate["candidate_digest"]
+        with store._immediate_write_transaction() as connection_db:
+            connection_db.execute(
+                "update run_adopted_reviews set candidate_digest=? where id=?",
+                ("0" * 64, review["id"]),
+            )
+        with pytest.raises(ValueError, match="not backed by an approving standard review"):
+            store.create_standard_wechat_delivery(
+                candidate_id=candidate["id"], review_id=review["id"],
+                action_identity=IDENTITY,
+            )
+        with store._immediate_write_transaction() as connection_db:
+            connection_db.execute(
+                "update run_adopted_reviews set candidate_digest=? where id=?",
+                (expected_digest, review["id"]),
+            )
+
+        delivery_id = store.create_standard_wechat_delivery(
+            candidate_id=candidate["id"], review_id=review["id"],
+            action_identity=IDENTITY,
+        )
+        assert store.create_standard_wechat_delivery(
+            candidate_id=candidate["id"], review_id=review["id"],
+            action_identity=IDENTITY,
+        ) == delivery_id
+        with store._connect() as connection_db:
+            physical_id = int(connection_db.execute(
+                "select id from actions where record_type='wechat_deliveries' "
+                "and cast(legacy_key as integer)=?", (delivery_id,),
+            ).fetchone()[0])
+            assert collision_id == delivery_id
+            assert physical_id != delivery_id
+            assert connection_db.execute(
+                "select 1 from actions where id=? and record_type='wechat_deliveries'",
+                (delivery_id,),
+            ).fetchone() is None
+        assert store.wechat_delivery_review_approved(delivery_id) is True
+
+        audit_id = int(review["audit_run_id"])
+        with store._immediate_write_transaction() as connection_db:
+            audit = connection_db.execute(
+                "select parent_id from runs where id=?", (audit_id,),
+            ).fetchone()
+            assert run_entity_storage.update_run_cas(
+                connection_db, run_id=audit_id,
+                expected={"parent_id": int(audit["parent_id"])},
+                changes={"parent_id": None},
+            ) is not None
+        assert store.wechat_delivery_review_approved(delivery_id) is False
+        with pytest.raises(ValueError, match="not backed by an approving standard review"):
+            store.create_standard_wechat_delivery(
+                candidate_id=candidate["id"], review_id=review["id"],
+                action_identity=IDENTITY,
+            )
+    finally:
+        db.close()
+
+
 def test_native_settled_reply_compaction_retires_task_input_bodies(tmp_path):
     store = _target_store(tmp_path / "native-reply-compaction.sqlite3")
     task = store.ensure_reply_task(**_creator_kwargs(_spec("compact-me")))
@@ -822,6 +959,21 @@ def test_native_reply_failure_result_and_receipt_survive_composed_portable_cycle
             db, context["adoption_source"], task_metadata=context["task_metadata"],
             run_metadata=context["run_metadata"],
         )
+        # This retained owner was published after the frozen predecessor used
+        # by _populated_source. Install its exact current assembly declarations
+        # after the explicit Task/Run/Action forwards, never in the old source.
+        current_assembly = task_run_entity_assembly_objects()
+        receipt_reference_objects = (
+            "reply_attempt_receipt_refs",
+            "idx_reply_attempt_receipt_refs_receipt",
+            "trg_reply_attempt_receipt_ref_insert",
+            "trg_reply_attempt_receipt_ref_update",
+        )
+        assert db.execute(
+            "select name from sqlite_schema where name='reply_attempt_receipt_refs'"
+        ).fetchone() is None
+        for name in receipt_reference_objects:
+            db.execute(current_assembly[name])
         db.commit()
         task_id = next(
             edge["target_id"] for edge in context["task_metadata"]["identity_edges"]

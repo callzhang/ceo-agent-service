@@ -1,11 +1,8 @@
 """Current Email action History, Attention and publication readers."""
 
-import sqlite3
-
-from app.action_storage import insert_action, insert_email_action, update_email_action
 from app.audit_web import _email_action_queue_snapshot, _queue_attention_rows, _queue_status_snapshots
 from app.email_canonical_storage import (
-    insert_email_classification, insert_email_message, update_email_classification,
+    update_email_classification,
 )
 from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, EmailStore
 from app.store import AutoReplyStore

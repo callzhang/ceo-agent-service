@@ -1886,6 +1886,26 @@ def test_sanitize_command_redacts_markdown_outbound_message_arguments():
     )
 
 
+def test_sanitize_command_redacts_document_body_and_file_arguments():
+    command = [
+        "dws",
+        "doc",
+        "+create",
+        "--name",
+        "Quarterly report",
+        "--content",
+        "Sensitive report body",
+        "--content-file",
+        "/private/tmp/report.md",
+        "--content=Sensitive inline body",
+    ]
+
+    assert DwsClient._sanitize_command(command) == (
+        "dws doc +create --name Quarterly report --content <redacted> "
+        "--content-file <redacted> --content=<redacted>"
+    )
+
+
 def test_build_mail_reply_command_shape():
     client = DwsClient(dws_bin="dws")
 

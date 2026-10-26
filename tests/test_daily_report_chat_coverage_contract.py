@@ -14,4 +14,5 @@ def test_daily_report_treats_unattempted_group_reads_as_missing_required_coverag
     assert "an inventory is not a message read" in skill
     assert "not attempted is not a source failure" in skill
     assert "if an inventory contains an accessible conversation with no" in skill
+    assert "attempt and no provider error, return the proposal" in skill
     assert "read operation actually fails, times out, or returns an incomplete page" in skill

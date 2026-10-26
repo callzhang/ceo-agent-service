@@ -240,14 +240,15 @@ def action_payloads(reply_variant, *, physical_provenance=False, selection_refer
 def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance=False,
                            selection_references=False, execution_owner=False,
                            shared_lifecycle=False, specialized_claims=False,
-                           postfix_owner=False, action_entity=False):
+                           postfix_owner=False, action_entity=False,
+                           signal_source_references=False):
     """Compose the common payload layout from explicit Reply field tuples."""
     from app.action_payload import ActionPayloads
     from app.storage_payload import PayloadLayout
     from app.action_feedback_definitions import FEEDBACK_FIELDS
     from app.action_business_definitions import BUSINESS_ACTION_FIELDS, BUSINESS_ACTION_AUTO
     from app.action_email_history_definitions import HISTORY_FIELDS
-    from app.provenance_definitions import SIGNAL_FIELDS
+    from app.provenance_definitions import SIGNAL_FIELDS, SIGNAL_REFERENCE_FIELDS
 
     fields = {kind: PAYLOAD_FIELDS[kind] for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
     fields.update({"reply_attempts": tuple(attempt_fields),
@@ -273,7 +274,9 @@ def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance
     fields.update({kind: tuple(field for field in names if field != "id" or kind not in BUSINESS_ACTION_AUTO)
                    for kind, names in BUSINESS_ACTION_FIELDS.items()})
     if physical_provenance:
-        fields["business_task_signals"] = SIGNAL_FIELDS
+        fields["business_task_signals"] = (
+            SIGNAL_REFERENCE_FIELDS if signal_source_references else SIGNAL_FIELDS
+        )
     fields.update(HISTORY_FIELDS)
     if selection_references:
         fields["candidate_selections"] = tuple(
@@ -396,7 +399,7 @@ def _reply_payload_check(fields, *, kind=None, payloads=None):
     return f"json_remove(payload_json,{paths})='{{}}' and " + " and ".join(_reply_value_check(field) for field in fields)
 
 
-def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, action_entity=False, payloads=None, sync_fields=None, canonical_attempt_fields=False, retired_types=()):
+def _action_definitions(include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, *, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, action_entity=False, payloads=None, sync_fields=None, canonical_attempt_fields=False, retired_types=(), signal_source_references=False):
     if sent_result_references and not (compact_payload and (include_delivery or include_reply)):
         raise ValueError("Sent result references require compact delivery Actions")
     if result_references and not compact_payload:
@@ -457,7 +460,8 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         kinds += tuple(kind for kind in EMAIL_TYPES_ORDER if kind not in retired_types)
         email_generated, email_checks, email_fks, email_indexes, email_triggers = email_schema_parts(
             lambda field: _encoded_value_check("payload_json", "$." + field), payloads=payloads,
-            shared_lifecycle=shared_lifecycle, retired_types=retired_types)
+            shared_lifecycle=shared_lifecycle, retired_types=retired_types,
+            signal_source_references=signal_source_references)
     if include_followup_sync:
         kinds += SYNC_TYPES_ORDER
     if include_task_delivery:
@@ -515,6 +519,7 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         )
         ba_generated, ba_checks, ba_indexes, ba_triggers = business_action_schema_parts(
             physical_provenance=physical_provenance, outer_columns=outer_columns, payloads=payloads,
+            signal_source_references=signal_source_references,
         )
     payload_fields = dict.fromkeys(c for kind in old_kinds if kind not in REPLY_ACTION_TYPES for c in (payloads.layouts[kind].fields if payloads else PAYLOAD_FIELDS[kind]) if c not in references and not (include_delivery and c == "channel"))
     generated = []

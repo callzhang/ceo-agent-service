@@ -224,7 +224,6 @@ from app.wechat.models import WechatReplyScope
 
 
 from app.action_storage import (
-    ACTION_RECORD_TYPES, _action_layout,
     OUTBOUND_POSTFIX_SQL, OUTBOUND_POSTFIX_RECEIPT_SQL,
     insert_action,
     update_action,
@@ -237,17 +236,13 @@ from app.action_storage import (
     AGENT_EXECUTION_RECEIPT_SQL,
     update_sync_action,
     SYNC_ACTION_PROJECTIONS,
-    _autoincrement_high_water,
-    _raise_autoincrement_full,
     task_delivery_projection,
     insert_task_delivery_action,
     task_delivery_set_parts,
     task_delivery_insert_parts,
-    _email_lock,
     insert_error_action,
     error_set_parts,
 )
-from app.action_task_delivery_definitions import TASK_DELIVERY_DEFAULTS
 from app.action_error_definitions import error_projection
 
 from app.shared_action_definitions import email_projection as email_action_projection
@@ -527,7 +522,7 @@ CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
 CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-25.2"
+STORE_SCHEMA_VERSION = "2026-10-25.3"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -14104,10 +14099,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> bool:
         """CAS restore of an already-delivered primary; preserve its exact body."""
         from app.meeting_alignment_delivery import MeetingDeliveryResult
+        from app.meeting_alignment_models import (
+            load_persisted_meeting_alignment_decision,
+            meeting_decision_audit_is_approved,
+        )
+
         result = MeetingDeliveryResult.model_validate_json(result_json)
         if (result.message_text != prepared.final_body or result.send_result != receipt
                 or result.target_kind != job.target_kind or result.target_id != job.target_id
                 or result.sensitive_private_delivery is not None or result.sensitive_private_merged):
+            return False
+        try:
+            stored_decision = json.loads(job.decision_json)
+            if (
+                isinstance(stored_decision, dict)
+                and "_service_audit" in stored_decision
+                and not meeting_decision_audit_is_approved(job.decision_json)
+            ):
+                return False
+            decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
+        except (TypeError, ValueError, json.JSONDecodeError):
             return False
         from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
         with self._immediate_write_transaction() as db:
@@ -14119,7 +14130,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
             target = db.execute(f"select value from ({state_projection('service_state')}) where key=?",
                 (f"meeting_delivery_target:v1:dingtalk:{key}",)).fetchone()
-            decision = MeetingAlignmentDecision.model_validate_json(job.decision_json)
             if decision.target is None:
                 return False
             binding_target_kind = (
@@ -14358,7 +14368,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> MeetingAlignmentJob | None:
         """CAS the exact audit-only result; approve alone re-enters delivery."""
         from app.meeting_alignment_models import (
-            MeetingAlignmentDecision,
             meeting_alignment_decision_digest,
             meeting_decision_audit_is_approved,
         )
@@ -14521,7 +14530,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 """
-                select r.*, p.job_id from runs r
+                select r.*, r.task_id as job_id from runs r
                 join run_provenance p on p.run_id=r.id and p.source_type='meeting_alignment_runs'
                 where r.session_id=? order by r.id desc
                 """,
@@ -23151,28 +23160,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                              (project_id,)).fetchone()
             return None if row is None else WorkProject.model_validate(dict(row))
 
-    def list_work_projects(
-        self,
-        statuses: tuple[str, ...] | None = None,
-        limit: int | None = None,
-    ) -> list[WorkProject]:
-        query = f"select * from ({BUSINESS_PROJECTIONS['work_project']})"
-        args: list[str | int] = []
-        if statuses:
-            placeholders = ",".join("?" for _ in statuses)
-            query = f"{query} where status in ({placeholders})"
-            args.extend(statuses)
-        query = f"{query} order by last_activity_at desc, id desc"
-        if limit is not None:
-            query = f"{query} limit ?"
-            args.append(limit)
-        with self._connect() as db:
-            return [
-                WorkProject.model_validate(dict(row)) for row in db.execute(query, args)
-            ]
-
-
-
     def get_work_todo(
         self, todo_id: int, *, _db: sqlite3.Connection | None = None
     ) -> WorkTodo | None:
@@ -23201,56 +23188,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         query = f"{query} order by id"
         with self._connect() as db:
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
-
-    def list_work_todos_for_projects(
-        self,
-        project_ids: list[int],
-        *,
-        statuses: tuple[str, ...] | None = None,
-    ) -> dict[int, list[WorkTodo]]:
-        if not project_ids:
-            return {}
-        placeholders = ",".join("?" for _ in project_ids)
-        query = f"select * from ({BUSINESS_PROJECTIONS['work_todo']}) where project_id in ({placeholders})"
-        args: list[str | int] = list(project_ids)
-        if statuses:
-            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
-            args.extend(statuses)
-        query = f"{query} order by project_id, id"
-        with self._connect() as db:
-            rows = db.execute(query, args).fetchall()
-        result: dict[int, list[WorkTodo]] = {}
-        for row in rows:
-            todo = WorkTodo.model_validate(dict(row))
-            result.setdefault(todo.project_id, []).append(todo)
-        return result
-
-    def list_work_project_ids_for_todo_owner(
-        self,
-        owner_user_id: str,
-        *,
-        project_statuses: tuple[str, ...] = ("active", "waiting"),
-        limit: int = 500,
-    ) -> set[int]:
-        owner_user_id = owner_user_id.strip()
-        if not owner_user_id or limit <= 0:
-            return set()
-        placeholders = ",".join("?" for _ in project_statuses)
-        query = f"""
-            select distinct todos.project_id
-            from ({BUSINESS_PROJECTIONS['work_todo']}) todos
-            join ({BUSINESS_PROJECTIONS['work_project']}) projects on projects.id=todos.project_id
-            where todos.owner_user_id=?
-              and projects.status in ({placeholders})
-            order by projects.last_activity_at desc, projects.id desc
-            limit ?
-        """
-        with self._connect() as db:
-            rows = db.execute(
-                query,
-                [owner_user_id, *project_statuses, limit],
-            ).fetchall()
-            return {int(row["project_id"]) for row in rows}
 
     @staticmethod
     def _normalize_dingtalk_todo_link_status(status: object) -> str:

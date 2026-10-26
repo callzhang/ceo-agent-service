@@ -10,6 +10,7 @@ from app.prepared_action_definitions import COLUMNS as PREPARED_COLUMNS, SLOTS
 from app.current_action_schema import current_action_payloads
 from app.shared_action_definitions import SHARED_RECORD_TYPES, email_projection
 from tools.action_entity_contract import (
+    build_current_release_target_ddl,
     inspect_action_entity_source,
     source_identity,
     validate_action_entity_contract,
@@ -369,3 +370,11 @@ def test_target_ddl_has_one_action_layout_and_runs():
     broken['target']['layout_selector'] = 'source_type'
     with pytest.raises(ValueError, match='source|origin|layout'):
         validate_action_entity_contract(broken)
+
+
+def test_current_release_artifact_matches_complete_native_manifest():
+    from pathlib import Path
+
+    artifact = Path("docs/action-entity-current-target.sql").read_text()
+    assert artifact == build_current_release_target_ddl()
+    assert hashlib.sha256(artifact.encode()).hexdigest() == CONTRACT["target"]["current_release_ddl_sha256"]

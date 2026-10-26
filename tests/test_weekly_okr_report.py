@@ -41,6 +41,8 @@ def test_display_rounding_uses_half_up_at_one_decimal():
     assert report._rounded(report._manager_final_score(60, 70, 0.95)) == 59.9
     assert report._display_average([91.4, 59.1]) == "75.3"
     assert report._manager_final_score(60, 70, 0.95) == 59.85
+
+
 WeeklyOkrAnalysis = report.WeeklyOkrAnalysis
 PublishedDocument = report.PublishedDocument
 render_group_summary = report.render_group_summary

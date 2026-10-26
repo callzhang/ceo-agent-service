@@ -72,14 +72,36 @@ KNOWN_DRIFT: dict[str, tuple[str, str, str]] = {
         "same fields, types and constraints; differs only in the per-property "
         "and top-level `title` strings pydantic v2 emits",
     ),
+    "meeting_alignment_audit.schema.json": (
+        "app.meeting_alignment_models",
+        "MeetingAlignmentAuditResult",
+        "provider snapshot inlines MeetingAlignmentAuditFeedback and removes "
+        "Pydantic titles and descriptions while preserving its strict fields",
+    ),
 }
 
 # Composite envelopes with no single root model to compare in PINNED.
 # Any component snapshot checks belong with the owning module's tests.
 NO_SINGLE_MODEL: dict[str, str] = {
+    "audit_agent_native_output.schema.json": (
+        "Codex structural projection generated from AuditAgentWireResult; "
+        "tests/test_native_audit_output.py pins the projected contract"
+    ),
+    "consumer_general_agent_native_output.schema.json": (
+        "Codex structural projection of the purpose-specific Consumer wire model; "
+        "tests/test_native_consumer_output.py pins the projected contract"
+    ),
+    "consumer_oa_agent_native_output.schema.json": (
+        "Codex structural projection of the OA Consumer wire model; "
+        "tests/test_native_consumer_output.py pins its purpose-specific actions"
+    ),
     "okr_review.schema.json": (
         "agent_envelope snapshot with app.okr_models.OkrReviewPayload as the strict "
         "domain_payload; tests/test_okr_output_schema.py pins both parts"
+    ),
+    "repository_release_summary.schema.json": (
+        "manual one-field output contract for ReleaseSummaryAgent; "
+        "app.repository_release_notes._summary enforces the same 1..500 characters"
     ),
     "wechat_memory_candidates.schema.json": (
         "envelope around a list of app.wechat.memory_import.ExtractedMemoryCandidate"
@@ -87,25 +109,7 @@ NO_SINGLE_MODEL: dict[str, str] = {
     "wechat_memory_dedupe.schema.json": (
         "envelope around a list of app.wechat.memory_import.DurableMemoryMatch"
     ),
-    "audit_agent_native_output.schema.json": (
-        "strict Codex native-output schema for the Audit role; app.native_agent_output selects it "
-        "and tests/test_native_audit_output.py checks it"
-    ),
-    "consumer_general_agent_native_output.schema.json": (
-        "strict Codex native-output schema for the general Consumer purpose; "
-        "tests/test_native_consumer_output.py checks it"
-    ),
-    "consumer_oa_agent_native_output.schema.json": (
-        "strict Codex native-output schema for the OA Consumer purpose; "
-        "tests/test_native_consumer_output.py checks it"
-    ),
-    "meeting_alignment_audit.schema.json": (
-        "output contract of the Meeting audit step, read by app.meeting_alignment_agent; "
-        "tests/test_meeting_alignment_agent.py exercises it"
-    ),
-    "repository_release_summary.schema.json": (
-        "output contract of the repository release-note summary, read by app.repository_release_notes"
-    ),
+
 }
 
 

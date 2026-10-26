@@ -28,7 +28,7 @@ def store(tmp_path):
 
 def test_migration_updates_projection_and_preserves_run_history(store):
     job_id = failed_meeting(store, 700, {"kind": "meeting_agent", "message": "runtime_effect_policy_violation"})
-    run_id = store.create_professional_run(job_id, status="failed", error="runtime_effect_policy_violation")
+    store.create_professional_run(job_id, status="failed", error="runtime_effect_policy_violation")
 
     preview = migrate_legacy_meeting_projections(store)
     assert preview == preview.__class__(scanned=1, changed=1, dry_run=True)

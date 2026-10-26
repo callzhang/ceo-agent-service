@@ -14,12 +14,20 @@ from app.task20_definitions import TASK20_COLUMNS, TASK20_PAYLOAD_FIELDS
 def test_real_type_codes_are_stable_and_include_empty_supported_families():
     assert len(SOURCE_ACTION_RECORD_TYPES.names) == 61
     assert ACTION_RECORD_TYPES.names[:len(SOURCE_ACTION_RECORD_TYPES.names)] == SOURCE_ACTION_RECORD_TYPES.names
-    assert ACTION_RECORD_TYPES.name(62) == "candidate_execution_alias"
-    assert ACTION_RECORD_TYPES.names[61:] == (
-        "candidate_execution_alias", "plan_version_reviewed", "plan_version_email",
-        "effect_step_email", "action_attempt_reviewed", "action_attempt_email",
-        "effect_step_email_reply", "effect_step_email_unsubscribe", "action",
+    assert ACTION_RECORD_TYPES.names[len(SOURCE_ACTION_RECORD_TYPES.names):] == (
+        "candidate_execution_alias",
+        "plan_version_reviewed",
+        "plan_version_email",
+        "effect_step_email",
+        "action_attempt_reviewed",
+        "action_attempt_email",
+        "effect_step_email_reply",
+        "effect_step_email_unsubscribe",
+        "action",
     )
+    assert ACTION_RECORD_TYPES.name(62) == "candidate_execution_alias"
+    assert ACTION_RECORD_TYPES.code("plan_version_reviewed") == 63
+    assert ACTION_RECORD_TYPES.code("action") == 70
     assert ACTION_RECORD_TYPES.code("review_candidates") == 1
     assert ACTION_RECORD_TYPES.code("business_task_signals") == 58
     assert ACTION_RECORD_TYPES.name(61) == "email_historical_operations"

@@ -193,6 +193,18 @@ class FakeMeetingRunner:
             }
         )
 
+    def audit(self, *, prompt, run_id, candidate_sha256):
+        from app.meeting_alignment_models import MeetingAlignmentAuditResult
+
+        assert run_id > 0
+        assert "上线范围" in prompt
+        return MeetingAlignmentAuditResult(
+            outcome="approve",
+            candidate_sha256=candidate_sha256,
+            summary="The meeting candidate matches the reviewed source evidence.",
+            feedback=None,
+        )
+
 
 def test_meeting_alignment_pipeline_sends_once_and_appears_in_history(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")

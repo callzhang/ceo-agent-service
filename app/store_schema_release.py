@@ -78,26 +78,6 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
     target = (_target_store_version(root), email_schema_release._target_schema_version(root) if (root / "app" / "email_store.py").exists() else None)
     from app.current_schema_manifest import STORE_VERSION as CURRENT_STORE_VERSION, EMAIL_VERSION as CURRENT_EMAIL_VERSION, require_current_pair
     if target == (CURRENT_STORE_VERSION, CURRENT_EMAIL_VERSION) and path.exists():
-        from app.action_reference_trigger_schema_release import (
-            SOURCE_STORE_VERSION as ACTION_TRIGGER_SOURCE_VERSION,
-            prepare_action_reference_trigger_release,
-        )
-        from app.state_definitions import state_projection
-        with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
-            db.execute("begin")
-            tables = {row[0] for row in db.execute(
-                "select name from main.sqlite_schema where type='table'")}
-            marker = db.execute(
-                f"select value from ({state_projection('service_state')}) where key=?",
-                (VERSION_KEY,),
-            ).fetchone() if "state" in tables else None
-        if marker is not None and marker[0] == ACTION_TRIGGER_SOURCE_VERSION:
-            return prepare_action_reference_trigger_release(path)
-        from app.action_entity_schema_release import (
-            SOURCE_STORE_VERSION as ACTION_ENTITY_SOURCE_VERSION,
-            ActionEntitySchemaRelease,
-            prepare_action_entity_release,
-        )
         from app.state_definitions import state_projection
         with closing(sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)) as db:
             db.execute("begin")
@@ -107,6 +87,13 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             email_version = (db.execute(
                 "select max(version) from main.email_schema_migrations"
             ).fetchone()[0] if "email_schema_migrations" in tables else None)
+        from app.signal_source_owner_schema_release import (
+            EMAIL_VERSION as SIGNAL_SOURCE_EMAIL_VERSION,
+            SOURCE_STORE_VERSION as SIGNAL_SOURCE_STORE_VERSION,
+            prepare_signal_source_owner_release,
+        )
+        if marker == (SIGNAL_SOURCE_STORE_VERSION,) and email_version == SIGNAL_SOURCE_EMAIL_VERSION:
+            return prepare_signal_source_owner_release(path)
         if not tables:
             require_current_pair(path)
             return None
@@ -122,8 +109,6 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
                 return prepare_email_schema_release(root, path)
             require_current_pair(path)
             return None
-        if marker == (ACTION_ENTITY_SOURCE_VERSION,):
-            return ActionEntitySchemaRelease(root, path, prepare_action_entity_release(path))
         raise ValueError("unsupported current Action source schema; explicit paired release required")
     prepare_store_schema_release(root, path)
     return email_schema_release.prepare_email_schema_release(root, path)

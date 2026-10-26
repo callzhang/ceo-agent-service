@@ -169,6 +169,14 @@ def test_skill_destination_preserves_exact_provider_folder_and_generic_write_rec
                         ]
                     }
                 }
+            if command[1:3] == ["doc", "+list"]:
+                return {
+                    "status": "success",
+                    "complete": True,
+                    "documents": [document] if document_exists or writes else [],
+                    "hasMore": False,
+                    "failures": [],
+                }
             assert "+node-list" in command
             assert "--page-all" in command
             if "--folder" not in command:
@@ -178,7 +186,11 @@ def test_skill_destination_preserves_exact_provider_folder_and_generic_write_rec
 
         def create_report_document(self, **kwargs):
             writes.append(("created", kwargs))
-            return {"nodeId": document["nodeId"]}
+            return {
+                "status": "success",
+                "complete": True,
+                "data": {"nodeId": document["nodeId"], "verified": True},
+            }
 
         def overwrite_report_document(self, **kwargs):
             writes.append(("updated", kwargs))

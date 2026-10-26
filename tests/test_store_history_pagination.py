@@ -39,7 +39,7 @@ def _insert_reply_task(db, values):
                     "created_at": "2026-10-01 00:00:00",
                     "updated_at": "2026-10-01 00:00:00"},
     )
-    task_entity_storage.append_task_input(db, task_id=task["id"], values={
+    task_input, _ = task_entity_storage.append_task_input(db, task_id=task["id"], values={
         "channel": values.get("channel", "dingtalk"),
         "conversation_id": values["conversation_id"],
         "conversation_title": values.get("conversation_title", ""),
@@ -52,6 +52,13 @@ def _insert_reply_task(db, values):
         "business_object_key": "message:" + values.get("channel", "dingtalk") + ":" +
             values["conversation_id"] + ":" + values["trigger_message_id"],
     })
+    assert task_entity_storage.bind_current_input(
+        db,
+        task_id=task["id"],
+        input_id=task_input["id"],
+        expected_input_version=None,
+        input_version=1,
+    ) is not None
     row = db.execute("select id from tasks where id=?", (task["id"],)).fetchone()
     return SimpleNamespace(lastrowid=row["id"])
 
@@ -638,9 +645,9 @@ def test_history_latest_attempt_keeps_only_current_generation_and_last_task_atte
     assert {item.source_id for item in rows} == {ids[1], ids[3], ids[4], ids[6]}
     with store._connect() as db:
         row = db.execute(
-            "select actions.id,cast(identity.source_identity as integer) "
-            "from actions join action_entity_identity_map identity on identity.action_id=actions.id "
-            "where identity.source_type='reply_attempts' and identity.source_identity=?", (str(ids[1]),)
+            "select id,cast(legacy_key as integer) from actions "
+            "where record_type='reply_attempts' and legacy_key=?",
+            (str(ids[1]),),
         ).fetchone()
     assert row[0] != row[1]
     assert store.count_operation_logs(source_tables=("reply_attempts",)) == 4

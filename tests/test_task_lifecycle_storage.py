@@ -109,10 +109,9 @@ def test_due_claim_and_metrics_seek_kind_status_without_materialized_history(tmp
     with store._connect() as db:
         plans = [[row[3] for row in db.execute("explain query plan " + sql)] for sql in queries]
     for plan in plans:
-        assert any(
-            step.startswith("SEARCH task USING") and "INDEX idx_tasks_claim_due (kind=? AND status=?)" in step
-            for step in plan
-        ), plan
+        assert any("SEARCH task USING INDEX idx_tasks_claim_due (kind=? AND status=?)"
+                   in step.replace("USING COVERING INDEX", "USING INDEX")
+                   for step in plan), plan
         assert not any("MATERIALIZE" in step or "SCAN task" in step for step in plan), plan
 
 

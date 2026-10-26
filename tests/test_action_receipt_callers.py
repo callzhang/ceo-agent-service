@@ -7,17 +7,33 @@ import json
 
 import pytest
 
-from app.action_storage import EXTERNAL_ACTION_RESULT_SQL, insert_action, update_action
-from app.store import AGENT_RUN_SQL, AgentRole, AutoReplyStore
-from tests.support.native_task_fields import set_native_task_fields
+from app import run_entity_storage, task_entity_storage
+from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
+from app.store import AgentRole, AutoReplyStore, NATIVE_AGENT_RUN_SQL
 from tests.test_action_receipt_source import source_values
 from tests.test_agent_turn_store import _claim_consumer, _task
+from tests.test_reply_task_deferral import (
+    _insert_native_external_action_result,
+    _insert_retained_action_fact,
+)
 from tests.test_reviewed_candidate_store import _reviewed
 
 
 def _update_reply_task_fixture(db, task_id, values):
-    set_native_task_fields(db, "reply_tasks", task_id, values)
-    return 1
+    current = task_entity_storage.get_task(db, task_id)
+    assert current is not None
+    return task_entity_storage.update_task_cas(
+        db,
+        task_id=task_id,
+        expected={field: current[field] for field in values},
+        changes=values,
+    )
+
+
+def _insert_receipt_fixture(db, kind, values, *, run_id):
+    if kind == "external_action_results":
+        return _insert_native_external_action_result(db, values, run_id=run_id)
+    return _insert_retained_action_fact(db, kind, values, run_id=run_id)
 
 
 @pytest.fixture
@@ -33,10 +49,8 @@ def test_candidate_receipt_idempotency_conflicts_and_late_result(receipt_store, 
     attempt = store.begin_candidate_action(execution["id"], "worker", 0, "01")
     assert attempt["status"] == "dispatched"
     if late:
+        store.invalidate_review_candidate(candidate["id"], "new source fact")
         with store._connect() as db:
-            update_action(db, "review_candidates", candidate["id"], {
-                "invalidated_at": "2026-10-13 12:00:00", "invalidation_reason": "new source fact",
-            })
             _update_reply_task_fixture(db, task.id, {
                 "execution_generation": "next-generation", "status": "pending",
             })
@@ -49,12 +63,24 @@ def test_candidate_receipt_idempotency_conflicts_and_late_result(receipt_store, 
     assert store.get_candidate_external_action("1") is None
     assert store.get_verified_action_source("01")["candidate_id"] == candidate["id"]
     assert store.list_verified_candidate_actions(task.id)[0]["provider_result_json"] == '{"receipt":"原始"}'
-    store.record_candidate_action_outcome(execution["id"], "worker", 0, "verified", {"receipt": "原始"})
+    acknowledged = store.list_candidate_action_attempts(execution["id"])[0]
+    assert (
+        acknowledged["status"], acknowledged["result_json"],
+        acknowledged["provider_receipt_id"], acknowledged["agent_run_id"],
+    ) == ("verified", '{"receipt":"原始"}', saved["provider_receipt_id"], candidate["id"])
+    outcome = store.record_candidate_action_outcome(
+        execution["id"], "worker", 0, "verified", {"receipt": "原始"},
+    )
+    assert (
+        outcome["status"], outcome["result_json"], outcome["provider_receipt_id"]
+    ) == ("verified", '{"receipt":"原始"}', saved["provider_receipt_id"])
     assert store.finish_candidate_execution(execution["id"], "worker", "done", {})["status"] == "done"
     if late:
         assert store.get_reply_task(task.id).status == "pending"
     with store._connect() as db:
-        assert db.execute(f"select count(*) from ({EXTERNAL_ACTION_RESULT_SQL})").fetchone()[0] == 1
+        assert db.execute(
+            f"select count(*) from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL})"
+        ).fetchone()[0] == 1
         assert not db.execute("pragma foreign_key_check").fetchall()
 
 
@@ -74,14 +100,23 @@ def test_independent_delivery_receipt_keeps_first_result_and_recovery_projection
     saved = store.get_candidate_external_action("01")
     assert saved["provider_result_json"] == '{"receipt":"first"}'
     assert store.get_verified_action_source("01") is None
-    with pytest.raises(ValueError, match="conflicting external action result"):
+    with pytest.raises(ValueError, match="conflicting sent Action identity"):
         store.record_completed_agent_message_delivery(**(values | {"operation": "another-operation"}))
     with store._connect() as db:
         _update_reply_task_fixture(db, task.id, {"status": "failed", "error": "later failure"})
     assert store.resolve_reconciled_failed_reply_task(task.id, external_action_key="01")
     with store._connect() as db:
-        db.execute("update runs set status='failed',structured_error_json=? "
-                   "where record_type='agent_runs' and id=?", ('{"code":"later_failure"}', run.id))
+        current_run = run_entity_storage.get_run(db, run.id)
+        assert current_run is not None
+        assert run_entity_storage.update_run_cas(
+            db,
+            run_id=run.id,
+            expected={"status": "completed"},
+            changes={
+                "status": "failed",
+                "structured_error_json": '{"code":"later_failure"}',
+            },
+        ) is not None
     assert store.reconcile_done_reply_tasks_with_failed_current_run() == 0
     with store._connect() as db:
         _update_reply_task_fixture(db, task.id, {"status": "needs_human"})
@@ -142,9 +177,10 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
             "where action_id=? and provider_result_json is not null", (sent.id,),
         ).fetchone()
         binding = db.execute(
-            "select provider_receipt_id,operation,target,result_digest,created_at "
-            "from action_receipts where action_id=? and provider_receipt_id is not null "
-            "and provider_result_json is null", (sent.id,),
+            f"select provider_receipt_id,operation,target_identifiers_json,result_digest,created_at "
+            f"from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) "
+            "where external_action_key=? and provider_receipt_id=?",
+            (key, body_after[0]),
         ).fetchone()
     assert after[0] == sent.id and tuple(after[1:]) == ("send", "send", None)
     assert tuple(body_after[:3]) == tuple(body[:3])
@@ -164,7 +200,9 @@ def test_unstarted_run_discard_respects_independent_native_facts(receipt_store, 
     run = _claim_consumer(store, task).run
     if kind:
         with store._connect() as db:
-            insert_action(db, kind, source_values(kind, run_id=run.id))
+            _insert_retained_action_fact(
+                db, kind, source_values(kind, run_id=run.id), run_id=run.id,
+            )
     assert store.discard_unstarted_agent_run(run.id, owner="consumer") is (kind is None)
     assert (store.get_agent_run(run.id) is None) is (kind is None)
 
@@ -184,11 +222,13 @@ def test_deferral_reads_each_independent_receipt_type(tmp_path, kind, blocker):
     task = store.get_reply_task(task_id)
     if kind:
         with store._connect() as db:
-            run_id = db.execute(f"select id from ({AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)).fetchone()[0]
+            run_id = db.execute(
+                f"select id from ({NATIVE_AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)
+            ).fetchone()[0]
             values = source_values(kind, run_id=run_id)
             if kind == "external_action_results":
                 values["business_object_key"] = task.business_object_key
-            insert_action(db, kind, values)
+            _insert_receipt_fixture(db, kind, values, run_id=run_id)
     preview = preview_deferral(path, task_id, now=NOW)
     if blocker:
         assert blocker in preview["blockers"]
@@ -210,11 +250,13 @@ def test_maintenance_reads_each_independent_receipt_type(tmp_path, kind):
     task = store.get_reply_task(task_id)
     if kind:
         with store._connect() as db:
-            run_id = db.execute(f"select id from ({AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)).fetchone()[0]
+            run_id = db.execute(
+                f"select id from ({NATIVE_AGENT_RUN_SQL}) where reply_task_id=?", (task_id,)
+            ).fetchone()[0]
             values = source_values(kind, run_id=run_id)
             if kind == "external_action_results":
                 values["business_object_key"] = task.business_object_key
-            insert_action(db, kind, values)
+            _insert_receipt_fixture(db, kind, values, run_id=run_id)
         reason = "prepared or completed action" if kind == "external_action_results" else "effect identity"
         with pytest.raises(UpgradePreconditionError, match=reason):
             check_maintenance(path, (task_id,))

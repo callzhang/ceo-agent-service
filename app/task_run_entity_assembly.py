@@ -106,17 +106,22 @@ def _unique_declared_objects(families):
     return declarations
 
 
-def _action_objects():
+def _action_objects(signal_source_references=True):
     from app import action_storage as actions
     from app.action_payload import ActionPayloads
     from app.business_legacy_fields import CURRENT_SYNC_FIELDS
-    from app.current_action_schema import current_action_payloads, RETIRED_ACTION_TYPES
+    from app.current_action_schema import (
+        RETIRED_ACTION_TYPES,
+        _signal_source_action_payloads,
+        current_action_payloads,
+    )
     from app.current_database_schema import FINAL_ACTION_OPTIONS
 
     options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
                if key not in {"canonical_email", "sent_result_references"}}
     retired_types = RETIRED_ACTION_TYPES | frozenset(RETIRED_ACTION_KINDS)
-    original_payloads = current_action_payloads()
+    original_payloads = (current_action_payloads() if signal_source_references
+                         else _signal_source_action_payloads())
     base_types = original_payloads.record_types
 
     class RetainedActionTypes:
@@ -143,6 +148,7 @@ def _action_objects():
         reply_variant="fresh_memory_fk", **options, payloads=payloads,
         sync_fields=CURRENT_SYNC_FIELDS, canonical_attempt_fields=True,
         retired_types=retired_types,
+        signal_source_references=signal_source_references,
     )
     table = table.replace("references email_classifications(id)", "references emails(classification_id)")
     table = table.replace(

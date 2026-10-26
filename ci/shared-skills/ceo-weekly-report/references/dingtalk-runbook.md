@@ -6,12 +6,44 @@ Save complete inputs and outputs in the task artifact directory.
 
 ## Sources
 
-Use read_scheduled_context for trigger facts. Save context.json and run
-materials.py with consumer_run_skill_script. Use the resulting explicit window
-in read_service_activity(sources=["meetings"]). Read selected complete archives
-through read_meeting_archive(meeting_id), then native minutes tools for gaps.
-Use dingtalk-chat for relevant message context and dingtalk-wiki/doc for live
-business material. Record read failures and partial coverage as evidence.
+Use `read_scheduled_context` for trigger facts. Save `context.json` and run
+`materials.py` with `consumer_run_skill_script`. Use the resulting explicit
+window for every source query.
+
+Complete these reads before deciding evidence is unavailable:
+
+1. Call `read_service_activity` for the full window with
+   `sources=["meetings"]`. Screen every returned meeting and record an
+   inclusion or exclusion reason. Read every relevant full archive using
+   `read_meeting_archive(meeting_id)`; when an archive is missing, try
+   `list_dingtalk_minutes(start, end, scope="all")` and read relevant items
+   with `read_dingtalk_minutes(task_uuid)`.
+2. Call `recent_dingtalk_conversations(start, end)` for the same bounded
+   window. Read relevant group conversation windows with
+   `read_dingtalk_messages_in_window(conversation_id, start, end)` and record
+   which conversations were read or excluded and why.
+3. Search for each of the four business-line source reports and for relevant
+   current company OKR, CRM, finance, product, release, quality and delivery
+   evidence with `search_dingtalk_documents(query)`. Use the exact returned
+   document identity to read full content with `read_dingtalk_document_full`
+   or `read_dingtalk_drive_file`, as appropriate. Follow linked evidence that
+   supports a material claim.
+4. Read the previous report and any exact target/prior documents resolved by
+   `materials.py`; do not treat the template or a search result snippet as
+   current business evidence.
+
+For each source class, distinguish `not searched`, `no results` after a
+completed query, `read failed` after an invoked operation returns a concrete
+error, and `read` with the source identity. Do not infer an unavailable
+operation from missing initial context, incomplete prompt input or the model's
+expectation. Do not return `operation_unavailable` for evidence that was never
+searched. When queries complete with no result, or a source read genuinely
+fails, preserve that coverage fact and continue the report using the contract's
+missing-data rules; absent business-line submissions do not block publication.
+If a required platform capability is genuinely absent, identify the exact
+capability and the attempted tool/route evidence, then stop before claiming
+complete coverage. Do not claim a search/read was complete unless its result
+shows completion (including pagination where exposed).
 
 ## Rendering
 

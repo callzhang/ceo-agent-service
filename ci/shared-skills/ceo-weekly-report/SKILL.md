@@ -41,6 +41,13 @@ Do not ask Derek to supply materials already accessible to the Agent.
    `dingtalk-minutes`; missing archives are coverage gaps. Use `dingtalk-chat`
    to read relevant group messages in the same window. Read the previous
    report, the company OKR and the business-line materials as needed.
+   Treat the source inventory as incomplete until every required source class
+   has an actual inventory/search/read attempt. Distinguish `not searched`
+   (no query), `no results` (completed query returned none) and `read failed`
+   (invoked operation returned a concrete error). Never label an unsearched
+   source `operation_unavailable` or stop for that reason. If evidence is
+   absent after the required reads, state the exact gap and continue under the
+   report contract; record provider errors with their source and impact.
 4. Required, not optional: read CRM actuals (orders, Pipeline, Gate, expected
    signing) with the native `sharecrm` CLI in the Consumer shell, following `fxiaoke-crm-cli` (load it
    with `read_skill`). Read-only: authentication status, help, object

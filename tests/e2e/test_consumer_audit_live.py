@@ -18,12 +18,14 @@ from app.audit_agent import AuditAgentRunner
 from app.codex_runner import CodexRunner, _config_string
 from app.consumer_agent import ConsumerAgentRunner
 from app.native_cli_metadata import describe_native_command
+from app.native_agent_output import native_output_schema_path
 from app.process_runner import run_process_with_idle_timeout
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole, AutoReplyStore
 from app.system_executor import SystemExecutor
 from app.wechat.codex_safety import make_audit_agent_command
 from tests.support.audit_sink_mcp import AuditSink
+from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
 from tests.support.native_protocol import install_protocol_native_trajectories
 
 
@@ -36,6 +38,20 @@ def _deterministic_native_contract_environment(tmp_path, monkeypatch, request):
     if request.node.get_closest_marker("live"):
         return
     monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "workspace"))
+    prompt_root = tmp_path / "prompt-configuration"
+    monkeypatch.setenv(
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
+        str(prompt_root / "developer_prompt.md"),
+    )
+    monkeypatch.setenv(
+        "CEO_USER_PROMPT_TEMPLATE_PATH",
+        str(prompt_root / "user_prompt.md"),
+    )
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(prompt_root / "work_profile.md"))
+    monkeypatch.setenv(
+        "CEO_AUDIT_RULES_TEMPLATE_PATH",
+        str(prompt_root / "audit_rules.md"),
+    )
     install_protocol_native_trajectories(tmp_path, monkeypatch, CalendarRunnerContractExecutor)
 
 
@@ -224,18 +240,20 @@ def _reviewed_records(
 
 def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
     wire = {
-        "outcome": "proposal",
+        "action": "plan",
+        "reason": proposal["authored_judgment"],
+        "target": {},
+        "payload": proposal,
+        "evidence_refs": [],
         "risk": "low",
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
         "summary": "Prepared one source-group clarification.",
-        "proposal": proposal,
         "decision_options": [],
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
-        "durable_memories": [],
     }
     return {
         "type": "item.completed",
@@ -245,14 +263,13 @@ def _consumer_result_record(proposal: dict[str, object]) -> dict[str, object]:
 
 def _audit_result_record(candidate: dict[str, object]) -> dict[str, object]:
     wire = {
-        "outcome": "approve",
         "risk": "low",
         "confidence": 1.0,
         "rule_coverage": 1.0,
         "information_completeness": 1.0,
         "summary": "The candidate and source evidence were reviewed.",
         "evidence_refs": [],
-        "feedback": None,
+        "decision": {"outcome": "approve", "feedback": None},
         "error_code": "",
         "error_retryable": False,
         "error_authorization_required": False,
@@ -268,23 +285,35 @@ class CalendarRunnerContractExecutor:
         self.skill_paths = skill_paths
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
+        self.sessions: list[str] = []
+        self.event_types: list[tuple[str, ...]] = []
+        self.return_codes: list[int] = []
 
     def __call__(self, command, *, prompt: str, on_stdout_line, **_kwargs):
         self.commands.append(list(command))
         self.prompts.append(prompt)
         audit_turn = "Candidate revision\n" in prompt
         records = self._audit_records(prompt) if audit_turn else self._consumer_records(prompt)
-        session = "calendar-audit-session" if audit_turn else "calendar-consumer-session"
+        session = f"calendar-{'audit' if audit_turn else 'consumer'}-{len(self.commands)}"
+        self.sessions.append(session)
         lines = [
             json.dumps({"type": "thread.started", "thread_id": session}),
             *(json.dumps(record) for record in records),
+            json.dumps({"type": "turn.completed", "turn": {"id": session}}),
         ]
+        self.event_types.append(
+            tuple(str(json.loads(line).get("type", "")) for line in lines)
+        )
 
 
         stdout = "\n".join(lines)
+        if not audit_turn:
+            stdout = native_consumer_stream_for_command(stdout, list(command))
         for line in lines:
             on_stdout_line(line)
-        return ProcessRunResult(0, stdout, "")
+        result = ProcessRunResult(0, stdout, "")
+        self.return_codes.append(result.returncode)
+        return result
 
     def _skill_records(self, role: str) -> list[dict[str, object]]:
         records = []
@@ -449,6 +478,62 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
         ]
 
 
+def _orchestration_failure_diagnostics(store, task, executor) -> dict[str, object]:
+    """Expose runtime lifecycle metadata without logging prompts or result bodies."""
+    runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation, load_events=False
+    )
+    run_diagnostics = []
+    for run in runs:
+        attempts = store.list_agent_runtime_attempts(run.id)
+        try:
+            error = json.loads(run.structured_error_json or "{}")
+        except json.JSONDecodeError:
+            error = {}
+        run_diagnostics.append({
+            "role": run.role.value,
+            "status": run.status,
+            "error_fields": {
+                key: error[key]
+                for key in ("code", "retryable", "authorization_required", "source_code")
+                if key in error
+            },
+            "lease_active": (
+                store.agent_run_lease_is_active(run.id)
+                if run.status == "running" else False
+            ),
+            "transcript_range": (run.transcript_start_line, run.transcript_end_line),
+            "session_present": bool(run.codex_session_id),
+            "attempts": tuple({
+                "attempt_number": attempt.attempt_number,
+                "route": attempt.route_name,
+                "runtime_kind": attempt.runtime_kind,
+                "credential_mode": attempt.credential_mode,
+                "status": attempt.status,
+                "failure_class": attempt.failure_class,
+                "failure_code": attempt.failure_code,
+                "session_mode": attempt.session_mode.value,
+                "source_session_present": bool(attempt.source_session_id),
+                "session_present": bool(attempt.session_id),
+                "transcript_range": (attempt.transcript_start, attempt.transcript_end),
+                "transcript_kind": attempt.transcript_reference.partition(":")[0],
+                "result_schema_present": bool(attempt.result_schema_id),
+            } for attempt in attempts),
+        })
+    return {
+        "runs": tuple(run_diagnostics),
+        "executor": {
+            "call_count": len(executor.commands),
+            "command_programs": tuple(
+                command[0] if command else "" for command in executor.commands
+            ),
+            "session_count": len(executor.sessions),
+            "event_types": tuple(executor.event_types),
+            "return_codes": tuple(executor.return_codes),
+        },
+    }
+
+
 def _persisted_skill_receipts(run) -> dict[str, tuple[str, str]]:
     receipts = {}
     for event in run.tool_events:
@@ -554,12 +639,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
 
     assert result.status == "executed", (
         result.summary,
-        [
-            (run.status, run.structured_error_json)
-            for run in store.list_agent_runs_for_task_generation(
-                task.id, task.execution_generation
-            )
-        ],
+        _orchestration_failure_diagnostics(store, task, executor),
     )
     assert result.final_role is AgentRole.AUDIT
     assert result.audit_result is not None
@@ -570,7 +650,13 @@ def test_deterministic_native_runner_calendar_clarification_contract(
     assert system_dws.sent[0][0] == "cid-1"
     assert system_dws.sent[0][1].startswith(MESSAGE_TEXT)
     assert len(executor.commands) == 2
-    assert all("--output-schema" not in command for command in executor.commands)
+    assert all("--output-schema" in command for command in executor.commands)
+    assert executor.commands[0][executor.commands[0].index("--output-schema") + 1] == str(
+        native_output_schema_path("consumer", purpose="general")
+    )
+    assert executor.commands[1][executor.commands[1].index("--output-schema") + 1].endswith(
+        "audit_agent_native_output.schema.json"
+    )
     assert "tools.enabled_tools" not in " ".join(executor.commands[0])
     assert "codex" == executor.commands[1][0]
     assert "Raw material references and exact read commands" in executor.prompts[0]
@@ -581,6 +667,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
         task.execution_generation,
     )
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
+    assert executor.sessions[0] != executor.sessions[1]
     assert all(run.status == "completed" for run in runs)
     assert _persisted_skill_receipts(runs[0]) == {}
     assert _persisted_skill_receipts(runs[1]) == {}
@@ -672,12 +759,7 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
 
     assert result.status == "executed", (
         result.summary,
-        [
-            (run.status, run.structured_error_json)
-            for run in store.list_agent_runs_for_task_generation(
-                task.id, task.execution_generation
-            )
-        ],
+        _orchestration_failure_diagnostics(store, task, executor),
     )
     runs = store.list_agent_runs_for_task_generation(
         task.id, task.execution_generation

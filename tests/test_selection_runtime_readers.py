@@ -53,7 +53,7 @@ def test_worker_oa_history_reads_selection_of_result_candidate():
             "action_identity": "old-action", "target_identifiers_json": json.dumps({
                 "process_instance_id": "old-process", "task_id": "old-task",
             }), "provider_result_json": '{"receipt":"old-receipt"}',
-            "provider_receipt_id": 7,
+            "provider_receipt_id": 17,
         }],
     )
     result = worker._orchestration_oa_metadata(SimpleNamespace(id=1, oa_url="old-url"),
@@ -62,4 +62,4 @@ def test_worker_oa_history_reads_selection_of_result_candidate():
     assert result["oa_process_instance_id"] == "old-process"
     assert result["oa_remark"] == "Original reviewed remark"
     assert result["oa_action_result_json"] == '{"receipt":"old-receipt"}'
-    assert result["oa_action_receipt_id"] == 7
+    assert result["oa_action_receipt_id"] == 17

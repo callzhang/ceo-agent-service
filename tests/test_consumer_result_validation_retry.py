@@ -1,6 +1,7 @@
 """Existing result validation must stay inside the bounded turn retry lifecycle."""
 
-from app.action_storage import ACTION_PROJECTIONS
+from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL
+from app.store import NATIVE_REVIEW_CANDIDATE_SQL, NATIVE_CANDIDATE_EXECUTION_SQL
 
 import json
 from pathlib import Path
@@ -59,13 +60,14 @@ def test_invalid_callback_results_stop_at_existing_consecutive_failure_limit(sto
             raise AssertionError("invalid Consumer result must not reach Audit")
 
     driver = AgentOrchestrator(store=store, consumer=runner_for(store, tmp_path), audit=NeverAudit())
-    outcomes = [driver.process(task, context, refresh_context=lambda: context) for _ in range(3)]
-    assert [result.status for result in outcomes] == ["failed_retryable", "failed_retryable", "failed_terminal"]
+    outcomes = [driver.process(task, context, refresh_context=lambda: context) for _ in range(2)]
+    assert [result.status for result in outcomes] == ["failed_retryable", "failed_terminal"]
     assert outcomes[-1].error.code == "codex_result_invalid"
     assert outcomes[-1].feedback_cycles == 0
     runs = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
-    assert len(runs) == 6
+    assert len(runs) == 4
     assert all(run.status == "failed" and run.role.value == "consumer" for run in runs)
     with store._connect() as db:
-        for table in ("review_candidates", "candidate_executions", "external_action_results", "sent_replies"):
-            assert db.execute("select count(*) from " + f"({ACTION_PROJECTIONS[table]})").fetchone()[0] == 0
+        for projection in (NATIVE_REVIEW_CANDIDATE_SQL, NATIVE_CANDIDATE_EXECUTION_SQL,
+                           NATIVE_EXTERNAL_ACTION_RESULT_SQL, SENT_REPLY_SQL):
+            assert db.execute(f"select count(*) from ({projection})").fetchone()[0] == 0

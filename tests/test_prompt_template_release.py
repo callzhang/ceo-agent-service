@@ -253,11 +253,14 @@ def test_deploy_explicit_prompt_publication_runs_even_when_code_already_current(
     monkeypatch.setattr(deploy_module, 'ExistingSchemaUpgradeStateStore', lambda db: _State())
     monkeypatch.setattr(deploy_module, '_default_stop', lambda: events.append('stop'))
     monkeypatch.setattr(deploy_module, '_default_start', lambda: events.append('start'))
-    monkeypatch.setattr(deploy_module, 'wait_until_quiet', lambda db: events.append('quiet'))
+    monkeypatch.setattr(deploy_module, 'wait_until_quiet', lambda db, **_kwargs: events.append('quiet'))
     monkeypatch.setattr(deploy_module, 'build_frontend', lambda *args: None)
     monkeypatch.setattr(deploy_module, 'verify_imports', lambda *args: None)
     monkeypatch.setattr(deploy_module, 'wait_for_health', lambda: True)
-    deploy_module.deploy(local, tmp_path / 'absent.db', publish_prompt_templates=True)
+    from app.store import AutoReplyStore
+    database = tmp_path / "current.sqlite3"
+    AutoReplyStore(database)
+    deploy_module.deploy(local, database, publish_prompt_templates=True)
     assert events == ['quiet', 'stop', 'publish', 'start', 'loaded', 'finalize']
 
 

@@ -67,7 +67,7 @@ def test_reply_recovery_does_not_scan_other_execution_links(tmp_path, monkeypatc
             db.set_progress_handler(None, 0)
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert any(
-        "schedule_occurrences USING INDEX idx_schedule_occurrences_reply_execution" in step
+        "SEARCH stale_run USING INDEX idx_schedule_occurrences_reply_execution (<expr>=?)" in step
         for step in plan
     ), plan
 

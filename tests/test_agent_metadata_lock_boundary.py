@@ -2,7 +2,7 @@ import sqlite3
 
 import pytest
 
-from app.store import AGENT_RUN_SQL, AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore
 
 
 @pytest.mark.parametrize("operation", ["claim", "completed_claim", "renew", "session", "expire"])
@@ -47,7 +47,7 @@ def test_agent_metadata_hydration_releases_writer_and_preserves_snapshot(
             # either a writer lock or an uncommitted metadata change.
             other.execute("begin immediate")
             persisted = other.execute(
-                f"select status, codex_session_id, lease_expires_at from ({AGENT_RUN_SQL}) as agent_runs where id=?",
+                "select status, session_id, lease_expires_at from runs where id=?",
                 (row["id"],),
             ).fetchone()
             assert persisted == (

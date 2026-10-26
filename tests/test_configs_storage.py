@@ -5,7 +5,10 @@ from tempfile import TemporaryDirectory
 
 import pytest
 
-from app.action_storage import create_action_schema, insert_email_action
+from app.action_storage import create_action_schema
+from app.email_classifier_contracts import EmailClassificationStatus
+from app.email_store import EmailStore
+from app.shared_action_lifecycle import transition
 from app.schedules_storage import create_schedules_schema
 from app.store import AutoReplyStore, _close_idle_connections
 from app.configs_definitions import (
@@ -18,6 +21,8 @@ from tests.configs_source_fixtures import (
     capture, insert as source_insert, source_db,
 )
 from tests.test_email_action_storage import _cases
+from tests.support.native_email_actions import persist_classification
+from tests.test_email_store import _task2_account_values
 
 def test_seven_declared_fields_and_order():
     actual = capture()["actual"]["tables"]
@@ -134,6 +139,32 @@ def current_store_db():
         with closing(sqlite3.connect(path)) as db:
             db.execute("pragma foreign_keys=on")
             yield db
+
+
+@contextmanager
+def current_email_store_db(*, claim_direct: bool):
+    """Current Config owner plus a genuine native Email plan and optional claim."""
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "store.sqlite3"
+        AutoReplyStore(path)
+        email = EmailStore(path)
+        email.create_account(_task2_account_values("account"))
+        plan_id = persist_classification(
+            email,
+            classification_id=11,
+            status=EmailClassificationStatus.PROCESSED,
+            account_id="account",
+        )
+        if claim_direct:
+            action_id = email.direct_action_ids_for_plan(plan_id)[0]
+            assert email.claim_direct_action(
+                action_id=action_id,
+                claimed_at="2026-10-25T12:00:00+00:00",
+            ) is not None
+        _close_idle_connections()
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("pragma foreign_keys=on")
+            yield db, plan_id
 
 
 @contextmanager
@@ -436,14 +467,21 @@ def test_max_rowid_uses_native_overflow_allocator(variant):
      "email_unsubscribe_write_in_flight"),
 ))
 def test_account_blockers_use_current_typed_action_predicate_fixture(kind, status, error):
-    with current_store_db() as current:
+    with current_email_store_db(claim_direct=kind == "email_actions") as (current, plan_id):
         current.execute("begin")
-        insert_config(current, "email_accounts",
-                      VALID["email_accounts"] | {"account_id": "account"})
         cases = _cases()
-        insert_email_action(current, "email_action_plans",
-                            cases["email_action_plans"])
-        insert_email_action(current, kind, cases[kind] | {"status": status})
+        if kind != "email_actions":
+            origin = {
+                "email_reply_dispatch_claims": "email_reply",
+                "email_unsubscribe_claims": "email_unsubscribe",
+            }[kind]
+            transition(
+                current,
+                origin,
+                "claim",
+                values=cases[kind]
+                | {"action_plan_id": plan_id, "status": status},
+            )
         with pytest.raises(sqlite3.IntegrityError, match=error):
             update_config(current, "email_accounts", 1, {"display_name": "B"})
         with pytest.raises(sqlite3.IntegrityError, match=error):

@@ -5,7 +5,7 @@
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
       "old_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2",
-      "new_sha256": "8e192a80c804987fdea37efb7383113d853d3a481a8d39fe194beb604beb7d62",
+      "new_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f",
       "old_managed_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2"
     },
     {
@@ -24,7 +24,7 @@
       "source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
       "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md",
       "old_sha256": "c617861797b07b256f7fade2882bc6c418e61ae9ce42f102460498edd51bae2d",
-      "new_sha256": "c617861797b07b256f7fade2882bc6c418e61ae9ce42f102460498edd51bae2d"
+      "new_sha256": "b039bad41721add4721d10dae25df5b77d950be166f9032b932124d41c40f4eb"
     },
     {
       "source": "app/defaults/audit_rules.md",
@@ -77,7 +77,7 @@
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
       "old_sha256": "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb",
-      "new_sha256": "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb"
+      "new_sha256": "a4510031a9cc912def6d56529c0eb9be754f8445fb3868b1104982bf82c7b705"
     },
     {
       "source": "ci/shared-skills/stardust-oa-finance-review/SKILL.md",

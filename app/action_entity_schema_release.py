@@ -17,19 +17,20 @@ import sqlite3
 from collections import Counter
 from typing import Mapping
 
-from app.current_action_schema_release import _foreign_keys, source_objects
-from app.current_schema_manifest import (
-    STORE_VERSION as TARGET_STORE_VERSION,
-    EMAIL_VERSION as TARGET_EMAIL_VERSION,
-    current_objects,
-    schema_objects,
-    require_current_pair,
+from app.action_entity_release_manifest import (
+    SOURCE_EMAIL_VERSION,
+    SOURCE_STORE_VERSION,
+    SOURCE_VARIANT,
+    TARGET_EMAIL_VERSION,
+    TARGET_STORE_VERSION,
+    source_objects,
+    target_objects,
 )
+from app.current_action_schema_release import _foreign_keys
+from app.current_schema_manifest import schema_objects
 from app.result_schema_helpers import _markers
 from app.state_storage import update_state_rows
 
-SOURCE_STORE_VERSION = "2026-10-19.12"
-SOURCE_EMAIL_VERSION = 53
 VERSION_KEY = "store_schema_version"
 _ACTION_GUARD_NAMES = frozenset({
     "trg_configs_direct_account_delete", "trg_configs_direct_account_update",
@@ -92,20 +93,20 @@ def prepare_action_entity_release(database: Path) -> dict:
 
 
 def _create_target_children(db):
-    from app.current_action_schema import _action_entity_objects
-    for obj in sorted(_action_entity_objects(), key=lambda item: item["type"] != "table"):
-        db.execute(obj["sql"])
+    child_tables = {"action_receipts", "action_observers", "action_entity_identity_map"}
+    for kind, name, table, sql in sorted(target_objects(), key=lambda item: item[0] != "table"):
+        if name in child_tables or table in child_tables:
+            db.execute(sql)
 
 
 def _rebuild_action_owner_table(db):
     """Replace only the Actions declaration, preserving every surviving stored cell."""
-    from app.current_action_schema import current_action_objects
     from app.action_email_storage import _quote
 
     if db.execute("select 1 from temp.sqlite_schema where name='_action_entity_rows'").fetchone():
         raise ValueError("Action entity transfer TEMP collision")
     source_cols = [row[1] for row in db.execute("pragma main.table_xinfo(actions)") if row[6] == 0]
-    target_table = next(obj["sql"] for obj in current_action_objects() if obj["type"] == "table")
+    target_table = next(obj[3] for obj in target_objects() if obj[0] == "table" and obj[1] == "actions")
     with closing(sqlite3.connect(":memory:")) as target_db:
         from app.task8_storage import register_task8_functions
         register_task8_functions(target_db)
@@ -121,7 +122,6 @@ def _rebuild_action_owner_table(db):
     db.execute("create temp table _action_entity_rows as select " + ",".join(select) + " from main.actions")
     before = db.execute("select count(*) from temp._action_entity_rows").fetchone()[0]
     db.execute("drop table main.actions")
-    target_objects = current_action_objects()
     db.execute(target_table)
     names = ",".join(_quote(column) for column in (*common, *added))
     db.execute(f"insert into main.actions({names}) select {names} from temp._action_entity_rows order by id")
@@ -129,9 +129,6 @@ def _rebuild_action_owner_table(db):
         raise ValueError("Action entity transfer changed surviving Action row count")
     if db.execute(f"select {names} from main.actions except select {names} from temp._action_entity_rows limit 1").fetchone():
         raise ValueError("Action entity transfer changed surviving stored cells")
-    for obj in target_objects:
-        if obj["type"] in {"index", "trigger"}:
-            db.execute(obj["sql"])
     db.execute("delete from main.sqlite_sequence")
     db.executemany("insert into main.sqlite_sequence(rowid,name,seq) values(?,?,?)", sequence_rows)
     db.execute("drop table temp._action_entity_rows")
@@ -147,14 +144,13 @@ def _rebuild_inverse_action_owner_table(db):
     exact predecessor declaration regenerate its public projections.
     """
     from app.action_email_storage import _columns, _quote
-    from app.current_action_schema import source_current_action_objects
+    source_schema = source_objects(SOURCE_VARIANT)
 
     stage = "_action_entity_inverse_rows"
     water = "_action_entity_inverse_water"
     if db.execute("select 1 from temp.sqlite_schema where name in (?,?)", (stage, water)).fetchone():
         raise ValueError("Action entity inverse TEMP collision")
-    target_objects = source_current_action_objects()
-    target_table = next(obj["sql"] for obj in target_objects if obj["type"] == "table")
+    target_table = next(obj[3] for obj in source_schema if obj[0] == "table" and obj[1] == "actions")
     with closing(sqlite3.connect(":memory:")) as target_db:
         from app.task8_storage import register_task8_functions
         register_task8_functions(target_db)
@@ -177,9 +173,9 @@ def _rebuild_inverse_action_owner_table(db):
     db.execute("drop table main.actions")
     db.execute(target_table)
     db.execute(f"insert into main.actions({names}) select {names} from temp.{_quote(stage)} order by id")
-    for obj in target_objects:
-        if obj["type"] in {"index", "trigger"}:
-            db.execute(obj["sql"])
+    for kind, _name, table, sql in source_schema:
+        if table == "actions" and kind in {"index", "trigger"}:
+            db.execute(sql)
     # Compare every stored cell that existed on both declarations, including
     # JSONB BLOB bytes and SQLite storage classes. Only predecessor-only
     # prepared-child columns are intentionally initialized to SQL NULL here.
@@ -197,12 +193,18 @@ def _rebuild_inverse_action_owner_table(db):
     db.execute("drop table temp." + _quote(water))
 
 
+def _create_target_action_indexes_and_triggers(db):
+    for kind, _name, table, sql in target_objects():
+        if table == "actions" and kind in {"index", "trigger"}:
+            db.execute(sql)
+
+
 def _source_expected(variant):
     return source_objects(variant)
 
 
 def _target_expected():
-    return current_objects(email_ledger=True)
+    return target_objects()
 
 
 def _drop_action_guards(db):
@@ -243,8 +245,9 @@ def publish_action_entity_release(database: Path, contract: Mapping[str, object]
             _drop_action_guards(db)
             _rebuild_action_owner_table(db)
             _create_target_children(db)
-            transfer_source_facts(db, source_facts)
+            _create_target_action_indexes_and_triggers(db)
             _create_action_guards(db, _target_expected())
+            transfer_source_facts(db, source_facts)
             update_state_rows(db, "service_state", {
                 "value": TARGET_STORE_VERSION,
                 "updated_at": datetime.now(timezone.utc).isoformat(),
@@ -326,15 +329,16 @@ class ActionEntitySchemaRelease:
 
     def publish(self):
         publish_action_entity_release(self.database_path, self.contract)
-        from app.store_schema_release import _migrate_store
-        _migrate_store(self.root, self.database_path)
         self.verify_loaded()
 
     def verify_loaded(self):
-        require_current_pair(self.database_path)
         with closing(sqlite3.connect(self.database_path.as_uri() + "?mode=ro", uri=True)) as db:
-            if schema_objects(db) != _target_expected():
-                raise ValueError("Action entity current schema readback mismatch")
+            marker, versions = _markers(db)
+            if (schema_objects(db) != _target_expected()
+                    or marker is None or marker[0] != TARGET_STORE_VERSION
+                    or not versions or versions[-1][0] != TARGET_EMAIL_VERSION
+                    or db.execute("pragma quick_check").fetchone()[0] != "ok"):
+                raise ValueError("Action entity explicit target schema readback mismatch")
 
     def rollback(self):
         invert_action_entity_release(self.database_path, self.contract)

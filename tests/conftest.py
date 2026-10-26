@@ -1,9 +1,11 @@
 import json
 import os
+import re
 from pathlib import Path
 import sys
 
 import pytest
+from tests.support.memory_limit import MemoryLimit
 
 
 os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
@@ -45,8 +47,6 @@ os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
 
 # Derek, 2026-10-23 and 2026-10-25: 2 GB and 5 minutes, fixed on purpose, no environment
 # variable or option.
-from tests.support.memory_limit import MemoryLimit
-
 MEMORY_LIMIT = MemoryLimit(2 * 1024**3, time_limit_seconds=5 * 60)
 
 
@@ -75,13 +75,28 @@ def pytest_addoption(parser):
 
 
 def pytest_collection_modifyitems(config, items):
-    if config.getoption("--run-live"):
-        return
-    live_items = [item for item in items if item.get_closest_marker("live")]
-    if not live_items:
-        return
-    items[:] = [item for item in items if item not in live_items]
-    config.hook.pytest_deselected(items=live_items)
+    deselected = []
+    if not config.getoption("--run-live"):
+        deselected.extend(item for item in items if item.get_closest_marker("live"))
+
+    shard = os.environ.get("CEO_PYTEST_SHARD")
+    if shard:
+        match = re.fullmatch(r"(\d+)/(\d+)", shard)
+        if match is None:
+            raise pytest.UsageError("CEO_PYTEST_SHARD must be INDEX/COUNT")
+        index, count = map(int, match.groups())
+        if count < 2 or not 0 <= index < count:
+            raise pytest.UsageError("CEO_PYTEST_SHARD index must be in [0, COUNT), COUNT >= 2")
+        remaining = sorted(
+            (item for item in items if item not in deselected),
+            key=lambda item: item.nodeid,
+        )
+        deselected.extend(item for position, item in enumerate(remaining) if position % count != index)
+
+    if deselected:
+        deselected_ids = {id(item) for item in deselected}
+        items[:] = [item for item in items if id(item) not in deselected_ids]
+        config.hook.pytest_deselected(items=deselected)
 
 
 @pytest.fixture(autouse=True)
@@ -180,3 +195,13 @@ def isolate_service_mcp_manifest(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+
+
+@pytest.fixture(autouse=True)
+def isolate_audit_shared_instructions(tmp_path, monkeypatch):
+    """Audit tests own required instruction input instead of relying on HOME."""
+    from app import audit_agent
+
+    shared = tmp_path / "shared-agent-instructions.md"
+    shared.write_text("Shared instructions for isolated Agent tests.\n", encoding="utf-8")
+    monkeypatch.setattr(audit_agent, "SHARED_AGENT_INSTRUCTIONS_PATH", shared)

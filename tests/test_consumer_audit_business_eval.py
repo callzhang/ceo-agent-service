@@ -265,13 +265,19 @@ def test_tool_use_violation_cannot_be_scored_or_sent_to_audit(tmp_path: Path, mo
 
 
 def test_current_role_wire_is_normalized_with_exact_candidate_digest():
+    from tests.test_agent_contracts import _consumer_wire_payload
     from tests.test_system_executor import _candidate
 
-    wire = _candidate().model_dump(mode="json")
-    wire.pop("source_bindings")  # service-populated, never model-authored
-    error = wire.pop("error")
-    wire.update(error_code=error["code"], error_retryable=error["retryable"],
-                error_authorization_required=error["authorization_required"])
+    candidate = _candidate()
+    wire = _consumer_wire_payload(
+        outcome="proposal",
+        proposal=candidate.proposal.model_dump(mode="json"),
+        summary=candidate.summary,
+        risk=candidate.risk.value,
+        confidence=candidate.confidence,
+        rule_coverage=candidate.rule_coverage,
+        information_completeness=candidate.information_completeness,
+    )
 
     normalized = normalize_role_result(ROOT, "consumer", wire)
     assert normalized["ok"]

@@ -273,15 +273,6 @@ def _display_message_body(message: Message) -> str:
     return visible_email_text(payload)
 
 
-def _reply_trigger_json_sql(alias: str = "") -> str:
-    """The Reply input's trigger JSON, read from its source facts once the input is compacted."""
-    prefix = alias + "." if alias else ""
-    return (
-        f"case when {prefix}input_compacted=1 then json_extract({prefix}input_provenance_json,'$.source') "
-        f"else {prefix}trigger_message_json end"
-    )
-
-
 _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
     select effects.action_identity as effect_action_identity,
            effects.effect_digest as effect_digest,
@@ -294,7 +285,9 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
            tasks.channel as task_channel,
            tasks.conversation_id as task_conversation_id,
            tasks.trigger_message_id,
-           {_reply_trigger_json_sql('tasks')} as trigger_message_json,
+           tasks.trigger_message_json,
+           tasks.input_compacted,
+           tasks.input_provenance_json,
            tasks.execution_generation as task_execution_generation,
            tasks.status as task_status
     from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effects
@@ -1167,7 +1160,10 @@ def _audited_unsubscribe_lineage(
     if current_plan is None:
         return None
     try:
-        payload = json.loads(lineage["trigger_message_json"])
+        payload = json.loads(
+            AutoReplyStore._compact_reply_input_json(lineage["input_provenance_json"])
+            if lineage["input_compacted"] else lineage["trigger_message_json"]
+        )
         plan_actions = _json_load(
             current_plan["actions_json"],
             field="actions_json",
@@ -1309,7 +1305,10 @@ def _current_unsubscribe_task_lineage(
     if current_plan is None:
         return None
     try:
-        payload = json.loads(str(task["trigger_message_json"]))
+        payload = json.loads(
+            AutoReplyStore._compact_reply_input_json(task["input_provenance_json"])
+            if task["input_compacted"] else str(task["trigger_message_json"])
+        )
         actions = _json_load(
             current_plan["actions_json"],
             field="actions_json",
@@ -5909,7 +5908,8 @@ class EmailStore:
                        consumer.operation_id as consumer_operation_id,
                        tasks.channel as task_channel,
                        tasks.trigger_message_id,
-                       {_reply_trigger_json_sql('tasks')} as trigger_message_json,
+                       tasks.trigger_message_json,
+                       tasks.input_compacted, tasks.input_provenance_json,
                        tasks.execution_generation as task_generation
                 from ({AGENT_RUN_SQL}) as audit
                 join ({AGENT_RUN_SQL}) as consumer
@@ -5932,9 +5932,12 @@ class EmailStore:
             payload_entries = None
             if row is not None:
                 try:
-                    task_payload = json.loads(str(row["trigger_message_json"]))
+                    task_payload = json.loads(
+                        AutoReplyStore._compact_reply_input_json(row["input_provenance_json"])
+                        if row["input_compacted"] else str(row["trigger_message_json"])
+                    )
                     payload_entries = task_payload.get("unsubscribe_entries")
-                except (AttributeError, TypeError, ValueError, RecursionError):
+                except (AttributeError, TypeError, ValueError, RecursionError, KeyError):
                     task_payload = None
                     payload_entries = None
             expected_payload = {
@@ -8163,7 +8166,8 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select actions.classification_id, actions.action_type,
+                select actions.classification_id, actions.action_plan_id,
+                       actions.created_at, actions.action_type,
                        actions.status, actions.error, actions.attempt_count,
                        actions.next_attempt_at, actions.provider_operation,
                        exists(select 1 from ({EMAIL_RETRY_SQL}) r where r.action_id=actions.action_id and r.attempt_number=actions.attempt_count) as explicit_retry_attempt,
@@ -8176,10 +8180,18 @@ class EmailStore:
                 where actions.classification_id in ("""
                 + ",".join("?" for _ in ids)
                 + """)
-                order by actions.created_at, actions.action_id
                 """,
                 ids,
             ).fetchall()
+        rows = sorted(
+            rows,
+            key=lambda row: (
+                row["created_at"],
+                _direct_action_id(
+                    str(row["action_plan_id"]), EmailAction(row["action_type"])
+                ),
+            ),
+        )
         for row in rows:
             state = {
                 "type": str(row["action_type"]),
@@ -8887,18 +8899,20 @@ class EmailStore:
                 task_rows = db.execute(
                     f"""
                     select id, conversation_id, trigger_message_id,
-                           {_reply_trigger_json_sql()} as trigger_message_json,
-                           execution_generation,
-                           status, error, created_at
-                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                    where channel='email'
-                      and json_valid({_reply_trigger_json_sql()})
-                      and json_extract(
-                            {_reply_trigger_json_sql()}, '$.classification_id'
-                          )=?
-                      and json_extract(
-                            {_reply_trigger_json_sql()}, '$.action_type'
-                          )='unsubscribe'
+                           trigger_message_json, input_compacted, input_provenance_json,
+                           execution_generation, status, error, created_at
+                    from (
+                        select reply_tasks.*,
+                               case when input_compacted=1 then
+                                   case when json_valid(input_provenance_json) then
+                                       json_extract(input_provenance_json, '$.source') end
+                                   else trigger_message_json end as lineage_source_json
+                        from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                        where channel='email'
+                    )
+                    where json_valid(lineage_source_json)
+                      and json_extract(lineage_source_json, '$.classification_id')=?
+                      and json_extract(lineage_source_json, '$.action_type')='unsubscribe'
                     order by created_at, id
                     """,
                     (classification_id,),
@@ -11060,9 +11074,15 @@ class EmailStore:
             owner = db.execute("select * from (" + DIRECT_EMAIL_ACTION_SQL + ") where action_id=?", (action_id,)).fetchone()
             if owner is None:
                 raise EmailActionAttemptConflict(f"unknown direct email action {action_id}")
+            action_started_at = db.execute(
+                "select action_started_at from actions where record_type='action' and id=?",
+                (action_id,),
+            ).fetchone()
+            if action_started_at is None:
+                raise EmailActionAttemptConflict(f"unknown direct email action {action_id}")
             receipt_id = shared_action_lifecycle.record_direct_email_action_outcome(
                 db, action_id=action_id, expected_status=owner['status'],
-                expected_started_at=owner['started_at'], expected_attempt_count=owner['attempt_count'],
+                expected_started_at=action_started_at[0], expected_attempt_count=owner['attempt_count'],
                 attempt_number=attempt_number, status=status,
                 provider_operation=provider_operation, provider_target=provider_target,
                 provider_result_id=provider_result_id, error=error,
@@ -11300,13 +11320,13 @@ class EmailStore:
             for row in sorted(rows, key=plan_priority)
         )
 
-    def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
+    def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[int, str]:
         with self._connect() as db:
             rows = db.execute(
                 f"select action_id, status from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
-        return {str(row["action_id"]): str(row["status"]) for row in rows}
+        return {int(row["action_id"]): str(row["status"]) for row in rows}
 
     def direct_action_receipts_for_plan(
         self, action_plan_id: str
@@ -11316,7 +11336,7 @@ class EmailStore:
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select a.action_id, a.action_type, a.status,
+                select a.action_id, a.action_plan_id, a.action_type, a.status,
                        t.provider_operation, t.provider_target,
                        t.provider_result_id, t.finished_at
                 from ({DIRECT_EMAIL_ACTION_SQL}) as a
@@ -11327,11 +11347,30 @@ class EmailStore:
                     where latest.action_id=a.action_id and latest.status='done'
                   )
                 where a.action_plan_id=? and a.status='done'
-                order by a.action_id
                 """,
                 (action_plan_id,),
             ).fetchall()
-        return tuple(dict(row) for row in rows)
+        rows = sorted(
+            rows,
+            key=lambda row: _direct_action_id(
+                str(row["action_plan_id"]), EmailAction(row["action_type"])
+            ),
+        )
+        return tuple(
+            {
+                key: row[key]
+                for key in (
+                    "action_id",
+                    "action_type",
+                    "status",
+                    "provider_operation",
+                    "provider_target",
+                    "provider_result_id",
+                    "finished_at",
+                )
+            }
+            for row in rows
+        )
 
     def list_missing_unsubscribe_action_tasks(
         self, *, classification_id: int | None = None

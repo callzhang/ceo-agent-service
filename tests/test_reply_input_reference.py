@@ -4,6 +4,7 @@ import sqlite3
 import pytest
 
 from app.store import AutoReplyStore
+from app.task20_definitions import TASK20_COLUMNS
 from app.storage_maintenance import REPLY_TASK_INPUT_SQL
 
 
@@ -18,6 +19,26 @@ def values(text="first"):
         trigger_text=text,
         trigger_message_json='{"schema":"sample","message_id":"message"}',
     )
+
+
+def test_parent_has_real_input_foreign_keys_and_no_payload_cache(tmp_path):
+    store = AutoReplyStore(tmp_path / "db.sqlite3")
+    task = store.ensure_reply_task(**values()).id
+    with sqlite3.connect(store.path) as db:
+        keys = {(r[3], r[2], r[4]) for r in db.execute("pragma foreign_key_list(tasks)")}
+        assert ("current_input_id", "task_inputs", "id") in keys
+        assert ("claimed_input_id", "task_inputs", "id") in keys
+        parent = db.execute(
+            "select current_input_id,parameters_json from tasks where kind='reply' and id=?",
+            (task,),
+        ).fetchone()
+        assert parent[0] is not None
+        parent_fields = {column[0] for column in TASK20_COLUMNS["reply_tasks"]}
+        assert parent_fields.isdisjoint({
+            "trigger_text", "trigger_message_json", "input_compacted", "input_provenance_json",
+        })
+        assert values()["trigger_text"].encode() not in parent[1]
+        assert values()["trigger_message_json"].encode() not in parent[1]
 
 
 def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
@@ -54,7 +75,12 @@ def test_terminal_input_persists_no_compact_json_but_projects_old_shape(tmp_path
     assert '"input_compacted":true' in result.trigger_message_json
     with sqlite3.connect(store.path) as db:
         assert db.execute(
-            f"select trigger_text, trigger_message_json, input_compacted from ({REPLY_TASK_INPUT_SQL})"
+            "select trigger_text, trigger_message_json, input_compacted "
+            "from task_inputs where task_id=? order by id limit 1",
+            (task_id,),
+        ).fetchone() == ("", "", 1)
+        assert db.execute(
+            f"select trigger_text,trigger_message_json,input_compacted from ({REPLY_TASK_INPUT_SQL})"
         ).fetchone() == ("", "", 1)
     assert (
         store.list_reply_task_inputs(task_id)[0]["trigger_message_json"]
@@ -294,5 +320,3 @@ def test_reviewed_dingtalk_reply_handler_uses_claimed_message_after_new_input(
     )
     assert result.status == "verified"
     assert observed == ["message"]
-
-

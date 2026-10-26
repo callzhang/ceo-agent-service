@@ -17,4 +17,5 @@ def test_project_skill_reconciles_known_unknowns_without_repeating_checklists():
     assert "Ask only for a genuinely new fact the applicant can supply" in skill
     assert "Do not turn a completed response into another broad checklist" in skill
     assert "do not reopen the same three requests" in skill
-    assert "do not send another request that cannot change the evidence" in skill
+    assert "A fact already stated as unavailable is not an unanswered request" in skill
+    assert "send a message that only repeats prior questions" in skill

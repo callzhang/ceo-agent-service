@@ -5,7 +5,12 @@ import pytest
 from app.agent_contracts import AuditOutcome
 from app.process_runner import ProcessRunResult
 from app.store import AgentRole
-from tests.test_audit_agent import _runner, _wire, setup as _audit_setup
+from tests.test_audit_agent import (
+    CapturingExecutor,
+    _runner,
+    _wire,
+    setup as _audit_setup,
+)
 
 
 @pytest.fixture
@@ -16,6 +21,9 @@ def setup(tmp_path):
 def test_audit_idle_timeout_binds_fresh_runtime_session_and_preserves_attempts(setup):
     store, task, parent, context, _config, _router = setup
     calls = []
+    successful_executor = CapturingExecutor(
+        _wire().replace("audit-session", "audit-recovered")
+    )
 
     def executor(command, *, on_stdout_line, **kwargs):
         calls.append(command)
@@ -23,10 +31,7 @@ def test_audit_idle_timeout_binds_fresh_runtime_session_and_preserves_attempts(s
             output = json.dumps({"type": "thread.started", "thread_id": "audit-idle"})
             on_stdout_line(output)
             return ProcessRunResult(1, output, "idle timeout", timed_out=True, timeout_kind="idle")
-        output = _wire().replace("audit-session", "audit-recovered")
-        for line in output.splitlines():
-            on_stdout_line(line)
-        return ProcessRunResult(0, output, "")
+        return successful_executor(command, on_stdout_line=on_stdout_line, **kwargs)
 
     result = _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
 

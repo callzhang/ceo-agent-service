@@ -346,6 +346,7 @@ def _file_sha256(path):
 
 def _publish_email_pair(repo, candidate, *, recovery_source_path=None):
     from app.storage_payload import ACTION_RECORD_TYPES
+    from app.current_schema_manifest import current_objects, schema_objects
     from app.state_definitions import state_projection
     from app.email_store import EMAIL_SCHEMA_VERSION, EmailStore
     from app.store import AutoReplyStore, STORE_SCHEMA_VERSION
@@ -366,10 +367,12 @@ def _publish_email_pair(repo, candidate, *, recovery_source_path=None):
         )}
         assert store_version == (STORE_SCHEMA_VERSION,)
         assert email_version == (EMAIL_SCHEMA_VERSION,)
-        assert tables == {"tasks", "runs", "actions", "business", "emails", "provenance",
-                          "configs", "provider_state", "schedules", "state", "email_schema_migrations"}
+        expected = current_objects(email_ledger=True)
+        assert schema_objects(db) == expected
+        assert tables == {name for kind, name, _owner, _sql in expected if kind == "table"}
     return {"store": store_version[0], "email": email_version[0],
-            "action_types": len(ACTION_RECORD_TYPES.names), "core_tables": 10,
+            "action_types": len(ACTION_RECORD_TYPES.names),
+            "core_tables": len(tables - {"email_schema_migrations"}),
             "source_body_table_present": False}
 
 

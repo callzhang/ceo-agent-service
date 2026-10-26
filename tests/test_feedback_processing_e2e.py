@@ -6,9 +6,6 @@ and references; no model invocation is involved in the import step.
 """
 from app.action_storage import update_action
 from app.action_feedback_storage import insert_feedback_action
-from app.task12_storage import task12_set_parts
-from app.task20_definitions import task20_column
-
 import subprocess
 from pathlib import Path
 
@@ -192,8 +189,8 @@ def _seed_processing_batch_for_resolution(
     store.claim_feedback_processing_items(batch_id, ["feedback-backlog"])
     store.associate_feedback_processing_turn(
         "feedback-backlog",
-        workbench_task_id="task-backlog",
-        workbench_turn_id="turn-backlog",
+        workbench_task_id="101",
+        workbench_turn_id="102",
         attempt_id=1,
         agent_run_id=2,
     )
@@ -708,8 +705,8 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         patched = client.patch(
             "/api/console/feedback/items/feedback-8308",
             json={
-                "workbench_task_id": "task-124",
-                "workbench_turn_id": "turn-445",
+                "workbench_task_id": "124",
+                "workbench_turn_id": "445",
                 "attempt_id": 8308,
                 "agent_run_id": 445,
                 **round_one_receipt,
@@ -836,8 +833,8 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         historical_batch_patch = client.patch(
             f"/api/console/feedback/batches/{batch_id}",
             json={
-                "workbench_task_id": "stale-task",
-                "workbench_turn_id": "stale-turn",
+                "workbench_task_id": "999",
+                "workbench_turn_id": "998",
             },
         )
         assert historical_batch_patch.status_code == 409
@@ -851,8 +848,8 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         patched_again = client.patch(
             "/api/console/feedback/items/feedback-8308",
             json={
-                "workbench_task_id": "task-224",
-                "workbench_turn_id": "turn-545",
+                "workbench_task_id": "224",
+                "workbench_turn_id": "545",
                 "attempt_id": 8308,
                 "agent_run_id": 545,
                 **round_two_receipt,
@@ -891,11 +888,10 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert old_batch_after.json()["item"]["items"][0]["round_number"] == 1
 
         with store._connect() as db:
-            parts = task12_set_parts("feedback_processing_items", {"current_round_id": 999999})
             db.execute(
-                f"update tasks set {parts.sql} where record_type='feedback_processing_items' "
-                f"and {task20_column('feedback_processing_items', 'feedback_key')}=?",
-                (*parts.parameters, "feedback-8308"),
+                "update feedback_processing_items set current_round_id=? "
+                "where feedback_key=?",
+                (999999, "feedback-8308"),
             )
         history_error = client.post(
             "/api/console/feedback/items/feedback-8308/reopen",
@@ -905,11 +901,10 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         assert history_error.json()["code"] == "feedback_reopen_history_incomplete"
         assert store.get_feedback_event("feedback-8308").resolved_at
         with store._connect() as db:
-            parts = task12_set_parts("feedback_processing_items", {"current_round_id": round_two["id"]})
             db.execute(
-                f"update tasks set {parts.sql} where record_type='feedback_processing_items' "
-                f"and {task20_column('feedback_processing_items', 'feedback_key')}=?",
-                (*parts.parameters, "feedback-8308"),
+                "update feedback_processing_items set current_round_id=? "
+                "where feedback_key=?",
+                (round_two["id"], "feedback-8308"),
             )
 
         resolved_after = client.get("/api/console/feedback?status=resolved")

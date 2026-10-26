@@ -186,13 +186,8 @@ def test_codex_legacy_mcp_end_is_not_replaced_by_started_projection(tmp_path, mo
 def test_completed_runtime_result_recovers_typed_value_from_native(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "runs.sqlite3")
     run = _claim_consumer(store, _task(store)).run
-    wire = {
-        "outcome": "no_action", "risk": "low", "confidence": 1.0,
-        "rule_coverage": 1.0, "information_completeness": 1.0,
-        "summary": "Native answer.", "proposal": None,
-        "decision_options": [], "error_code": "", "error_retryable": False,
-        "error_authorization_required": False, 
-    }
+    from tests.test_agent_contracts import _consumer_wire_payload
+    wire = _consumer_wire_payload(outcome="no_action", summary="Native answer.")
     path = tmp_path / "session.jsonl"
     path.write_text(json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": json.dumps(wire)}]}}) + "\n")
     monkeypatch.setattr(native_trajectory, "find_codex_session_path", lambda *args, **kwargs: path)
@@ -567,14 +562,13 @@ def test_prepared_failure_does_not_adopt_native_proposed_success(tmp_path, monke
     from app.agent_wire_contracts import parse_consumer_agent_wire_result
     from app.agent_orchestrator import AgentOrchestrator
     from app.process_runner import ProcessRunResult
+    from app.native_agent_output import native_output_schema_path
 
     store = AutoReplyStore(tmp_path / 'runs.sqlite3')
     task = _task(store)
     run = _claim_consumer(store, task).run
-    wire = {'outcome': 'no_action', 'summary': 'Proposed success', 'proposal': None,
-            'error_code': '', 'error_retryable': False, 'error_authorization_required': False,
-            'risk': 'low', 'confidence': 1.0, 'rule_coverage': 1.0,
-            'information_completeness': 1.0}
+    from tests.test_agent_contracts import _consumer_wire_payload
+    wire = _consumer_wire_payload(outcome="no_action", summary="Proposed success")
     _native_final(tmp_path, monkeypatch, store, run.id, wire)
     monkeypatch.setattr('app.agent_turn_runner.count_codex_session_lines', lambda *a, **k: 1)
     config = load_runtime_config({'CEO_AGENT_RUNTIME_ROUTES': 'codex_oauth'})
@@ -584,6 +578,8 @@ def test_prepared_failure_does_not_adopt_native_proposed_success(tmp_path, monke
     def execute(_command, *, on_stdout_line, **kwargs):
         stream = '\n'.join([json.dumps({'type': 'thread.started', 'thread_id': f'native-{run.id}'}),
                             json.dumps({'type': 'item.completed', 'item': {'type': 'agent_message', 'text': json.dumps(wire)}})])
+        from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
+        stream = native_consumer_stream_for_command(stream, _command)
         for line in stream.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(0, stream, '')
@@ -593,7 +589,9 @@ def test_prepared_failure_does_not_adopt_native_proposed_success(tmp_path, monke
     result = AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner='consumer',
                               executor=execute, runtime_config=config, runtime_router=Router()).execute(
         run=run, prompt='task', session_id=None, developer_instructions='',
-        configure_command=lambda command: None, parse_result=parse_consumer_agent_wire_result,
+        configure_command=lambda command: command.extend([
+            "--output-schema", str(native_output_schema_path("consumer", purpose="general")),
+        ]), parse_result=parse_consumer_agent_wire_result,
         prepare_result=prepare, persist_conversation_session=True,
     )
     assert result.result.outcome is ConsumerOutcome.FAILED

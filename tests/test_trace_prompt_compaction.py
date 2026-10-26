@@ -45,7 +45,7 @@ def test_wire_schema_compaction_retains_validation_constraints():
     common = dict(summary="fixture", error_code=None, error_retryable=False,
                   error_authorization_required=False, risk="low", confidence=0.9,
                   rule_coverage=1.0, information_completeness=1.0)
-    consumer = dict(common, outcome="no_action", proposal=None)
+    consumer = dict(common, action="no_action", reason="fixture", target={}, payload={}, evidence_refs=[])
     audit = dict(common, outcome="approve", feedback=None)
     for model, valid in ((ConsumerAgentWireResult, consumer), (AuditAgentWireResult, audit)):
         raw = model.model_json_schema()
@@ -53,7 +53,7 @@ def test_wire_schema_compaction_retains_validation_constraints():
         Draft202012Validator.check_schema(compact)
         assert Draft202012Validator(compact).is_valid(valid)
         assert len(json.dumps(compact)) < len(json.dumps(raw))
-        cases = [valid, dict(valid, confidence=1.5), dict(valid, surprise=True), dict(valid, outcome="unknown")]
+        cases = [valid, dict(valid, confidence=1.5), dict(valid, surprise=True), dict(valid, **{("action" if model is ConsumerAgentWireResult else "outcome"): "unknown"})]
         missing = copy.deepcopy(valid)
         del missing["summary"]
         cases.append(missing)

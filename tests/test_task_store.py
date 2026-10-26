@@ -18,6 +18,22 @@ def _store(tmp_path: Path) -> AutoReplyStore:
     return AutoReplyStore(tmp_path / "task.sqlite3")
 
 
+def test_legacy_work_lists_are_retired_but_exact_history_readers_remain(tmp_path):
+    store = _store(tmp_path)
+    project_id = seed_legacy_work_project(
+        store, title="历史项目", category="projects", status="active"
+    )
+    todo_id = seed_legacy_work_todo(
+        store, project_id=project_id, title="历史待办", status="open"
+    )
+
+    assert not hasattr(store, "list_work_projects")
+    assert not hasattr(store, "list_work_todos_for_projects")
+    assert not hasattr(store, "list_work_project_ids_for_todo_owner")
+    assert store.get_work_project(project_id).id == project_id
+    assert store.get_work_todo(todo_id).id == todo_id
+
+
 def test_current_task_execution_schema_has_no_legacy_auxiliary_tables(tmp_path):
     store = _store(tmp_path)
     from app.current_schema_manifest import schema_is_current
@@ -1389,80 +1405,6 @@ def test_list_follow_up_drafts_for_todos_groups_by_todo(
     assert [draft.id for draft in grouped[first_todo_id]] == [first_draft_id]
     assert [draft.id for draft in grouped[second_todo_id]] == [second_draft_id]
     assert other_todo_id not in grouped
-
-
-def test_list_work_todos_for_projects_groups_by_project(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    first_project_id = seed_legacy_work_project(store,
-        title="第一项目",
-        category="projects",
-        status="active",
-    )
-    second_project_id = seed_legacy_work_project(store,
-        title="第二项目",
-        category="projects",
-        status="active",
-    )
-    other_project_id = seed_legacy_work_project(store,
-        title="第三项目",
-        category="projects",
-        status="active",
-    )
-    first_todo_id = seed_legacy_work_todo(store,
-        project_id=first_project_id,
-        title="第一项",
-        status="open",
-    )
-    second_todo_id = seed_legacy_work_todo(store,
-        project_id=second_project_id,
-        title="第二项",
-        status="done",
-    )
-    seed_legacy_work_todo(store,
-        project_id=other_project_id,
-        title="第三项",
-        status="open",
-    )
-
-    grouped = store.list_work_todos_for_projects([first_project_id, second_project_id])
-
-    assert [todo.id for todo in grouped[first_project_id]] == [first_todo_id]
-    assert [todo.id for todo in grouped[second_project_id]] == [second_todo_id]
-    assert other_project_id not in grouped
-
-
-def test_list_work_project_ids_for_todo_owner_filters_active_projects(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    active_project_id = seed_legacy_work_project(store,
-        title="技术部招聘",
-        category="recruiting",
-        status="active",
-    )
-    archived_project_id = seed_legacy_work_project(store,
-        title="历史招聘",
-        category="recruiting",
-        status="archived",
-    )
-    seed_legacy_work_todo(store,
-        project_id=active_project_id,
-        title="评估 Colin",
-        owner_user_id="owner-1",
-        owner_name="Avery",
-    )
-    seed_legacy_work_todo(store,
-        project_id=archived_project_id,
-        title="归档候选人",
-        owner_user_id="owner-1",
-        owner_name="Avery",
-    )
-
-    assert store.list_work_project_ids_for_todo_owner("owner-1") == {
-        active_project_id
-    }
 
 
 def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: Path):

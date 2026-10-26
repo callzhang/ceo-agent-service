@@ -28,6 +28,7 @@ def _options(store: AutoReplyStore, root: Path) -> ScheduledTaskOptionService:
         "dingtalk-oa-approval",
         "dingtalk-wiki",
         "dingtalk-doc",
+        "dingtang-okr-review",
         "stardust-oa-finance-review",
         "stardust-oa-project-review",
         "stardust-oa-contract-review",

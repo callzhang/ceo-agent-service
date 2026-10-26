@@ -12,8 +12,8 @@ _DIRECT_CODEX_RUNNER_EXEMPTIONS = {
     # Repository branch-name suggestions are an isolated, non-persisted helper
     # and intentionally do not participate in task execution routing.
     "app/repository_upgrade_agent.py",
-    # The upgrade console's release-note summary is the same kind of isolated,
-    # non-persisted helper (one prompt, no task, no routing parent).
+    # Release-note summaries are an isolated, read-only repository helper, not
+    # execution of a persisted service operation.
     "app/repository_release_notes.py",
 }
 

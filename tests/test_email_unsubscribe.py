@@ -538,7 +538,7 @@ def test_unsubscribe_result_preserves_lines_and_benign_diagnostics_when_redactin
 
 @pytest.mark.parametrize(("raw", "secret"), [
     ("Bearer\nabcdefghi", "abcdefghi"),
-    ("Basic\nYWJjZGVmZ2g=", "YWJjZGVmZ2g="),
+    ("Basic\nYWJjOmRlZmdobw==", "YWJjOmRlZmdobw=="),
     ("token=\nsecret-value", "secret-value"),
 ])
 def test_unsubscribe_result_keeps_cross_line_credential_redaction(raw, secret):

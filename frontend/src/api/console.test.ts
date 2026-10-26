@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, listAttention, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, listHistoryTypes, renameRuntimeRoute } from "./console";
+import { ConsoleApiError, listAttention, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, getBusinessTaskDetail, listHistoryTypes, renameRuntimeRoute, getLegacyProjectDetail } from "./console";
 
 function statusEnvelope() {
   return {
@@ -381,129 +381,58 @@ describe("console API helpers", () => {
     }
   });
 
-  it("prefers the server-provided task owner field when present", async () => {
+  it("exposes only the exact legacy project detail reader for historical projects", async () => {
     const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      items: [{
-        id: 836,
-        title: "客户项目",
-        status: "active",
-        category: "projects",
-        owner: "Avery",
-        owner_name: "",
-        owner_user_id: "",
-        progress_count: 3,
-        progress_total: 5,
-        progress_ratio: 60,
-        todo_count: 5,
-        current_state: "等待客户确认",
-        next_step: "准备下一次同步",
-      }],
-      meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T18:27:11Z" },
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
+    let requestedUrl = "";
+    globalThis.fetch = async (input) => {
+      requestedUrl = String(input);
+      return new Response(JSON.stringify({ item: {
+        project: {
+          id: 17, title: "历史项目", status: "active", owner: "", owner_name: "",
+          owner_user_id: "", goal: "历史目标", facts: [{ id: 1, description: "来源事实", source: "meeting-71", created_at: "2026-09-01" }],
+          source_conversations: [{ id: 2, title: "来源会话" }],
+        },
+        todos: [{ id: 21, title: "历史待办", owner_name: "王五", status: "done" }],
+        updates: [{ id: 31, summary: "历史更新" }],
+        evidence_candidates: [{ id: 41, evidence_text: "依据候选" }],
+        unlinked_follow_ups: [{ id: 51, question_text: "历史催办" }],
+      }, meta: { snapshot_at: "2026-09-04" } }), { status: 200 });
+    };
     try {
-      const { listTasks } = await import("./console");
-      const page = await listTasks();
-      expect(page.items[0].owner).toBe("Avery");
-      expect(page.items[0]).not.toHaveProperty("priority");
-      expect(page.items[0]).not.toHaveProperty("risk");
+      const api = await import("./console");
+      expect("listTasks" in api).toBe(false);
+      expect("getTaskDetail" in api).toBe(false);
+      const response = await getLegacyProjectDetail("17/with space");
+      expect(requestedUrl).toContain("/api/console/tasks/legacy-projects/17%2Fwith%20space");
+      expect(response.item).toEqual({
+        id: "17", title: "历史项目", status: "active", owner: "王五", description: "历史目标",
+        facts: [{ id: "1", description: "来源事实", source: "meeting-71", created: "2026-09-01", updated: "未提供" }],
+        source_conversations: [{ id: 2, title: "来源会话" }],
+        todos: [{ id: 21, title: "历史待办", owner_name: "王五", status: "done" }],
+        updates: [{ id: 31, summary: "历史更新" }],
+        evidence_candidates: [{ id: 41, evidence_text: "依据候选" }],
+        unlinked_follow_ups: [{ id: 51, question_text: "历史催办" }],
+      });
+      expect(response.item).not.toHaveProperty("progress");
+      expect(response.item).not.toHaveProperty("next_summary");
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  it("rejects a legacy Project row in the semantic Tasks list", async () => {
+  it("rejects a legacy Project shape from the semantic Business Task detail endpoint", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({
-      items: [{ id: 836, title: "客户项目", status: "active", category: "projects" }],
-      meta: { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "2026-08-29T00:00:00Z" },
+      item: { project: { id: 836, title: "旧项目" } },
+      meta: { snapshot_at: "2026-09-24" },
     }), { status: 200 });
     try {
-      const { listBusinessTasks } = await import("./console");
-      await expect(listBusinessTasks()).rejects.toThrow("invalid business task response");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("rejects a legacy Project detail in the semantic Task detail endpoint", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({ item: { project: { id: 836, title: "旧项目" } }, meta: { snapshot_at: "2026-09-24" } }), { status: 200 });
-    try {
-      const { getBusinessTaskDetail } = await import("./console");
       await expect(getBusinessTaskDetail("836")).rejects.toThrow("invalid business task detail");
     } finally {
       globalThis.fetch = originalFetch;
     }
   });
 
-  it("summarizes multiple TODO owners on task details when project owner is empty", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      item: {
-        project: {
-          id: 836,
-          title: "客户项目",
-          status: "active",
-          category: "projects",
-          owner: "",
-          owner_name: "",
-          owner_user_id: "",
-          current_state: "等待客户确认",
-          next_step: "准备下一次同步",
-          facts: [],
-          tags: [],
-        },
-        todos: [
-          { id: 1, owner_name: "孙伟", owner_user_id: "owner-1" },
-          { id: 2, owner_name: "张晓民", owner_user_id: "owner-2" },
-          { id: 3, owner_name: "Avery", owner_user_id: "owner-3" },
-          { id: 4, owner_name: "ET", owner_user_id: "owner-4" },
-        ],
-        updates: [],
-      },
-      meta: { snapshot_at: "2026-08-29T18:27:11Z" },
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
-    try {
-      const { getTaskDetail } = await import("./console");
-      const response = await getTaskDetail("836");
-      expect(response.item.owner).toBe("多人：孙伟、张晓民、Avery 等 4 人");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
-
-  it("computes task detail progress from completed TODOs", async () => {
-    const originalFetch = globalThis.fetch;
-    globalThis.fetch = async () => new Response(JSON.stringify({
-      item: {
-        project: {
-          id: 836,
-          title: "客户项目",
-          status: "active",
-          category: "projects",
-          owner_name: "Avery",
-          current_state: "执行中",
-          next_step: "继续推进",
-          facts: [],
-          tags: [],
-        },
-        todos: [
-          { id: 1, status: "done" },
-          { id: 2, status: "open" },
-        ],
-        updates: [],
-      },
-      meta: { snapshot_at: "2026-08-29T18:27:11Z" },
-    }), { status: 200, headers: { "Content-Type": "application/json" } });
-    try {
-      const { getTaskDetail } = await import("./console");
-      const response = await getTaskDetail("836");
-      expect(response.item.progress).toBe("1/2（50%）");
-    } finally {
-      globalThis.fetch = originalFetch;
-    }
-  });
 });
 
  it("labels grouped Failed links with each actual Attempt identity", async () => {

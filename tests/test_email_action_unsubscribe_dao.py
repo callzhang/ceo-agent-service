@@ -974,4 +974,3 @@ def _audited_lineage_cycle(store, classification):
             stable_message_identity=a["stable_message_identity"],
         ),
     )
-

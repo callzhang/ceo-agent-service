@@ -1,3 +1,8 @@
+from app.action_storage import (
+    NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+    NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+    SENT_REPLY_SQL,
+)
 import json
 import os
 from dataclasses import replace
@@ -6,7 +11,6 @@ from pathlib import Path
 import pytest
 
 import app.consumer_agent as consumer_agent
-from app.store import AGENT_RUN_SQL
 from app.agent_context import (
     _CONSUMER_AGENT_RULES,
     AgentContextMessage,
@@ -38,6 +42,7 @@ from app.consumer_agent import (
     CONSUMER_BASE_RUNTIME_CAPABILITIES,
     CONSUMER_DYNAMIC_SKILL_BODY,
     ConsumerAgentRunner,
+    TASK_STORAGE_INSTRUCTIONS,
     audit_developer_instructions,
     consumer_developer_sections,
     consumer_developer_sections_by_runtime,
@@ -51,7 +56,12 @@ from app.developer_prompt import DeveloperPromptTemplateError
 from app.outbound_postfix import PreparedOutboundMessage
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.process_runner import ProcessRunResult
-from app.store import AgentRole, AutoReplyStore
+from app.store import (
+    AgentRole,
+    AutoReplyStore,
+    NATIVE_AGENT_RUN_SQL,
+    NATIVE_CANDIDATE_EXECUTION_SQL,
+)
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 from tests.support.native_protocol import install_protocol_native_trajectories
 from tests.support.native_consumer_output_fixture import native_consumer_stream_for_command
@@ -964,6 +974,13 @@ def test_consumer_summary_is_not_an_execution_receipt(store, task, context, summ
     assert result.result.summary == summary
     assert store.get_reply_task(task.id).status == "processing"
     with store._connect() as db:
+        for projection in (
+            NATIVE_CANDIDATE_EXECUTION_SQL,
+            NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
+            NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+            SENT_REPLY_SQL,
+        ):
+            assert db.execute(f"select count(*) from ({projection})").fetchone()[0] == 0
         # A Consumer summary is not an execution: no Action and no Action receipt exists.
         for table in ("actions", "action_receipts"):
             assert db.execute(f"select count(*) from {table}").fetchone()[0] == 0
@@ -1122,10 +1139,12 @@ def test_consumer_and_audit_share_direct_external_delivery_boundary():
         "Verify the candidate.", runtime_context="", work_profile=""
     )
 
+    assert consumer.count(CONSUMER_OUTBOUND_INSTRUCTION) == 1
     assert consumer.count(instruction) == 1
-    assert "Consumer may propose them as typed actions but must not execute them through any tool." in audit
+    assert "actions contacting or changing state for another person require Audit review" in audit
+    assert "Consumer may propose them as typed actions but must not execute them through any tool" in audit
     assert "candidate prose alone is not a provider receipt" in audit
-    assert "Honor draft-only instructions." in audit
+    assert "Honor draft-only instructions" in audit
     assert "Return or reject claims that such effects occurred outside the typed, Audit-reviewed path" in audit
     assert "Otherwise keep valid typed proposals eligible for review" in audit
     assert "only system code may execute approved plans" in audit
@@ -1136,11 +1155,11 @@ def test_consumer_capability_section_keeps_tool_contract_without_repeating_commo
     capability = next(section.text for section in sections if section.name == "能力边界")
     common = next(section.text for section in sections if section.name == "共同工作原则")
 
-    # 3556 before c0382cbb2 (2026-10-23) moved task-memory writing into the Consumer's own
-    # memory_write guidance (about 1.7k characters in this section).
-    assert len(capability) <= 5400
     assert "Consumer 可做本轮普通文档" in common
     assert "只有当前系统任务已注册且要求 Audit 的动作" in common
+    assert "Consumer 可做本轮普通文档" not in capability
+    assert "只有当前系统任务已注册且要求 Audit 的动作" not in capability
+    assert capability.count(TASK_STORAGE_INSTRUCTIONS) == 1
     assert "consumer_artifact_write" in capability
     assert "consumer_document_write" in capability
     assert "consumer_run_skill_script" in capability
@@ -3163,9 +3182,17 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     saved = store.get_agent_run(result.run_id)
     assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
-        # The Run row keeps no copy of the final result; the native session is the source.
-        run_columns = [c[0] for c in db.execute(f'select * from ({AGENT_RUN_SQL}) limit 0').description]
+        run_columns = [
+            column[0]
+            for column in db.execute(
+                f"select * from ({NATIVE_AGENT_RUN_SQL}) limit 0"
+            ).description
+        ]
         assert "final_result_json" not in run_columns
+        assert db.execute(
+            f"select projection_json from ({NATIVE_AGENT_RUN_SQL}) where id=?",
+            (result.run_id,),
+        ).fetchone()[0] is None
 
 
 def test_consumer_preserves_full_calendar_material_source(store, task, context):
@@ -3183,9 +3210,17 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
     persisted = json.loads(store.get_agent_run(result.run_id).adopted_result_json)
     assert persisted["source_bindings"][0]["value"] == binding.value
     with store._connect() as db:
-        # The Run row keeps no copy of the final result; the native session is the source.
-        run_columns = [c[0] for c in db.execute(f'select * from ({AGENT_RUN_SQL}) limit 0').description]
+        run_columns = [
+            column[0]
+            for column in db.execute(
+                f"select * from ({NATIVE_AGENT_RUN_SQL}) limit 0"
+            ).description
+        ]
         assert "final_result_json" not in run_columns
+        assert db.execute(
+            f"select projection_json from ({NATIVE_AGENT_RUN_SQL}) where id=?",
+            (result.run_id,),
+        ).fetchone()[0] is None
     from app.reviewed_candidates import candidate_digest
     from app.reviewed_sources import capture_candidate_sources, changed_candidate_sources
 

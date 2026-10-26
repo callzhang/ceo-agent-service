@@ -549,6 +549,76 @@ def test_quiet_excludes_only_superseded_runtime_without_live_ownership(
     assert in_flight_work(store.path) == expected
 
 
+def test_quiet_reads_current_store_252_source_and_counts_running_reply_run(tmp_path):
+    import sqlite3
+
+    from app.repository_updater import in_flight_work
+    from app.task_entity_storage import append_task_input, bind_current_input, create_task
+    from app.run_entity_storage import create_run
+    from tests.test_signal_source_owner_schema_release import source
+
+    path = tmp_path / "store-252.sqlite3"
+    source(path)
+    assert in_flight_work(path) == 0
+
+    with sqlite3.connect(path) as db:
+        db.row_factory = sqlite3.Row
+        task = create_task(db, values={
+            "kind": "reply", "status": "processing",
+            "input_version": 0,
+            "created_at": "2026-10-25T00:00:00+00:00",
+            "updated_at": "2026-10-25T00:00:00+00:00",
+        })
+        task_input, inserted = append_task_input(db, task_id=task["id"], values={
+            "channel": "dingtalk", "conversation_id": "chat",
+            "conversation_title": "Chat", "single_chat": 1,
+            "trigger_message_id": "message", "trigger_create_time": "clock",
+            "trigger_sender": "sender", "trigger_text": "request",
+            "business_object_key": "chat:chat", "input_revision_key": "input-1",
+        })
+        assert inserted
+        assert bind_current_input(
+            db, task_id=task["id"], input_id=task_input["id"],
+            expected_input_version=0, input_version=1,
+        ) is not None
+        create_run(db, values={
+            "task_id": task["id"], "execution_generation": "generation-1",
+            "role": "consumer", "status": "running",
+        })
+
+    assert in_flight_work(path) == 1
+
+
+@pytest.mark.parametrize(
+    "damage", ["schema_object", "email_version_53", "empty_email_ledger"]
+)
+def test_quiet_rejects_damaged_store_252_source_without_writes(tmp_path, damage):
+    import sqlite3
+
+    from app.repository_updater import in_flight_work
+    from tests.test_signal_source_owner_schema_release import source
+
+    path = tmp_path / "damaged-store-252.sqlite3"
+    source(path)
+    with sqlite3.connect(path) as db:
+        if damage == "schema_object":
+            from app.signal_source_owner_schema_release import source_objects
+
+            _kind, name, _owner, _sql = next(
+                obj for obj in source_objects() if obj[0] == "index"
+            )
+            db.execute(f'drop index "{name}"')
+        elif damage == "email_version_53":
+            db.execute("update email_schema_migrations set version=53 where version=54")
+        else:
+            db.execute("delete from email_schema_migrations")
+
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="unsupported"):
+        in_flight_work(path)
+    assert path.read_bytes() == before
+
+
 def test_stalled_admitted_transaction_times_out_and_reopens_admission(tmp_path):
     from app.deployment_drain import (
         claim_connection,

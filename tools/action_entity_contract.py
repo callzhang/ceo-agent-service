@@ -66,14 +66,14 @@ def source_identity(source_table: str, source_id: object) -> tuple[str, str, str
 
 
 def build_target_ddl() -> str:
-    """Render the exact current shared Actions and receipt declarations."""
-    from app.current_action_schema import current_action_objects, _action_entity_objects
+    """Render the original Action field contract using its frozen source owner."""
+    from app.current_action_schema import signal_source_action_objects, _action_entity_objects
 
     rendered = [
-        "-- Current unified Actions declaration and its fixed receipt relationships.",
-        "-- This artifact is rendered from the same declarations used by blank current stores.",
+        "-- Original unified Actions field-contract declaration and its fixed receipt relationships.",
+        "-- Frozen Store25.2 Actions declaration for explicit field-contract tooling; not the current runtime schema.",
     ]
-    action_objects = current_action_objects()
+    action_objects = signal_source_action_objects()
     entity_objects = _action_entity_objects()
     rendered.extend(item["sql"] for item in sorted(
         action_objects, key=lambda item: item["type"] != "table"))
@@ -209,7 +209,7 @@ def validate_action_entity_contract(contract: dict) -> None:
                     raise ValueError(f"target column {column.get('name')} has unknown source {source}")
     ddl = DDL_PATH.read_text()
     if ddl != build_target_ddl():
-        raise ValueError('static target DDL differs from the rebuilt current declaration')
+        raise ValueError('static target DDL differs from the frozen field-contract declaration')
     with sqlite3.connect(':memory:') as db:
         db.create_function('unhex', 1, lambda value: bytes.fromhex(value) if value is not None else None, deterministic=True)
         db.create_function('pow', 2, lambda x, y: x ** y, deterministic=True)
