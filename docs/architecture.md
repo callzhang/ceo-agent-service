@@ -1060,6 +1060,8 @@ Chrome 登录态、申请读不到的钉钉 AI 听记，以及下载新增的钉
 
 定时任务共用现有调度、队列、Consumer → Audit → revision 生命周期；14 个默认任务由声明表生成，默认新安装仍暂停。11 项发现/同步任务保留服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是三项普通 Agent 任务。业务要求由任务 prompt 与 Skill 决定，系统层不按报告名称或 Skill 名称分支，也不以 `publishable` 判断业务质量。通用 `read_scheduled_context` 返回触发时刻、时区、版本及历史完成事实；Consumer 还会收到当前 task generation 中已有产物的文件名和 SHA-256 清单，不包含文件正文，以便重试先复用当前执行已有材料。`read_service_activity` 按调用者明确给出的时间窗口和来源返回服务事实；定时任务的历史活动与群消息读取不接受晚于本次触发 `scheduled_for` 的结束时间，避免把触发后发生的事实计入本次运行。非定时任务及面向未来的日历读取不受此边界影响。`read_meeting_archive` 按会议身份读取归档。Codex 与 Claude 均可通过 Consumer 的 `consumer_run_skill_script` 执行所选 Skill 的确定性 Python 脚本。脚本在当前 task generation 的产物目录运行；产物读回分页，完整正文留在本地产物中。
 
+产出报告的定时任务（CEO 管理周报、CEO 每日总结、每周 OKR 管理周报；声明表 `ScheduledTaskDefault.produces_report`）有一条独立的 Attention 规则（Derek 2026-10-25，纯展示，不改任何任务、运行记录或日程）：最近一次计划运行（不含「上一次仍在执行」的跳过）没有产出报告就显示一行「Scheduled task」，直到之后有一次运行（计划或手动）以 `done` 结束。「没有产出」指三种情况：运行因运行线路、Skill 不可用等原因被跳过因此没有任务；派发本身失败；任务以 `skipped` 结束。任务 `failed` 已有自己的 Reply task 行，不重复显示；进行中的不显示；暂停的日程不显示。实现在 `app/report_schedule_attention.py`，由 Attention 列表汇总调用。2026-10-03 周报因线路不可用被跳过、2026-09-26 因重启被打断记为已跳过，当时都没有任何 Attention 提示，靠手动重跑才补上。
+
 产物 offset 是从0起的字符索引；每页统一返回 offset、total_chars、next_offset，sha256 始终对应整份文件。完整读取从0开始，按 next_offset 续读至 null，不能把非零起点的尾部当作全文。
 
 `consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。

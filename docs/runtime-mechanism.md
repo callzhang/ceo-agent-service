@@ -1650,6 +1650,8 @@ pending -> processing -> done
 
 ### 失败回复的自动恢复与 Attention 终态
 
+产出报告的定时任务（CEO 管理周报、CEO 每日总结、每周 OKR 管理周报；声明表 `ScheduledTaskDefault.produces_report`）有一条独立的 Attention 规则（Derek 2026-10-25，纯展示，不改任何任务、运行记录或日程）：最近一次计划运行（不含「上一次仍在执行」的跳过）没有产出报告就显示一行「Scheduled task」，直到之后有一次运行（计划或手动）以 `done` 结束。「没有产出」指三种情况：运行因运行线路、Skill 不可用等原因被跳过因此没有任务；派发本身失败；任务以 `skipped` 结束。任务 `failed` 已有自己的 Reply task 行，不重复显示；进行中的不显示；暂停的日程不显示。实现在 `app/report_schedule_attention.py`，由 Attention 列表汇总调用。2026-10-03 周报因线路不可用被跳过、2026-09-26 因重启被打断记为已跳过，当时都没有任何 Attention 提示，靠手动重跑才补上。
+
 `audit_revision_exhausted` 的钉钉回复任务，在同一会话读到发送者身份已验证、非当前用户且严格晚于失败时间的新消息时，
 自动以该批消息身份生成一次新的执行代次。当前用户自己的消息和缺少发送者身份的记录不触发重放。相同来源修订幂等；
 只有旧任务仍为该错误、代次未变、没有活跃 run、发送回执、
