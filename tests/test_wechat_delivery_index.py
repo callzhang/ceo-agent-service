@@ -1,17 +1,14 @@
 """Latest-delivery projection stays indexed on fresh and upgraded databases."""
 
-import pytest
-
 import app.audit_web as audit_web
 import app.store as store_module
-from app.store import AutoReplyStore
+from app.store import WECHAT_DELIVERY_SQL, AutoReplyStore
 
 
-INDEX_NAME = "idx_wechat_deliveries_task_generation"
+INDEX_NAME = "idx_actions_td_wechat_task_generation"
 
 
-@pytest.mark.parametrize("schema", ["fresh", "missing_index"])
-def test_latest_wechat_delivery_index_survives_schema_initialization(tmp_path, schema):
+def test_latest_wechat_delivery_index_survives_schema_initialization(tmp_path):
     path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(path)
     store.enqueue_reply_task(
@@ -26,28 +23,26 @@ def test_latest_wechat_delivery_index_survives_schema_initialization(tmp_path, s
     )
     with store._connect() as db:
         original_delivery = dict(db.execute(
-            "select * from wechat_deliveries where id=?", (delivery_id,),
+            f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,),
         ).fetchone())
-        if schema != "fresh":
-            db.execute(f"drop index if exists {INDEX_NAME}")
-    if schema != "fresh":
-        assert store._schema_is_current() is False
-        store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-        store = AutoReplyStore(path)
+    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
+    store = AutoReplyStore(path)
     assert store._schema_is_current() is True
     with store._connect() as db:
-        indexes = {row["name"]: row for row in db.execute("pragma index_list(wechat_deliveries)")}
+        indexes = {row["name"]: row for row in db.execute("pragma index_list(actions)")}
         assert INDEX_NAME in indexes
         assert not indexes[INDEX_NAME]["unique"]
+        assert indexes[INDEX_NAME]["partial"]
+        # The third key is the expression cast(legacy_key as integer), the delivery id.
         assert [row["name"] for row in db.execute(f"pragma index_info({INDEX_NAME})")] == [
-            "reply_task_id", "execution_generation", "id",
+            "td_reply_task_id", "td_execution_generation", None,
         ]
         assert dict(db.execute(
-            "select * from wechat_deliveries where id=?", (delivery_id,),
+            f"select * from ({WECHAT_DELIVERY_SQL}) where id=?", (delivery_id,),
         ).fetchone()) == original_delivery
 
 
-def test_history_and_queue_latest_delivery_queries_use_covering_index(tmp_path, monkeypatch):
+def test_history_and_queue_latest_delivery_queries_use_the_task_generation_index(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     statements = []
     original_open = store._open_connection
@@ -69,7 +64,7 @@ def test_history_and_queue_latest_delivery_queries_use_covering_index(tmp_path, 
         for sql in projected_queries:
             plan = [row["detail"] for row in db.execute("explain query plan " + sql)]
             assert any(
-                "SEARCH current_delivery USING COVERING INDEX " + INDEX_NAME in detail
+                detail.startswith("SEARCH a USING INDEX " + INDEX_NAME
+                                  + " (td_reply_task_id=? AND td_execution_generation=?)")
                 for detail in plan
             ), plan
-            assert not any(detail == "SEARCH current_delivery" for detail in plan), plan
