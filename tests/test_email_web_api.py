@@ -40,7 +40,6 @@ from app.email_important import ImportantSignals
 from app.email_classifier_runtime import EmailClassifierRuntimeMode
 from app.email_training_snapshot import build_folder_training_snapshot
 from app.email_store import (
-    EMAIL_DIRECT_ACTION_SQL,
     EMAIL_UNSUBSCRIBE_EFFECT_SQL,
     EMAIL_UNSUBSCRIBE_STEP_SQL,
     EmailFolderBindingConflict,
@@ -52,7 +51,6 @@ from app.action_storage import (
     delete_action,
     delete_email_action,
     email_action_projection,
-    insert_email_action,
     update_action,
     update_email_action,
 )
@@ -61,10 +59,12 @@ from app.state_storage import insert_state
 from app.configs_storage import insert_config
 
 from app.email_task_adapter import email_conversation_id
-from app.store import AgentRole, AutoReplyStore
+from app.store import AgentRole, AutoReplyStore, _close_idle_connections
 from app.agent_contracts import ConsumerAgentResult
 from app.web_api.email import _project_legacy_model_inventory, register_email_routes
 from tests.support.candidate_review import complete_synthetic_approval
+from tests.support.native_email_actions import fail_action, persist_classification
+from tests.support.native_task_fields import set_native_task_fields
 
 
 SERVICE_STATE_SQL = state_projection("service_state")
@@ -235,7 +235,8 @@ def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_pat
 
 
 def _signal_failed_move_plan(
-    store: EmailStore, classification_id: int, *, attempts: int, error: str
+    store: EmailStore, classification_id: int, *, attempts: int, error: str,
+    retryable_last: bool = False,
 ) -> None:
     plan = build_versioned_email_action_plan(
         action_plan_version=1, classification_id=classification_id,
@@ -248,37 +249,18 @@ def _signal_failed_move_plan(
     store.append_action_plan_version(
         classification_id, plan, confirmed_category=EmailCategory.NOTIFICATION
     )
-    with sqlite3.connect(store.path) as db:
-        action_id = db.execute(
-            f"select action_id from ({EMAIL_DIRECT_ACTION_SQL}) where action_plan_id=?",
-            (plan.action_plan_id,),
-        ).fetchone()[0]
-    for number in range(1, attempts + 1):
-        store.append_action_attempt(
-            action_id=action_id, attempt_number=number, status="failed",
-            provider_operation="move", provider_target="Archive", provider_result_id="",
-            error=error, started_at="2020-01-01T00:00:00+00:00",
-            finished_at="2020-01-01T00:01:00+00:00",
-        )
+    (action_id,) = store.direct_action_ids_for_plan(plan.action_plan_id)
+    fail_action(
+        store, action_id, attempts=attempts, retryable_last=retryable_last, error=error,
+    )
 
 
 def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does(tmp_path: Path):
     client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    # The failure is long past (outside the 24-hour window) and still failed.
     _signal_failed_move_plan(
         store, identity, attempts=3, error="provider_read_failed:ImapMessageUnavailable"
     )
-    # A failure from three days ago: outside the 24-hour window, still failed.
-    with sqlite3.connect(store.path) as db:
-        rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where classification_id=?",
-            (identity,),
-        ).fetchall()
-        for (source_rowid,) in rows:
-            update_email_action(db, "email_actions", source_rowid, {
-                "created_at": "2020-01-01T00:00:00+00:00",
-                "updated_at": "2020-01-01T00:00:00+00:00",
-            })
 
     progress = client.get("/api/console/email/processing-progress").json()
     listed = client.get("/api/console/email/classifications?status=processed&action_status=failed").json()
@@ -292,20 +274,9 @@ def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does
 def test_processing_progress_and_the_list_filter_split_failed_actions_by_whether_they_retry(tmp_path: Path):
     client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
     _signal_failed_move_plan(
-        store, identity, attempts=1, error="provider_read_failed:ImapConnectionError"
+        store, identity, attempts=1, error="provider_read_failed:ImapConnectionError",
+        retryable_last=True,
     )
-    with sqlite3.connect(store.path) as db:
-        rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where classification_id=?",
-            (identity,),
-        ).fetchall()
-        for (source_rowid,) in rows:
-            update_email_action(db, "email_actions", source_rowid, {
-                "next_attempt_at": "2099-01-01T00:00:00+00:00",
-                "created_at": "2020-01-01T00:00:00+00:00",
-                "updated_at": "2020-01-01T00:00:00+00:00",
-            })
 
     progress = client.get("/api/console/email/processing-progress").json()
     retriable = client.get("/api/console/email/classifications?status=processed&action_status=failed_retriable").json()
@@ -321,7 +292,7 @@ def test_processing_progress_and_the_list_filter_split_failed_actions_by_whether
 def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path, monkeypatch):
     store = EmailStore(tmp_path / "unsubscribe-filter.sqlite3")
     view = SimpleNamespace()
-    view.list_unsubscribe_classifications = lambda *, limit, offset: ([{
+    view.list_unsubscribe_classifications = lambda *, limit, offset, **_search: ([{
         "id": 47, "category": "junk", "sender": "newsletter@example.com",
         "subject": "Weekly newsletter", "status": "processed",
         "classification_source": "agent", "updated_at": "2026-09-14T12:00:00+00:00",
@@ -354,7 +325,7 @@ def test_email_unsubscribe_filter_returns_dedicated_task_rows(tmp_path: Path, mo
 def test_email_unsubscribe_filter_reports_each_rows_newest_unsubscribe_state(tmp_path: Path, monkeypatch):
     store = EmailStore(tmp_path / "unsubscribe-state.sqlite3")
     view = SimpleNamespace()
-    view.list_unsubscribe_classifications = lambda *, limit, offset: ([
+    view.list_unsubscribe_classifications = lambda *, limit, offset, **_search: ([
         {"id": 47, "subject": "a"}, {"id": 48, "subject": "b"},
     ], 2)
     events = {
@@ -441,10 +412,11 @@ def _assert_email_endpoints_unavailable(client: TestClient) -> None:
 
 def _assert_audit_app_rejects_shared_schema(
     database: Path, tmp_path: Path, *, error_type=sqlite3.IntegrityError,
-    match="malformed current provider/config declaration",
+    match="explicit paired schema release required",
 ) -> None:
     from contextlib import closing
 
+    _close_idle_connections()
     with closing(sqlite3.connect(database)) as db:
         assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
         schema_before = db.execute(
@@ -1085,7 +1057,15 @@ def test_email_classification_list_and_detail_expose_persisted_text(
     assert detailed.json()["item"]["message_text"] == (
         "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
     )
-    assert listed.json()["items"][0]["message_text"] == (
+    # The default list reads local metadata only: the stored preview, never message_text.
+    assert listed.json()["items"][0]["preview"] == (
+        "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
+    )
+    assert "message_text" not in listed.json()["items"][0]
+    full = client.get(
+        "/api/console/email/classifications?status=pending_feedback&search_scope=full"
+    )
+    assert full.json()["items"][0]["message_text"] == (
         "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
     )
     assert detailed.json()["item"]["cc"] == "copy@example.com"
@@ -1169,13 +1149,19 @@ def test_email_classification_list_all_unifies_statuses_with_persisted_body(
     assert {item["category"] for item in payload["items"]} == {"work", "legal"}
     assert {item["classification_source"] for item in payload["items"]} == {"model"}
     assert all(isinstance(item["id"], str) for item in payload["items"])
-    assert {item["message_text"] for item in payload["items"]} == {"正文 101", "正文 102"}
+    assert {item["preview"] for item in payload["items"]} == {"正文 101", "正文 102"}
+    assert all("message_text" not in item for item in payload["items"])
+    full = client.get(
+        "/api/console/email/classifications?status=all&page_size=10&search_scope=full"
+    ).json()
+    assert {item["message_text"] for item in full["items"]} == {"正文 101", "正文 102"}
 
+    # An explicit full search reads the original text.
     for query, expected in [("正文 101", ["101"]), ("MESSAGE 102", ["102"]), ("SENDER@EXAMPLE", ["102", "101"]), ("%", []), ("' OR 1=1 --", [])]:
-        found = client.get("/api/console/email/classifications", params={"status":"all", "q":query, "page_size":1}).json()
+        found = client.get("/api/console/email/classifications", params={"status":"all", "q":query, "page_size":1, "search_scope":"full"}).json()
         assert found["meta"]["total"] == len(expected)
         assert [item["id"] for item in found["items"]] == expected[:1]
-    found = client.get("/api/console/email/classifications", params={"status":"pending_feedback", "q":"正文 102"}).json()
+    found = client.get("/api/console/email/classifications", params={"status":"pending_feedback", "q":"正文 102", "search_scope":"full"}).json()
     assert found["meta"]["total"] == 0
     found = client.get("/api/console/email/classifications", params={"status":"all", "q":"sender", "page_size":1,"page":2}).json()
     assert [item["id"] for item in found["items"]] == ["101"]
@@ -1493,7 +1479,14 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
             return None
 
     app = FastAPI()
-    register_email_routes(app, lambda: DetailStore())
+    # The original is read from the mailbox; this store has no stored message body.
+    register_email_routes(
+        app, lambda: DetailStore(),
+        email_source_reader_factory=lambda: SimpleNamespace(
+            read_view=lambda account, identity: {},
+            read_views=lambda account, identities: {i: {} for i in identities},
+        ),
+    )
 
     response = TestClient(app).get("/api/console/email/classifications/41")
 
@@ -2638,6 +2631,20 @@ def test_unsubscribe_search_uses_same_predicate_for_rows_and_count(tmp_path: Pat
     assert absent["items"] == []
 
 
+def _reopen_task_as_running(db, fixture, audit_run_id=None) -> None:
+    """Undo the settled state: a running Task keeps its full trigger payload."""
+    set_native_task_fields(db, "reply_tasks", fixture.task.id, {
+        "status": "processing",
+        "trigger_text": "Immutable ActionPlan authorizes unsubscribe.",
+        "trigger_message_json": json.dumps(fixture.task_payload, sort_keys=True),
+        "input_compacted": 0,
+    })
+    if audit_run_id is not None:
+        db.execute(
+            "update runs set status='running', completed_at=null where id=?", (audit_run_id,),
+        )
+
+
 def _assert_no_audited_lineage(event: dict[str, object]) -> None:
     assert event["consumer_run_ids"] == []
     assert event["audit_run_ids"] == []
@@ -2689,13 +2696,8 @@ def test_email_detail_projects_only_redacted_audited_unsubscribe_lineage(
         str(value) not in serialized for value in fixture.private_markers.values()
     )
 
-    with sqlite3.connect(fixture.database) as db:
-        from app.task8_storage import task8_set_parts
-        parts = task8_set_parts("reply_tasks", {"channel": "legacy-email"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*parts.parameters, fixture.task.id),
-        )
+    with fixture.store._connect() as db:
+        set_native_task_fields(db, "reply_tasks", fixture.task.id, {"channel": "legacy-email"})
     legacy_event = _audited_observability_event(fixture)
 
     _assert_no_audited_lineage(legacy_event)
@@ -2803,7 +2805,7 @@ def test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address
     tmp_path: Path,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    with sqlite3.connect(fixture.database) as db:
+    with fixture.store._connect(foreign_keys=False) as db:
         effects = db.execute(
             f"select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
@@ -2813,7 +2815,7 @@ def test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address
             update_action(db, "email_unsubscribe_effects", (action_identity, effect_digest), {
                 "audit_agent_run_id": None,
             })
-        db.execute("delete from runs where record_type='agent_runs'")
+        db.execute("delete from runs")
 
     detail = fixture.client.get(
         f"/api/console/email/classifications/{fixture.classification_id}"
@@ -2830,7 +2832,7 @@ def test_email_detail_projects_verified_attempt_for_legacy_receipt_without_audit
     tmp_path: Path,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    with sqlite3.connect(fixture.database) as db:
+    with fixture.store._connect() as db:
         effects = db.execute(
             f"select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
@@ -2851,7 +2853,7 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
     tmp_path: Path,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    with sqlite3.connect(fixture.database) as db:
+    with fixture.store._connect() as db:
         for (step_id,) in db.execute(f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL})").fetchall():
             delete_action(db, "email_unsubscribe_steps", step_id)
         for kind in ("email_unsubscribe_receipts", "email_unsubscribe_continuations"):
@@ -2865,16 +2867,7 @@ def test_email_detail_projects_in_flight_unsubscribe_before_terminal_receipt(
         claim_source = email_action_projection("email_unsubscribe_claims", include_rowid=True)
         for (source_rowid,) in db.execute(f"select rowid from ({claim_source})").fetchall():
             delete_email_action(db, "email_unsubscribe_claims", source_rowid)
-        from app.task8_storage import task8_set_parts
-        parts = task8_set_parts("reply_tasks", {"status": "processing"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*parts.parameters, fixture.task.id),
-        )
-        db.execute(
-            "update runs set status='running', completed_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?",
-            (fixture.audit.id,),
-        )
+        _reopen_task_as_running(db, fixture, fixture.audit.id)
 
     rows, total = StoredEmailListingOracle(fixture.store).list_unsubscribe_classifications(limit=20, offset=0)
     assert total == 1
@@ -2916,7 +2909,7 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
     tmp_path: Path,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    with sqlite3.connect(fixture.database) as db:
+    with fixture.store._connect() as db:
         for (step_id,) in db.execute(f"select id from ({EMAIL_UNSUBSCRIBE_STEP_SQL})").fetchall():
             delete_action(db, "email_unsubscribe_steps", step_id)
         receipt_source = email_action_projection("email_unsubscribe_receipts", include_rowid=True)
@@ -2930,16 +2923,7 @@ def test_email_detail_projects_safe_unsubscribe_continuation_state(
         update_email_action(db, "email_unsubscribe_claims", source_rowid, {
             "status": "dispatching", "phase": "navigating",
         })
-        from app.task8_storage import task8_set_parts
-        parts = task8_set_parts("reply_tasks", {"status": "processing"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-            (*parts.parameters, fixture.task.id),
-        )
-        db.execute(
-            "update runs set status='running', completed_at='' where record_type='agent_runs' and cast(legacy_key as integer)=?",
-            (fixture.audit.id,),
-        )
+        _reopen_task_as_running(db, fixture, fixture.audit.id)
     fixture.store.persist_email_unsubscribe_continuation(
         action_identity=fixture.action_identity,
         effect_digest=fixture.effect_digest,
@@ -3013,9 +2997,8 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
     mismatch: str,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    from app.task8_storage import task8_set_parts
-    from app.task20_definitions import task20_column
-
+    # Control: the unmodified fixture does show its audited lineage.
+    assert _audited_observability_event(fixture)["consumer_run_ids"] == [fixture.consumer.id]
     with fixture.task_store._connect() as db:
         if mismatch in {"account", "plan", "classification"}:
             payload = dict(fixture.task_payload)
@@ -3027,31 +3010,23 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
                 payload["classification_id"] = fixture.classification_id + 1
             # This fixture is settled: retained source facts, rather than a
             # retired JSON cache, are the authoritative lineage binding.
-            source = db.execute(
-                "select id, " + task20_column("reply_task_inputs", "input_provenance_json") +
-                " as provenance from tasks where id=(select current_input_id "
-                "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?)",
+            provenance = json.loads(db.execute(
+                "select input_provenance_json from task_inputs where task_id=?",
                 (fixture.task.id,),
-            ).fetchone()
-            provenance = json.loads(source["provenance"])
+            ).fetchone()[0])
             provenance["source"].update({
                 name: payload[name] for name in ("account_id", "action_plan_id", "classification_id")
             })
-            parts = task8_set_parts("reply_task_inputs", {
+            set_native_task_fields(db, "reply_tasks", fixture.task.id, {
                 "input_provenance_json": json.dumps(provenance),
             })
-            db.execute(f"update tasks set {parts.sql} where id=?", (*parts.parameters, source["id"]))
         elif mismatch == "conversation":
-            parts = task8_set_parts("reply_tasks", {"conversation_id": "wrong-conversation"})
-            db.execute(
-                f"update tasks set {parts.sql} "
-                "where record_type='reply_tasks' and cast(legacy_key as integer)=?",
-                (*parts.parameters, fixture.task.id),
-            )
+            set_native_task_fields(db, "reply_tasks", fixture.task.id, {
+                "conversation_id": "wrong-conversation",
+            })
         elif mismatch == "generation":
             db.execute(
-                "update runs set execution_generation='wrong-generation' "
-                "where record_type='agent_runs' and cast(legacy_key as integer)=?",
+                "update runs set execution_generation='wrong-generation' where id=?",
                 (fixture.audit.id,),
             )
         elif mismatch == "effect":
@@ -3128,6 +3103,7 @@ def test_email_detail_preserves_all_valid_continuation_rounds_in_lineage(
 def test_future_email_schema_isolated_from_non_email_routes(tmp_path: Path):
     database = tmp_path / "corrupt.sqlite3"
     EmailStore(database)
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
         db.execute(
@@ -3254,6 +3230,7 @@ def test_audit_app_rejects_unknown_future_email_pair_without_repair(tmp_path: Pa
     database = tmp_path / "audit-app.sqlite3"
     AutoReplyStore(database)
     EmailStore(database)
+    _close_idle_connections()
     with sqlite3.connect(database) as db:
         assert db.execute("pragma journal_mode=delete").fetchone()[0] == "delete"
         db.execute(
@@ -3278,7 +3255,7 @@ def test_audit_app_rejects_unknown_future_email_pair_without_repair(tmp_path: Pa
     (assets / "index.html").write_text("", encoding="utf-8")
     with pytest.raises(
         sqlite3.IntegrityError,
-        match="unsupported or mixed Store/Email source schema",
+        match="explicit paired schema release required",
     ):
         create_audit_app(
             database,
@@ -3334,10 +3311,8 @@ def test_audit_app_rejects_non_text_shared_email_schema_identifier(tmp_path: Pat
         db.execute("pragma writable_schema = off")
 
     db.close()
-    _assert_audit_app_rejects_shared_schema(
-        database, tmp_path, error_type=email_store_module.EmailPersistenceCorruption,
-        match="invalid schema identifier metadata",
-    )
+    # The exact current-schema comparison refuses it before any Email validator runs.
+    _assert_audit_app_rejects_shared_schema(database, tmp_path)
 
 
 def test_audit_app_isolates_email_schema_validation_failure(
@@ -4594,28 +4569,22 @@ def test_action_throughput_is_the_whole_action_over_the_recent_window(tmp_path: 
     now = datetime(2026, 9, 25, 12, 0, tzinfo=timezone.utc)
 
     def action(index: int, *, status: str, started: datetime, seconds: int) -> None:
-        with store._connect() as db:
-            db.execute("pragma foreign_keys=off")
-            insert_email_action(db, "email_actions", {
-                "action_id": f"action-{index}",
-                "action_plan_id": f"plan-{index}",
-                "classification_id": 1,
-                "account_id": "a",
-                "action_type": "move",
-                "parameters_json": "{}",
-                "config_version": "c",
-                "status": status,
-                "attempt_count": 0,
-                "started_at": started.isoformat(),
-                "finished_at": (started + timedelta(seconds=seconds)).isoformat(),
-                "next_attempt_at": "",
-                "provider_operation": "",
-                "provider_target": "",
-                "provider_result_id": "",
-                "error": "",
-                "created_at": started.isoformat(),
-                "updated_at": started.isoformat(),
-            })
+        plan_id = persist_classification(
+            store, classification_id=index + 1, status=EmailClassificationStatus.PROCESSED,
+        )
+        (action_id,) = store.direct_action_ids_for_plan(plan_id)
+        claimed = store.claim_direct_action(
+            action_id=action_id, claimed_at=started.isoformat(),
+        )
+        assert claimed is not None
+        store.complete_direct_action_attempt(
+            claimed, status=status, provider_operation="MOVE",
+            provider_target=claimed.locator.stable_message_identity,
+            provider_result_id="" if status == "failed" else "receipt",
+            error="boom" if status == "failed" else "",
+            finished_at=(started + timedelta(seconds=seconds)).isoformat(),
+            retryable=False,
+        )
 
     for index, seconds in enumerate((4, 8, 12)):
         action(index, status="done", started=now - timedelta(minutes=5 + index), seconds=seconds)
@@ -4678,6 +4647,16 @@ def _store_with_three_classifications(tmp_path: Path) -> EmailStore:
     return store
 
 
+def _fail_move_of(store: EmailStore, classification_id: int) -> None:
+    """Fail the one pending move of a classification for good, as the worker would."""
+    plan_id = store.get_classification(classification_id)["current_action_plan_id"]
+    (action_id,) = store.direct_action_ids_for_plan(plan_id)
+    fail_action(
+        store, action_id, attempts=1, retryable_last=False,
+        error="provider_destination_failed:ImapMoveUnsupported",
+    )
+
+
 def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_path: Path) -> None:
     store = _store_with_three_classifications(tmp_path)
     client = TestClient(FastAPI())
@@ -4700,15 +4679,7 @@ def test_the_all_list_filters_by_category_decider_and_mailbox_action_state(tmp_p
     assert ids(action_status="pending") == ["102", "103"]
     assert ids(action_status="failed") == []
 
-    with store._connect() as db:
-        rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where classification_id=102"
-        ).fetchall()
-        for (source_rowid,) in rows:
-            update_email_action(db, "email_actions", source_rowid, {
-                "status": "failed", "error": "provider_destination_failed:ImapMoveUnsupported",
-            })
+    _fail_move_of(store, 102)
 
     assert ids(action_status="failed") == ["102"]
     assert ids(action_status="pending") == ["103"]
@@ -4733,25 +4704,17 @@ def test_a_failed_action_says_whether_it_will_be_retried() -> None:
                 "provider_operation": operation, "action_type": action}
 
     assert outlook(failed(1, "2099-01-01T00:00:00+00:00")) == {
-        "retriable": True, "retry_note": "将自动重试（已试 1/3 次）"}
+        "retriable": True, "retry_note": "将自动重试（已试 1/4 次）"}
     assert outlook(failed(1, "")) == {"retriable": False, "retry_note": "这个错误不可重试"}
-    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable"))["retriable"] is True
-    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable", action="move"))["retriable"] is True
+    assert outlook(failed(4, "", error="provider_read_failed:ImapMessageUnavailable"))["retriable"] is True
+    assert outlook(failed(4, "", error="provider_read_failed:ImapMessageUnavailable", action="move"))["retriable"] is True
     # A trash whose message is briefly unreadable keeps being tried after the budget.
-    assert outlook(failed(3, "", error="provider_read_failed:ImapMessageUnavailable", action="trash"))["retriable"] is True
+    assert outlook(failed(4, "", error="provider_read_failed:ImapMessageUnavailable", action="trash"))["retriable"] is True
 
 
 def test_a_listed_message_carries_its_mailbox_actions_and_why_one_failed(tmp_path: Path) -> None:
     store = _store_with_three_classifications(tmp_path)
-    with store._connect() as db:
-        rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where classification_id=102"
-        ).fetchall()
-        for (source_rowid,) in rows:
-            update_email_action(db, "email_actions", source_rowid, {
-                "status": "failed", "error": "provider_destination_failed:ImapMoveUnsupported",
-            })
+    _fail_move_of(store, 102)
     client = TestClient(FastAPI())
     register_email_routes(client.app, lambda: store)
 
