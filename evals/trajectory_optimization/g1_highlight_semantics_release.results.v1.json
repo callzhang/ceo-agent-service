@@ -895,6 +895,281 @@
       "conclusion": "No document-write calls in completed Consumer/Audit natural attempts through run399448; no relevant G1 behavior sample. Running later attempts excluded. Neither absence of regression nor failure-path production acceptance established.",
       "unique_sessions": 15,
       "total_nonoverlapping_lines": 1141
+    },
+    {
+      "checked_at_utc": "2026-10-26T03:06:24.411264+00:00",
+      "run_lower_bound_exclusive": 399448,
+      "run_upper_bound": 399456,
+      "runs": [
+        {
+          "id": 399449,
+          "role": "consumer",
+          "status": "completed",
+          "started_at": "2026-10-26 02:52:30",
+          "completed_at": "2026-10-26 02:53:12"
+        },
+        {
+          "id": 399450,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 02:52:48",
+          "completed_at": "2026-10-26 02:53:28"
+        },
+        {
+          "id": 399451,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 02:53:17",
+          "completed_at": "2026-10-26 02:53:53"
+        },
+        {
+          "id": 399452,
+          "role": "consumer",
+          "status": "completed",
+          "started_at": "2026-10-26 02:56:54",
+          "completed_at": "2026-10-26 02:57:29"
+        },
+        {
+          "id": 399453,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 02:57:33",
+          "completed_at": "2026-10-26 02:58:07"
+        },
+        {
+          "id": 399454,
+          "role": "consumer",
+          "status": "failed",
+          "started_at": "2026-10-26 03:00:48",
+          "completed_at": "2026-10-26 03:01:25"
+        },
+        {
+          "id": 399455,
+          "role": "consumer",
+          "status": "completed",
+          "started_at": "2026-10-26 03:01:13",
+          "completed_at": "2026-10-26 03:01:54"
+        },
+        {
+          "id": 399456,
+          "role": "audit",
+          "status": "completed",
+          "started_at": "2026-10-26 03:01:56",
+          "completed_at": "2026-10-26 03:02:37"
+        }
+      ],
+      "attempts": [
+        {
+          "id": 399161,
+          "parent_id": 399449,
+          "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+          "transcript_start": 0,
+          "transcript_end": 67,
+          "status": "completed",
+          "range_sha256": "84f401f4dc2f0975f809a9c18a0ffa441e473ba611686d6674841f166b326764",
+          "call_names": [
+            "exec",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "search_dingtalk_documents",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 16,
+              "arguments_sha256": "189b5e09b222d6069c5d11aa0796562801aa3dbb6b245efa8d002c6e6c18d58a",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399162,
+          "parent_id": 399450,
+          "session_id": "01a1761f-fb11-74b0-9257-9fdcc383626f",
+          "transcript_start": 0,
+          "transcript_end": 65,
+          "status": "completed",
+          "range_sha256": "9e0a84340b9c9aef86002a5de4e83dae7b516b6d41d32ad5c9568bd209f98940",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_calendar_event",
+            "list_dingtalk_calendar_events",
+            "read_dingtalk_messages",
+            "read_system_action_contract"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": []
+        },
+        {
+          "id": 399163,
+          "parent_id": 399451,
+          "session_id": "01a17620-6b89-7d72-afc4-86c16b98f7b5",
+          "transcript_start": 0,
+          "transcript_end": 59,
+          "status": "completed",
+          "range_sha256": "c42ad948cae652c30c6ff84741e47039124a6ef87042d97698955d27e5a8d9c5",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_system_action_contract",
+            "read_dingtalk_messages",
+            "read_dingtalk_group_members"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 28,
+              "arguments_sha256": "f5789c858f823a7fcd99f7d72f9e9e10b16b95df340a8cd6a4f050956b550f76",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399164,
+          "parent_id": 399452,
+          "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+          "transcript_start": 114,
+          "transcript_end": 162,
+          "status": "completed",
+          "range_sha256": "833facf915966948282b785f133932044996987d1f48dde19e2528e51e530477",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_dingtalk_messages",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": []
+        },
+        {
+          "id": 399165,
+          "parent_id": 399453,
+          "session_id": "01a17624-543c-73b0-a226-c3d8f30e8dcc",
+          "transcript_start": 0,
+          "transcript_end": 58,
+          "status": "completed",
+          "range_sha256": "a15eb6eff8396d769993ecc78126a9bf2f65b676f0d2c1f83dfed5afd118ba86",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_dingtalk_messages",
+            "read_system_action_contract"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 28,
+              "arguments_sha256": "39ff412e0b4cc799e63bfbc47e72652174bca6180f0da35170275f81452c170d",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399166,
+          "parent_id": 399454,
+          "session_id": "01a17627-4e7c-7370-a25d-ac07e6125e56",
+          "transcript_start": 0,
+          "transcript_end": 65,
+          "status": "failed",
+          "range_sha256": "079f83b739a9e656464143560285738dd28fc31fdb049ee9acdc20d43be6ab2e",
+          "call_names": [
+            "exec",
+            "exec",
+            "exec",
+            "exec",
+            "exec"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 16,
+              "arguments_sha256": "f10827c8a32e3e9064785a7c13c268efde790ec54ff26bd1e6d1af7b7a3de4ef",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 23,
+              "arguments_sha256": "5ade0aa35dd756c29ddccbe186291b25cde25e1f6a94d3644b86d3470f2eaf15",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 35,
+              "arguments_sha256": "9d99a9a484154e4331629e0d50e06f84660d819bf2d988c4ef20ac88dcebb788",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 45,
+              "arguments_sha256": "6d820a11fcaded24d270650a6fc5111cad210c64b949b509a49904019e090d6d",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            },
+            {
+              "line": 52,
+              "arguments_sha256": "26611b40d36395fd62611aaaf7129d28b8070c181fd488a6bc0212470cc25875",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399167,
+          "parent_id": 399455,
+          "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+          "transcript_start": 67,
+          "transcript_end": 138,
+          "status": "completed",
+          "range_sha256": "85da807bed879752ddf0c056e3ec2aedf4f5f560eadf8291ba1442f3d75e21e9",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "exec",
+            "read_dingtalk_messages",
+            "search_dingtalk_documents",
+            "search_dingtalk_documents",
+            "search_dingtalk_messages",
+            "read_system_action_contract",
+            "read_consumer_output_schema"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": [
+            {
+              "line": 92,
+              "arguments_sha256": "5747111affb297263997aef07f422aade3b297cc2488e9a5d356b798575b62b7",
+              "inspection": "read/discovery calls only; no document write or direct DWS command"
+            }
+          ]
+        },
+        {
+          "id": 399168,
+          "parent_id": 399456,
+          "session_id": "01a17628-5790-7362-bd8a-3aead03ff3eb",
+          "transcript_start": 0,
+          "transcript_end": 65,
+          "status": "completed",
+          "range_sha256": "81d4ac282703331cbaa90e30e54b537772ab37a29701780440c3d0b3a64c8991",
+          "call_names": [
+            "read_task_skill",
+            "read_task_skill",
+            "read_system_action_contract",
+            "read_dingtalk_messages",
+            "search_dingtalk_documents",
+            "read_dingtalk_document",
+            "read_dingtalk_group_members"
+          ],
+          "document_write_call_lines": [],
+          "exec_inspection": []
+        }
+      ],
+      "total_nonoverlapping_lines": 498,
+      "production_head": "1e840a6858a8b39394ea090df26acb0b2f5baba1",
+      "development_main": "929456df41954304cd5c989fb33561e973702d16",
+      "binary_sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c",
+      "conclusion": "8 newly ended natural runs (7 completed,1 failed),498 full native lines; no document writes. Later running runs excluded. G1 production nonrepeat acceptance remains pending; no replay or new tests."
     }
   ]
 }

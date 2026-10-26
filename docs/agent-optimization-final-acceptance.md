@@ -396,3 +396,9 @@ GitHub npm test先执行Ruff，所以这些错误使pytest尚未启动；app.dep
 **结论：G1仍缺修复后自然文档调用，保持“已上线待行为验收”。** 这不是已确认的新回归，也不能以没有文档调用证明无效覆盖已停止。原服务成功语义、完整JSONML/高亮/字面内容与严格负例证据继续有效，不重复验证。下一步仍只核对首个自然相关文档写入的实际回执和后续行为；本轮无人工重放、业务写入、模型调用、运行代码变更或部署。G2关闭状态不变，整轮未全部完成。
 
 详见[自然文档回读记录](document-write-recovery-validation.md)及[现有G1发布证据](../evals/trajectory_optimization/g1_highlight_semantics_release.results.v1.json)的最后一项`natural_followup_checks`（记录精确UTC查询时间、逐attempt范围及SHA）。
+
+### G1 自然样本续查（2026-10-25 20:06 PDT）
+
+接上次Run399448上界，本次只检查399449–399456共8项已结束自然Consumer/Audit运行（7项completed、1项failed），逐attempt完整解析498行原生记录及9次exec调用参数；有文档搜索/读取，没有`consumer_document_write`或直接DWS写入。查询截止2026-10-26 03:06:24 UTC；后续尚在途运行不计作完成样本。安装后累计已检查26项已结束运行、1639行互不重复记录，仍无相关自然写入。
+
+当前生产HEAD为`1e840a6858a8b39394ea090df26acb0b2f5baba1`；DWS二进制SHA仍与已验收`ceo-docfmt.6747c671`一致。新增逐attempt范围、SHA及调用摘要已追加至G1发布JSON的`natural_followup_checks`，未保存业务正文。**G1保持已发布、生产非重复行为待验收**：本轮没有写入样本，不能核验写入格式回执或同正文后续覆盖，也不据此认定存在新回归。唯一下一步仍是首个自然相关文档调用的回执与后续行为；无重放、业务写入、代码变更、模型/测试重跑或部署。
