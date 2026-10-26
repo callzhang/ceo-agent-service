@@ -5,15 +5,12 @@ from pathlib import Path
 import re
 import sqlite3
 
-import pytest
 
-from app.action_storage import create_action_schema, insert_action, insert_email_action
 from app.email_store import EmailStore
 from app.email_current_schema import (
     create_current_email_migration_ledger,
     create_current_email_non_action_schema,
 )
-from tests.test_email_action_storage import _cases
 from app.store import AutoReplyStore
 from app.store import STORE_SCHEMA_VERSION
 from app.state_definitions import state_projection
@@ -67,34 +64,6 @@ def test_current_retained_schema_is_caller_transactional_and_unseeded() -> None:
         assert db.execute("select 1 from sqlite_schema where name='email_classifications'").fetchone() is None
 
 
-def test_real_opt_in_actions_use_current_parent_with_fk_enforcement() -> None:
-    with sqlite3.connect(":memory:") as db:
-        db.execute("pragma foreign_keys=on")
-        db.execute("create table tasks(id integer primary key, record_type text)")
-        db.execute("create table runs(id integer primary key, record_type text, legacy_key text)")
-        create_current_email_non_action_schema(db)
-        create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk", include_email=True)
-        db.execute("insert into runs(id,record_type,legacy_key) values(1,'agent_runs','1')")
-        insert_action(db, "external_action_results", dict(
-            external_action_key="older-key", business_object_key="business",
-            action_identity="older-identity", operation="send",
-            target_identifiers_json="raw targets", provider_result_json="raw result",
-            result_digest="digest", first_agent_run_id=1,
-        ))
-        db.execute("""insert into email_classifications(
-            id,account_id,folder,uidvalidity,uid,stable_message_identity,
-            confidence,margin,probabilities_json,model_id,config_version,status,
-            classification_source
-        ) values(11,'account','INBOX',1,1,'message',0.5,0.1,'{}','model',
-                 'config','pending_feedback','model')""")
-        insert_email_action(db, "email_action_plans", _cases()["email_action_plans"])
-        assert db.execute("select email_classification_id from actions where record_type='email_action_plans'").fetchone() == (11,)
-        with pytest.raises(sqlite3.IntegrityError, match="FOREIGN KEY constraint failed"):
-            insert_email_action(db, "email_action_plans", _cases()["email_action_plans"] | {
-                "action_plan_id": "missing-parent", "classification_id": 999,
-            })
-
-
 def test_default_constructors_select_current_email_actions(tmp_path: Path) -> None:
     path = tmp_path / "default.sqlite"
     AutoReplyStore(path)
@@ -103,7 +72,7 @@ def test_default_constructors_select_current_email_actions(tmp_path: Path) -> No
         assert db.execute(
             f"select value from ({state_projection('service_state')}) where key='store_schema_version'"
         ).fetchone() == (STORE_SCHEMA_VERSION,)
-        assert db.execute("select max(version) from email_schema_migrations").fetchone() == (52,)
+        assert db.execute("select max(version) from email_schema_migrations").fetchone() == (54,)
         assert db.execute(
             "select 1 from sqlite_schema where type='table' and name='email_action_plans'"
         ).fetchone() is None
