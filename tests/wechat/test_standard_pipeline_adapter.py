@@ -11,7 +11,9 @@ import pytest
 
 from app.agent_contracts import ConsumerAgentResult
 from app.agent_context import AgentTaskContext
-from app.consumer_agent import ResultParseError, _prepare_outgoing_wechat_messages
+from app.consumer_agent import (
+    ResultParseError, _align_plan_purpose_output, _prepare_outgoing_wechat_messages,
+)
 from app.store import AutoReplyStore
 from app.wechat.models import WechatAccount, WechatMessage
 from app.wechat.standard_context import build_wechat_task_context
@@ -121,6 +123,33 @@ def test_other_channels_are_left_alone(tmp_path):
     result = _proposal(context, capability="dingtalk-chat", operation="x", target={"a": "b"})
     assert _prepare_outgoing_wechat_messages(
         result, store=store, task=task, context=other, proposal_revision=0) is result
+
+
+def _with_plan_copy(result, payload):
+    return result.model_copy(update={"purpose_output": {
+        "action": "plan", "reason": "r", "target": {}, "evidence_refs": [], "payload": payload,
+    }})
+
+
+def test_the_consumers_copy_of_the_plan_carries_the_prepared_text_too(tmp_path):
+    import json
+
+    store, task, context = _context(tmp_path)
+    proposal = _proposal(context)
+    raw = _with_plan_copy(proposal, json.loads(proposal.proposal.model_dump_json()))
+    prepared = _align_plan_purpose_output(raw, _prepare_outgoing_wechat_messages(
+        raw, store=store, task=task, context=context, proposal_revision=0))
+    sent = prepared.proposal.actions[0].payload["text"]
+    assert sent != "收到，稍后回复你。"
+    assert prepared.purpose_output["payload"]["actions"][0]["payload"]["text"] == sent
+
+
+def test_a_purpose_output_that_is_not_the_proposal_is_left_alone(tmp_path):
+    store, task, context = _context(tmp_path)
+    raw = _with_plan_copy(_proposal(context), {"something": "else"})
+    prepared = _align_plan_purpose_output(raw, _prepare_outgoing_wechat_messages(
+        raw, store=store, task=task, context=context, proposal_revision=0))
+    assert prepared.purpose_output["payload"] == {"something": "else"}
 
 
 def test_the_worker_runs_a_claimed_wechat_task_through_the_shared_orchestrator(tmp_path):
