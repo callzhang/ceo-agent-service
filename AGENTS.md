@@ -119,14 +119,14 @@ production to `origin/main`. Committed-but-unpushed
 work never goes live, so a restart no longer carries another session's
 half-written edits.
 
-Derek, 2026-10-25: `python -m app.deploy` is meant to first run the gate suite (the
-files in `tests/gate_files.txt`, one process, under 2 GB and 5 minutes; about 95 s
-today) at the commit it is going to install, in a throwaway clone with a clean
-environment, and to refuse to deploy if any test fails. There is no bypass option.
-That requirement is **suspended** by `TEST_GATE_ENABLED = False` in `app/deploy.py`
-until the new gate suite is live, then it is set back to `True` in a commit of its
-own; while it is suspended a deploy runs no tests. Add a test to the manifest when
-it covers current behaviour and is fast.
+Derek, 2026-10-25: `python -m app.deploy` first runs the gate suite (the files
+in `tests/gate_files.txt`, one process; `tests/conftest.py` stops it at 2 GB or at
+5 minutes of real time; about 95 s on an idle machine) at the commit it is going to
+install, in a throwaway clone with a clean environment, and refuses to deploy if any
+test fails or the run is stopped. There is no bypass option and no switch: the
+requirement is `TEST_GATE_ENABLED = True` in `app/deploy.py`. A busy machine can make
+the run take longer; the run is stopped at 5 minutes, not extended. Add a test to the
+manifest when it covers current behaviour and is fast.
 `--restart` runs no new code and is not gated.
 
 After a deploy, read back the new PID, healthz, queues, Attention and History

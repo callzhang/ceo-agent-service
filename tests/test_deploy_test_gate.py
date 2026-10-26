@@ -161,3 +161,14 @@ def test_a_missing_manifest_refuses_the_deploy(tmp_path: Path):
 
     with pytest.raises(SystemExit, match="gate_files.txt is missing or empty.*nothing was deployed"):
         require_green_suite(tmp_path / "root", "e" * 40, run=run)
+
+
+def test_the_gate_is_on_and_the_run_stops_by_itself_after_five_minutes():
+    # Derek, 2026-10-25. The process ends itself at 5 minutes of real time
+    # (tests/conftest.py); the deploy only adds a small backstop for a hung interpreter.
+    import app.deploy as deploy_module
+    from tests.conftest import MEMORY_LIMIT
+
+    assert deploy_module.TEST_GATE_ENABLED is True
+    assert MEMORY_LIMIT.time_limit_seconds == 5 * 60
+    assert 5 * 60 < deploy_module.TEST_GATE_TIMEOUT_SECONDS <= 7 * 60
