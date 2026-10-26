@@ -2337,6 +2337,10 @@ OA Consumer/Audit 处理扫描页时，在当前 Native Codex session 的同一 
 
 微信发送前失败（`pre_action_failure=1`，已记录非空 `action_started_at`、从未真正发出）的投递，自动重试用尽后停在 `failed`，History 与重试接口都把它当作可手动重试的投递：详情显示「重试发送」，`requeue_expired_wechat_delivery_for_user` 同时接受 `skipped` 与此类 `failed`。此前只有手动 CLI `skip-stale-wechat-delivery` 能把它改成 `skipped`，而 `skipped` 是唯一出现重试入口的状态，所以最需要重发的失败投递反而没有入口（投递 #140，`wechat_ui_not_ready`，2026-10-23）。独立 Audit 拒绝（`wechat_audit_rejected`）从未领取，没有 `action_started_at`，不在此列；重新入队后发送仍需通过原有的已批准 Audit 证据才能领取。
 
+失败微信 Attempt 的 History `POST /api/console/history/{attempt_id}/retry` 是原生读回恢复入口，不要求用户回复确认卡，也不调用 Sender。它先校验当前已审核候选、审核、执行代、动作正文和 Delivery 证据完全绑定。`sent` 仅在 Reader 从准确账号、会话和动作开始时间之后读回唯一匹配的本人消息时结算为 `done`；明确 `superseded_by_newer_wechat_trigger` 链只有在最终 successor 的已发送正文被读回、旧正文在完整有限窗口内不存在且账号/会话/目标相同后才结算为 `skipped`。无法证明时保留真实失败并返回冲突；原失败 Attempt、Run 和动作历史保持不变。
+
+需要重新执行内部失败的 Attempt 时，调用 `POST /api/console/history/{attempt_id}/rerun`，由原任务流程重新读取并审核当前输入；调用该 API 不要求 Agent 让 Derek 回复聊天确认卡。它与 `/retry` 的外部动作只读对账分开：存在投递或回执时不通过 rerun 重发。
+
 ## 用户反馈处理轮次
 
 Consumer/Audit 的通用应用结果合同只在 Developer 注入一次，不在每轮 Task context 复制。Audit 的重复 Role Boundary 合并到“应用结果合同”段；Task 中显式自定义 Audit Rules、完整候选与 digest、当前事实、阶段和反馈继续保留。会话绑定、角色政策和 wire schema 保持不变，Settings 的当前预览沿用同一装配函数，历史视图继续读取原始已保存输入。

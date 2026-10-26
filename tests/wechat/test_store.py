@@ -3,6 +3,7 @@ from app.action_storage import (
     task_delivery_projection, task_delivery_set_parts, insert_task_delivery_action,
 )
 from multiprocessing import get_context
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
@@ -953,6 +954,108 @@ def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     refreshed_old = store.get_wechat_delivery_for_task(tasks[0].id)
     assert refreshed_old.status == "superseded"
     assert refreshed_old.error == f"superseded_by_newer_wechat_delivery:{newer.id}"
+
+
+def test_failed_wechat_task_settles_done_only_from_exact_sent_readback(tmp_path):
+    from app import task_entity_storage
+
+    store = _store(tmp_path)
+    task = store.ensure_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m-settled",
+        trigger_create_time="2026-07-28T10:00:00", trigger_sender="Alex",
+        trigger_text="question",
+    )
+    delivery_id = create_wechat_delivery(
+        store, reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="exact answer",
+    )
+    approve_delivery(store, delivery_id)
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(delivery_id, "sent")
+    with store._connect() as db:
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"status": "pending"},
+            changes={"status": "failed", "error": "external_action_failed"},
+        )
+
+    with pytest.raises(ValueError, match="exact outbound readback"):
+        store.settle_failed_wechat_task_from_delivery(
+            task.id, expected_execution_generation=task.execution_generation,
+            delivery_id=delivery_id, task_status="done",
+            evidence={"delivery_id": delivery_id, "readback": {
+                "message_id": "outbound-1", "conversation_id": "other",
+                "account_id": "acct-1", "direction": "outbound",
+                "sent_at": "2026-07-28T10:01:00+00:00", "text": "exact answer",
+            }},
+        )
+    assert store.get_reply_task(task.id).status == "failed"
+    readback_at = datetime.now(timezone.utc) + timedelta(seconds=10)
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    assert store.settle_failed_wechat_task_from_delivery(
+        task.id, expected_execution_generation=task.execution_generation,
+        delivery_id=delivery_id, task_status="done",
+        evidence={"delivery_id": delivery_id, "readback": {
+            "message_id": "outbound-1", "conversation_id": "u1",
+                "account_id": "acct-1", "direction": "outbound",
+                "sent_at": readback_at.isoformat(), "text": delivery.reply_text,
+        }},
+    )
+    assert store.get_reply_task(task.id).status == "done"
+
+
+def test_failed_wechat_task_can_skip_only_with_readback_of_linked_sent_successor(tmp_path):
+    from app import task_entity_storage
+
+    store = _store(tmp_path)
+    tasks = []
+    for message_id in ("m-old", "m-new"):
+        tasks.append(store.ensure_reply_task(
+            channel="wechat", conversation_id="u1", conversation_title="Alex",
+            single_chat=True, trigger_message_id=message_id,
+            trigger_create_time="2026-07-28T10:00:00", trigger_sender="Alex",
+            trigger_text=message_id,
+        ))
+    old_id = create_wechat_delivery(
+        store, reply_task_id=tasks[0].id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="old answer",
+    )
+    approve_delivery(store, old_id)
+    store.mark_wechat_delivery_sending(old_id)
+    store.set_wechat_delivery_status(old_id, "failed", error="wechat_ui_not_ready")
+    new_id = create_wechat_delivery(
+        store, reply_task_id=tasks[1].id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="new answer",
+    )
+    approve_delivery(store, new_id)
+    store.mark_wechat_delivery_sending(new_id)
+    store.set_wechat_delivery_status(new_id, "sent")
+    with store._connect() as db:
+        task_entity_storage.update_task_cas(
+            db, task_id=tasks[0].id, expected={"status": "pending"},
+            changes={"status": "failed", "error": "external_action_failed"},
+        )
+
+    readback_at = datetime.now(timezone.utc) + timedelta(seconds=10)
+    successor_delivery = store.get_wechat_delivery_by_id(new_id)
+    evidence = {
+        "delivery_id": old_id,
+        "successor_delivery_chain": [old_id, new_id],
+        "old_delivery_readback": {
+            "delivery_id": old_id, "match_count": 0, "window_complete": True,
+        },
+        "successor_readback": {"delivery_id": new_id, "readback": {
+            "message_id": "outbound-2", "conversation_id": "u1",
+                "account_id": "acct-1", "direction": "outbound",
+            "sent_at": readback_at.isoformat(), "text": successor_delivery.reply_text,
+        }},
+    }
+    assert store.settle_failed_wechat_task_from_delivery(
+        tasks[0].id, expected_execution_generation=tasks[0].execution_generation,
+        delivery_id=old_id, task_status="skipped", successor_task_id=tasks[1].id,
+        evidence=evidence,
+    )
+    assert store.get_reply_task(tasks[0].id).status == "skipped"
 
 
 @pytest.mark.parametrize("status", ["sending", "send_unknown"])

@@ -1088,10 +1088,95 @@ class WechatSendMessageHandler:
         delivery = self.store.get_wechat_delivery_for_task(candidate["task_id"])
         if delivery is None or delivery.execution_generation != candidate["execution_generation"]:
             return None
-        outcome = self._from_delivery(delivery)
-        if delivery.status == "ready_to_send":
-            return ActionOutcome("confirmed_no_effect", {"delivery_id": delivery.id})
-        return outcome
+        if delivery.status == "superseded":
+            return self._from_delivery(delivery)
+        if delivery.status != "sent":
+            return self._from_delivery(delivery)
+        task, prepared = self._task_and_prepared(action, candidate)
+        body = action.payload.get("text")
+        if (task is None or prepared is None or not isinstance(body, str)
+                or body != delivery.reply_text or body != prepared.final_body):
+            return ActionOutcome("uncertain", {
+                "reason": "wechat_readback_candidate_mismatch", "delivery_id": delivery.id,
+            })
+        evidence = delivery.evidence
+        if (evidence.get("standard_candidate_id") != str(candidate.get("candidate_id", candidate.get("id", "")))
+                or evidence.get("standard_review_id") != str(candidate.get("review_id", ""))
+                or evidence.get("standard_action_identity") != action.action_identity):
+            return ActionOutcome("uncertain", {
+                "reason": "wechat_readback_review_mismatch", "delivery_id": delivery.id,
+            })
+        return self._readback_delivery(delivery, body)
+
+    def _readback_delivery(self, delivery, body: str) -> ActionOutcome:
+        try:
+            account, reader = self._reader_runtime()
+            if account is None or account.account_id != delivery.account_id:
+                return ActionOutcome("uncertain", {
+                    "reason": "wechat_readback_account_mismatch", "delivery_id": delivery.id,
+                })
+            messages = reader.read_messages(
+                account,
+                conversation_id=delivery.conversation_id,
+                conversation_type=delivery.target_type,
+                since=self._utc_instant(delivery.action_started_at).isoformat(),
+                limit=200,
+                order="newest",
+            )
+        except Exception as exc:
+            return ActionOutcome("uncertain", {
+                "reason": "wechat_readback_unavailable", "exception_type": type(exc).__name__,
+                "delivery_id": delivery.id,
+            })
+        matches = [
+            message for message in messages
+            if message.account_id == delivery.account_id
+            and message.conversation_id == delivery.conversation_id
+            and message.conversation_type == delivery.target_type
+            and message.direction == "outbound"
+            and message.text == body
+            and self._utc_instant(message.sent_at) >= self._utc_instant(delivery.action_started_at)
+            and message.message_id
+        ]
+        window_complete = len(messages) < 200
+        if len(matches) == 1 and not window_complete:
+            return ActionOutcome("uncertain", {
+                "reason": "wechat_readback_window_incomplete", "delivery_id": delivery.id,
+                "match_count": len(matches), "window_complete": False,
+            })
+        if len(matches) != 1:
+            return ActionOutcome("uncertain", {
+                "reason": "wechat_readback_not_unique", "delivery_id": delivery.id,
+                "match_count": len(matches), "window_complete": window_complete,
+            })
+        message = matches[0]
+        return ActionOutcome("verified", {
+            "delivery_id": delivery.id,
+            "readback": {
+                "message_id": message.message_id,
+                "account_id": message.account_id,
+                "conversation_id": message.conversation_id,
+                "direction": message.direction,
+                "sent_at": message.sent_at,
+                "text": message.text,
+            },
+        })
+
+    @staticmethod
+    def _utc_instant(value: str) -> datetime:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        if parsed.tzinfo is None:
+            parsed = parsed.replace(tzinfo=timezone.utc)
+        return parsed.astimezone(timezone.utc)
+
+    def _reader_runtime(self):
+        """Build only the read path; reconciliation must never construct Sender."""
+        from app.wechat import service as wechat_service
+
+        account = (self._account_factory() if self._account_factory
+                   else _wechat_account(self.store, wechat_service))
+        reader = self._reader_factory() if self._reader_factory else wechat_service.build_reader()
+        return account, reader
 
 
 def _wechat_account(store: object, wechat_service: object):

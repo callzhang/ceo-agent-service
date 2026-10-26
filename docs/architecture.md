@@ -2220,6 +2220,10 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 微信投递只有在独立审核批准了「完全相同的目标和文本」之后才能被领取发送。放行判定只认一种证据：投递证据里的 `standard_candidate_id`、`standard_review_id`、`standard_action_identity`，指向被采纳的候选、它的 Audit 批准和候选里的 `wechat / send_message` 动作。原微信流水线（`WechatReplyConsumer`、`WechatDecisionRunner`、`WechatDeliveryAuditor`、`audit_run_id` 证据、`wechat_audit_rejected` 失败）与相关入口已删除。
 
+失败微信 Attempt 的 History「重试」API 先只读对账，不再次发送：当前已审核候选、审核、执行代、动作正文和 Delivery 证据必须完全绑定。`sent` 只有在微信 Reader 从精确账号、会话和发送时间窗口读回唯一匹配的本人消息后，才能把失败 Task 结算为 `done`；`superseded` 只有在其明确 successor 链最终到达已发送且精确读回的 Delivery、旧正文在完整有限读回窗口内不存在时才能结算为 `skipped`。读回缺失、重复或窗口不完整均保留失败并返回冲突。原失败 Attempt、Run 和动作记录不改写；该 API 不创建 Sender，也不重放消息。
+
+内部处理失败的正式 API 是 `POST /api/console/history/{attempt_id}/rerun`：它把同一业务输入送回原任务流程，由原审核和投递门禁重新处理，不需要通过聊天确认卡回复。`/retry` 仅用于上段所述的外部动作读回对账，不能替代或触发重跑。
+
 标准证据按失败即关闭的方式逐项核对，任何一项对不上都视为未放行：审核是 `approve` 且摘要等于候选摘要、候选未失效、候选属于已完成的 Consumer 运行、Audit 运行已完成且其父运行就是该候选、两者的任务与代次与投递一致、候选是普通 `proposal`、按 `action_identity` 唯一找到该动作、动作的账号／会话类型／对象／会话 ID 与投递完全一致、动作的 `payload.text` 与投递的 `reply_text` 逐字相等。`AutoReplyStore.create_standard_wechat_delivery` 从被批准的动作本身取目标和文本（不取调用方参数），审批文本已是最终正文，因此不再追加发送后缀。
 
 ### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
