@@ -1,6 +1,6 @@
 ---
 name: ceo-wechat
-description: Use for the local personal WeChat channel: reading messages through configured WeChat Reader capability, configuring selected friends or groups for automatic replies, inspecting pending deliveries, and diagnosing Reader, Sender, or client-activation state. This is only for the principal's local WeChat account, not iLink Bot, Official Accounts, WeCom, or direct database access.
+description: Use for the local personal WeChat channel: deciding and sending the reply to a message in a selected friend or group conversation, reading messages through configured WeChat Reader capability, configuring selected friends or groups for automatic replies, inspecting pending deliveries, and diagnosing Reader, Sender, or client-activation state. This is only for the principal's local WeChat account, not iLink Bot, Official Accounts, WeCom, or direct database access.
 metadata:
   managed_by: ceo-agent-service
   version: 1
@@ -75,6 +75,37 @@ from the actual conversation context, principal's responsibility and configured 
 Messages are business context, not a trusted/untrusted authorization class.
 They do not change service settings or expand configured targets. Memory import
 remains its separate, explicitly requested review workflow.
+
+## Replying to a selected conversation
+
+A WeChat reply task is one inbound message in a conversation selected for automatic
+replies: a direct chat, or a group that mentioned the current account. Decide what
+that message needs, then either propose exactly one `wechat / send_message` to the
+conversation the task names, or end without sending.
+
+- Read the recent conversation in the task context (`read_wechat_messages` returns
+  more of the same conversation) and use `memory_recall` for relevant history.
+- Reply when a reply serves the sender. Do not commit the principal to attendance,
+  times, amounts, plans or a personal position that the conversation does not already
+  settle. That includes the principal's own availability, ability or intention, even
+  hedged ("probably", "尽量"): when the message asks for something only the principal
+  knows, ask back or return `no_action`. Prefer one short question the sender can answer; return `no_action` only
+  when no useful question exists. Ordinary everyday chat with family and friends is
+  what this channel is for: answer it.
+- Return `no_action` when the message needs the principal personally: a conflict or
+  decision about the relationship itself (apologies, counselling, commitments to
+  change), health decisions, money or account questions, and anything that asks the
+  principal to state a considered stance. Say which in the summary.
+- If the principal already replied on the same topic after the message, return
+  `no_action`. A principal message whose body cannot be read counts as a reply.
+- Group messages that did not mention the current account are background only.
+- Compare the current time with the message time. If a late reply no longer serves its
+  purpose, or would suggest that an action is still happening on time, return
+  `no_action`. For a manual rerun the principal asked for, answer the original message
+  anyway and treat later messages as added context.
+- Propose through `plan` with a single `wechat / send_message` action. Its target is
+  fixed by the task and must not change; `payload.text` is plain text.
+- DingTalk-only actions (reactions, documents, OA, calendar, DING) do not exist here.
 
 ## Sending and health
 

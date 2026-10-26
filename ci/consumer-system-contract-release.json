@@ -4,9 +4,9 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
-      "old_sha256": "98882f8bfd4e30076a643021f000d5bbb092113f3fff34251b9f379201ff3a50",
+      "old_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2",
       "new_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2",
-      "old_managed_sha256": "98882f8bfd4e30076a643021f000d5bbb092113f3fff34251b9f379201ff3a50"
+      "old_managed_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
@@ -23,7 +23,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
       "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md",
-      "old_sha256": "3007b9dbabbe3316628be23b697433e2ec364237f3d80d7ea43f54d2a6973785",
+      "old_sha256": "c617861797b07b256f7fade2882bc6c418e61ae9ce42f102460498edd51bae2d",
       "new_sha256": "c617861797b07b256f7fade2882bc6c418e61ae9ce42f102460498edd51bae2d"
     },
     {
@@ -42,9 +42,9 @@
     {
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
       "target": "skills/ceo-daily-report/SKILL.md",
-      "old_sha256": "a7c7caaedc5fc63446e20f53ca4bf69d643cca50578c2eda723dfc6f6d9a810e",
+      "old_sha256": "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa",
       "new_sha256": "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa",
-      "old_managed_sha256": "a7c7caaedc5fc63446e20f53ca4bf69d643cca50578c2eda723dfc6f6d9a810e"
+      "old_managed_sha256": "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa"
     },
     {
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
@@ -71,12 +71,12 @@
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
       "target": "skills/ceo-wechat/SKILL.md",
       "old_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae",
-      "new_sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
+      "new_sha256": "55a8ce70e973e05997d66f873e4fe2c3697aaed5d2797f34dda043519e812f9c"
     },
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "8329de8d9066411138cc1c17fac473e335e2136fd0dded2492321d58c0529337",
+      "old_sha256": "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb",
       "new_sha256": "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb"
     },
     {
@@ -118,9 +118,9 @@
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
       "target": "skills/ceo-weekly-okr-report/SKILL.md",
-      "old_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e",
+      "old_sha256": "16fcdd9b765656e758a1ea98f425d5976c0bbbb33a0a53fa379b22d8f480294d",
       "new_sha256": "16fcdd9b765656e758a1ea98f425d5976c0bbbb33a0a53fa379b22d8f480294d",
-      "old_managed_sha256": "54d3e45e58cdf819d21d9ad4c3973030a5a70de75b0f8d583995a5a496464d5e"
+      "old_managed_sha256": "16fcdd9b765656e758a1ea98f425d5976c0bbbb33a0a53fa379b22d8f480294d"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
@@ -161,7 +161,7 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/README.md",
       "target": "skills/ceo-weekly-report/README.md",
-      "old_sha256": "7da8b2af66835b6ea0c124bc9016e70d10995677a0f728994165d7ffeafd32a2",
+      "old_sha256": "cfbbc80c7a384a64077e7e4bd75b7341f883ebd9bc7284fe86100d79e565ee40",
       "new_sha256": "cfbbc80c7a384a64077e7e4bd75b7341f883ebd9bc7284fe86100d79e565ee40"
     }
   ]

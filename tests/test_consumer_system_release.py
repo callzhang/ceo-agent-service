@@ -71,7 +71,7 @@ def test_repository_consumer_release_manifest_tracks_installed_daily_report_base
 
     skill = entries[skill_source]
     assert skill["new_sha256"] == _digest((root / skill_source).read_bytes())
-    assert skill["old_sha256"] == "a7c7caaedc5fc63446e20f53ca4bf69d643cca50578c2eda723dfc6f6d9a810e"
+    assert skill["old_sha256"] == "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa"
     assert skill["old_managed_sha256"] == skill["old_sha256"]
 
     script = entries[script_source]
@@ -118,7 +118,7 @@ def test_release_manifest_pins_current_finance_card_and_active_managed_skill_has
     } == {
         "ci/shared-skills/ceo-calendar-invite/SKILL.md": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
         "ci/shared-skills/ceo-message-triage/SKILL.md": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "98882f8bfd4e30076a643021f000d5bbb092113f3fff34251b9f379201ff3a50",
+        "ci/shared-skills/ceo-weekly-report/SKILL.md": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2",
     }
 
 
