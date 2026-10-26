@@ -19,7 +19,6 @@ from threading import Barrier, Event, Thread, get_ident
 import pytest
 
 import app.store as store_module
-from tests.wechat.support import approve_delivery
 from tests.support.native_run_rows import (
     insert_native_run as _insert_native_run,
     insert_run_row as _insert_run_row,
