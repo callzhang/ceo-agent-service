@@ -631,3 +631,20 @@ more pass2 in0.80s, Email owners/history pass15 in20.56s, native identity/status
 plans pass7 in2.63s, and raw Meeting/status/schema-registry scope passes35 in1.62s.
 Merged duplicate snapshot entries are deduplicated without dropping the typed
 Meeting schema owner. Complete app/tests Ruff passes.
+
+## Complete Quality accepted — 2026-10-26
+
+Run40283440575 at brancha28858637, actual merge-refdbb25a8c8/base193ddd06b,
+completed51/51 successful jobs:48 Python shards, lint, frontend and browser.
+All original Quality failures and the cross-branch integer-ID conflict are
+closed. Fixed2GB/5minute enforcement and test selection remain unchanged.
+Independent final runtime/SPEC reviews approve without blockers.
+
+Subsequent mainf7a9b3a8a adds only the separately owned read-only OA Attempt
+detail/Skill clarification; release owner8cb3adff1 synchronizes its source hash
+while preserving the actual installed old hash. Normal merge79ae76997 retains
+all root owner/state/query code. Review confirms no Signal/EmailTask/receipt
+Store migration overlap. Its84 directly related backend/publication cases pass
+28.53s and46 Attempt-page cases pass2.83s. All26 installed/managed publication
+preconditions pass; frozen source478/target476 digests remain exact. The final
+standard deploy and production readback/cleanup have not yet run at this entry.

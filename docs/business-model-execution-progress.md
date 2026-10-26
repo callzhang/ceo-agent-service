@@ -45,11 +45,12 @@ release readback. No physical database saving is attributed to that cleanup.
 - The standard clean-clone gate passes at `e9b6c0a55`; full app/tests Ruff passes.
   The26 file/installed-target/current managed-revision publication preflight
   passes. Only the two originally planned weekly-report assets differ.
-- Complete48-shard Quality at `b4ce543c1` (`40279241126`) ended with32 Python
-  shards passing and17 failing nodes across the other16; frontend/browser pass.
-  All17 now have focused passing fixes. The unused-import lint failure is also
-  fixed; current app/tests Ruff passes. Final integrated complete Quality is
-  pending; this is not a full-Quality-green statement.
+- Complete Quality now passes51/51 jobs at `a28858637` (`40283440575`, actual
+  merge-refdbb25a8c8/base193ddd06b):48 Python shards plus lint/frontend/browser.
+  The later read-only main Attempt detail and release-owner manifest patch are
+  normally integrated with84 backend/publication and46 page cases passing.
+  This names the exact evidence boundary; final standard deployment/readback
+  and artifact cleanup remain pending.
 - The temporary production connection refusal coincided with a separate
   standard deploy to `9e7308ee5`; subsequent health readback returned200/ok.
   The Signal migration has not been deployed by this task. Final Quality,
