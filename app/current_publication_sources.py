@@ -26,7 +26,7 @@ def _version(db, *, release_source_email_version=None):
         return version
     if version == PREVIOUS_STORE_VERSION:
         from app.signal_source_owner_schema_release import source_objects
-        if schema_objects(db) == source_objects():
+        if email_version == TARGET_EMAIL_VERSION and schema_objects(db) == source_objects():
             return version
     raise ValueError('unsupported current publication declaration; explicit source migration required')
 

@@ -589,6 +589,36 @@ def test_quiet_reads_current_store_252_source_and_counts_running_reply_run(tmp_p
     assert in_flight_work(path) == 1
 
 
+@pytest.mark.parametrize(
+    "damage", ["schema_object", "email_version_53", "empty_email_ledger"]
+)
+def test_quiet_rejects_damaged_store_252_source_without_writes(tmp_path, damage):
+    import sqlite3
+
+    from app.repository_updater import in_flight_work
+    from tests.test_signal_source_owner_schema_release import source
+
+    path = tmp_path / "damaged-store-252.sqlite3"
+    source(path)
+    with sqlite3.connect(path) as db:
+        if damage == "schema_object":
+            from app.signal_source_owner_schema_release import source_objects
+
+            _kind, name, _owner, _sql = next(
+                obj for obj in source_objects() if obj[0] == "index"
+            )
+            db.execute(f'drop index "{name}"')
+        elif damage == "email_version_53":
+            db.execute("update email_schema_migrations set version=53 where version=54")
+        else:
+            db.execute("delete from email_schema_migrations")
+
+    before = path.read_bytes()
+    with pytest.raises(ValueError, match="unsupported"):
+        in_flight_work(path)
+    assert path.read_bytes() == before
+
+
 def test_stalled_admitted_transaction_times_out_and_reopens_admission(tmp_path):
     from app.deployment_drain import (
         claim_connection,

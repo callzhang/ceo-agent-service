@@ -132,14 +132,9 @@ def _frozen_task_delivery_text_writer(monkeypatch):
 
 def test_fresh_final_schema_failure_does_not_publish_current(tmp_path, monkeypatch):
     from app import current_database_schema, store as store_module
-    from tests.support import store_template
 
     path = tmp_path / "fresh.sqlite3"
-
-    # This case verifies constructor rollback from an empty database. The
-    # process-wide template may already contain a healthy published schema,
-    # which would bypass the injected constructor failure entirely.
-    monkeypatch.setattr(store_template, "_copy_of_template", lambda *_args, **_kwargs: None)
+    path.touch()
 
     def fail_conversion(*_args, **_kwargs):
         raise RuntimeError("conversion interrupted")
