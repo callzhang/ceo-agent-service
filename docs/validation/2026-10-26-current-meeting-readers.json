@@ -1,0 +1,157 @@
+{
+  "scope": "Current Meeting Run readers only; retire completed orphan repair tool",
+  "target_commit": "8e0f66b00c639769cfac8d3fc9b32425ad3879cb",
+  "change_commit": "0642d30fd",
+  "before": {
+    "at": "2026-10-26T09:10:15.937748+00:00",
+    "code": "5c82e489c0c980a7bb8936c49d80eb5d35ac04c3",
+    "health": {
+      "http": 200,
+      "value": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "status": {
+      "http": 200,
+      "value": {
+        "queue_count": 11,
+        "pending": 11,
+        "processing": 0,
+        "failed": 36,
+        "retryable": 3,
+        "attention": 9
+      }
+    }
+  },
+  "verification": {
+    "current_contract_cases": 37,
+    "seconds": 15.43,
+    "additional_valid_readers": 2,
+    "additional_seconds": 3.56,
+    "red_then_green_readers": [
+      "HTML Meeting detail",
+      "API Meeting detail",
+      "session-related Meeting history"
+    ],
+    "independent_review": "approved; both findings closed"
+  },
+  "schema_change": false,
+  "production_data_change": false,
+  "test_provider_calls": 0,
+  "deleted_entry_points": [
+    "scripts/repair_orphan_meeting_run.py",
+    "tests/test_repair_orphan_meeting_run.py"
+  ],
+  "post_deploy": {
+    "at": "2026-10-26T09:20:41.513064+00:00",
+    "code": "8e0f66b00c639769cfac8d3fc9b32425ad3879cb",
+    "pid": 83730,
+    "retired_tool_absent": true,
+    "readers": {
+      "render_meeting_attempt_detail": {
+        "exception_handlers": 0
+      },
+      "_meeting_related_history_card": {
+        "exception_handlers": 0
+      },
+      "console_meeting_detail": {
+        "exception_handlers": 0
+      }
+    },
+    "database": {
+      "objects": 476,
+      "sha256": "234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221",
+      "fk_findings": [],
+      "historical_run_task_id": null,
+      "source_job_id": 4908
+    },
+    "health": {
+      "http": 200,
+      "value": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "status": {
+      "http": 200,
+      "value": {
+        "queue_count": 11,
+        "pending": 10,
+        "processing": 0,
+        "failed": 36,
+        "retryable": 2,
+        "attention": 9
+      }
+    },
+    "attention": {
+      "http": 200,
+      "value": {
+        "items": 9
+      }
+    },
+    "history": {
+      "http": 200,
+      "value": {
+        "total": 38446,
+        "returned": 1
+      }
+    },
+    "null_parent": {
+      "http": 200,
+      "value": {
+        "id": 190042,
+        "task_id": null,
+        "source_job_id": 4908,
+        "task_available": false
+      }
+    },
+    "valid_parent": {
+      "http": 200,
+      "value": {
+        "id": 399558,
+        "task_id": 417513,
+        "source_job_id": null,
+        "task_available": true
+      }
+    }
+  },
+  "cleanup": {
+    "root": "/tmp/ceo-no-legacy-run.si7vho",
+    "verified_backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+    "backup_integrity": "ok",
+    "open_references": 0,
+    "status": "completed",
+    "root_absent": true,
+    "backup_absent": true,
+    "verified_at": "2026-10-26T09:25:22.587619+00:00"
+  },
+  "intervening_release": {
+    "at": "2026-10-26T09:17:36.570440+00:00",
+    "code": "49ef0784dc1acaa168e625c9ac79a9bfe2565c36",
+    "summary": {
+      "queue_count": 11,
+      "pending": 10,
+      "processing": 2,
+      "failed": 36,
+      "retryable": 2,
+      "attention": 9
+    }
+  },
+  "first_deploy_attempt": "standard deployment stopped when another deploy moved production to49ef0784; no own runtime change installed",
+  "mandatory_gate": {
+    "target": "8e0f66b00c639769cfac8d3fc9b32425ad3879cb",
+    "passed": true,
+    "standard_deploy": "deployed49ef0784->8e0f66b0"
+  },
+  "ui": {
+    "null_parent_run": 190042,
+    "original_runtime_details_expanded": true,
+    "normal_current_run": 399558,
+    "normal_current_task": 417513,
+    "native_session_timeline_loaded": true,
+    "native_timeline_records": 10,
+    "related_history_helper_covered_by": "focused current-schema tests",
+    "temporary_tab_closed": true
+  }
+}

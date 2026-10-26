@@ -82,6 +82,18 @@ facts, while errors reading a non-NULL current Task propagate. Each of the three
 catch-and-continue branches had a failing regression before its removal.
 
 The37 focused current Meeting/professional/related-history cases pass in15.43s;
-Ruff and diff checks pass. Standard deployment and live readback of this reader
-cleanup are pending at this checkpoint. No schema or production data change is
-part of this cleanup; no external test send is used.
+Ruff and diff checks pass; two additional valid-parent History readers pass
+in3.56s. Independent final review approved after closing the third-reader and
+documentation findings. Standard deployment completed49ef0784→8e0f66b00; the
+exact-target mandatory gate passed, PID83730/health200 and all three installed
+reader functions have zero exception handlers. The one-off command is absent
+from production. Actual NULL-parent/valid-parent detail APIs and Chrome pages
+load, with source Job4908 and original error retained; a real native session
+timeline also loads. Schema remains the exact476 objects and FK findings are
+empty. Failed36/Attention9 match the immediate pre-release baseline. The first
+standard attempt stopped when another deploy moved production; it was retried
+through the same gates, without a bypass. Test outputs and the integrity-verified
+workflow backup were deleted and path absence verified. No schema/production
+data change or real external test send was part of this cleanup.
+
+[Exact reader deployment/cleanup evidence](validation/2026-10-26-current-meeting-readers.json).

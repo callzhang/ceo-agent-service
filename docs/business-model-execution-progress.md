@@ -2,6 +2,11 @@
 
 ## Authoritative completion — 2026-10-26
 
+Latest follow-up: the current-model-only Meeting readers are deployed as
+`8e0f66b00` (09:20 UTC), FK findings are empty, and the completed one-off repair
+entry point is removed. The Signal publication table below records its earlier
+07:39 UTC release checkpoint.
+
 PR [294](https://github.com/callzhang/ceo-agent-service/pull/294) is merged and
 standard deployment completed `9a256fa77 → 62b4da19b`. The production readback at
 07:39 UTC verified PID94797, health200/ok, Store `2026-10-25.3` / Email54 and the
@@ -24,8 +29,11 @@ Current-code follow-up: the completed Run-reference maintenance script and its
 obsolete tool-only tests are retired. All three Meeting detail/related-history
 readers now use the current native Task reference directly; only NULL represents
 an unavailable Task, and a broken non-NULL lookup is no longer hidden by a legacy
-fallback. Focused37 current-contract cases pass; reader deployment/readback is
-pending. See [repair and retirement evidence](orphan-meeting-run-reference-repair.md).
+fallback. Focused37 current-contract cases plus2 valid-parent readers pass.
+The reader cleanup is deployed as8e0f66b00 (PID83730,health200,FK0); actual
+NULL-parent/current-parent pages and APIs pass, and the installed one-off tool
+is absent. Test artifacts and the verified workflow backup are removed.
+See [repair and retirement evidence](orphan-meeting-run-reference-repair.md).
 
 [Exact structured readback](validation/2026-10-26-signal-owner-production-readback.json),
 [Signal contract and copy evidence](signal-source-owner-validation.md), and
