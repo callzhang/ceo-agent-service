@@ -155,3 +155,14 @@ checkout. Existing failure assertions were not deleted, weakened or hidden.
 These broader historical validation debts are recorded for the publication
 owner and still prevent a full-green claim. The two current source-provider/Task
 Agent files additionally pass7 executions; providers are substitutes.
+
+## Latest production-derived revalidation — 2026-10-26
+
+After mainf867d5c43 reconciliation and the current owner fixes, a fresh SQLite
+backup of production was validated with the same strict script and actual
+dc07ddcbe old code. The complete forward/new-facts/substitute-receipt/current-
+data inverse/old-code cold-read-and-write/reforward passed in103.68s. The source
+again has1140 Signals and172 provenance parents; final1147 Signals, all48 tables
+preserved, and exactly the same existing FK finding
+`('runs',190042,'tasks',1)`. No real provider calls. This refresh is data-copy
+acceptance; complete Quality and production publication/readback remain pending.
