@@ -124,7 +124,8 @@ in `tests/gate_files.txt`, one process; `tests/conftest.py` stops it at 2 GB or 
 5 minutes of real time; about 95 s on an idle machine) at the commit it is going to
 install, in a throwaway clone with a clean environment, and refuses to deploy if any
 test fails or the run is stopped. There is no bypass option and no switch: the
-requirement is `TEST_GATE_ENABLED = True` in `app/deploy.py`. A busy machine can make
+requirement is `TEST_GATE_ENABLED = True` in `app/deploy.py`. The deploy then installs exactly the commit the gate tested, even if `main` moved
+while it ran. A busy machine can make
 the run take longer; the run is stopped at 5 minutes, not extended. Add a test to the
 manifest when it covers current behaviour and is fast.
 `--restart` runs no new code and is not gated.

@@ -115,29 +115,41 @@ def test_deploy_runs_the_gate_before_anything_can_be_stopped_or_changed(tmp_path
     assert [entry[0] for entry in seen] == ["gate"]
 
 
-def test_deploy_hands_the_gate_the_exact_commit_it_will_install(tmp_path: Path, monkeypatch):
+def test_deploy_installs_the_commit_the_gate_tested_even_if_main_moves(tmp_path: Path, monkeypatch):
     import app.deploy as deploy_module
     from app.repository_updater import UpgradeResult
+    from tests.test_repository_updater import git
 
     local, _ = fixture_repo(tmp_path)
+    updater_clone = tmp_path / "updater"
     order = []
+    pins = []
+
+    def gate_while_main_moves(root, commit):
+        order.append(("gate", commit))
+        (updater_clone / "version.txt").write_text("newer than the tested commit\n", encoding="utf-8")
+        git(updater_clone, "add", "version.txt")
+        git(updater_clone, "commit", "-m", "pushed while the gate was running")
+        git(updater_clone, "push", "origin", "main")
 
     class Recording:
         def __init__(self, *args, **kwargs):
-            pass
+            pins.append(kwargs["pin_target_commit"])
 
         def execute_locked(self, op):
             order.append(("install", op.target_commit))
             return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
 
     monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", True)
-    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit: order.append(("gate", commit)))
+    monkeypatch.setattr(deploy_module, "require_green_suite", gate_while_main_moves)
     monkeypatch.setattr(deploy_module, "RepositoryUpdater", Recording)
 
     deploy_module.deploy(local, tmp_path / "db.sqlite3")
 
     assert [kind for kind, _ in order] == ["gate", "install"]
     assert order[0][1] == order[1][1]
+    assert pins == [True]
+    assert git(updater_clone, "rev-parse", "HEAD") != order[0][1]   # main really moved
 
 
 def test_suspended_gate_does_not_run(tmp_path: Path, monkeypatch):
