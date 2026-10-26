@@ -5373,6 +5373,12 @@ The existing explicit selected-task repair resets attempts and keeps task
 identity; discovery does not automatically reopen failed records. See
 `docs/email-classification-retry-budget-validation.md` for evidence.
 
+For current classification readback, the saved UID is tried first. If it no
+longer returns the source, the worker may locate it only by the task's exact
+account-scoped RFC Message-ID in the same folder, then fetch and verify the
+stable task identity. No sender/subject search or classifier/action policy is
+changed.
+
 
 ### Classification source-read failure repair
 

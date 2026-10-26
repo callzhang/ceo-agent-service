@@ -3935,6 +3935,58 @@ def test_classification_worker_persists_certain_decision_and_direct_plan(tmp_pat
     assert classification["status"] == "processed"
 
 
+def test_classification_provider_readback_relocates_exact_message_id_when_uid_is_stale():
+    from app.email_classifier_contracts import EmailProviderLocator
+    from app.email_worker import _read_current_classification_message
+
+    locator = EmailProviderLocator(
+        account_id="account-1",
+        folder="INBOX",
+        uidvalidity=42,
+        uid=82,
+        rfc_message_id="<mail-82@example.com>",
+        thread_id="thread-82",
+    )
+    exact_message = {
+        "stableMessageIdentity": "account-1:message-id:<mail-82@example.com>",
+        "folder": "INBOX",
+        "providerUnread": True,
+    }
+
+    class Source:
+        located = None
+        fetched = None
+
+        def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
+            assert (folder, cursor_uidvalidity, last_seen_uid, limit) == (
+                "INBOX", 42, 81, 2
+            )
+            return SimpleNamespace(uidvalidity=42, messages=())
+
+        def locate_message(self, requested, *, folder):
+            self.located = (requested, folder)
+            return requested.model_copy(update={"uid": 99})
+
+        def fetch_message(self, current, *, stable_message_identity):
+            self.fetched = (current, stable_message_identity)
+            return exact_message
+
+    source = Source()
+    task = SimpleNamespace(
+        stable_message_identity="account-1:message-id:<mail-82@example.com>"
+    )
+    message = _read_current_classification_message(
+        source,
+        task,
+        {"provider_locator": locator.model_dump(mode="json")},
+    )
+
+    assert message == exact_message
+    assert source.located == (locator, "INBOX")
+    assert source.fetched[0].uid == 99
+    assert source.fetched[1] == task.stable_message_identity
+
+
 def test_classification_worker_persists_provider_readback_body_not_agent_redaction(
     tmp_path,
 ):

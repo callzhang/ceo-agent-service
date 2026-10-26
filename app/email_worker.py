@@ -748,6 +748,44 @@ def run_manual_historical_batch(
     ).run_batch(candidates)
 
 
+def _read_current_classification_message(
+    source: object, task: object, payload: Mapping[str, object]
+) -> Mapping[str, object] | None:
+    """Read the exact persisted classification source, relocating only by Message-ID."""
+
+    from app.email_classifier_contracts import EmailProviderLocator
+
+    locator_payload = payload.get("provider_locator")
+    if not isinstance(locator_payload, Mapping):
+        raise ValueError("classification task provider locator is invalid")
+    locator = EmailProviderLocator.model_validate(locator_payload)
+    identity = str(getattr(task, "stable_message_identity"))
+    try:
+        batch = source.fetch_uid_batch(
+            locator.folder,
+            cursor_uidvalidity=locator.uidvalidity,
+            last_seen_uid=max(0, locator.uid - 1),
+            limit=2,
+        )
+    except LookupError:
+        batch = None
+    if batch is not None and int(batch.uidvalidity) == locator.uidvalidity:
+        current = next(
+            (
+                message
+                for message in batch.messages
+                if _message_identity(message) == identity
+            ),
+            None,
+        )
+        if current is not None:
+            return current
+    current_locator = source.locate_message(locator, folder=locator.folder)
+    return source.fetch_message(
+        current_locator, stable_message_identity=identity
+    )
+
+
 def run_email_classification_task_once(
     adapter: object,
     agent: object,
@@ -3415,25 +3453,7 @@ def build_email_worker_dependencies(
                 return None
             source = source_factory(account)
             try:
-                uid = int(locator.get("uid") or 0)
-                uidvalidity = int(locator.get("uidvalidity") or 0)
-                batch = source.fetch_uid_batch(
-                    folder,
-                    cursor_uidvalidity=uidvalidity,
-                    last_seen_uid=max(0, uid - 1),
-                    limit=2,
-                )
-                if int(batch.uidvalidity) != uidvalidity:
-                    return None
-                return next(
-                    (
-                        message
-                        for message in batch.messages
-                        if _message_identity(message)
-                        == str(getattr(task, "stable_message_identity"))
-                    ),
-                    None,
-                )
+                return _read_current_classification_message(source, task, payload)
             finally:
                 _close_email_source(source)
 

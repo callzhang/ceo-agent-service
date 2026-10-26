@@ -4251,6 +4251,11 @@ The existing explicit selected-task repair resets attempts and keeps task
 identity; discovery does not automatically reopen failed records. See
 `docs/email-classification-retry-budget-validation.md` for evidence.
 
+When the original IMAP UID no longer returns a message, classification readback
+may relocate it only with the task's exact account-scoped RFC Message-ID in the
+same folder, then fetch and verify that exact message against the stable task
+identity. It does not use sender/subject matching or alter classifier actions.
+
 
 ### Classification source-read failure repair
 
