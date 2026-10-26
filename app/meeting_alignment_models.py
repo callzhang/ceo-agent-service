@@ -413,8 +413,9 @@ class MeetingAlignmentDecision(StrictModel):
         description=(
             "必填且不能为 null。group 与 direct 两种形态的字段互斥，但 kind、"
             "conversation_id、direct_user_id、title、candidates 五个键在任何形态下都必须"
-            "出现，未使用的一侧要显式写成空值而不是省略：kind=group 时 conversation_id "
-            "非空、candidates 非空且 conversation_id 必须等于 candidates[0]."
+            "出现，未使用的一侧要显式写成空值而不是省略："
+            "audience_scope=business 时 target.kind 必须是 group；"
+            "kind=group 时 conversation_id 非空、candidates 非空且 conversation_id 必须等于 candidates[0]."
             "conversation_id、direct_user_id 必须是 \"\"；kind=direct 时 title 非空、"
             "conversation_id 必须是 \"\"、candidates 必须是 []，direct_user_id 写对方"
             "在来源里的真实 user_id；业务私信必须非空，唯一匹配来源参会人或已核验日历组织者，"

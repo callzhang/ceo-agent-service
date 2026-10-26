@@ -150,6 +150,10 @@ def deliver_meeting_alignment(
     target_title = source.title
     if target is None:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
+    if decision.audience_scope == "business" and target.kind != "group":
+        raise MeetingDeliveryError(
+            "business summary requires a verified group target"
+        )
     private_message = decision.sensitive_private_message
     if private_message is not None:
         try:
@@ -206,43 +210,29 @@ def deliver_meeting_alignment(
             target_id = target.conversation_id
             target_title = target.title
     else:
-        if decision.audience_scope == "business":
-            try:
-                recipient = meeting_business_direct_recipient(source, target)
-            except ValueError as exc:
-                raise MeetingDeliveryError(str(exc)) from exc
-            if not decision.audit_summary.strip():
+        counterpart = _direct_target_participant(source, target)
+        direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
+        if counterpart.user_id:
+            if target.direct_user_id != counterpart.user_id:
                 raise MeetingDeliveryError(
-                    "business direct requires audience evidence in audit_summary"
+                    "direct target must use the participant user id"
                 )
-            direct_user_id = recipient.user_id.strip()
-            target_title = recipient.name
-            target_kind = "direct"
-            target_id = direct_user_id or direct_open_dingtalk_id
+            direct_user_id = counterpart.user_id
         else:
-            counterpart = _direct_target_participant(source, target)
-            direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
-            if counterpart.user_id:
-                if target.direct_user_id != counterpart.user_id:
-                    raise MeetingDeliveryError(
-                        "direct target must use the participant user id"
-                    )
-                direct_user_id = counterpart.user_id
+            if target.direct_user_id:
+                raise MeetingDeliveryError(
+                    "unresolved 1:1 target cannot supply a guessed user id"
+                )
+            if counterpart.open_dingtalk_id.strip():
+                direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
             else:
-                if target.direct_user_id:
-                    raise MeetingDeliveryError(
-                        "unresolved 1:1 target cannot supply a guessed user id"
-                    )
-                if counterpart.open_dingtalk_id.strip():
-                    direct_open_dingtalk_id = counterpart.open_dingtalk_id.strip()
-                else:
-                    profile = _resolve_profile(counterpart.name, counterpart, dws, [])
-                    if profile is None or not profile.user_id.strip():
-                        raise MeetingDeliveryRetry("1:1 target identity is unresolved")
-                    direct_user_id = profile.user_id.strip()
-                    direct_open_dingtalk_id = (profile.open_dingtalk_id or "").strip()
-            target_kind = "direct"
-            target_id = direct_user_id or direct_open_dingtalk_id
+                profile = _resolve_profile(counterpart.name, counterpart, dws, [])
+                if profile is None or not profile.user_id.strip():
+                    raise MeetingDeliveryRetry("1:1 target identity is unresolved")
+                direct_user_id = profile.user_id.strip()
+                direct_open_dingtalk_id = (profile.open_dingtalk_id or "").strip()
+        target_kind = "direct"
+        target_id = direct_user_id or direct_open_dingtalk_id
 
     if target_kind == "direct":
         principal_id = source.current_user_id.strip()
