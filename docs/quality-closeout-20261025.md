@@ -509,3 +509,15 @@ coverage after independent retirement review. Truly removed intermediate
 publication/index-repair scaffolds are retired only where behavior no longer
 ships or stronger native cycle tests remain. Conflict files pass307 cases32.17s
 and27 Email key nodes20.97s.
+
+Source/DTO regressions pass40 cases5.79s. The Reply receipt release now starts
+from real current facts and traverses the three shipped schema inverses before
+its strict23.1 forward/inverse; no marker-only fake source or source guard
+relaxation remains. Email tests exercise real two-action retirement, and
+selection receipts retain exact current immutable receipt IDs.
+
+Five remaining current dispatcher/feedback/delivery/eval fixtures pass141
+cases28.52s; unchanged prompt-preview/runtime nodes are also green. Root
+reviewed canonical Workbench IDs, native round-pointer corruption, purpose-wire
+digest identity, prepared delivery owner and outer error projection assertions.
+No model, provider call, Audit, authorization or retry-policy edits.

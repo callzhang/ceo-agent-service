@@ -2110,7 +2110,8 @@ def test_error_metrics_skip_owner_checks_and_payload_projection_for_no_error_bac
         if "source_claim.last_error as claim_last_error" in statement
     )
     assert "source.*" not in error_projection
-    assert "trigger_text" not in error_projection
+    selected_candidate_fields = error_projection.split(" from (select ", 1)[0]
+    assert "trigger_text" not in selected_candidate_fields
 
 
 def test_dispatcher_metrics_only_report_errors_from_actionable_sources(

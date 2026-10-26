@@ -2,12 +2,10 @@ import sqlite3
 import pytest
 
 from app import action_entity_storage, action_storage, shared_action_lifecycle
-from app.current_schema_manifest import (
-    create_current_email_migration_ledger,
-    schema_objects,
-)
+from app.current_schema_manifest import schema_objects
 from app.reply_receipt_reference import add_reference
 from app.reply_receipt_reference_schema_release import (
+    ReplyReceiptReferenceRelease,
     SOURCE_STORE_VERSION,
     prepare_reply_receipt_reference_release,
     target_objects,
@@ -15,16 +13,6 @@ from app.reply_receipt_reference_schema_release import (
 from app.store import AutoReplyStore
 from app.store import AgentRole
 from app.task8_storage import register_task8_functions
-from app.state_storage import update_state_rows
-
-
-def _set_marker(db, version):
-    update_state_rows(
-        db, "service_state", {"value": version, "updated_at": "source-clock"},
-        where_sql="key=?", parameters=("store_schema_version",),
-    )
-
-
 def _attempt(db, body):
     required_text = "conversation_id conversation_title trigger_message_id trigger_sender trigger_text action sensitivity_kind codex_reason draft_reply_text final_reply_text permission_action permission_reason send_status send_error reviewer_feedback corrected_reply_text created_at updated_at audit_documents_json audit_tool_events_json audit_summary codex_session_id direct_user_id direct_open_dingtalk_id oa_process_instance_id oa_task_id oa_url oa_action oa_remark oa_action_result_json trigger_create_time calendar_event_id calendar_response_status calendar_response_result_json mail_mailbox mail_message_id mail_subject mail_reply_text mail_action_result_json channel universal_execution_id universal_execution_scope_id reaction_action_result_json document_action_result_json human_decision_options_json feedback_scope skill_update_receipts_json resolved_at resolution trigger_text_provenance_json".split()
     values = action_storage._ATTEMPT_DEFAULTS | {name: "" for name in required_text}
@@ -87,6 +75,41 @@ def _seed_provider_action(db, *, external_key, operation, target, body, run_id):
     )
 
 
+def _convert_current_store_to_frozen_reply_source(path):
+    """Use each shipped inverse; changing only a version marker is not a source."""
+    from app.action_reference_trigger_schema_release import (
+        ActionReferenceTriggerRelease,
+        SOURCE_STORE_VERSION as ACTION_SOURCE_VERSION,
+    )
+    from app.signal_source_owner_schema_release import (
+        SOURCE_STORE_VERSION as SIGNAL_SOURCE_VERSION,
+        SignalSourceOwnerRelease,
+    )
+
+    with sqlite3.connect(path) as db:
+        source_fk = tuple(sorted(tuple(row) for row in db.execute(
+            "pragma foreign_key_check"
+        )))
+    SignalSourceOwnerRelease(
+        path,
+        (SIGNAL_SOURCE_VERSION, "signal-source-clock"),
+        source_fk,
+        published=True,
+    ).rollback()
+    ActionReferenceTriggerRelease(
+        path,
+        (ACTION_SOURCE_VERSION, "action-source-clock"),
+        source_fk,
+        published=True,
+    ).rollback()
+    ReplyReceiptReferenceRelease(
+        path,
+        (SOURCE_STORE_VERSION, "source-clock"),
+        source_fk,
+        published=True,
+    ).rollback()
+
+
 def test_reply_attempt_projection_reads_exact_receipt_and_protects_it_from_retirement():
     db = sqlite3.connect(":memory:")
     db.row_factory = sqlite3.Row
@@ -122,6 +145,8 @@ def test_reply_attempt_projection_reads_exact_receipt_and_protects_it_from_retir
 def test_current_store_release_backfills_reference_and_inverse_restores_body(tmp_path):
     path = tmp_path / "reply-receipt.sqlite3"
     store = AutoReplyStore(path)
+    from app.email_store import EmailStore
+    EmailStore(path)
     store.enqueue_reply_task(
         conversation_id="receipt-reference-chat", conversation_title="test",
         single_chat=True, trigger_message_id="seed-task", trigger_create_time="2026-10-25",
@@ -140,15 +165,10 @@ def test_current_store_release_backfills_reference_and_inverse_restores_body(tmp
     matched_id = _seed_attempt(store, run_id=run_id, trigger="matched", body=matched_body)
     unmatched_id = _seed_attempt(store, run_id=run_id, trigger="unmatched", body=unmatched_body)
     ambiguous_id = _seed_attempt(store, run_id=run_id, trigger="ambiguous", body=ambiguous_body)
+    _convert_current_store_to_frozen_reply_source(path)
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         register_task8_functions(db)
-        create_current_email_migration_ledger(db)
-        db.execute("insert into email_schema_migrations(version,applied_at) values(54,'source-clock')")
-        _set_marker(db, SOURCE_STORE_VERSION)
-        db.execute("drop table reply_attempt_receipt_refs")
-        from app.action_reference_trigger_schema_release import RETIRED_TRIGGER_SQL
-        db.execute(RETIRED_TRIGGER_SQL)
         _decoy_action(db)
         target = '{"process_instance_id":"test-process","task_id":"test-task"}'
         matched_receipt = _seed_provider_action(
