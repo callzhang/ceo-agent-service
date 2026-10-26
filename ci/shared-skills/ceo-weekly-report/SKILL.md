@@ -50,7 +50,15 @@ Do not ask Derek to supply materials already accessible to the Agent.
    with escalated permissions (Codex `sandbox_permissions: "require_escalated"`,
    Claude `dangerouslyDisableSandbox`) and a one-line justification. A query
    that still fails leaves that metric `无数据` with the exact error in the
-   coverage gaps. Finance has no readable source here and stays `无数据`.
+   coverage gaps.
+5. Finance (recognized revenue, collection, gross margin, overdue receivables)
+   and product (Friday WAU and conversion) actuals have no readable system
+   source. Never fail or hold the report for them. Publish the metric as
+   `无数据`, find the department head who owns the number (`memory_recall`;
+   finance is 丽丽/Lily) and propose a message asking for it through the
+   normal reviewed message action, naming the metric and the cutoff date;
+   never send it yourself. If the head cannot be found, say so in the coverage
+   gaps.
 
 ## Judgment and report data
 
