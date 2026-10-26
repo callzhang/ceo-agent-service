@@ -47,7 +47,9 @@ def test_wire_schema_compaction_retains_validation_constraints():
                   rule_coverage=1.0, information_completeness=1.0)
     consumer = dict(common, action="no_action", reason="fixture", target={}, payload={}, evidence_refs=[])
     audit = dict(common, outcome="approve", feedback=None)
-    for model, valid in ((ConsumerAgentWireResult, consumer), (AuditAgentWireResult, audit)):
+    for model, valid, decision in (
+        (ConsumerAgentWireResult, consumer, "action"), (AuditAgentWireResult, audit, "outcome"),
+    ):
         raw = model.model_json_schema()
         compact = json.loads(_schema_json(model))
         Draft202012Validator.check_schema(compact)
