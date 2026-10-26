@@ -174,3 +174,23 @@ comparison confirms all ten original test bodies are unchanged: eleven nodes,
 assertions were added. The final pending-status version passed all 11 nodes in
 13.88 seconds under the current fixed 2 GB / 5 minute limits. Ruff/diff pass;
 independent final QUALITY review approved.
+
+## Metadata and role-catalog fixtures
+
+Native hydration receives a physical Run row. Its lock-release regression now
+compares committed `runs.status/session_id/lease_expires_at` against that exact
+raw snapshot, without a removed record-type predicate or projected DTO key.
+Public AgentRun session assertions remain unchanged. The role-catalog setup uses
+one existing native reply Task with the original pending state and generation;
+all Consumer/Audit tool-catalog expectations remain unchanged.
+
+Final single-file results: metadata boundary 5 passed in1.94 seconds; effect guard
+19 passed in1.48 seconds. Ruff/diff pass; final independent SPEC and QUALITY approved. No runtime or
+permissions changed.
+
+Quality37bd's worker zero-completion assertions were diagnosed with one exact
+bundled-Skill test node. The Task was claimed once, then two Consumer attempts
+failed with `codex_result_invalid` / `native result failed current Consumer wire
+contract` before Audit. Zero completed work is not a zero-claim observation. A
+synthetic protocol-fixture correction is being investigated; no production
+worker, authorization or retry-policy change has been made.
