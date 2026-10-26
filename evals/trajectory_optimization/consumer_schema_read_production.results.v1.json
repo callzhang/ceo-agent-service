@@ -1951,5 +1951,88 @@
     "completed_sessions_with_multiple_confirmed_direct_reads": 6,
     "failed_attempts_excluded": 6,
     "wrapper_note": "Do not count an exec expression as successful read. Six wrapper expressions explicitly returned not-a-function,including five in completed runs;other wrapper returns not proven complete by this analysis."
+  },
+  "removal_release": {
+    "checked_at_utc": "2026-10-26T06:04:45.076483+00:00",
+    "pr": 329,
+    "merge_commit": "9e7308ee50d288ea39eb26c00ef3ab1e47f265bc",
+    "production_head": "9e7308ee50d288ea39eb26c00ef3ab1e47f265bc",
+    "production_clean": true,
+    "pid": 91601,
+    "started_at": "2026-10-25T23:02:37-07:00",
+    "started_after_relevant_code_writes": true,
+    "production_cwd_verified": true,
+    "code_sha256": {
+      "app/agent_cli.py": "0119560f109f7099bf3c43589427f79111fb351423f371143e17fedffac348be",
+      "app/consumer_agent.py": "8814e3be6b5139426223d4b25a477ed39e9b2d318d0da874108377cdeed9ef6a",
+      "app/wechat/codex_safety.py": "1604b2206743218dc9c1f180c298960b01582f2bd29ace43323a34cdd905955e"
+    },
+    "tool_catalog": {
+      "source": "/Users/derek/Services/ceo-agent-service/app/agent_cli.py",
+      "query_tool_present": false,
+      "registry_present": false,
+      "tool_count": 57
+    },
+    "api_readback": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "meta": {},
+        "ok": true
+      },
+      {
+        "path": "/api/console/dashboard/queues",
+        "http": 200,
+        "meta": {
+          "page": 1,
+          "page_size": 20,
+          "total": 3,
+          "next_cursor": "",
+          "has_more": false,
+          "snapshot_at": "2026-10-26T06:04:44.226495+00:00"
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T06:04:44.843986Z",
+          "page": null,
+          "page_size": null,
+          "total": 6,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/history?page_size=1&include_chart=false",
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T06:04:45.074610Z",
+          "page": 1,
+          "page_size": 1,
+          "total": 38378,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+        "http": 200,
+        "schema_query_hint_present": false,
+        "schema_fingerprint_present": true,
+        "developer_characters": 30520,
+        "developer_sha256": "6c73d31ef0df08e170a7061c6cbd1fdeb6cfff86cb679e6b76b548e676df71b8",
+        "route_name": "codex_oauth",
+        "model": "gpt-6-luna"
+      }
+    ],
+    "local_tests": 58,
+    "independent_review": "No blockers;confirmed native cold and resume schema delivery unchanged",
+    "new_model_calls": 0,
+    "production_task_replays": 0
   }
 }

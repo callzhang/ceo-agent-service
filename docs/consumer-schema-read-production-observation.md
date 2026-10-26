@@ -36,3 +36,11 @@ Derek要求确认原生schema注入后删除该工具。已核对Consumer runner
 回归先确认原生general/OA冷启动与resume四种命令均含准确schema；删除前另四项工具/提示缺席断言如预期失败。删除后的测试、审查和正式生产加载结果待追加。无新增模型评测或任务重放。
 
 本次本地验证：原生general/OA×cold/resume四项交付检查先通过；另四项工具/提示缺席检查先失败后通过。三份受影响测试文件49项通过，适配器参数和指纹兼容定向9项通过；Ruff及diff检查通过。上述均为本地确定性测试，无模型调用、无新增生产业务操作。实际代码删除12行查询函数/注册相关内容和目录条目；prompt保留短格式与schema SHA，未替换为完整schema文本。正式发布及进程加载结果待追加。
+
+## PR329 正式发布与生产回读（2026-10-25 23:04 PDT）
+
+PR329合并为`9e7308ee50d288ea39eb26c00ef3ab1e47f265bc`。正式`python -m app.deploy --target-commit ...`返回`deployed e8e5b346 -> 9e7308ee`，保留门禁和自然排空，没有强制中断或新模型评测。新supervisor PID91601于23:02:37 PDT启动，晚于三处相关运行文件写入；生产工作树干净，三文件与合并提交逐字节相同，工作目录为生产checkout。
+
+以服务实际Python加载生产`app.agent_cli`生成Consumer工具目录，确认`read_consumer_output_schema`既不在具名工具中，也不在Consumer注册列表中。实际运行服务的Settings Consumer/codex_oauth/gpt-6-luna公共预览HTTP200，Developer中查询提示不存在，schema SHA指纹保留；公共预览不冒充新业务运行。healthz、队列、Attention、History均200，回读快照为队列汇总3、Attention6、History38378，不代表历史问题清零。
+
+**删除已生效。** 原生general/OA schema字节未变，冷启动与resume继续直接提交；这次无业务重放、schema替代入口或新模型调用。已有生产调用统计仍作为删除前历史证据保留，不能用新进程/目录缺席宣称已测得删除后的提速或业务质量效果。精简加载证据追加在原JSON的`removal_release`。本次独立源码审查无阻塞，49+9项本地定向测试通过；无需额外发布文档变更。
