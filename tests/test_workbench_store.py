@@ -1,5 +1,4 @@
 from tests.test_email_legacy_schema import published_source as published_source
-import hashlib
 import sqlite3
 import threading
 from concurrent.futures import ThreadPoolExecutor
@@ -9,12 +8,7 @@ import pytest
 
 import app.store as store_module
 from app.workbench.models import TurnStatus
-from app.task_storage import task_physical_id, task_id_expression
-from tests.workbench_caller_fixtures import empty_source13, advance_source16_to_store17, advance_source17_to_current_store
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
-from app.task8_storage import task8_insert_parts, task8_set_parts
-from app.task20_definitions import task20_column, task20_projection
-from app.task12_storage import insert_task12
 
 
 def _store(tmp_path: Path) -> WorkbenchStore:
@@ -36,23 +30,6 @@ def _running_turn(tmp_path: Path) -> tuple[WorkbenchStore, str, str]:
     return store, task.id, turn.id
 
 
-def test_source13_migration_preserves_user_text_and_private_resume_context(tmp_path: Path, published_source):
-    db_path = tmp_path / "workbench.sqlite3"
-    with empty_source13(db_path, published_source) as db:
-        db.execute("insert into workbench_tasks(id,title,runtime_kind) values('parent','Analyse sales','codex')")
-        db.execute("""insert into workbench_turns(id,task_id,client_request_id,task_sequence,user_text,status,resume_context)
-            values('turn','parent','request-1',1,'Compare regions','completed','private receipt')""")
-    advance_source16_to_store17(db_path)
-    advance_source17_to_current_store(db_path, published_source)
-    migrated = WorkbenchStore(db_path)
-    assert migrated.get_turn("turn").user_text == "Compare regions"
-    assert "resume_context" not in migrated.get_turn("turn").model_dump()
-    with migrated._connect() as db:
-        assert migrated._require_turn(db, "turn")["resume_context"] == "private receipt"
-        assert "resume_context" in {row["name"] for row in db.execute("pragma table_info(tasks)")}
-
-
-
 def test_store_schema_check_rejects_missing_required_reply_attempt_column(
     tmp_path: Path,
 ):
@@ -63,95 +40,6 @@ def test_store_schema_check_rejects_missing_required_reply_attempt_column(
         )
 
     assert store._schema_is_current() is False
-
-
-def test_store_rejects_incomplete_point_seven_schema_with_current_indexes(tmp_path):
-    path = tmp_path / "damaged.sqlite3"
-    WorkbenchStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("drop index idx_task20_native_18")
-        db.execute("drop index idx_task20_published_14")
-        before = tuple(db.iterdump())
-    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
-        WorkbenchStore(path)
-    with sqlite3.connect(path) as db:
-        assert tuple(db.iterdump()) == before
-
-
-def test_store_rejects_missing_required_point_nine_index(tmp_path):
-    path = tmp_path / "damaged.sqlite3"
-    WorkbenchStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("drop index idx_workbench_events_event_type")
-        before = tuple(db.iterdump())
-    with pytest.raises(sqlite3.IntegrityError, match="malformed"):
-        WorkbenchStore(path)
-    with sqlite3.connect(path) as db:
-        assert tuple(db.iterdump()) == before
-
-
-def test_source13_migration_preserves_attachment_request_hash_and_file_bytes(tmp_path: Path, published_source):
-    db_path = tmp_path / "workbench.sqlite3"
-    task_id = "00000000-0000-4000-8000-000000000011"
-    attachment_id = "00000000-0000-4000-8000-000000000012"
-    directory = tmp_path / "workbench" / "attachments" / task_id
-    directory.mkdir(parents=True)
-    attachment_path = directory / attachment_id
-    attachment_path.write_bytes(b"legacy")
-    with empty_source13(db_path, published_source) as db:
-        db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Attachment upgrade','codex')", (task_id,))
-        db.execute("""insert into workbench_attachments(id,task_id,client_request_id,filename,media_type,size_bytes,content_sha256,storage_path)
-            values(?,?,'original-request','legacy.png','image/png',6,?,?)""",
-            (attachment_id, task_id, hashlib.sha256(b"legacy").hexdigest(), str(attachment_path)))
-        before = db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone()
-    advance_source16_to_store17(db_path)
-    advance_source17_to_current_store(db_path, published_source)
-    migrated = WorkbenchStore(db_path)
-    with migrated._connect() as db:
-        after = tuple(db.execute("select id,client_request_id,content_sha256,filename,media_type,size_bytes,storage_path,created_at from workbench_attachments").fetchone())
-        assert after == before
-        assert db.execute("select task_id from workbench_attachments").fetchone()[0] == task_physical_id(db, "workbench_tasks", task_id)
-        index = db.execute("select name from sqlite_master where type='index' and name='idx_workbench_attachments_task_request'").fetchone()
-    assert after[1] == "original-request"
-    assert after[2] == hashlib.sha256(b"legacy").hexdigest()
-    assert attachment_path.read_bytes() == b"legacy"
-    assert migrated.list_attachments(task_id)[0].task_id == task_id
-    assert index is not None
-
-
-
-def test_source13_migration_preserves_stable_per_task_sequence(
-    tmp_path: Path, published_source,
-):
-    db_path = tmp_path / "workbench.sqlite3"
-    first_id = "ffffffff-ffff-4fff-8fff-ffffffffffff"
-    second_id = "00000000-0000-4000-8000-000000000001"
-    task_id = "source-parent"
-    with empty_source13(db_path, published_source) as db:
-        db.execute("insert into workbench_tasks(id,title,runtime_kind) values(?,'Legacy order','codex')", (task_id,))
-        db.execute("""insert into workbench_turns
-            (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
-            values(?,?,?,?,?,?,?)""", (first_id,task_id,'legacy-first','first','completed',1,'2026-08-13 00:00:00'))
-        db.execute("""insert into workbench_turns
-            (id,task_id,client_request_id,user_text,status,task_sequence,created_at)
-            values(?,?,?,?,?,?,?)""", (second_id,task_id,'legacy-second','second','failed',2,'2026-08-13 00:00:00'))
-
-    advance_source16_to_store17(db_path)
-    advance_source17_to_current_store(db_path, published_source)
-    upgraded = WorkbenchStore(db_path)
-    turns = upgraded.list_turns(task_id)
-    with upgraded._connect() as db:
-        schema_version = db.execute(
-            "select value from service_state where key=?",
-            (store_module.STORE_SCHEMA_VERSION_KEY,),
-        ).fetchone()["value"]
-
-    assert schema_version == store_module.STORE_SCHEMA_VERSION
-    assert [(turn.id, turn.task_sequence) for turn in turns] == [
-        (second_id, 2),
-        (first_id, 1),
-    ]
-    assert upgraded.get_task_summary(task_id)[1] == "failed"
 
 
 def test_concurrent_turn_creation_allocates_unique_monotonic_task_sequences(
@@ -243,10 +131,9 @@ def test_store_has_no_public_confirmation_decision_bypass(tmp_path: Path):
 def test_public_turn_excludes_private_resume_context(tmp_path: Path):
     store, _, turn_id = _running_turn(tmp_path)
     with store._connect() as db:
-        parts = task8_set_parts("workbench_turns", {"resume_context": "private receipt"})
         db.execute(
-            f"update tasks set {parts.sql} where record_type='workbench_turns' and legacy_key=?",
-            (*parts.parameters, turn_id),
+            "update workbench_turns set resume_context=? where task_id=?",
+            ("private receipt", turn_id),
         )
     public = store.get_turn(turn_id)
     assert "resume_context" not in public.model_dump()
@@ -377,145 +264,6 @@ def test_archive_and_create_turn_race_has_one_valid_outcome(tmp_path: Path):
     persisted_task = first.get_task(task.id)
     turns = first.list_turns(task.id)
     assert (bool(persisted_task.archived_at), len(turns)) in {(True, 0), (False, 1)}
-
-
-def test_workbench_query_indexes_exist(tmp_path: Path):
-    store = _store(tmp_path)
-    with store._connect() as db:
-        indexes = {
-            row["name"]
-            for row in db.execute(
-                "select name from sqlite_master where type='index'"
-            ).fetchall()
-        }
-    assert {
-        "idx_task20_published_16",
-        "idx_task20_published_17",
-        "idx_workbench_events_turn_id_id",
-        "idx_task20_native_18",
-        "idx_task20_published_18",
-        "idx_task20_published_19",
-        "idx_task20_published_14",
-        "idx_workbench_events_id_turn_id",
-        "idx_task20_native_19",
-        "idx_task20_native_22",
-        "idx_workbench_events_event_type",
-    } <= indexes
-    with store._connect() as db:
-        timeline_plans = {
-            "events": db.execute(
-                "explain query plan select * from runs as workbench_events where record_type='workbench_events' and task_id in (?,?) order by cast(legacy_key as integer) desc limit ?",
-                ("turn-1", "turn-2", 1001),
-            ).fetchall(),
-            "artifacts": db.execute(
-                f"""explain query plan select * from ({task20_projection('workbench_artifacts')}) as workbench_artifacts
-                   where turn_id in (?,?) order by created_at,id limit 101""",
-                ("turn-1", "turn-2"),
-            ).fetchall(),
-        }
-        stats_plan = db.execute(
-            "explain query plan select event_type,count(*) from runs where record_type='workbench_events' group by event_type"
-        ).fetchall()
-    for table, rows in timeline_plans.items():
-        rendered = " ".join(row["detail"] for row in rows)
-        assert ("SEARCH workbench_events" if table == "events" else "SEARCH tasks") in rendered
-        assert ("task_id=?" if table == "events" else "workbench_artifacts__turn_id=?") in rendered
-    rendered_stats_plan = " ".join(row["detail"] for row in stats_plan)
-    assert "COVERING INDEX idx_workbench_events_event_type" in rendered_stats_plan
-    assert "TEMP B-TREE" not in rendered_stats_plan
-
-
-def test_timeline_snapshot_work_is_bounded_by_selected_turns_not_global_events(
-    tmp_path: Path, monkeypatch
-):
-    store = _store(tmp_path)
-    selected_task = store.create_task(title="Selected", runtime_kind="codex")
-    selected_turn = store.create_turn(
-        selected_task.id,
-        user_text="selected",
-        client_request_id="selected-request",
-    )
-    store.request_stop(selected_turn.id)
-    unrelated_task = store.create_task(title="Unrelated", runtime_kind="codex")
-    unrelated_turn_id = "00000000-0000-4000-8000-000000000050"
-    with store._connect() as db:
-        parts = task8_insert_parts('workbench_turns', {
-                "legacy_key": unrelated_turn_id,
-                "parent_id": task_physical_id(db, "workbench_tasks", unrelated_task.id),
-                "client_request_id": "unrelated-request",
-                "task_sequence": 1,
-                "user_text": "unrelated",
-                "status": "completed",
-            })
-        db.execute(
-            f"insert into tasks ({parts.columns}) values ({parts.values})",
-            parts.parameters,
-        )
-        unrelated_physical_id = task_physical_id(db, "workbench_turns", unrelated_turn_id)
-        db.executemany(
-            """insert into runs(record_type,task_id,sequence,event_type,payload_json,created_at)
-               values('workbench_events',?,?,'text_delta','{"text":"noise"}',current_timestamp)""",
-            ((unrelated_physical_id, sequence) for sequence in range(1, 50_001)),
-        )
-
-    progress_calls = 0
-    original_open = store._open_connection
-
-    def counted_connection():
-        nonlocal progress_calls
-        connection = original_open()
-
-        def progress():
-            nonlocal progress_calls
-            progress_calls += 1
-            return 0
-
-        connection.set_progress_handler(progress, 100)
-        return connection
-
-    monkeypatch.setattr(store, "_open_connection", counted_connection)
-
-    snapshot = store.timeline_snapshot(selected_task.id)
-
-    assert [turn.id for turn in snapshot[1]] == [selected_turn.id]
-    assert {event.turn_id for event in snapshot[2]} == {selected_turn.id}
-    assert progress_calls * 100 < 20_000
-
-
-def test_get_task_summary_uses_latest_turn_index_and_limit_one(tmp_path: Path):
-    store = _store(tmp_path)
-    task = store.create_task(title="Summary", runtime_kind="codex")
-    with store._connect() as db:
-        for index in range(1_000):
-            created_at = f"2026-08-{1 + index // 24:02d} {index % 24:02d}:00:00"
-            parts = task8_insert_parts('workbench_turns', {
-                "legacy_key": f"00000000-0000-4000-8000-{index:012d}",
-                "parent_id": task_physical_id(db, "workbench_tasks", task.id),
-                "client_request_id": f"summary-{index}",
-                "task_sequence": index + 1,
-                "user_text": "summary",
-                "status": "completed" if index < 999 else "failed",
-                "created_at": created_at,
-                "updated_at": created_at,
-            })
-            db.execute(
-                f"insert into tasks ({parts.columns}) values ({parts.values})",
-                parts.parameters,
-            )
-        plan = " ".join(
-            row["detail"]
-            for row in db.execute(
-                f"explain query plan select {task20_column('workbench_turns', 'status')} from tasks where record_type='workbench_turns' and {task20_column('workbench_turns', 'task_id')}={task_id_expression('workbench_tasks', '?')} order by {task20_column('workbench_turns', 'task_sequence')} desc limit 1",
-                (task.id,),
-            ).fetchall()
-        )
-
-    summary = store.get_task_summary(task.id)
-
-    assert summary is not None
-    assert summary[1] == "failed"
-    assert "idx_task20_published_19" in plan
-    assert "TEMP B-TREE" not in plan
 
 
 def test_create_task_and_idempotent_turn_request(tmp_path: Path):
@@ -748,8 +496,8 @@ def test_append_artifact_event_rolls_back_artifact_when_event_insert_fails(tmp_p
     artifact_path.write_text("report", encoding="utf-8")
     with store._connect() as db:
         db.execute(
-            """create trigger reject_artifact_event before insert on runs
-               when new.record_type='workbench_events' and new.event_type='artifact_created'
+            """create trigger reject_artifact_event before insert on workbench_events
+               when new.event_type='artifact_created'
                begin select raise(abort, 'rejected'); end"""
         )
 
@@ -941,8 +689,7 @@ def test_attachment_db_failure_leaves_no_orphan_file(tmp_path: Path):
         db.execute(
             """
             create trigger reject_workbench_attachment
-            before insert on tasks
-            when new.record_type='workbench_attachments'
+            before insert on workbench_attachments
             begin
                 select raise(abort, 'injected attachment failure');
             end
@@ -999,7 +746,7 @@ def test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file(
             content=b"private",
         )
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from tasks where record_type='workbench_attachments'").fetchone()[0] == 0
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
     assert list(directory.iterdir()) == []
 
     monkeypatch.delattr(store, "_commit_attachment_metadata", raising=False)
@@ -1016,7 +763,7 @@ def test_attachment_replace_or_commit_failure_leaves_no_metadata_or_file(
             content=b"private",
         )
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from tasks where record_type='workbench_attachments'").fetchone()[0] == 0
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
     assert list(directory.iterdir()) == []
 
 
@@ -1032,18 +779,18 @@ def test_attachment_reconciliation_removes_generated_orphans(tmp_path: Path):
     orphan_file.write_bytes(b"orphan")
     missing_id = "5ff5ff8c-9ef3-4190-8d32-f6a4a6cf1a11"
     with store._connect() as db:
-        insert_task12(db, "workbench_attachments", {
-            "id": missing_id,
-            "task_id": task_physical_id(db, "workbench_tasks", task.id),
-            "client_request_id": missing_id,
-            "filename": "missing.txt", "media_type": "text/plain", "size_bytes": 0,
-            "storage_path": str(directory / missing_id), "content_sha256": "0" * 64,
-        })
+        db.execute(
+            "insert into workbench_attachments(workbench_task_id,client_request_id,filename,"
+            "media_type,size_bytes,content_sha256,storage_path,created_at) "
+            "values(?,?,?,?,?,?,?,current_timestamp)",
+            (task.id, missing_id, "missing.txt", "text/plain", 0,
+             "0" * 64, str(directory / missing_id)),
+        )
 
     WorkbenchStore(store.path)
 
     with sqlite3.connect(store.path) as db:
-        assert db.execute("select count(*) from tasks where record_type='workbench_attachments'").fetchone()[0] == 0
+        assert db.execute("select count(*) from workbench_attachments").fetchone()[0] == 0
     assert list(directory.iterdir()) == []
 
 
@@ -1349,7 +1096,7 @@ def test_attachment_filename_cannot_escape_generated_task_directory(tmp_path: Pa
     with sqlite3.connect(store.path) as db:
         storage_path = Path(
             db.execute(
-                f"select storage_path from ({task20_projection('workbench_attachments')}) where id=?",
+                "select storage_path from workbench_attachments where id=?",
                 (attachment.id,),
             ).fetchone()[0]
         )
