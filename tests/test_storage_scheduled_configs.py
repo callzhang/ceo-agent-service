@@ -1,4 +1,3 @@
-from app.run_storage import SCHEDULED_RUN_SQL
 import sqlite3
 from datetime import timedelta
 
@@ -14,9 +13,9 @@ def test_runs_share_exact_config_without_copying_json(tmp_path):
     first = store.create_scheduled_task_run(task.id, trigger_kind="manual", scheduled_for=NOW)
     second = store.create_scheduled_task_run(task.id, trigger_kind="manual", scheduled_for=NOW + timedelta(minutes=1))
     with sqlite3.connect(store.path) as db:
-        columns = {row[1] for row in db.execute("pragma table_info(runs)")}
+        columns = {row[1] for row in db.execute("pragma table_info(schedule_occurrences)")}
         assert "snapshot_json" not in columns
-        refs = db.execute(f"select snapshot_id from ({SCHEDULED_RUN_SQL}) as scheduled_task_runs order by id").fetchall()
+        refs = db.execute("select snapshot_id from schedule_occurrences order by id").fetchall()
         assert refs[0] == refs[1]
         assert db.execute(f"select count(*) from ({config_projection('scheduled_task_config_versions')})").fetchone()[0] == 1
     assert store.get_scheduled_task_run(first.id).snapshot == first.snapshot

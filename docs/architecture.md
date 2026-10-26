@@ -845,7 +845,7 @@ Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general �
 
 已发送的微信 Attempt 不能从普通重跑入口再次入队。历史详情仅对当前最新的已发送 Attempt、且原始输入未被精简时提供独立的“再次发送”操作；操作展示原消息内容和 ID，并把该 ID 随请求提交。服务在同一事务中核对来源 Attempt、会话、原消息 ID、最新 Attempt 与之前的再次发送记录，然后创建新执行代际。相同来源在新代际待处理时重复提交复用它，完成后不能再次使用旧 Attempt 发起。精简后缺少可执行原文的历史任务不提供该操作。失败 Attempt 的普通重跑、其他渠道和现有 Sender 投递规则不变。
 
-迁移期开关 `CEO_WECHAT_STANDARD_PIPELINE_TARGETS`（逗号分隔的会话 ID，默认空）：列出的会话的微信任务改走标准流程——`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经 G2 放行判定发送。未列出的会话仍走 `WechatReplyConsumer`。该开关只是迁移工具，旧路径退休时一并删除；离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
+微信回复任务统一走标准流程（Derek 2026-10-25：不要开关，统一逻辑）：`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经 G2 放行判定发送。`WechatReplyConsumer`、`WechatDecisionRunner` 已不再被派发路径引用；它们与 `WechatDeliveryAuditor`、旧审核绑定和 `wechat_audit_rejected` 特殊处理的删除另行取得 Derek 批准后进行。离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
 
 ```text
 pending -> processing -> done

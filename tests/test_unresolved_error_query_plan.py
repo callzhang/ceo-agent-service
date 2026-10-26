@@ -2,10 +2,9 @@ import pytest
 
 from app.audit_web import _queue_attention_rows
 from app.store import AutoReplyStore
-from app.run_storage import insert_run
-from app.task_storage import task_physical_id
-from app.action_storage import _native_payload
+from app.action_storage import insert_error_action
 from app.action_error_definitions import error_projection
+from tests.support.native_run_rows import insert_scheduled_occurrence
 
 
 def _attention_error_query(store, monkeypatch):
@@ -38,16 +37,14 @@ def test_resolved_error_history_does_not_consume_attention_query_budget(
     tmp_path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    with store._connect() as db:
-        db.executemany(
-            "insert into actions(record_type,legacy_key,payload_json) values('errors',?,?)",
-            [(str(i + 1), _native_payload({
+    with store._immediate_write_transaction() as db:
+        for i in range(5000):
+            insert_error_action(db, {
                 "conversation_id": f"cid-{i}", "message_id": f"msg-{i}",
                 "kind": "test", "detail": "historical resolved incident",
                 "created_at": "2026-10-08 00:00:00",
                 "resolved_at": "2026-10-08 00:00:00", "resolution": "",
-            })) for i in range(5000)],
-        )
+            })
     query = _attention_error_query(store, monkeypatch)
     steps = [0]
 
@@ -87,12 +84,12 @@ def test_attention_locates_scheduled_runs_without_scanning_unrelated_history(
         cron_expression="* * * * *",
         timezone_name="UTC",
     )
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, "{}")
         for i in range(5000):
-            insert_run(db, 'scheduled_task_runs', {
+            insert_scheduled_occurrence(db, {
                 'event_id': f"unrelated-event-{i}",
                 'scheduled_task_id': task.id,
                 'trigger_kind': 'manual',
@@ -101,8 +98,9 @@ def test_attention_locates_scheduled_runs_without_scanning_unrelated_history(
                 'dispatch_status': 'failed',
                 'snapshot_id': snapshot_id,
             })
+    # An error bound to an existing run that has no later dispatched run stays visible.
     store.record_error(
-        "scheduled-task-run:999999", "missing-event", "test", "not recovered"
+        "scheduled-task-run:4999", "missing-event", "test", "not recovered"
     )
     query = _attention_error_query(store, monkeypatch)
     steps = [0]
@@ -124,16 +122,22 @@ def test_attention_locates_scheduled_runs_without_scanning_unrelated_history(
 @pytest.mark.parametrize(
     ("conversation_id", "message_id", "covered"),
     [
+        # Run 10 failed, but run 11 of the same schedule was dispatched and is done.
         ("scheduled-task-run:10", None, True),
-        ("scheduled-task-run:010", "missing-event", False),
-        ("scheduled-task-run:+10", "missing-event", False),
-        ("scheduled-task-run:10suffix", "missing-event", False),
+        # Run 11 is the latest dispatched run: its read error is still current.
+        ("scheduled-task-run:11", "missing-event", False),
+        # A run identity that is not exactly an existing run id is an orphan (History only).
+        ("scheduled-task-run:011", "missing-event", True),
+        ("scheduled-task-run:010", "missing-event", True),
+        ("scheduled-task-run:+10", "missing-event", True),
+        ("scheduled-task-run:10suffix", "missing-event", True),
+        ("scheduled-task-run:100", "missing-event", True),
+        ("scheduled-task-run:99", "missing-event", True),
+        ("scheduled-task-run:999", "missing-event", True),
+        # The event route: an event id of the superseded run 10 is covered.
         ("unrelated", "event-old", True),
         ("scheduled-task-run:010", "event-old", True),
         ("scheduled-task-run:10", "event-old", True),
-        ("scheduled-task-run:100", "missing-event", False),
-        ("scheduled-task-run:99", "missing-event", False),
-        ("scheduled-task-run:999", "missing-event", False),
         ("unrelated", "missing-event", False),
     ],
 )
@@ -160,53 +164,49 @@ def test_scheduled_error_locator_preserves_exact_identity_and_event_route(
         trigger_text="Report",
         channel="scheduled",
     )
-    with store._connect() as db:
+    with store._immediate_write_transaction() as db:
         from app.scheduled_config_storage import intern_scheduled_config
 
         snapshot_id = intern_scheduled_config(db, "{}")
-        physical_reply = task_physical_id(db, "reply_tasks", reply.id)
-        db.execute("update tasks set status='done' where record_type='reply_tasks' and id=?", (physical_reply,))
-        # Same public ID in another run namespace must never match the locator.
-        for public_id, revision in ((99, 0), (10, 1)):
-            insert_run(db, 'agent_runs', {
-                'id': public_id, 'legacy_key': public_id, 'task_id': physical_reply,
-                'execution_generation': reply.execution_generation,
-                'role': 'consumer', 'proposal_revision': revision,
-            })
+        db.execute("update tasks set status='done' where id=?", (reply.id,))
         for run_id, event_id, dispatch, kind, execution in (
             (10, 'event-old', 'failed', '', ''),
             (11, 'event-new', 'dispatched', 'reply_task', str(reply.id)),
         ):
-            insert_run(db, 'scheduled_task_runs', {
+            insert_scheduled_occurrence(db, {
+                'id': run_id,
                 'event_id': event_id,
                 'scheduled_task_id': schedule.id,
                 'trigger_kind': 'manual',
                 'scheduled_for': '2026-10-08T00:00:00Z',
                 'first_scheduled_for': '2026-10-08T00:00:00Z',
-                'legacy_key': run_id,
                 'dispatch_status': dispatch,
                 'snapshot_id': snapshot_id,
                 'execution_kind': kind,
                 'execution_id': execution,
             })
-        assert db.execute(
-            "select id from runs where record_type='scheduled_task_runs' and legacy_key='10'"
-        ).fetchone()[0] != 10
-        db.execute(
-            "insert into errors(conversation_id,message_id,kind,detail) values (?,?,'read','failed')",
-            (conversation_id, message_id),
-        )
+    store.record_error(conversation_id, message_id, "read", "failed")
+    errors = f"select * from ({error_projection()}) order by id"
+    with store._connect() as db:
         before = {
-            table: [tuple(row) for row in db.execute(f'select * from {table} order by id')]
-            for table in ('errors', 'tasks', 'runs')
+            "errors": [tuple(row) for row in db.execute(errors)],
+            **{
+                table: [tuple(row) for row in db.execute(f'select * from {table} order by id')]
+                for table in ('actions', 'tasks', 'runs', 'schedule_occurrences')
+            },
         }
     rows = _queue_attention_rows(store)
     assert (
         bool([row for row in rows if row["category"] == "Service error"]) is not covered
     )
     with store._connect() as db:
-        assert db.execute("select resolved_at from errors").fetchone()[0] == ""
+        assert db.execute(
+            f"select resolved_at from ({error_projection()})"
+        ).fetchone()[0] == ""
         assert {
-            table: [tuple(row) for row in db.execute(f'select * from {table} order by id')]
-            for table in ('errors', 'tasks', 'runs')
+            "errors": [tuple(row) for row in db.execute(errors)],
+            **{
+                table: [tuple(row) for row in db.execute(f'select * from {table} order by id')]
+                for table in ('actions', 'tasks', 'runs', 'schedule_occurrences')
+            },
         } == before
