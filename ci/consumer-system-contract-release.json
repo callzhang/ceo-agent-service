@@ -65,7 +65,7 @@
       "target": "skills/ceo-message-triage/SKILL.md",
       "old_sha256": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc",
       "new_sha256": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc",
-      "old_managed_sha256": "8a19820f1644638c3c007c59809d730985405325c3333a9ac1b089eab332ae43"
+      "old_managed_sha256": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc"
     },
     {
       "source": "ci/shared-skills/ceo-wechat/SKILL.md",
