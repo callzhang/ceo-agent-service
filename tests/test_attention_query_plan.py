@@ -143,6 +143,8 @@ def test_attention_selects_failed_ids_without_scanning_task_payloads(
     with store._connect() as db:
         plan = [row[3] for row in db.execute("explain query plan " + query)]
     assert any("SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)" in step for step in plan), plan
+    assert any("SEARCH inputs USING INTEGER PRIMARY KEY (rowid=?)" in step for step in plan), plan
+    assert not any(step.startswith("SCAN inputs") for step in plan), plan
     assert not any(
         step.startswith(("SCAN tasks", "SCAN t"))
         and "USING INDEX" not in step
@@ -566,3 +568,10 @@ def test_attention_ignores_orphan_scheduled_run_read_errors_but_keeps_history(
     error = store.list_errors()[0]
     assert error.conversation_id == "scheduled-task-run:99776"
     assert error.resolved_at == ""
+
+
+def test_executed_column_read_guard_detects_native_input_body(tmp_path):
+    store = AutoReplyStore(tmp_path / "column-read-control.sqlite3")
+    with store._connect() as db:
+        reads = _executed_table_column_reads(db, "select trigger_text from task_inputs")
+    assert "trigger_text" in reads.get("task_inputs", set())
