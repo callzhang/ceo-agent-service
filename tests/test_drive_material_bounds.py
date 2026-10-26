@@ -109,7 +109,9 @@ def test_package_parser_never_requests_unbounded_member_read(tmp_path, monkeypat
     monkeypatch.setattr(zipfile.ZipExtFile, "read", reading)
     result = read_attachment(tmp_path, monkeypatch, presentation("Normal document"))
     assert result["slides"][0]["text"] == "Normal document"
-    assert calls and all(0 < count <= agent_cli.MAX_SPREADSHEET_BYTES + 1 for count in calls)
+    assert calls and all(
+        0 < count <= agent_cli.MAX_PPTX_EXPANDED_BYTES + 1 for count in calls
+    )
 
 
 def test_dense_workbook_is_bounded_by_actual_mcp_text_block(tmp_path, monkeypatch):
