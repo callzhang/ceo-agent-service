@@ -4,26 +4,26 @@
     {
       "source": "ci/shared-skills/ceo-weekly-report/SKILL.md",
       "target": "skills/ceo-weekly-report/SKILL.md",
-      "old_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2",
-      "new_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f",
-      "old_managed_sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2"
+      "old_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f",
+      "new_sha256": "4507e1d54af92b6b84b60168abc82d572b147d6730b545361ff61d4e52df821e",
+      "old_managed_sha256": "8e44ebd02e497b210ce3e4ba69841e80dea48e16472765c6b2de9d125ec5878f"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
       "target": "skills/ceo-weekly-report/scripts/report_contract.py",
       "old_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a",
-      "new_sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a"
+      "new_sha256": "c67ff09c8333e43b54dfa326721becba08d1b31628c113a520cb5276b058cd63"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
       "target": "skills/ceo-weekly-report/scripts/validate_run.py",
       "old_sha256": "3a4a2f00138492780b54107ddd37303649bb11e333ea1d13ed092a897299587e",
-      "new_sha256": "3a4a2f00138492780b54107ddd37303649bb11e333ea1d13ed092a897299587e"
+      "new_sha256": "7da98e0c3751f4e54a1b2fc8a47e6565c3b1b73b130978f4f57c17301bcd1a1b"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
       "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md",
-      "old_sha256": "c617861797b07b256f7fade2882bc6c418e61ae9ce42f102460498edd51bae2d",
+      "old_sha256": "b039bad41721add4721d10dae25df5b77d950be166f9032b932124d41c40f4eb",
       "new_sha256": "b039bad41721add4721d10dae25df5b77d950be166f9032b932124d41c40f4eb"
     },
     {
@@ -76,7 +76,7 @@
     {
       "source": "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
       "target": "skills/dingtalk-oa-approval/SKILL.md",
-      "old_sha256": "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb",
+      "old_sha256": "a4510031a9cc912def6d56529c0eb9be754f8445fb3868b1104982bf82c7b705",
       "new_sha256": "a4510031a9cc912def6d56529c0eb9be754f8445fb3868b1104982bf82c7b705"
     },
     {
@@ -150,7 +150,7 @@
       "source": "ci/shared-skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
       "target": "skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
       "old_sha256": "94326d6138ae1b4a8a5560ed417b54bb1b9ad9317ed586c8b24f4963bbd44cd9",
-      "new_sha256": "94326d6138ae1b4a8a5560ed417b54bb1b9ad9317ed586c8b24f4963bbd44cd9"
+      "new_sha256": "3c1f9652fd273d417752889c6c3b9675188b403fb490f80d75458bab8e1e3b43"
     },
     {
       "source": "ci/shared-skills/ceo-weekly-okr-report/scripts/destination.py",

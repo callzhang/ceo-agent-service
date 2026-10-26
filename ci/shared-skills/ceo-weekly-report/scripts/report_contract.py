@@ -84,10 +84,8 @@ def validate_manifest(manifest: dict) -> list[str]:
                 f"message {message_id} is missing surrounding context"
             )
 
-    reports = manifest.get("business_reports", {})
-    for line in BUSINESS_LINES:
-        if not reports.get(line):
-            errors.append(f"{line} source report is missing")
+    # A business line that has not submitted its report is disclosed in the
+    # coverage gaps; it is never an error here (Derek 2026-10-26).
     return errors
 
 
@@ -119,22 +117,14 @@ def validate_claim(claim: dict) -> list[str]:
 
 
 def validate_metric(metric: dict) -> list[str]:
+    """A value that is published needs its source; no data needs nothing.
+
+    Derek 2026-10-26: a metric without data is shown as `无数据` and never
+    blocks the report. Naming the responsible person and the next checkpoint
+    for a decision-critical gap is asked of the Agent, not enforced here.
+    """
     errors: list[str] = []
     key = metric.get("key") or metric.get("name") or "metric"
-    if (
-        metric.get("current") == "无数据"
-        and metric.get("decision_critical")
-    ):
-        if not metric.get("responsible_user_id"):
-            errors.append(
-                f"{key} is missing responsible DingTalk user identity"
-            )
-        if not metric.get("responsible_name"):
-            errors.append(
-                f"{key} is missing responsible DingTalk name"
-            )
-        if not metric.get("next_checkpoint"):
-            errors.append(f"{key} is missing next data checkpoint")
     if metric.get("current") != "无数据":
         if not metric.get("source"):
             errors.append(f"{key} is missing source")
