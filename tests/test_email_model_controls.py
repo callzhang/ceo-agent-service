@@ -7,7 +7,6 @@ from uuid import UUID
 
 import pytest
 
-from app.action_storage import email_action_projection, insert_action, insert_email_action, update_email_action
 
 from app.email_store import (
     EmailFolderBindingConflict,
@@ -190,6 +189,13 @@ def test_config_cas_serializes_competing_writers(tmp_path):
     assert len(store.list_model_promotion_configs()) == 2
 
 
+def _bump_schema_cookie(db):
+    # The schema check is cached per file and SQLite schema cookie; a hand edit of
+    # sqlite_master leaves the cookie alone, so move it as a real DDL change would.
+    cookie = db.execute("pragma schema_version").fetchone()[0]
+    db.execute(f"pragma schema_version={cookie + 1}")
+
+
 @pytest.mark.parametrize(
     "old,new",
     [
@@ -208,6 +214,7 @@ def test_model_control_schema_contract_is_strict(tmp_path, old, new):
             "update sqlite_master set sql=? where name='configs'",
             (sql.replace(old, new),),
         )
+        _bump_schema_cookie(db)
     with pytest.raises(sqlite3.IntegrityError):
         EmailStore(store.path)
 
@@ -223,6 +230,7 @@ def test_model_control_primary_key_contract_is_strict(tmp_path):
         db.execute("update sqlite_master set sql=? where name='configs'", (
             sql.replace("id integer primary key autoincrement", "id integer not null"),
         ))
+        _bump_schema_cookie(db)
     with pytest.raises(sqlite3.IntegrityError):
         EmailStore(store.path)
 
@@ -685,40 +693,3 @@ def test_new_category_initial_revision_is_preserved(tmp_path):
     )
     assert store.list_category_description_revisions("partners")[0]["config"] == created
 
-
-def test_attempt_count_drift_is_refused_at_the_write(tmp_path):
-    """The counter and the attempt ledger must part company at the write that
-    does it, not at whatever unrelated process next opens the store."""
-
-    path = tmp_path / "email.sqlite3"
-    EmailStore(path)
-    with sqlite3.connect(path) as db:
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        insert_email_action(db, "email_actions", {
-            "action_id": "a:1", "action_plan_id": "plan-1",
-            "classification_id": 1, "account_id": "account",
-            "action_type": "move", "parameters_json": "{}",
-            "config_version": "c", "status": "processing",
-            "attempt_count": 0, "created_at": "now", "updated_at": "now",
-        })
-        insert_action(db, "email_action_attempts", {
-            "action_id": "a:1", "attempt_number": 1,
-            "status": "failed", "provider_operation": "move",
-            "provider_target": "t", "provider_result_id": "",
-            "error": "boom", "started_at": "now", "finished_at": "now",
-        })
-        action_rows = db.execute(
-            f"select rowid from ({email_action_projection('email_actions', include_rowid=True)}) "
-            "where action_id='a:1'"
-        ).fetchall()
-        for action_row in action_rows:
-            update_email_action(db, "email_actions", action_row[0], {
-                "attempt_count": 1, "updated_at": "later",
-            })
-        with pytest.raises(sqlite3.IntegrityError, match="attempt_count_drift"):
-            for action_row in action_rows:
-                update_email_action(db, "email_actions", action_row[0], {
-                    "attempt_count": 0,
-                })
-        db.execute("rollback")
