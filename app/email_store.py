@@ -5909,6 +5909,7 @@ class EmailStore:
                        tasks.channel as task_channel,
                        tasks.trigger_message_id,
                        tasks.trigger_message_json,
+                       tasks.input_compacted, tasks.input_provenance_json,
                        tasks.execution_generation as task_generation
                 from ({AGENT_RUN_SQL}) as audit
                 join ({AGENT_RUN_SQL}) as consumer
@@ -5931,9 +5932,12 @@ class EmailStore:
             payload_entries = None
             if row is not None:
                 try:
-                    task_payload = json.loads(str(row["trigger_message_json"]))
+                    task_payload = json.loads(
+                        AutoReplyStore._compact_reply_input_json(row["input_provenance_json"])
+                        if row["input_compacted"] else str(row["trigger_message_json"])
+                    )
                     payload_entries = task_payload.get("unsubscribe_entries")
-                except (AttributeError, TypeError, ValueError, RecursionError):
+                except (AttributeError, TypeError, ValueError, RecursionError, KeyError):
                     task_payload = None
                     payload_entries = None
             expected_payload = {
@@ -11313,13 +11317,13 @@ class EmailStore:
             for row in sorted(rows, key=plan_priority)
         )
 
-    def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[str, str]:
+    def direct_action_statuses_for_plan(self, action_plan_id: str) -> dict[int, str]:
         with self._connect() as db:
             rows = db.execute(
                 f"select action_id, status from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
                 (action_plan_id,),
             ).fetchall()
-        return {str(row["action_id"]): str(row["status"]) for row in rows}
+        return {int(row["action_id"]): str(row["status"]) for row in rows}
 
     def direct_action_receipts_for_plan(
         self, action_plan_id: str

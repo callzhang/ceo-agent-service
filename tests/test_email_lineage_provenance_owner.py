@@ -5,6 +5,7 @@ import sqlite3
 
 import pytest
 
+from app.email_store import EmailPersistenceCorruption
 from tests.test_email_web_api import _audited_email_detail_fixture, _audited_observability_event
 from tests.support.email_source import stored_email_source as _stored_email_source  # noqa: F401
 
@@ -36,3 +37,16 @@ def test_completed_lineage_uses_compacted_source_with_exact_bindings(tmp_path, s
         assert event["consumer_run_ids"] == []
         assert event["audit_run_ids"] == []
         assert "task_id" not in event
+
+    if source == "valid":
+        terminal = fixture.store.get_email_unsubscribe_terminal_snapshot(
+            fixture.action_identity, fixture.effect_digest, task_id=fixture.task.id,
+            task_execution_generation=fixture.task.execution_generation,
+        )
+        assert terminal["receipt"]["receipt_id"] == fixture.receipt["receipt_id"]
+    else:
+        with pytest.raises(EmailPersistenceCorruption, match="Audit lineage is invalid"):
+            fixture.store.get_email_unsubscribe_terminal_snapshot(
+                fixture.action_identity, fixture.effect_digest, task_id=fixture.task.id,
+                task_execution_generation=fixture.task.execution_generation,
+            )

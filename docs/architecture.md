@@ -4379,3 +4379,9 @@ TaskInput provenance when its body has been compacted. In-flight inputs continue
 to use their existing body. Classification/action filtering and exact account,
 plan, Task, generation and Audit bindings use that same owner; malformed or
 mismatched provenance does not expose a lineage. Input bodies are not restored.
+
+The terminal unsubscribe snapshot uses the same retained input provenance after
+compaction, including the original entry-reference bindings; Audit/owner/effect
+validation is unchanged. Direct Email plan status maps use native integer
+Action IDs, matching plan and historical-operation readers, so existing done
+receipts are recognized by the original recovery flow.
