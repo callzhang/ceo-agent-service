@@ -1,10 +1,13 @@
 from contextlib import closing, contextmanager
+from pathlib import Path
 import sqlite3
+from tempfile import TemporaryDirectory
 
 import pytest
 
 from app.action_storage import create_action_schema, insert_email_action
 from app.schedules_storage import create_schedules_schema
+from app.store import AutoReplyStore, _close_idle_connections
 from app.configs_definitions import (
     CONFIG_FIELDS, CONFIG_FRESH_PROJECTIONS, CONFIG_PROJECTIONS,
 )
@@ -15,7 +18,6 @@ from tests.configs_source_fixtures import (
     capture, insert as source_insert, source_db,
 )
 from tests.test_email_action_storage import _cases
-from tests.test_email_action_writes import _databases
 
 def test_seven_declared_fields_and_order():
     actual = capture()["actual"]["tables"]
@@ -36,18 +38,7 @@ def test_seven_declared_fields_and_order():
         assert db.execute("pragma quick_check").fetchone() == ("ok",)
 
 def test_signed_rowids_and_reuse():
-    with closing(sqlite3.connect(":memory:")) as db:
-        db.execute("pragma foreign_keys=on")
-        create_action_schema(
-            db, include_reply=True, reply_variant="fresh_memory_fk",
-            include_email=True, include_followup_sync=True, include_skill_config_receipts=True,
-        )
-        create_schedules_schema(db)
-        if not db.execute("select 1 from sqlite_master where name='actions'").fetchone():
-            create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk",
-                                 include_email=True, include_followup_sync=True,
-                                 include_skill_config_receipts=True)
-        create_configs_schema(db)
+    with current_store_db() as db:
         db.execute("begin")
         account = {
             "account_id": "base", "display_name": "A",
@@ -134,15 +125,20 @@ INSERT_ORDER = (
 
 
 @contextmanager
+def current_store_db():
+    """The Configs tables as the current Store declares them."""
+    with TemporaryDirectory() as directory:
+        path = Path(directory) / "store.sqlite3"
+        AutoReplyStore(path)
+        _close_idle_connections()
+        with closing(sqlite3.connect(path)) as db:
+            db.execute("pragma foreign_keys=on")
+            yield db
+
+
+@contextmanager
 def pair(variant):
-    with source_db(variant) as source, closing(sqlite3.connect(":memory:")) as target:
-        target.execute("pragma foreign_keys=on")
-        create_action_schema(
-            target, include_reply=True, reply_variant="fresh_memory_fk",
-            include_email=True, include_followup_sync=True, include_skill_config_receipts=True,
-        )
-        create_schedules_schema(target)
-        create_configs_schema(target)
+    with source_db(variant) as source, current_store_db() as target:
         target.execute("begin")
         yield source, target
 
@@ -440,11 +436,7 @@ def test_max_rowid_uses_native_overflow_allocator(variant):
      "email_unsubscribe_write_in_flight"),
 ))
 def test_account_blockers_use_current_typed_action_predicate_fixture(kind, status, error):
-    old_email, current = _databases(include_skill_config_receipts=True, compact_payload=True)
-    with closing(old_email), closing(current):
-        create_schedules_schema(current)
-        create_configs_schema(current)
-        current.commit()
+    with current_store_db() as current:
         current.execute("begin")
         insert_config(current, "email_accounts",
                       VALID["email_accounts"] | {"account_id": "account"})
