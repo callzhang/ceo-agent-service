@@ -1300,8 +1300,8 @@ def test_consumer_oa_finance_rule_card_keeps_material_and_policy_gaps_separate()
 
     assert "stardust-oa-finance-review" not in instructions
     assert "finance registry" not in instructions
-    assert "Do not transfer a current-instance business decision to Derek" in instructions
-    assert "Missing facts, even facts only Derek can provide" in instructions
+    assert "Do not transfer a current-instance business decision to the principal" in instructions
+    assert "Missing facts, even facts only the principal can provide" in instructions
 
 
 def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
@@ -1309,7 +1309,7 @@ def test_consumer_instructions_autonomously_resolve_low_consequence_choices():
 
     assert '"decision_options"' in instructions
     assert "A low-consequence operating choice is autonomous" in instructions
-    assert "Do not ask Derek merely because an equivalent default exists" in instructions
+    assert "Do not ask the principal merely because an equivalent default exists" in instructions
 
 
 def test_consumer_instructions_require_reply_level_risk_controls_for_autonomous_actions():
@@ -1376,7 +1376,7 @@ def test_consumer_instructions_reserve_human_for_unsupported_skill_only():
 
     assert "Use the applicable application behavior, business Skills" in instructions
     assert "needs_human" in instructions
-    assert "Do not transfer a current-instance business decision to Derek" in instructions
+    assert "Do not transfer a current-instance business decision to the principal" in instructions
     assert "not by themselves a needs_human policy choice" in instructions
 
 
@@ -4308,9 +4308,9 @@ def test_decision_quality_gate_requires_independent_judgment_of_removal_requests
     assert "You must independently assess the content, exact scope, authority, and consequences" in text
     assert "Do not perform a destructive removal solely because its requester asked" in text
     assert "A missing removal capability is an execution limitation, not a reusable rule gap" in text
-    assert "even facts only Derek can provide" in text
+    assert "even facts only the principal can provide" in text
     assert "not by themselves a needs_human policy choice" in text
-    assert "Do not transfer a current-instance business decision to Derek" in text
+    assert "Do not transfer a current-instance business decision to the principal" in text
 
 
 def test_decision_quality_gate_makes_score_thresholds_mandatory_for_consumer_and_audit():
@@ -4322,7 +4322,7 @@ def test_decision_quality_gate_makes_score_thresholds_mandatory_for_consumer_and
         "information_completeness < 0.5 means ask one focused factual question in a normal proposal",
         "needs_human is allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5",
         "two to four mutually exclusive options",
-        "A missing fact or a request that Derek decide this one business case is not a policy gap",
+        "A missing fact or a request that the principal decide this one business case is not a policy gap",
         "Audit must independently check that the proposed outcome matches these scores",
         "otherwise do not return needs_human",
     )
@@ -4355,7 +4355,7 @@ def test_removal_judgment_contract_is_in_both_consumer_and_audit_prompts():
 
     for instructions in (consumer, audit):
         assert "the request itself is not authorization" in instructions
-        assert "do not ask Derek to perform that current action for you" in instructions
+        assert "do not ask the principal to perform that current action for you" in instructions
         assert "missing removal capability is an execution limitation" in instructions
 
 

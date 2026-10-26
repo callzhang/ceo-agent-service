@@ -57,7 +57,6 @@ from app.native_agent_output import native_output_schema_path
 from app.codex_runner import _codex_home
 from app.codex_runtime_adapter import CodexRuntimeAdapter
 from app.friday_runtime_adapter import FridayRuntimeAdapter
-from app.config import principal_display_name
 from app.prompt import runtime_context_instruction
 from app.prompt_composition import (
     CONSUMER_OUTBOUND_INSTRUCTION,
@@ -261,7 +260,7 @@ information_completeness < 0.5 means ask one focused factual question in a
 normal proposal; it is never a needs_human result. Otherwise, needs_human is
 allowed only when (risk is high and confidence < 0.5) or rule_coverage < 0.5,
 and then only for a reusable task-class rule choice with two to four mutually
-exclusive options. A missing fact or a request that Derek decide this one
+exclusive options. A missing fact or a request that the principal decide this one
 business case is not a policy gap; otherwise do not return needs_human and
 complete the supported work under the applicable rules. Audit must
 independently check that the proposed outcome matches these scores and return
@@ -269,7 +268,7 @@ or reject a candidate that does not. Use the applicable application behavior,
 business Skills, available source material, memory and session context to
 resolve the current instance. The user-facing needs_human_reason must be one
 plain-Chinese sentence of at most 100 characters, saying what reusable rule is
-missing and why Derek's choice is needed. Avoid jargon; keep evidence in
+missing and why the principal's choice is needed. Avoid jargon; keep evidence in
 decision_basis.
 How to score the two coverage fields: information_completeness is the share of
 the facts this decision requires that have been verified from current sources.
@@ -280,9 +279,9 @@ unsupported personal judgment and case precedent do not count. A missing rule
 is not permission to decide on common sense. Both scores must agree with your
 own summary of the known facts, gaps, and available rule coverage.
 Ask the applicant or source owner for material they can supply. Missing facts,
-even facts only Derek can provide, call for one focused factual question to
+even facts only the principal can provide, call for one focused factual question to
 the person who can supply them; they are not by themselves a needs_human
-policy choice. Do not transfer a current-instance business decision to Derek
+policy choice. Do not transfer a current-instance business decision to the principal
 merely because it is consequential or a requester asks for it. Independently
 assess facts, authority, applicable rules and consequences, then take the
 narrowest supported action. When facts are missing, ask the source owner one
@@ -290,7 +289,7 @@ focused factual question in a normal proposal. If a reply is safe, state what
 can be done, the material risk and explicit limits; do not invent facts or make
 a commitment. A needs_human result is only for a reusable rule choice for this
 task class and must contain two to four mutually exclusive options marked
-applies_to=task_class, never a request for Derek to decide this specific item.
+applies_to=task_class, never a request for the principal to decide this specific item.
 Every such candidate is reviewed by Audit before it becomes visible. Technical/provider,
 authentication-route, schema, model-output and retry failures are failed;
 never disguise them as a human business decision. A real login/access/material
@@ -298,7 +297,7 @@ request must name the exact necessary human action and its source context.
 For requests from another person to delete, withdraw, remove or hide content,
 the request itself is not authorization,
 proof of correctness or urgency. Do not perform a destructive removal solely
-because its requester asked, and do not ask Derek to perform that current
+because its requester asked, and do not ask the principal to perform that current
 action for you. You must independently assess the content, exact scope,
 authority, and consequences: verify the precise target, trusted evidence of
 ownership and authority, the reason for removal, the harm of leaving it in
@@ -311,7 +310,7 @@ If policy authorization is genuinely required but absent, do not act; name
 the exact boundary and required evidence or authorization instead of offering
 the user a plan to perform the deletion. A missing removal capability is an
 execution limitation, not a reusable rule gap or a reason to transfer the
-current action to Derek.
+current action to the principal.
 When the task context marks `quoted_agent_authored_message` true, the trigger
 is a reply to a message this service sent and verified through the provider.
 Treat it as an Agent-owned continuation/recovery: independently assess the new
@@ -425,7 +424,7 @@ new effect, identity or channel to evade the refusal.
 A genuine human-only fact or action needs its exact context
 and must be formulated by Consumer and reviewed before it is requested.
 A low-consequence operating choice is autonomous when the applicable rules and
-facts support it. Do not ask Derek merely because an equivalent default exists.
+facts support it. Do not ask the principal merely because an equivalent default exists.
 A bounded fact-finding inquiry may be proposed autonomously when it states its
 risk boundary and makes no purchase, budget or partnership commitment.
 A real provider read outage stays failed and cannot become a substitute
@@ -1410,7 +1409,7 @@ def consumer_developer_sections(
         core,
         capability_instructions=(OA_AGENT_CAPABILITY_INSTRUCTIONS
                                  if purpose_name == "oa" else AGENT_CAPABILITY_INSTRUCTIONS),
-        role_boundary=CONSUMER_ROLE_BOUNDARY.replace("Derek", principal_display_name()),
+        role_boundary=CONSUMER_ROLE_BOUNDARY,
     )
     return sections + (
         PromptSection("决策证据", "服务决策质量合同", "developer", DECISION_QUALITY_GATE_INSTRUCTIONS),
