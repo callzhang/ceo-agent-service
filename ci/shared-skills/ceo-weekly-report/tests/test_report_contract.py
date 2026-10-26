@@ -227,52 +227,20 @@ class ReportContractTests(unittest.TestCase):
             ],
         )
 
-    def test_decision_critical_missing_metric_requires_native_mention(self):
-        errors = validate_metric(
-            {
-                "key": "payment_collected",
-                "current": "无数据",
-                "decision_critical": True,
-                "responsible_name": "张丽丽(Lily)",
-            }
-        )
+    def test_a_metric_without_data_is_never_an_error(self):
+        # Derek 2026-10-26: no data does not block the report, not even for a
+        # decision-critical metric with no named owner or checkpoint.
         self.assertEqual(
-            errors,
-            [
-                "payment_collected is missing responsible DingTalk user identity",
-                "payment_collected is missing next data checkpoint",
-            ],
+            validate_metric(
+                {"key": "payment_collected", "current": "无数据", "decision_critical": True}
+            ),
+            [],
         )
 
-    def test_decision_critical_missing_metric_requires_next_checkpoint(self):
-        errors = validate_metric(
-            {
-                "key": "recognized_revenue",
-                "current": "无数据",
-                "decision_critical": True,
-                "responsible_user_id": "finance-user-id",
-                "responsible_name": "张丽丽(Lily)",
-            }
-        )
-        self.assertEqual(
-            errors,
-            ["recognized_revenue is missing next data checkpoint"],
-        )
-
-    def test_decision_critical_missing_metric_requires_responsible_name(self):
-        errors = validate_metric(
-            {
-                "key": "gross_margin",
-                "current": "无数据",
-                "decision_critical": True,
-                "responsible_user_id": "finance-user-id",
-                "next_checkpoint": "2026-09-11 18:00",
-            }
-        )
-        self.assertEqual(
-            errors,
-            ["gross_margin is missing responsible DingTalk name"],
-        )
+    def test_a_business_line_without_a_report_is_not_a_manifest_error(self):
+        manifest = self.complete_manifest()
+        manifest["business_reports"] = {}
+        self.assertEqual(validate_manifest(manifest), [])
 
     def test_private_personnel_detail_is_blocked(self):
         self.assertIn(
@@ -334,12 +302,15 @@ class ReportContractTests(unittest.TestCase):
         del report["company_metrics"][0]["name"]
         self.assertIn("company_metrics[0] is missing renderer field name", validate_render_input(report))
 
-    def test_issue_owner_and_fields_are_checked(self):
+    def test_issue_identity_is_checked_but_the_owner_is_optional(self):
         report = self.complete_report()
         report["issues"] = [{"owner": {}}]
         errors = validate_render_input(report)
+        self.assertIn("issues[0] is missing renderer field id", errors)
         self.assertIn("issues[0] is missing renderer field question", errors)
-        self.assertIn("issues[0].owner is missing renderer field name", errors)
+        self.assertFalse([e for e in errors if "owner" in e])
+        report["issues"] = [{"id": "SALES-001", "question": "q", "owner": "Lily"}]
+        self.assertIn("issues[0].owner must be an object when given", validate_render_input(report))
 
     def test_no_fixed_business_line_list_is_required_for_meeting_render(self):
         report = {"ceo_judgment": [], "company_metrics": [], "issues": []}

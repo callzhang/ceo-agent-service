@@ -17,6 +17,15 @@ LINE_LABELS = {
 }
 
 
+NO_DATA = "无数据"
+NO_OWNER = "待确认负责人"
+
+
+def filled(value):
+    """A value the report could not supply is shown as no data, never as an error."""
+    return NO_DATA if value is None or value == "" else value
+
+
 def node_id() -> str:
     return f"ceo-weekly-{uuid.uuid4()}"
 
@@ -40,7 +49,9 @@ def paragraph(value: str) -> list:
     return ["p", {"uuid": node_id()}, text(value)]
 
 
-def mention(person: dict) -> list:
+def mention(person) -> list:
+    if not isinstance(person, dict) or not person.get("user_id") or not person.get("name"):
+        return text(NO_OWNER)
     return [
         "span",
         {
@@ -52,21 +63,48 @@ def mention(person: dict) -> list:
 
 
 def metric_evidence(metric: dict) -> list:
-    nodes = [text(metric["definition_evidence"])]
-    if metric.get("current") == "无数据" and metric.get("decision_critical"):
-        nodes.extend(
-            [
-                text("；待补："),
-                mention(
-                    {
-                        "user_id": metric["responsible_user_id"],
-                        "name": metric["responsible_name"],
-                    }
-                ),
-                text(f"；下次检查：{metric['next_checkpoint']}"),
-            ]
-        )
+    nodes = [text(str(filled(metric.get("definition_evidence"))))]
+    if metric.get("current") == NO_DATA and metric.get("decision_critical"):
+        if metric.get("responsible_user_id") and metric.get("responsible_name"):
+            nodes.extend(
+                [
+                    text("；待补："),
+                    mention(
+                        {
+                            "user_id": metric["responsible_user_id"],
+                            "name": metric["responsible_name"],
+                        }
+                    ),
+                ]
+            )
+        if metric.get("next_checkpoint"):
+            nodes.append(text(f"；下次检查：{metric['next_checkpoint']}"))
     return nodes
+
+
+def _issue_row(issue: dict) -> list:
+    return [
+        *(
+            filled(issue.get(field))
+            for field in (
+                "id", "question", "current_root_cause", "prior_state",
+                "new_evidence", "status_icon", "weeks_open", "next_checkpoint",
+            )
+        ),
+        [mention(issue.get("owner"))],
+        filled(issue.get("closure_standard")),
+    ]
+
+
+def _metric_row(metric: dict, fields: tuple[str, ...]) -> list:
+    return [
+        *(filled(metric.get(field)) for field in fields),
+        metric_evidence(metric),
+    ]
+
+
+COMPANY_METRIC_FIELDS = ("name", "target", "previous", "current", "change", "status", "data_date")
+LINE_METRIC_FIELDS = ("name", "target", "current", "status", "data_date")
 
 
 def _cell_children(value) -> list:
@@ -122,7 +160,8 @@ def node_text(node) -> str:
 def render_managed_sections(report: dict) -> list:
     nodes: list = [heading(1, "一、CEO本周判断")]
     nodes.extend(
-        paragraph(f"{item['status']} {item['text']}") for item in report["ceo_judgment"]
+        paragraph(f"{filled(item.get('status'))} {item['text']}")
+        for item in report["ceo_judgment"]
     )
 
     nodes.append(heading(1, "二、公司级重点指标"))
@@ -139,16 +178,7 @@ def render_managed_sections(report: dict) -> list:
                 "口径与证据",
             ],
             [
-                [
-                    metric["name"],
-                    metric["target"],
-                    metric["previous"],
-                    metric["current"],
-                    metric["change"],
-                    metric["status"],
-                    metric["data_date"],
-                    metric_evidence(metric),
-                ]
+                _metric_row(metric, COMPANY_METRIC_FIELDS)
                 for metric in report["company_metrics"]
             ],
         )
@@ -170,18 +200,7 @@ def render_managed_sections(report: dict) -> list:
                 "关闭标准",
             ],
             [
-                [
-                    issue["id"],
-                    issue["question"],
-                    issue["current_root_cause"],
-                    issue["prior_state"],
-                    issue["new_evidence"],
-                    issue["status_icon"],
-                    issue["weeks_open"],
-                    issue["next_checkpoint"],
-                    [mention(issue["owner"])],
-                    issue["closure_standard"],
-                ]
+                _issue_row(issue)
                 for issue in report["issues"]
             ],
         )
@@ -189,12 +208,12 @@ def render_managed_sections(report: dict) -> list:
 
     nodes.append(heading(1, "四、经营驾驶舱与CRM"))
     nodes.extend(
-        paragraph(item) for item in report["cockpit"] or ["无需要管理层介入的异常"]
+        paragraph(item) for item in report.get("cockpit") or ["无需要管理层介入的异常"]
     )
 
     nodes.append(heading(1, "五、四条业务线"))
     for key, label in LINE_LABELS.items():
-        line = report["business_lines"][key]
+        line = report.get("business_lines", {}).get(key) or {}
         nodes.append(heading(2, label))
         nodes.append(
             table(
@@ -207,11 +226,11 @@ def render_managed_sections(report: dict) -> list:
                 ],
                 [
                     [
-                        line["summary"],
-                        line["core_metrics"],
-                        line["milestone_deviation"],
-                        line["largest_risk"],
-                        line["management_decision"],
+                        filled(line.get("summary")),
+                        filled(line.get("core_metrics")),
+                        filled(line.get("milestone_deviation")),
+                        filled(line.get("largest_risk")),
+                        filled(line.get("management_decision")),
                     ]
                 ],
             )
@@ -220,15 +239,8 @@ def render_managed_sections(report: dict) -> list:
             table(
                 ["指标", "目标", "本周", "状态", "数据截止", "口径与证据"],
                 [
-                    [
-                        metric["name"],
-                        metric["target"],
-                        metric["current"],
-                        metric["status"],
-                        metric["data_date"],
-                        metric_evidence(metric),
-                    ]
-                    for metric in line["metrics"]
+                    _metric_row(metric, LINE_METRIC_FIELDS)
+                    for metric in line.get("metrics") or []
                 ],
             )
         )
@@ -244,19 +256,19 @@ def render_managed_sections(report: dict) -> list:
                 ],
                 [
                     [
-                        milestone["date"],
-                        [mention(milestone["owner"])],
-                        milestone["name"],
-                        milestone["deliverable_evidence"],
-                        milestone["progress"],
-                        milestone["status"],
+                        filled(milestone.get("date")),
+                        [mention(milestone.get("owner"))],
+                        filled(milestone.get("name")),
+                        filled(milestone.get("deliverable_evidence")),
+                        filled(milestone.get("progress")),
+                        filled(milestone.get("status")),
                     ]
-                    for milestone in line["milestones"]
+                    for milestone in line.get("milestones") or []
                 ],
             )
         )
         nodes.append(heading(3, f"{label}完整周报", fold=True))
-        nodes.extend(copy.deepcopy(line["full_report_jsonml"]))
+        nodes.extend(copy.deepcopy(line.get("full_report_jsonml") or []))
 
     nodes.append(heading(1, "六、根因判断与管理指导"))
     nodes.extend(
@@ -265,7 +277,7 @@ def render_managed_sections(report: dict) -> list:
     )
 
     nodes.append(heading(1, "七、需讨论与决策"))
-    nodes.extend(paragraph(item) for item in report["discussion"] or ["无"])
+    nodes.extend(paragraph(item) for item in report.get("discussion") or ["无"])
     return nodes
 
 
@@ -364,14 +376,14 @@ def _tracking_row(header: str, issue: dict, as_of: str) -> object:
     values = {
         "ID": issue["id"],
         "事项/跟踪主题": issue.get("topic") or issue["question"],
-        "责任人": [mention(issue["owner"])],
+        "责任人": [mention(issue.get("owner"))],
         "原始问题": issue["question"],
-        "待办关闭标准": issue["closure_standard"],
+        "待办关闭标准": filled(issue.get("closure_standard")),
         "上周计划": "—",
         "上周计划完成情况": "—",
-        "本周计划": issue["next_checkpoint"],
+        "本周计划": filled(issue.get("next_checkpoint")),
         "待办发起时间": as_of.replace("-", ""),
-        "最新状态（延期/风险/进行中/完成）": f"{issue['status_icon']} 新增",
+        "最新状态（延期/风险/进行中/完成）": f"{filled(issue.get('status_icon'))} 新增",
     }
     return values.get(_compact(header), "")
 
@@ -427,7 +439,8 @@ def _append_tracking_rows(document: list, report: dict) -> None:
 
 def _judgment_nodes(report: dict) -> list:
     nodes = [
-        paragraph(f"{item['status']} {item['text']}") for item in report["ceo_judgment"]
+        paragraph(f"{filled(item.get('status'))} {item['text']}")
+        for item in report["ceo_judgment"]
     ]
     nodes.append(heading(3, "跨周问题与行动"))
     nodes.append(
@@ -445,25 +458,14 @@ def _judgment_nodes(report: dict) -> list:
                 "关闭标准",
             ],
             [
-                [
-                    issue["id"],
-                    issue["question"],
-                    issue["current_root_cause"],
-                    issue["prior_state"],
-                    issue["new_evidence"],
-                    issue["status_icon"],
-                    issue["weeks_open"],
-                    issue["next_checkpoint"],
-                    [mention(issue["owner"])],
-                    issue["closure_standard"],
-                ]
+                _issue_row(issue)
                 for issue in report["issues"]
             ],
         )
     )
     nodes.append(heading(3, "经营驾驶舱与CRM"))
     nodes.extend(
-        paragraph(item) for item in report["cockpit"] or ["无需要管理层介入的异常"]
+        paragraph(item) for item in report.get("cockpit") or ["无需要管理层介入的异常"]
     )
     nodes.append(heading(3, "根因判断与管理指导"))
     nodes.extend(
@@ -471,7 +473,7 @@ def _judgment_nodes(report: dict) -> list:
         for item in report.get("root_causes", []) or [{"text": "无新增判断"}]
     )
     nodes.append(heading(3, "需讨论与决策"))
-    nodes.extend(paragraph(item) for item in report["discussion"] or ["无"])
+    nodes.extend(paragraph(item) for item in report.get("discussion") or ["无"])
     return nodes
 
 
@@ -488,16 +490,7 @@ def _metrics_table(report: dict) -> list:
             "口径与证据",
         ],
         [
-            [
-                metric["name"],
-                metric["target"],
-                metric["previous"],
-                metric["current"],
-                metric["change"],
-                metric["status"],
-                metric["data_date"],
-                metric_evidence(metric),
-            ]
+            _metric_row(metric, COMPANY_METRIC_FIELDS)
             for metric in report["company_metrics"]
         ],
     )
