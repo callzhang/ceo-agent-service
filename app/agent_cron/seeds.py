@@ -361,6 +361,9 @@ class ScheduledTaskDefault:
     previous_agent_prompts: tuple[str, ...] = ()
     previous_cron_expression: str = ""
     previous_timezone_name: str = ""
+    # The task's job is to deliver a report. A planned run that ends without
+    # one is shown in Attention until a later run delivers it.
+    produces_report: bool = False
 
 
 SCHEDULED_TASK_DEFAULTS = (
@@ -440,6 +443,7 @@ SCHEDULED_TASK_DEFAULTS = (
     ),
     ScheduledTaskDefault(
         migration_key=WEEKLY_OKR_MIGRATION_KEY,
+        produces_report=True,
         cron_expression="0 0 3 * * 0",
         timezone_name="America/Los_Angeles",
         prompt="使用 $ceo-weekly-okr-report 与 $dingtang-okr-review 生成并发送每周 OKR 管理周报；按 Skill 使用原生 DWS 读取、发布和核验。",
@@ -456,6 +460,7 @@ SCHEDULED_TASK_DEFAULTS = (
     ),
     ScheduledTaskDefault(
         migration_key=WEEKLY_REPORT_MIGRATION_KEY,
+        produces_report=True,
         cron_expression="0 0 12 * * 6",
         prompt=weekly_report_prompt(),
         timezone_name="America/Los_Angeles",
@@ -470,6 +475,7 @@ SCHEDULED_TASK_DEFAULTS = (
     ),
     ScheduledTaskDefault(
         migration_key=DAILY_REPORT_MIGRATION_KEY,
+        produces_report=True,
         cron_expression="0 0 6 * * *",
         timezone_name="America/Los_Angeles",
         prompt=daily_report_prompt(),
@@ -503,6 +509,11 @@ SCHEDULED_TASK_DEFAULTS = (
         cron_expression="0 0 20 * * *",
         command="sync-minutes-once",
     ),
+)
+
+
+REPORT_SCHEDULE_MIGRATION_KEYS = frozenset(
+    default.migration_key for default in SCHEDULED_TASK_DEFAULTS if default.produces_report
 )
 
 

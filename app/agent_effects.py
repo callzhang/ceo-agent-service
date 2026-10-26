@@ -815,8 +815,14 @@ def _valid_mcp_content_block(value: object) -> bool:
 
 
 def _is_signed_url(value: str) -> bool:
+    # A URL is a single token. Text that starts with a link and goes on (a shared
+    # link with its page text) is prose: parsing all of it as one URL turned the page
+    # text after its first "?" into a query string and flagged words in it.
+    tokens = value.split(None, 1)
+    if not tokens:
+        return False
     try:
-        parsed = urlsplit(value)
+        parsed = urlsplit(tokens[0])
     except ValueError:
         return False
     if parsed.scheme not in {"http", "https"} or not parsed.netloc or not parsed.query:

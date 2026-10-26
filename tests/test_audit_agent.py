@@ -155,6 +155,7 @@ class CapturingExecutor:
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
         self.environments: list[dict[str, str]] = []
+        self.outputs: list[str] = []
 
     def __call__(self, command, *, on_stdout_line, **kwargs):
         if getattr(self, 'capture_active_events', None):
@@ -179,6 +180,7 @@ class CapturingExecutor:
                 item["text"] = json.dumps(output)
                 lines[index] = json.dumps(event)
             stdout = "\n".join(lines)
+        self.outputs.append(stdout)
         for line in stdout.splitlines():
             on_stdout_line(line)
         return ProcessRunResult(0, stdout, "")
@@ -830,3 +832,192 @@ def test_audit_builds_native_role_skill_config_once(setup, tmp_path, monkeypatch
     executor = CapturingExecutor(_wire())
     _runner(setup, executor).run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
     assert_single_role_skill_build(calls, expected, executor)
+
+
+@pytest.mark.parametrize("outcome", ["approve", "return"])
+def test_service_api_audit_uses_native_schema_and_bound_decoder(setup, outcome):
+    store, task, parent, context, config, _router = setup
+    executor = CapturingExecutor(_wire(outcome=outcome))
+    runner = _runner(setup, executor)
+    runner.forced_runtime_route = next(route for route in config.routes if route.name == "codex_api")
+    result = runner.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    command = executor.commands[0]
+    assert "--output-schema" in command
+    assert command[command.index("--output-schema") + 1].endswith("audit_agent_native_output.schema.json")
+    assert result.result.outcome.value == outcome
+    assert result.result.proposal_revision == context.proposal_revision
+    assert result.result.candidate_digest == context.candidate_digest
+    assert store.get_agent_run(result.run_id).status == "completed"
+
+
+def test_completed_api_native_audit_recovers_without_running_executor(setup, monkeypatch):
+    import app.agent_turn_runner as turn_runner
+
+    store, task, parent, context, config, _router = setup
+    executor = CapturingExecutor(_wire())
+    runner = _runner(setup, executor)
+    runner.forced_runtime_route = next(route for route in config.routes if route.name == "codex_api")
+    complete = store.complete_agent_run
+    execute = turn_runner.AgentTurnProcess.execute
+    invocation = {}
+
+    def capture_execute(process, **kwargs):
+        invocation.update(process=process, kwargs=kwargs)
+        return execute(process, **kwargs)
+
+    monkeypatch.setattr(turn_runner.AgentTurnProcess, "execute", capture_execute)
+
+    class InterruptedAfterCompletedAttempt(RuntimeError):
+        pass
+
+    def interrupt(*_args, **_kwargs):
+        raise InterruptedAfterCompletedAttempt
+
+    monkeypatch.setattr(store, "complete_agent_run", interrupt)
+    with pytest.raises(InterruptedAfterCompletedAttempt):
+        runner.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    run = store.get_agent_run_for_turn(task.id, task.execution_generation,
+        role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
+    attempts = store.list_agent_runtime_attempts(run.id)
+    assert len(attempts) == 1 and attempts[0].status == "completed"
+    assert attempts[0].route_name == "codex_api"
+    assert "decision" in json.loads(json.loads(executor.outputs[0].splitlines()[-1])["item"]["text"])
+
+    monkeypatch.setattr(store, "complete_agent_run", complete)
+
+    def saved_native(kind, session_id, start, end):
+        assert kind == attempts[0].runtime_kind
+        assert session_id == attempts[0].session_id
+        assert (start, end) == (attempts[0].transcript_start, attempts[0].transcript_end)
+        return executor.outputs[0]
+
+    monkeypatch.setattr(turn_runner, "read_native_result_stream", saved_native)
+
+    def forbidden_executor(*_args, **_kwargs):
+        pytest.fail("completed native Audit must recover without another model invocation")
+
+    # Recovery must use the identical submitted contract, rather than assemble
+    # a new prompt after the first attempt has changed the stored context.
+    invocation["process"].executor = forbidden_executor
+    recovered = execute(invocation["process"], **invocation["kwargs"])
+    assert recovered.result.outcome is AuditOutcome.APPROVE
+    assert recovered.result.proposal_revision == context.proposal_revision
+    assert recovered.result.candidate_digest == context.candidate_digest
+    assert store.get_agent_run(run.id).status == "completed"
+    assert len(store.list_agent_runtime_attempts(run.id)) == 1
+
+
+@pytest.mark.parametrize("phase", ["retry", "revision"])
+def test_non_oauth_audit_continues_native_attempt_without_consumer_session(setup, phase):
+    store, task, parent, context, config, _router = setup
+    route = next(route for route in config.routes if route.name == "codex_api")
+    store.upsert_conversation_runtime_session(
+        task.conversation_id, route.name, "consumer-owned-session", "consumer-contract",
+    )
+    first_output = _wire(outcome="return") if phase == "revision" else "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "audit-session"}),
+        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "{}"}}),
+    ))
+    first = _runner(setup, CapturingExecutor(first_output))
+    first.forced_runtime_route = route
+    if phase == "retry":
+        with pytest.raises(ResultParseError):
+            first.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+        prior = store.get_agent_run_for_turn(
+            task.id, task.execution_generation, role=AgentRole.AUDIT,
+            proposal_revision=0, turn_attempt=0,
+        )
+        turn_attempt = 1
+    else:
+        completed = first.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+        prior = store.get_agent_run(completed.run_id)
+        parent = store.claim_agent_run(
+            task.id, task.execution_generation, role=AgentRole.CONSUMER,
+            proposal_revision=1, turn_attempt=0, parent_agent_run_id=prior.id,
+            operation_id="", owner="consumer-revision-1",
+        ).run
+        store.complete_agent_run(parent.id, context.candidate.model_dump(mode="json"), owner="consumer-revision-1")
+        context = replace(context, proposal_revision=1, operation_id="audit-operation-1")
+        turn_attempt = 0
+    prior_attempt = store.list_agent_runtime_attempts(prior.id)[-1]
+    assert prior_attempt.session_id == "audit-session"
+    assert prior.codex_session_id == "audit-session"
+    second_output = CapturingExecutor(_wire())
+    second = _runner(setup, second_output)
+    second.forced_runtime_route = route
+    result = second.run(task, context, turn_attempt=turn_attempt, parent_agent_run_id=parent.id)
+    assert "resume" in second_output.commands[0]
+    assert "audit-session" in second_output.commands[0]
+    attempt = store.list_agent_runtime_attempts(result.run_id)[-1]
+    assert attempt.session_mode == "resume" and attempt.source_session_id == "audit-session"
+    assert result.result.proposal_revision == context.proposal_revision
+    assert result.result.candidate_digest == context.candidate_digest
+    assert store.get_agent_runtime_attempt(prior_attempt.id) == prior_attempt
+    assert store.get_conversation_runtime_session(task.conversation_id, route.name) == "consumer-owned-session"
+
+
+def test_audit_native_session_selection_requires_same_owner_and_honors_fresh(setup, monkeypatch):
+    from app.agent_runtime_contracts import CredentialMode, RuntimeKind
+    from app.agent_turn_runner import AgentTurnProcess
+
+    store, task, parent, context, config, _router = setup
+    route = next(route for route in config.routes if route.name == "codex_api")
+    first = _runner(setup, CapturingExecutor(_wire()))
+    first.forced_runtime_route = route
+    completed = first.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=1, parent_agent_run_id=parent.id,
+        operation_id=context.operation_id, owner="audit-next",
+    ).run
+    process = AgentTurnProcess(store=store, task=task, workspace=Path("/workspace"), owner="audit-next")
+    selection = dict(role=AgentRole.AUDIT, requested_session_id="consumer-or-untrusted-session", run=run)
+    assert process._session_for_route(route, **selection) == "audit-session"
+    # Already persisted non-OAuth history can have an empty Run projection;
+    # its native attempt still proves session ownership.
+    list_runs = store.list_agent_runs_for_task_generation
+    empty_projection = [item.model_copy(update={"codex_session_id": ""}) for item in
+                        list_runs(task.id, task.execution_generation, load_events=False)]
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "list_agent_runs_for_task_generation", lambda *_args, **_kwargs: empty_projection)
+        assert process._session_for_route(route, **selection) == "audit-session"
+    for change in (
+        {"name": "another-provider"},
+        {"model": "another-model"},
+        {"runtime_kind": RuntimeKind.CLAUDE_CLI},
+        {"credential_mode": CredentialMode.LOCAL_OAUTH},
+    ):
+        assert process._session_for_route(route.model_copy(update=change), **selection) is None
+    assert process._session_for_route(route, **selection, force_new_session=True) is None
+    for change in (
+        {"execution_generation": "another-generation"},
+        {"reply_task_id": task.id + 1000},
+        {"id": completed.run_id - 1},
+    ):
+        assert process._session_for_route(route, **{**selection, "run": run.model_copy(update=change)}) is None
+    noncontinuable = store.get_agent_run(completed.run_id).model_copy(update={
+        "status": "failed", "structured_error_json": json.dumps({"session_continuable": False}),
+    })
+    revised = run.model_copy(update={"proposal_revision": 1})
+    monkeypatch.setattr(store, "list_agent_runs_for_task_generation", lambda *_args, **_kwargs: [noncontinuable, revised])
+    assert process._session_for_route(route, **{**selection, "run": revised}) is None
+
+
+def test_non_oauth_audit_repeated_invalid_result_keeps_existing_fresh_session_rule(setup):
+    store, task, parent, context, config, _router = setup
+    route = next(route for route in config.routes if route.name == "codex_api")
+    invalid = "\n".join((
+        json.dumps({"type": "thread.started", "thread_id": "audit-session"}),
+        json.dumps({"type": "item.completed", "item": {"type": "agent_message", "text": "{}"}}),
+    ))
+    for turn_attempt in range(2):
+        runner = _runner(setup, CapturingExecutor(invalid))
+        runner.forced_runtime_route = route
+        with pytest.raises(ResultParseError):
+            runner.run(task, context, turn_attempt=turn_attempt, parent_agent_run_id=parent.id)
+    output = CapturingExecutor(_wire())
+    runner = _runner(setup, output)
+    runner.forced_runtime_route = route
+    result = runner.run(task, context, turn_attempt=2, parent_agent_run_id=parent.id)
+    assert "resume" not in output.commands[0]
+    assert store.list_agent_runtime_attempts(result.run_id)[-1].session_mode == "fresh"

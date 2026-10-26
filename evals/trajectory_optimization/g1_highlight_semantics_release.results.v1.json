@@ -258,5 +258,43 @@
   },
   "acceptance": "Code tested/reviewed; upstream PR updated; local CLI installed and process path verified. No new natural Consumer/Audit run between install and single readback cutoff, so production non-repetition remains pending. No infinite polling or artificial replay.",
   "backup_retention": "Newest verified rollback binary and original Skill kept at backups/dws-docfmt-6747c671; previous official-binary backup retired after digest checks, old receipt metadata retained.",
-  "pr_attachment_note": "Codex attachment tool called; attachment capacity exceeds 100. PR remains accessible through direct URL."
+  "pr_attachment_note": "Codex attachment tool called; attachment capacity exceeds 100. PR remains accessible through direct URL.",
+  "natural_followup_checks": [
+    {
+      "cutoff_utc": "2026-10-25T22:52:06Z",
+      "timezone_label": "2026-10-25 15:52:06 PDT",
+      "installed_binary_sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c",
+      "production_head": "dc07ddcbed7ee48896879db37b06d162a97a98d5",
+      "query": "runs with role consumer/audit and datetime(coalesce(updated_at,started_at)) >= datetime(install timestamp)",
+      "run_count_since_install": 0,
+      "latest_consumer_run": 399427,
+      "latest_audit_run": 399428,
+      "latest_run_completed_at_utc": "2026-10-25 19:11:14",
+      "active_runtime_attempts": 0,
+      "running_agent_runs": 0,
+      "healthz": "ok",
+      "service_pid": 6533,
+      "service_state": "running",
+      "existing_system_health_violations": 2,
+      "dispatcher_scheduled_running": 1,
+      "leased_occurrences": [
+        {
+          "id": 406331,
+          "scheduled_task_id": 1,
+          "dispatch_status": "pending",
+          "execution_kind": "",
+          "execution_id": ""
+        },
+        {
+          "id": 406332,
+          "scheduled_task_id": 10,
+          "dispatch_status": "pending",
+          "execution_kind": "",
+          "execution_id": ""
+        }
+      ],
+      "scope": "Only metadata read for not-yet-executed leased occurrences; not a completed Agent or document-write sample. No additional natural-run polling, passed tests or model calls.",
+      "conclusion": "No related post-install natural trajectory available; G1 remains deployed awaiting production non-repetition acceptance. G2 not started."
+    }
+  ]
 }

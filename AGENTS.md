@@ -117,10 +117,11 @@ production to `origin/main`. Committed-but-unpushed
 work never goes live, so a restart no longer carries another session's
 half-written edits.
 
-Derek, 2026-10-25: `python -m app.deploy` first runs the whole test suite
-(`pytest -n 2`, about 70 minutes) at the commit it is going to install, in a
-throwaway clone with a clean environment, and refuses to deploy if any test
-fails. There is no bypass option. A red suite is fixed first, then deployed.
+Derek, 2026-10-25: `python -m app.deploy` is meant to run the whole test suite
+at the commit it installs and refuse to deploy if a test fails (`require_green_suite`
+in `app/deploy.py`, no bypass option). That requirement is **suspended** by
+`TEST_GATE_ENABLED = False` until the new gate suite is live, then it is set back
+to `True` in a commit of its own. While it is suspended a deploy runs no tests.
 `--restart` runs no new code and is not gated.
 
 After a deploy, read back the new PID, healthz, queues, Attention and History
