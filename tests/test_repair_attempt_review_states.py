@@ -1,7 +1,6 @@
 """Historical repair uses saved identities and never sends a second OA action."""
 
 import json
-import sqlite3
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -143,12 +142,11 @@ def test_settled_trigger_closes_only_the_saved_old_node(tmp_path):
         original_oa_task_id="old-node", changed_card_task_id="new-node",
     )
     assert store.get_reply_task(task.id).status == "done"
-    with sqlite3.connect(store.path) as db:
-        [saved] = db.execute(
-            "select resolution from errors where message_id='original-message' "
-            "and kind='reply_task_already_settled'"
-        ).fetchall()
-    assert json.loads(saved[0])["original_task_result"] == "AGREE"
+    [saved] = [
+        error for error in store.list_errors()
+        if error.message_id == "original-message" and error.kind == "reply_task_already_settled"
+    ]
+    assert json.loads(saved.resolution)["original_task_result"] == "AGREE"
 
 
 def test_settled_trigger_refuses_current_principal_node(tmp_path):

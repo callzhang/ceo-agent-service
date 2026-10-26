@@ -1,16 +1,12 @@
 import pytest
-from unittest.mock import patch
 
 from app.codex_decision import append_signature
-from app.dingtalk_models import CodexAction, CodexDecision
 from app.external_retry import MAX_AUTOMATIC_RETRIES
-from app.store import AgentRole, AgentRunLeaseLostError, AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.wechat import service
-from app.wechat.audit import (
-    WechatAuditDecision, wechat_audit_candidate, wechat_audit_digest,
-)
 from app.wechat.accessibility import AccessibilityResult, SendOutcome, WechatSender
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
+from tests.wechat.support import approve_delivery, create_wechat_delivery
 
 
 def _seed(store, *, binding="verified", task_id=1):
@@ -22,8 +18,8 @@ def _seed(store, *, binding="verified", task_id=1):
         channel="wechat", conversation_id="u9", conversation_title="Alex",
         single_chat=True, trigger_message_id=f"m{task_id}",
         trigger_create_time="2026-07-18T10:00:00", trigger_sender="Alex", trigger_text="hi")
-    delivery_id = store.create_wechat_delivery(
-        reply_task_id=task_id, account_id="acct-1", target_type="direct",
+    delivery_id = create_wechat_delivery(
+        store, reply_task_id=task_id, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text="收到",
         evidence={"trigger_text": "hi"})
     delivery = store.get_wechat_delivery_for_task(task_id)
@@ -35,32 +31,7 @@ def _seed(store, *, binding="verified", task_id=1):
     )
     assert delivery is not None
     assert delivery.reply_text == prepared.final_body
-    task = store.get_reply_task(task_id)
-    parent = store.claim_agent_run(
-        task.id, task.execution_generation, role=AgentRole.CONSUMER,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
-        operation_id="", owner="consumer-test",
-    ).run
-    store.complete_agent_run(parent.id, CodexDecision(
-        action=CodexAction.SEND_REPLY, reply_text="收到", reason="fixture",
-        audit_summary="Consumer proposal",
-    ).model_dump(mode="json"), owner="consumer-test")
-    review = WechatAuditDecision(
-        outcome="approve",
-        candidate_digest=wechat_audit_digest(wechat_audit_candidate(task, delivery)),
-        summary="Fixture's independently reviewed reply",
-    )
-    audit = store.claim_agent_run(
-        task.id, task.execution_generation, role=AgentRole.AUDIT,
-        proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
-        operation_id=f"wechat-delivery:{delivery.id}", owner="audit-test",
-    ).run
-    store.complete_agent_run(audit.id, review.model_dump(mode="json"), owner="audit-test")
-    with patch(
-        "app.native_trajectory.read_native_result_json_from_attempt",
-        return_value=review.model_dump_json(),
-    ):
-        store.record_wechat_delivery_review(delivery.id, audit.id, review)
+    approve_delivery(store, delivery.id)
     return delivery
 
 

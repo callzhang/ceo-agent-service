@@ -59,7 +59,8 @@ def test_candidate_skill_repeats_crm_customer_citation_in_project_evidence():
 def test_task_agent_prompt_builder_contains_transport_not_business_policy():
     source = inspect.getsource(build_task_agent_prompt)
 
-    assert "load_skill_text" in source
+    # The Skill reaches the Agent by path and digest, never inlined into the prompt.
+    assert "WORK_TRACKING_SKILL_PATH" in source
     # The full schema travels through the command factory, tested separately
     # by test_task_prompt_schema_delivery; the Task body must not duplicate it.
     assert "task_agent_output_schema" not in source

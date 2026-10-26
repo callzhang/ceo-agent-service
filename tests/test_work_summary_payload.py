@@ -4,8 +4,7 @@ import sqlite3
 
 from app.task_models import WorkSummaryInput
 from app.store import AutoReplyStore, WORK_SUMMARY_INPUT_SQL
-from app.task8_storage import register_task8_functions, task8_insert_parts, task8_set_parts
-from app.task_storage import task_id_expression
+from tests.support.native_task_fields import set_native_task_fields
 from app.storage_maintenance import compact_terminal_work_summary_inputs
 from app.work_summary_payload import (
     decode_work_summary_payload,
@@ -64,21 +63,19 @@ def test_store_round_trips_compressed_work_summary_input(tmp_path):
 def test_migration_is_bounded_lossless_and_idempotent(tmp_path):
     database = tmp_path / "payloads.sqlite3"
     payload = '{"body":"' + ("周报正文" * 500) + '"}'
-    AutoReplyStore(database)
-    with sqlite3.connect(database) as db:
-        register_task8_functions(db)
-        for input_id, body, status in (
-            (1, payload, "pending"), (2, "{}", "pending"),
-            (3, payload, "done"),
-        ):
-            parts = task8_insert_parts("work_summary_inputs", {
-                "source_type": "local_file", "source_ref": f"file:{input_id}",
-                "payload_json": body, "status": status,
-            }, structural_sql={"legacy_key": "?"}, structural_parameters=(input_id,))
-            db.execute(
-                f"insert into tasks ({parts.columns}) values ({parts.values})",
-                parts.parameters,
-            )
+    store = AutoReplyStore(database)
+    ids = [
+        store.enqueue_work_summary_input("local_file", f"file:{index}", body)
+        for index, body in enumerate((payload, "{}", payload), start=1)
+    ]
+    assert ids == [1, 2, 3]
+    with store._immediate_write_transaction() as db:
+        # Rows written uncompressed before the codec existed.
+        db.executemany(
+            "update work_summary_inputs set payload_json=? where task_id=?",
+            [(payload, 1), ("{}", 2), (payload, 3)],
+        )
+        set_native_task_fields(db, "work_summary_inputs", 3, {"status": "done"})
 
     first = migrate_work_summary_payloads(database, batch_size=1)
     with sqlite3.connect(database) as db:
@@ -108,14 +105,8 @@ def test_terminal_compaction_reads_compressed_input_and_preserves_provenance(tmp
         + '"}'
     )
     input_id = store.enqueue_work_summary_input("local_file", "file:done", payload)
-    with sqlite3.connect(database) as db:
-        register_task8_functions(db)
-        parts = task8_set_parts("work_summary_inputs", {"status": "done"})
-        db.execute(
-            f"update tasks set {parts.sql} where record_type='work_summary_inputs' "
-            f"and id={task_id_expression('work_summary_inputs', '?')}",
-            (*parts.parameters, input_id),
-        )
+    with store._immediate_write_transaction() as db:
+        set_native_task_fields(db, "work_summary_inputs", input_id, {"status": "done"})
 
     result = compact_terminal_work_summary_inputs(database)
 

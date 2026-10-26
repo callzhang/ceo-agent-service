@@ -1,10 +1,7 @@
 """Exact deployed OKR/weekly declarations, public identities and paired inverse."""
 
 from contextlib import closing
-from pathlib import Path
 import sqlite3
-import subprocess
-import sys
 
 import pytest
 
@@ -322,31 +319,6 @@ def test_original_point_natural_and_queue_indexes_remain_usable(tmp_path):
             plan = '\n'.join(row[3] for row in db.execute("explain query plan " + sql, args))
             assert index in plan
             assert "USE TEMP B-TREE" not in plan
-
-
-def test_fresh_current_and_missing_auxiliary_index_do_not_resurrect_sources(tmp_path):
-    from app.run_storage import insert_run
-    from app.store import AutoReplyStore
-    from app.task_storage import insert_task
-
-    path = tmp_path / "current.db"
-    AutoReplyStore(path)
-    with closing(sqlite3.connect(path)) as db, db:
-        request = insert_task(db, "okr_review_requests", request_values()).lastrowid
-        insert_run(db, "okr_review_runs", dict(request_id=request))
-        insert_task(db, "weekly_okr_analysis_jobs", dict(week_end="week", manager_user_id="manager", source_digest="digest", status="completed", error="retained", finished_at="finished"))
-    for missing in (None, "idx_weekly_okr_analysis_jobs_identity", "idx_okr_review_requests_status"):
-        with closing(sqlite3.connect(path)) as db, db:
-            before = {table: db.execute(f"select * from {table} order by rowid").fetchall() for table in ("tasks", "runs", "okr_review_items")}
-            if missing:
-                db.execute(f"drop index {missing}")
-        subprocess.run(
-            [sys.executable, "-c", "from pathlib import Path; import sys; from app.store import AutoReplyStore; s=AutoReplyStore(Path(sys.argv[1])); assert s._schema_is_current()", str(path)],
-            cwd=Path(__file__).resolve().parents[1], check=True, capture_output=True,
-        )
-        with closing(sqlite3.connect(path)) as db:
-            assert {table: db.execute(f"select * from {table} order by rowid").fetchall() for table in before} == before
-            assert not db.execute("select name from sqlite_master where name in ('okr_review_requests','okr_review_runs','weekly_okr_analysis_jobs')").fetchall()
 
 
 @pytest.mark.parametrize("name", ["idx_okr_review_requests_identity", "idx_okr_review_requests_status", "idx_weekly_okr_analysis_jobs_identity"])

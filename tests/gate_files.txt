@@ -148,7 +148,6 @@ tests/wechat/test_discovery.py
 tests/wechat/test_key_probe.py
 tests/wechat/test_models.py
 tests/wechat/test_permission_onboarding.py
-tests/wechat/test_prompt.py
 tests/wechat/test_reader.py
 tests/wechat/test_reader_app_packaging.py
 tests/wechat/test_reader_helper.py

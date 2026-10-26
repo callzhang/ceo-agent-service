@@ -1,0 +1,2038 @@
+{
+  "checked_at_utc": "2026-10-26T05:26:34.030585+00:00",
+  "since_utc": "2026-10-25T09:00:00Z",
+  "scope": "Production Consumer codex_oauth/gpt-6-luna ended attempts; no models/tests/replay. Direct calls and actual exec-wrapper invocation expressions,not prompt mentions.",
+  "rows": [
+    {
+      "id": 399062,
+      "run_id": 399361,
+      "task_id": 417437,
+      "session_id": "01a17281-1d0e-78a2-9839-8328ca88d31f",
+      "session_mode": "fresh",
+      "status": "failed",
+      "started_at": "2026-10-25 10:00:25",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 348,
+      "calls": [],
+      "available": true,
+      "native_sha256": "1dc3bb5f6b068f91bee87cc7bfbec5f90298c6d065ff2db253e73b922d60d70a"
+    },
+    {
+      "id": 399063,
+      "run_id": 399362,
+      "task_id": 417437,
+      "session_id": "01a17281-1d0e-78a2-9839-8328ca88d31f",
+      "session_mode": "resume",
+      "status": "failed",
+      "started_at": "2026-10-25 10:17:43",
+      "proposal_revision": 0,
+      "transcript_start": 348,
+      "transcript_end": 6864,
+      "calls": [
+        {
+          "line": 6551,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T12:07:45.975Z",
+          "call_id": "call_cbfa3e7ad42948cc949a62f099f30c5e",
+          "returned": true,
+          "output_line": 6554,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        },
+        {
+          "line": 6682,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "ab6b915bc96d21c0e7405fc90a1ab87329f822002f6f616ec7f65d7544382708",
+          "timestamp": "2026-10-25T12:13:23.926Z",
+          "call_id": "call_99a616cc7dd74b2298f88e892307f9e3",
+          "returned": true,
+          "output_line": 6684,
+          "complete_schema_texts": [],
+          "output_characters": 226,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": [
+            "not_a_function"
+          ]
+        },
+        {
+          "line": 6713,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T12:13:44.040Z",
+          "call_id": "call_d8ef491418ef42cc921d5fbf765adb77",
+          "returned": true,
+          "output_line": 6716,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "6cd1e463d40b37f47dc198e2da6bfe6b1843928f7d0fadcc863185ed513c80b5"
+    },
+    {
+      "id": 399064,
+      "run_id": 399363,
+      "task_id": 417438,
+      "session_id": "01a172ee-2697-7d42-ab94-72ea0e9b400c",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 11:59:31",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 97,
+      "calls": [
+        {
+          "line": 84,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T12:00:09.902Z",
+          "call_id": "call_a05d875ca89042f1982f0633a859c81d",
+          "returned": true,
+          "output_line": 87,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "a9de15642d167de36ceb06b0402ff4eaff9b6ac8888eb287d8e023b01daad993"
+    },
+    {
+      "id": 399067,
+      "run_id": 399365,
+      "task_id": 417437,
+      "session_id": "01a17281-1d0e-78a2-9839-8328ca88d31f",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 12:19:10",
+      "proposal_revision": 0,
+      "transcript_start": 6864,
+      "transcript_end": 7538,
+      "calls": [
+        {
+          "line": 7437,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T12:31:37.533Z",
+          "call_id": "call_4f9912a344bb4a27bc48aa5478534406",
+          "returned": true,
+          "output_line": 7440,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "9e952355758423612ba4e1a1ce50064bc4aa9ca96d6eeb1781ebb22b2caed4f7"
+    },
+    {
+      "id": 399069,
+      "run_id": 399367,
+      "task_id": 417437,
+      "session_id": "01a17281-1d0e-78a2-9839-8328ca88d31f",
+      "session_mode": "resume",
+      "status": "failed",
+      "started_at": "2026-10-25 12:36:49",
+      "proposal_revision": 1,
+      "transcript_start": 7538,
+      "transcript_end": 7636,
+      "calls": [],
+      "available": true,
+      "native_sha256": "ccaa85156cf58b773c36111e09999bb2e3b5bf615be528a610da1f5f36806754"
+    },
+    {
+      "id": 399070,
+      "run_id": 399368,
+      "task_id": 417440,
+      "session_id": "01a17326-067f-7ab1-aa21-627ce0e49704",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 13:00:33",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 345,
+      "calls": [
+        {
+          "line": 328,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T13:05:02.241Z",
+          "call_id": "call_557a430864984bf1980de847b46ac96d",
+          "returned": true,
+          "output_line": 331,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "3870727efc2e9a94e8f3afa08ea17e59bdc5394b36aa18934977185c0d0a9423"
+    },
+    {
+      "id": 399072,
+      "run_id": 399370,
+      "task_id": 417440,
+      "session_id": "01a17326-067f-7ab1-aa21-627ce0e49704",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 13:06:17",
+      "proposal_revision": 1,
+      "transcript_start": 345,
+      "transcript_end": 396,
+      "calls": [],
+      "available": true,
+      "native_sha256": "a5e15058740cb9202e0675fddbe9e5c2a0d10e7ed31bdaaa8e87238dbc4b52c3"
+    },
+    {
+      "id": 399078,
+      "run_id": 399374,
+      "task_id": 417443,
+      "session_id": "01a1737c-a10b-7461-843f-832eef37689d",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 14:35:08",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 51,
+      "calls": [
+        {
+          "line": 40,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T14:35:24.736Z",
+          "call_id": "call_028be341d91244879c57fa2a04e89232",
+          "returned": true,
+          "output_line": 43,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "7ee585c150bce8f0fda81dc1271b70261b72ea770304fef5423f828be288f566"
+    },
+    {
+      "id": 399085,
+      "run_id": 399380,
+      "task_id": 417448,
+      "session_id": "01a17230-7f03-7600-bd40-2643c64f7de9",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 16:34:11",
+      "proposal_revision": 0,
+      "transcript_start": 152,
+      "transcript_end": 199,
+      "calls": [
+        {
+          "line": 188,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T16:34:34.029Z",
+          "call_id": "call_d7f570ac01644f61a4e51d8d63728925",
+          "returned": true,
+          "output_line": 191,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "1e6941bc40953046949fc1ac754be2628ccac39b80fa4f43d5853e741c240755"
+    },
+    {
+      "id": 399087,
+      "run_id": 399382,
+      "task_id": 417450,
+      "session_id": "01a17230-7f03-7600-bd40-2643c64f7de9",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 16:34:49",
+      "proposal_revision": 0,
+      "transcript_start": 199,
+      "transcript_end": 227,
+      "calls": [
+        {
+          "line": 216,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T16:35:04.771Z",
+          "call_id": "call_72aff2f10cad4d81b18d1effcec5f0f6",
+          "returned": true,
+          "output_line": 219,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "b3da572a4ee89186b0ac3999a5b2eca9363bca5849ff36da4f4674499063bad4"
+    },
+    {
+      "id": 399089,
+      "run_id": 399384,
+      "task_id": 417449,
+      "session_id": "01a17230-7f03-7600-bd40-2643c64f7de9",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 16:35:30",
+      "proposal_revision": 0,
+      "transcript_start": 227,
+      "transcript_end": 242,
+      "calls": [],
+      "available": true,
+      "native_sha256": "5f93500adce22c237d05d14f01e0908bab804ee40c3507b1df8113d073ff6fbf"
+    },
+    {
+      "id": 399091,
+      "run_id": 399386,
+      "task_id": 417451,
+      "session_id": "01a17230-7f03-7600-bd40-2643c64f7de9",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 16:36:12",
+      "proposal_revision": 0,
+      "transcript_start": 242,
+      "transcript_end": 266,
+      "calls": [],
+      "available": true,
+      "native_sha256": "018128d77b46297fdfe183f2739664bd29a65f3e322493ee4b7fd92c75971dd9"
+    },
+    {
+      "id": 399093,
+      "run_id": 399388,
+      "task_id": 417452,
+      "session_id": "01a173f9-4fae-72e3-ba9b-367426f7c153",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 16:51:20",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 78,
+      "calls": [
+        {
+          "line": 42,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T16:51:40.395Z",
+          "call_id": "call_3b1fce8314cf4b9f9b56e8f8e91f4215",
+          "returned": true,
+          "output_line": 45,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "bd1043ac262f31ea741e8c2400545a93855a356bce11a002b0408e4ce275b941"
+    },
+    {
+      "id": 399095,
+      "run_id": 399390,
+      "task_id": 417453,
+      "session_id": "01a173f9-4fae-72e3-ba9b-367426f7c153",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 16:54:38",
+      "proposal_revision": 0,
+      "transcript_start": 78,
+      "transcript_end": 114,
+      "calls": [],
+      "available": true,
+      "native_sha256": "34613da899beed0ea0b13af574ef7426f7817af80201e7db1b0c72804db3120b"
+    },
+    {
+      "id": 399097,
+      "run_id": 399392,
+      "task_id": 417454,
+      "session_id": "01a173f9-4fae-72e3-ba9b-367426f7c153",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 17:03:19",
+      "proposal_revision": 0,
+      "transcript_start": 114,
+      "transcript_end": 150,
+      "calls": [],
+      "available": true,
+      "native_sha256": "8e7659a2eb2bf6b690bfc954ea62d8619766515fd4878df1b72521104c2f2d51"
+    },
+    {
+      "id": 399099,
+      "run_id": 399394,
+      "task_id": 417455,
+      "session_id": "01a17407-deee-7b20-9491-e32fba0b3780",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 17:07:13",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 77,
+      "calls": [
+        {
+          "line": 35,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "23734c8848a84770d759d933dcefbcc21fd02170bd6b1b2ca8aedfed015182ab",
+          "timestamp": "2026-10-25T17:07:29.719Z",
+          "call_id": "call_12c586747472448ea7619a5d1a0697e4",
+          "returned": true,
+          "output_line": 37,
+          "complete_schema_texts": [],
+          "output_characters": 233,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": [
+            "not_a_function"
+          ]
+        },
+        {
+          "line": 55,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T17:07:41.790Z",
+          "call_id": "call_0f83529b8c144c87846ca438940fe8c2",
+          "returned": true,
+          "output_line": 58,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "1e9a7d2b3255e34e66302e95f3ae141007ebe5bd4830a6ac5891d3afcc4bda4e"
+    },
+    {
+      "id": 399101,
+      "run_id": 399396,
+      "task_id": 417455,
+      "session_id": "01a17407-deee-7b20-9491-e32fba0b3780",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 17:08:50",
+      "proposal_revision": 1,
+      "transcript_start": 77,
+      "transcript_end": 101,
+      "calls": [],
+      "available": true,
+      "native_sha256": "c54c7f92a51c07bebe524259c6bd52c8285d2ec3202d663a72fec09b3cdd6684"
+    },
+    {
+      "id": 399103,
+      "run_id": 399398,
+      "task_id": 417455,
+      "session_id": "01a17407-deee-7b20-9491-e32fba0b3780",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 17:09:57",
+      "proposal_revision": 2,
+      "transcript_start": 101,
+      "transcript_end": 114,
+      "calls": [],
+      "available": true,
+      "native_sha256": "93bb0d0834ff652d3ddf3f31699bfd96da053551d3e7b6aee80f840cddd971e1"
+    },
+    {
+      "id": 399105,
+      "run_id": 399400,
+      "task_id": 417456,
+      "session_id": "01a1741d-c503-7562-935d-bb6bde624e49",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 17:31:09",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 66,
+      "calls": [
+        {
+          "line": 55,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T17:31:36.457Z",
+          "call_id": "call_713bec32fe3746dcab2e3a05e89347cf",
+          "returned": true,
+          "output_line": 58,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "64b2cd5af4a581a44a41b2ca302e00e49655a967253b3d6c0987619ec09a8aa1"
+    },
+    {
+      "id": 399107,
+      "run_id": 399402,
+      "task_id": 417458,
+      "session_id": "01a1741d-c503-7562-935d-bb6bde624e49",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 17:32:04",
+      "proposal_revision": 0,
+      "transcript_start": 66,
+      "transcript_end": 106,
+      "calls": [],
+      "available": true,
+      "native_sha256": "61038c18c961a61bdd4cc9cb71c6909c789eeeb31ad890b24d9ccc3a2b07f107"
+    },
+    {
+      "id": 399108,
+      "run_id": 399403,
+      "task_id": 417456,
+      "session_id": "01a1741d-c503-7562-935d-bb6bde624e49",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 17:32:46",
+      "proposal_revision": 1,
+      "transcript_start": 106,
+      "transcript_end": 121,
+      "calls": [],
+      "available": true,
+      "native_sha256": "98ca6d686e0fe1db8318b71019942ac3dc1f9bd3c9b161dbf6ee2da8df9690c3"
+    },
+    {
+      "id": 399111,
+      "run_id": 399406,
+      "task_id": 417457,
+      "session_id": "01a1741d-c503-7562-935d-bb6bde624e49",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 17:33:32",
+      "proposal_revision": 0,
+      "transcript_start": 121,
+      "transcript_end": 155,
+      "calls": [],
+      "available": true,
+      "native_sha256": "5a2c650b7b3faca7771ed56c636a6016400b7643a513547d094966c5a7d519b4"
+    },
+    {
+      "id": 399113,
+      "run_id": 399408,
+      "task_id": 417459,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 18:24:37",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 53,
+      "calls": [
+        {
+          "line": 35,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T18:24:54.093Z",
+          "call_id": "call_5eb7d7e5f38542eb985f6a8dc56842e9",
+          "returned": true,
+          "output_line": 38,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "46a291716bd28f6a0657c358ec136f8d734dd5a9b2ec4814b89fd9aa97bb5581"
+    },
+    {
+      "id": 399115,
+      "run_id": 399410,
+      "task_id": 417459,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 18:25:47",
+      "proposal_revision": 1,
+      "transcript_start": 53,
+      "transcript_end": 66,
+      "calls": [],
+      "available": true,
+      "native_sha256": "57ffb9444781bc8dbbe5d078e6b2b58565e5017fe24ca62f6c93503e599e634e"
+    },
+    {
+      "id": 399117,
+      "run_id": 399412,
+      "task_id": 417460,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 18:26:24",
+      "proposal_revision": 0,
+      "transcript_start": 66,
+      "transcript_end": 102,
+      "calls": [],
+      "available": true,
+      "native_sha256": "0ff5d7bce9c226622c6d342821530e30106912ca19986681458972171b4c14dd"
+    },
+    {
+      "id": 399119,
+      "run_id": 399414,
+      "task_id": 417461,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 18:51:20",
+      "proposal_revision": 0,
+      "transcript_start": 102,
+      "transcript_end": 126,
+      "calls": [],
+      "available": true,
+      "native_sha256": "0bb4aef349c801e79ce248c38bfa4b80f91d3dfbb0662d09ea70e82c586bdf10"
+    },
+    {
+      "id": 399121,
+      "run_id": 399416,
+      "task_id": 417462,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 18:52:20",
+      "proposal_revision": 0,
+      "transcript_start": 126,
+      "transcript_end": 141,
+      "calls": [],
+      "available": true,
+      "native_sha256": "35d4f49b20f3095b14c97f8e140a48334956336ad6245356cfe7ab1abc90767c"
+    },
+    {
+      "id": 399123,
+      "run_id": 399418,
+      "task_id": 417463,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 19:06:21",
+      "proposal_revision": 0,
+      "transcript_start": 141,
+      "transcript_end": 170,
+      "calls": [
+        {
+          "line": 154,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T19:06:32.186Z",
+          "call_id": "call_3b51a0c01b5c4f3c985edcc18813bf67",
+          "returned": true,
+          "output_line": 157,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "a3775978db0f28cf9e66d55389e7a012afe1f6250f80be3c7bb9727481d2520c"
+    },
+    {
+      "id": 399125,
+      "run_id": 399420,
+      "task_id": 417464,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 19:07:19",
+      "proposal_revision": 0,
+      "transcript_start": 170,
+      "transcript_end": 216,
+      "calls": [
+        {
+          "line": 200,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T19:07:35.714Z",
+          "call_id": "call_523a2b403027451ab37734d5aca8bc7c",
+          "returned": true,
+          "output_line": 203,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "f871d888c0530710914505139b5683284610d4939a9798bfe44ab587a45481df"
+    },
+    {
+      "id": 399127,
+      "run_id": 399422,
+      "task_id": 417463,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "failed",
+      "started_at": "2026-10-25 19:07:54",
+      "proposal_revision": 1,
+      "transcript_start": 216,
+      "transcript_end": 284,
+      "calls": [],
+      "available": true,
+      "native_sha256": "4114959e3568e9505bb9a425565dedbe77e95de702b00e7355c441064caaec0f"
+    },
+    {
+      "id": 399128,
+      "run_id": 399423,
+      "task_id": 417463,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 19:09:00",
+      "proposal_revision": 1,
+      "transcript_start": 284,
+      "transcript_end": 299,
+      "calls": [],
+      "available": true,
+      "native_sha256": "07f58d6da32c062a14cf55a877378927325b3c48444f1126d15910d97c0356ed"
+    },
+    {
+      "id": 399130,
+      "run_id": 399425,
+      "task_id": 417464,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 19:09:33",
+      "proposal_revision": 1,
+      "transcript_start": 299,
+      "transcript_end": 316,
+      "calls": [],
+      "available": true,
+      "native_sha256": "3b5a1615163d6004c1655f0c4188647cbb3ec71161d126e64263d49f3e573814"
+    },
+    {
+      "id": 399132,
+      "run_id": 399427,
+      "task_id": 417463,
+      "session_id": "01a1744e-b8b2-7453-bc22-311fd4083f9a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-25 19:10:27",
+      "proposal_revision": 2,
+      "transcript_start": 316,
+      "transcript_end": 331,
+      "calls": [],
+      "available": true,
+      "native_sha256": "f3b1cdcae0b3c7db6ae166b3f5f7aac80486f67828907d1de1042fbe4df031b9"
+    },
+    {
+      "id": 399134,
+      "run_id": 399429,
+      "task_id": 417465,
+      "session_id": "01a1756d-1519-7ea0-9343-562299b3a654",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-25 23:37:23",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 59,
+      "calls": [
+        {
+          "line": 35,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "7aa8e73b95eff6bb40ecaad87bebc8e03237d0bb5742414d2b92d8b3b9ee2230",
+          "timestamp": "2026-10-25T23:37:36.671Z",
+          "call_id": "call_4ef8b8f81dcc433ca132681db8e045ff",
+          "returned": true,
+          "output_line": 37,
+          "complete_schema_texts": [],
+          "output_characters": 233,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": [
+            "not_a_function"
+          ]
+        },
+        {
+          "line": 48,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-25T23:37:41.657Z",
+          "call_id": "call_fd17ea5eda8c4cc6be947108a6975ab3",
+          "returned": true,
+          "output_line": 51,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "962c31aafd3038aa5bb4a2c8d70f01da65498db213fc31de6c0cddb1980290a4"
+    },
+    {
+      "id": 399139,
+      "run_id": 399431,
+      "task_id": 417469,
+      "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:03:16",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 92,
+      "calls": [
+        {
+          "line": 72,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:03:52.648Z",
+          "call_id": "call_86a471bbe82a41fc8091edb196985ea4",
+          "returned": true,
+          "output_line": 75,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "bc85ae4f55279590a9328fe5c5626d6b8912532956fe4e6e4c4f85b2f8c0a625"
+    },
+    {
+      "id": 399141,
+      "run_id": 399433,
+      "task_id": 417470,
+      "session_id": "01a175f4-8022-77a3-a5da-490aa3985ee4",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:05:18",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 24,
+      "calls": [],
+      "available": true,
+      "native_sha256": "a2ed0261620be345adfdd26ac740dd195f0dcc7e4528ddd39cc47a564a26f040"
+    },
+    {
+      "id": 399148,
+      "run_id": 399436,
+      "task_id": 417474,
+      "session_id": "01a17617-8ba3-7ab0-a6c8-7e40301dbcc0",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:43:35",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 95,
+      "calls": [
+        {
+          "line": 65,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:44:16.033Z",
+          "call_id": "call_70339e5b2e3d40acaaf9531dc1ddff6c",
+          "returned": true,
+          "output_line": 68,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "617836d1d2a57462678ef8276befcd5c2e47b2370897ebc919e78fc6064acdd7"
+    },
+    {
+      "id": 399150,
+      "run_id": 399438,
+      "task_id": 417475,
+      "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:44:47",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 62,
+      "calls": [
+        {
+          "line": 51,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:45:07.612Z",
+          "call_id": "call_11a20af8be794a07b0a353020511a95f",
+          "returned": true,
+          "output_line": 54,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "f67a49b7947097cf5fff7f235275b5ee897875b16d197ce14e31f1686e133e82"
+    },
+    {
+      "id": 399152,
+      "run_id": 399440,
+      "task_id": 417476,
+      "session_id": "01a17619-abdd-7dd1-a080-fc98e63c132a",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:45:50",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 89,
+      "calls": [
+        {
+          "line": 23,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "9b11ee52e573d8535b1e1a55fe7a9f6f97491ee067653dfa6b9041c93f4fde48",
+          "timestamp": "2026-10-26T02:46:12.277Z",
+          "call_id": "call_e9f89c49f61a40cfade71de80ce650df",
+          "returned": true,
+          "output_line": 25,
+          "complete_schema_texts": [],
+          "output_characters": 226,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": [
+            "not_a_function"
+          ]
+        },
+        {
+          "line": 76,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:46:40.056Z",
+          "call_id": "call_691545116e9a4adbb34edce15904c1fe",
+          "returned": true,
+          "output_line": 79,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "7460f53cbcaa7b81e56940b7623bd5cc5efe61226c4a1bd4d3f5003867f1cd6e"
+    },
+    {
+      "id": 399153,
+      "run_id": 399441,
+      "task_id": 417477,
+      "session_id": "01a1761a-d39b-72c2-b90a-0e009ad84130",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:47:02",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 79,
+      "calls": [
+        {
+          "line": 55,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "d930e4088a99b12c5cdfccfa795dddab1f76e1116f743522c45824d8a4ca1228",
+          "timestamp": "2026-10-26T02:48:10.235Z",
+          "call_id": "call_de1e0c4bf64040b7ab24e4988dd7c72d",
+          "returned": true,
+          "output_line": 57,
+          "complete_schema_texts": [],
+          "output_characters": 238,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": [
+            "not_a_function"
+          ]
+        },
+        {
+          "line": 68,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:48:14.966Z",
+          "call_id": "call_3042bb4e300f4dc4ba300b9c970123a9",
+          "returned": true,
+          "output_line": 71,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "26b42f2fce39e293f31dc428106f5f06c5baa006ad88264a38c90d954ea50e49"
+    },
+    {
+      "id": 399156,
+      "run_id": 399444,
+      "task_id": 417476,
+      "session_id": "01a17619-abdd-7dd1-a080-fc98e63c132a",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 02:49:06",
+      "proposal_revision": 1,
+      "transcript_start": 89,
+      "transcript_end": 137,
+      "calls": [],
+      "available": true,
+      "native_sha256": "c5bf10715a0185c0e6bdd39aeac5ceece2343ab40a203d789577a2afa637c08e"
+    },
+    {
+      "id": 399158,
+      "run_id": 399446,
+      "task_id": 417478,
+      "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 02:50:45",
+      "proposal_revision": 0,
+      "transcript_start": 62,
+      "transcript_end": 114,
+      "calls": [
+        {
+          "line": 103,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:51:17.140Z",
+          "call_id": "call_331c058770dd474aaa373b9364543bdb",
+          "returned": true,
+          "output_line": 106,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "889be36b1aebd9a95e0963a171f5fcd4378fe97356e86c017bf4f223322715b7"
+    },
+    {
+      "id": 399160,
+      "run_id": 399448,
+      "task_id": 417479,
+      "session_id": "01a1761f-08ea-7ca1-8ea0-2e8bc1032776",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:51:47",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 95,
+      "calls": [
+        {
+          "line": 82,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:52:22.587Z",
+          "call_id": "call_ae949a78459f4f289c06180400c27a58",
+          "returned": true,
+          "output_line": 85,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "2aa3d84127298a7dad0b3223d3dea753575a189269801af91485c3888f96118b"
+    },
+    {
+      "id": 399161,
+      "run_id": 399449,
+      "task_id": 417480,
+      "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 02:52:30",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 67,
+      "calls": [
+        {
+          "line": 56,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:52:56.182Z",
+          "call_id": "call_dc92db6b355f4be3b06506fd393c7f33",
+          "returned": true,
+          "output_line": 59,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "84f401f4dc2f0975f809a9c18a0ffa441e473ba611686d6674841f166b326764"
+    },
+    {
+      "id": 399164,
+      "run_id": 399452,
+      "task_id": 417481,
+      "session_id": "01a17618-a48d-78f1-b42c-6285b398b9bb",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 02:56:54",
+      "proposal_revision": 0,
+      "transcript_start": 114,
+      "transcript_end": 162,
+      "calls": [
+        {
+          "line": 151,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T02:57:20.737Z",
+          "call_id": "call_bdf6afc3ff084cddb98724ec92d95b36",
+          "returned": true,
+          "output_line": 154,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "833facf915966948282b785f133932044996987d1f48dde19e2528e51e530477"
+    },
+    {
+      "id": 399166,
+      "run_id": 399454,
+      "task_id": 417483,
+      "session_id": "01a17627-4e7c-7370-a25d-ac07e6125e56",
+      "session_mode": "fresh",
+      "status": "failed",
+      "started_at": "2026-10-26 03:00:48",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 65,
+      "calls": [
+        {
+          "line": 23,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "5ade0aa35dd756c29ddccbe186291b25cde25e1f6a94d3644b86d3470f2eaf15",
+          "timestamp": "2026-10-26T03:00:58.618Z",
+          "call_id": "call_8b813d72c1364109954d85bde9012406",
+          "returned": true,
+          "output_line": 31,
+          "complete_schema_texts": [],
+          "output_characters": 33949,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": []
+        }
+      ],
+      "available": true,
+      "native_sha256": "079f83b739a9e656464143560285738dd28fc31fdb049ee9acdc20d43be6ab2e"
+    },
+    {
+      "id": 399167,
+      "run_id": 399455,
+      "task_id": 417482,
+      "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 03:01:13",
+      "proposal_revision": 0,
+      "transcript_start": 67,
+      "transcript_end": 138,
+      "calls": [
+        {
+          "line": 127,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T03:01:42.601Z",
+          "call_id": "call_70b07c05eea140e0ae1e125874dfcd01",
+          "returned": true,
+          "output_line": 130,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "85da807bed879752ddf0c056e3ec2aedf4f5f560eadf8291ba1442f3d75e21e9"
+    },
+    {
+      "id": 399169,
+      "run_id": 399457,
+      "task_id": 417484,
+      "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 03:05:13",
+      "proposal_revision": 0,
+      "transcript_start": 138,
+      "transcript_end": 211,
+      "calls": [],
+      "available": true,
+      "native_sha256": "45b06687e2f9fa44a05dcbe62a567c9a380e25b5fa4ce32a5c832edb833e2a89"
+    },
+    {
+      "id": 399171,
+      "run_id": 399459,
+      "task_id": 417484,
+      "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 03:06:57",
+      "proposal_revision": 1,
+      "transcript_start": 211,
+      "transcript_end": 224,
+      "calls": [],
+      "available": true,
+      "native_sha256": "37934761b157a5501199ee58850d0912d083d6d515c4038c797eae83f99be15b"
+    },
+    {
+      "id": 399173,
+      "run_id": 399461,
+      "task_id": 417484,
+      "session_id": "01a1761f-b515-7e33-b849-ca827a90984b",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 03:07:55",
+      "proposal_revision": 2,
+      "transcript_start": 224,
+      "transcript_end": 237,
+      "calls": [],
+      "available": true,
+      "native_sha256": "b7bdd6b9b70d54ff841a69270b83d4f92cf0988c9ffda6af7fd199bf1aaceab2"
+    },
+    {
+      "id": 399175,
+      "run_id": 399463,
+      "task_id": 417485,
+      "session_id": "01a17639-6745-72a3-8b07-aaf1161e556c",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 03:20:34",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 51,
+      "calls": [
+        {
+          "line": 40,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T03:20:51.648Z",
+          "call_id": "call_452bd53665f341308538f908c9e34070",
+          "returned": true,
+          "output_line": 43,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "0bec4900dbf9170c9f403b6abf159c80219454367e93ab55624343f6a1753e43"
+    },
+    {
+      "id": 399177,
+      "run_id": 399465,
+      "task_id": 417485,
+      "session_id": "01a17639-6745-72a3-8b07-aaf1161e556c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 03:21:49",
+      "proposal_revision": 1,
+      "transcript_start": 51,
+      "transcript_end": 64,
+      "calls": [],
+      "available": true,
+      "native_sha256": "0f415a75f05244cd97ec838358bd27133d8ed940d651044facb3de475059cfbc"
+    },
+    {
+      "id": 399179,
+      "run_id": 399467,
+      "task_id": 417483,
+      "session_id": "01a1765e-4128-7e63-b22c-1f1b6051fd68",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 04:00:47",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 93,
+      "calls": [
+        {
+          "line": 23,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "bfecb1e360f607e830f8494f24796c846ff69451253bad1b5e091d7d93b7054b",
+          "timestamp": "2026-10-26T04:01:02.106Z",
+          "call_id": "call_c0e527baacf348f6864995e02ae3bfaa",
+          "returned": true,
+          "output_line": 31,
+          "complete_schema_texts": [],
+          "output_characters": 33932,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": []
+        }
+      ],
+      "available": true,
+      "native_sha256": "ea755ffc6478fbd6477c5790147cdcf6f987e30fca1c99221534093ca9924bbd"
+    },
+    {
+      "id": 399181,
+      "run_id": 399469,
+      "task_id": 417483,
+      "session_id": "01a1765e-4128-7e63-b22c-1f1b6051fd68",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:03:15",
+      "proposal_revision": 1,
+      "transcript_start": 93,
+      "transcript_end": 110,
+      "calls": [],
+      "available": true,
+      "native_sha256": "3e767ce9d5dd0d23749987a218f27fa5149a5aa0b949efd916754d43263b3de8"
+    },
+    {
+      "id": 399183,
+      "run_id": 399471,
+      "task_id": 417487,
+      "session_id": "01a17664-6640-7d10-be0a-509fe484b303",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 04:07:31",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 79,
+      "calls": [
+        {
+          "line": 42,
+          "mechanism": "exec_wrapper",
+          "arguments_sha256": "98a962ee096166c85353a200c6bdc9e3c9264a140f825985e4621e1b8754087d",
+          "timestamp": "2026-10-26T04:07:47.066Z",
+          "call_id": "call_bbf0147d96fb4d3a8731c00fccd210a5",
+          "returned": true,
+          "output_line": 44,
+          "complete_schema_texts": [],
+          "output_characters": 233,
+          "return_mentions_schema": false,
+          "wrapper_schema_objects": 0,
+          "wrapper_errors": [
+            "not_a_function"
+          ]
+        },
+        {
+          "line": 64,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T04:07:58.121Z",
+          "call_id": "call_cf65d38002374110878a0f0da18adf3c",
+          "returned": true,
+          "output_line": 67,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "1f1a28d29b7f7978d8b56296cee4e6491c7b596457dcdfb05b23ebd158ad710e"
+    },
+    {
+      "id": 399185,
+      "run_id": 399473,
+      "task_id": 417487,
+      "session_id": "01a17664-6640-7d10-be0a-509fe484b303",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:08:43",
+      "proposal_revision": 1,
+      "transcript_start": 79,
+      "transcript_end": 92,
+      "calls": [],
+      "available": true,
+      "native_sha256": "6719972de0b37d6f5ce59b797c6188e39b1ee6116339527a06a284091b447699"
+    },
+    {
+      "id": 399188,
+      "run_id": 399476,
+      "task_id": 417489,
+      "session_id": "01a1766c-70a5-7af0-bdf5-20b6cf60f95c",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 04:16:19",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 147,
+      "calls": [
+        {
+          "line": 116,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T04:17:08.691Z",
+          "call_id": "call_15e2b6fa1c024c1db643c5cae4f16939",
+          "returned": true,
+          "output_line": 119,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "e7e5e611241d5a3c92f47ea440eb32f89bfdbb57f4b3dbef204f81bfd6b7a6c0"
+    },
+    {
+      "id": 399193,
+      "run_id": 399479,
+      "task_id": 417490,
+      "session_id": "01a1767e-b182-7e61-b039-d72b358ae41c",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 04:36:15",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 69,
+      "calls": [
+        {
+          "line": 37,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T04:36:38.844Z",
+          "call_id": "call_a527140aabf140c09f0ae2ae1b6068df",
+          "returned": true,
+          "output_line": 40,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "8a626781ad615d23bda63a9be788b43faf04f59dcd59889fbabf6cafac6a6257"
+    },
+    {
+      "id": 399195,
+      "run_id": 399481,
+      "task_id": 417490,
+      "session_id": "01a1767e-b182-7e61-b039-d72b358ae41c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:37:42",
+      "proposal_revision": 1,
+      "transcript_start": 69,
+      "transcript_end": 84,
+      "calls": [],
+      "available": true,
+      "native_sha256": "e4f598bf8669f818b4f976f8daa2933d4cfa3a89a1037e3154cf1d170cd42aed"
+    },
+    {
+      "id": 399197,
+      "run_id": 399483,
+      "task_id": 417492,
+      "session_id": "01a17689-c99f-7dc1-aba9-d530e014a893",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 04:48:21",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 60,
+      "calls": [
+        {
+          "line": 49,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T04:48:40.844Z",
+          "call_id": "call_dd4224d40ad742238cadb0dbd1ddcb71",
+          "returned": true,
+          "output_line": 52,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "85ab51dc10c1bbd32779976132c9dca70fbfebc34ada0895e9492895a25dce4c"
+    },
+    {
+      "id": 399199,
+      "run_id": 399485,
+      "task_id": 417492,
+      "session_id": "01a17689-c99f-7dc1-aba9-d530e014a893",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:49:32",
+      "proposal_revision": 1,
+      "transcript_start": 60,
+      "transcript_end": 86,
+      "calls": [],
+      "available": true,
+      "native_sha256": "da7c24091f221ad2c49993635ad822641a0d68ace7eaf0d11132285eb86dc195"
+    },
+    {
+      "id": 399200,
+      "run_id": 399486,
+      "task_id": 417493,
+      "session_id": "01a1768a-e418-76f3-a6c0-d41d9d1588e1",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 04:49:34",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 86,
+      "calls": [
+        {
+          "line": 71,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T04:50:07.632Z",
+          "call_id": "call_b55c2691d72147b5a57734c28be95000",
+          "returned": true,
+          "output_line": 74,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "4981275e94f0dc04b33a0f08011d2a61f0719a80e91272f579bfb5f20dfee561"
+    },
+    {
+      "id": 399203,
+      "run_id": 399489,
+      "task_id": 417492,
+      "session_id": "01a17689-c99f-7dc1-aba9-d530e014a893",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:51:06",
+      "proposal_revision": 2,
+      "transcript_start": 86,
+      "transcript_end": 129,
+      "calls": [],
+      "available": true,
+      "native_sha256": "53c3f850a99f61912c5dcb8aedecf307cea57712a9fbd2074a3be62b861a5a0a"
+    },
+    {
+      "id": 399204,
+      "run_id": 399490,
+      "task_id": 417493,
+      "session_id": "01a1768a-e418-76f3-a6c0-d41d9d1588e1",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:51:19",
+      "proposal_revision": 1,
+      "transcript_start": 86,
+      "transcript_end": 101,
+      "calls": [],
+      "available": true,
+      "native_sha256": "a8bd3867ec2295721fd1207b82a80c1d7765d1c6a8873d0bbb333c5c03ad0935"
+    },
+    {
+      "id": 399207,
+      "run_id": 399493,
+      "task_id": 417494,
+      "session_id": "01a17689-c99f-7dc1-aba9-d530e014a893",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:55:11",
+      "proposal_revision": 0,
+      "transcript_start": 129,
+      "transcript_end": 194,
+      "calls": [
+        {
+          "line": 183,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T04:56:02.545Z",
+          "call_id": "call_622ab077ea8a4e459bc6268135b575dd",
+          "returned": true,
+          "output_line": 186,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "285be480c813542b91a4ebcd2e748270d80d48e3e630a76e8f8047c354132925"
+    },
+    {
+      "id": 399211,
+      "run_id": 399496,
+      "task_id": 417494,
+      "session_id": "01a17689-c99f-7dc1-aba9-d530e014a893",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 04:57:28",
+      "proposal_revision": 1,
+      "transcript_start": 194,
+      "transcript_end": 207,
+      "calls": [],
+      "available": true,
+      "native_sha256": "82ec852bf071351fa27fb0af86692b3fc3bcd747a5e7793c924e035cc90c7cca"
+    },
+    {
+      "id": 399213,
+      "run_id": 399498,
+      "task_id": 417496,
+      "session_id": "01a1766c-70a5-7af0-bdf5-20b6cf60f95c",
+      "session_mode": "resume",
+      "status": "failed",
+      "started_at": "2026-10-26 05:04:26",
+      "proposal_revision": 0,
+      "transcript_start": 147,
+      "transcript_end": 374,
+      "calls": [],
+      "available": true,
+      "native_sha256": "2df2c94aa4e8aa6c2e5ac35ceac77c881b001817eafbbfb6b7c5a905ae89055b"
+    },
+    {
+      "id": 399214,
+      "run_id": 399499,
+      "task_id": 417497,
+      "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 05:08:14",
+      "proposal_revision": 0,
+      "transcript_start": 92,
+      "transcript_end": 155,
+      "calls": [
+        {
+          "line": 139,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T05:08:44.550Z",
+          "call_id": "call_dcb86c7b69ba49c2903a945862aff15e",
+          "returned": true,
+          "output_line": 142,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "20f653bd5a4438073fe84aff3496e815437b3e9d1e5a3bb1e3dc6141c88897a1"
+    },
+    {
+      "id": 399216,
+      "run_id": 399501,
+      "task_id": 417497,
+      "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 05:10:14",
+      "proposal_revision": 1,
+      "transcript_start": 155,
+      "transcript_end": 184,
+      "calls": [
+        {
+          "line": 173,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T05:10:25.241Z",
+          "call_id": "call_c0d6a3f6c73b4dacb9101fec677e1d4e",
+          "returned": true,
+          "output_line": 176,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "7ce6522c62ad364521e0a2732a5f988b3329eb12d229cddd027288af93faa47a"
+    },
+    {
+      "id": 399218,
+      "run_id": 399503,
+      "task_id": 417497,
+      "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 05:11:20",
+      "proposal_revision": 2,
+      "transcript_start": 184,
+      "transcript_end": 208,
+      "calls": [],
+      "available": true,
+      "native_sha256": "0b5ce6e65c1bfdac4726d31f3a75fa39392cd48636e349c8ddb6d82a9b195c07"
+    },
+    {
+      "id": 399220,
+      "run_id": 399505,
+      "task_id": 417497,
+      "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 05:13:00",
+      "proposal_revision": 3,
+      "transcript_start": 208,
+      "transcript_end": 223,
+      "calls": [],
+      "available": true,
+      "native_sha256": "e8a1058efd6a4b1b31bab997a49a3e626c464fd57e9d2fb43a0b5b4144f81d7b"
+    },
+    {
+      "id": 399222,
+      "run_id": 399507,
+      "task_id": 417497,
+      "session_id": "01a175f2-b11c-7161-a415-136a8e70605c",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 05:13:36",
+      "proposal_revision": 4,
+      "transcript_start": 223,
+      "transcript_end": 236,
+      "calls": [],
+      "available": true,
+      "native_sha256": "a5d9d622f1cebd433e37e1c6e46e9743c93508737325fe78c3ad9df568c9bea7"
+    },
+    {
+      "id": 399226,
+      "run_id": 399510,
+      "task_id": 417498,
+      "session_id": "01a176ab-1d0e-7292-a9c6-949e5955c0f7",
+      "session_mode": "fresh",
+      "status": "completed",
+      "started_at": "2026-10-26 05:24:45",
+      "proposal_revision": 0,
+      "transcript_start": 0,
+      "transcript_end": 57,
+      "calls": [
+        {
+          "line": 35,
+          "mechanism": "direct",
+          "arguments": {
+            "purpose": "general"
+          },
+          "timestamp": "2026-10-26T05:24:59.321Z",
+          "call_id": "call_dddcb06cbd864d60b16bbde3e3c1d87f",
+          "returned": true,
+          "output_line": 38,
+          "complete_schema_texts": [
+            {
+              "characters": 11656,
+              "sha256": "d465045225ac0eb43cc50c9cc59a56cc3d9818ca4c369d6f4510276af17d01a4"
+            }
+          ],
+          "output_characters": 13462,
+          "return_mentions_schema": true
+        }
+      ],
+      "available": true,
+      "native_sha256": "d1f36d83f6403c96216a8b1c928eda6dafebbd42b61e0391a5a42766dc0c1cd8"
+    },
+    {
+      "id": 399228,
+      "run_id": 399512,
+      "task_id": 417498,
+      "session_id": "01a176ab-1d0e-7292-a9c6-949e5955c0f7",
+      "session_mode": "resume",
+      "status": "completed",
+      "started_at": "2026-10-26 05:26:02",
+      "proposal_revision": 1,
+      "transcript_start": 57,
+      "transcript_end": 79,
+      "calls": [],
+      "available": true,
+      "native_sha256": "2fefbf25d5ee6d82ff02e0e30b64598472f3d9d5f7e042333893f21e83a4c506"
+    }
+  ],
+  "summary": {
+    "completed": 68,
+    "completed_fresh": 24,
+    "completed_resume": 44,
+    "fresh_with_query_attempt": 23,
+    "resume_with_query_attempt": 11,
+    "fresh_with_confirmed_complete_direct_schema": 22,
+    "resume_with_confirmed_complete_direct_schema": 11,
+    "confirmed_direct_return_characters": 11656,
+    "completed_sessions_with_multiple_confirmed_direct_reads": 6,
+    "failed_attempts_excluded": 6,
+    "wrapper_note": "Do not count an exec expression as successful read. Six wrapper expressions explicitly returned not-a-function,including five in completed runs;other wrapper returns not proven complete by this analysis."
+  },
+  "removal_release": {
+    "checked_at_utc": "2026-10-26T06:04:45.076483+00:00",
+    "pr": 329,
+    "merge_commit": "9e7308ee50d288ea39eb26c00ef3ab1e47f265bc",
+    "production_head": "9e7308ee50d288ea39eb26c00ef3ab1e47f265bc",
+    "production_clean": true,
+    "pid": 91601,
+    "started_at": "2026-10-25T23:02:37-07:00",
+    "started_after_relevant_code_writes": true,
+    "production_cwd_verified": true,
+    "code_sha256": {
+      "app/agent_cli.py": "0119560f109f7099bf3c43589427f79111fb351423f371143e17fedffac348be",
+      "app/consumer_agent.py": "8814e3be6b5139426223d4b25a477ed39e9b2d318d0da874108377cdeed9ef6a",
+      "app/wechat/codex_safety.py": "1604b2206743218dc9c1f180c298960b01582f2bd29ace43323a34cdd905955e"
+    },
+    "tool_catalog": {
+      "source": "/Users/derek/Services/ceo-agent-service/app/agent_cli.py",
+      "query_tool_present": false,
+      "registry_present": false,
+      "tool_count": 57
+    },
+    "api_readback": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "meta": {},
+        "ok": true
+      },
+      {
+        "path": "/api/console/dashboard/queues",
+        "http": 200,
+        "meta": {
+          "page": 1,
+          "page_size": 20,
+          "total": 3,
+          "next_cursor": "",
+          "has_more": false,
+          "snapshot_at": "2026-10-26T06:04:44.226495+00:00"
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T06:04:44.843986Z",
+          "page": null,
+          "page_size": null,
+          "total": 6,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/history?page_size=1&include_chart=false",
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T06:04:45.074610Z",
+          "page": 1,
+          "page_size": 1,
+          "total": 38378,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/settings/prompt-preview?role=consumer&route_name=codex_oauth",
+        "http": 200,
+        "schema_query_hint_present": false,
+        "schema_fingerprint_present": true,
+        "developer_characters": 30520,
+        "developer_sha256": "6c73d31ef0df08e170a7061c6cbd1fdeb6cfff86cb679e6b76b548e676df71b8",
+        "route_name": "codex_oauth",
+        "model": "gpt-6-luna"
+      }
+    ],
+    "local_tests": 58,
+    "independent_review": "No blockers;confirmed native cold and resume schema delivery unchanged",
+    "new_model_calls": 0,
+    "production_task_replays": 0
+  }
+}

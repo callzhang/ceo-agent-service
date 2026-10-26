@@ -3,8 +3,8 @@ import sqlite3
 
 import pytest
 
-from app.store import AutoReplyStore, REPLY_TASK_INPUT_SQL
-from app.task20_definitions import TASK20_COLUMNS
+from app.store import AutoReplyStore
+from app.storage_maintenance import REPLY_TASK_INPUT_SQL
 
 
 def values(text="first"):
@@ -18,27 +18,6 @@ def values(text="first"):
         trigger_text=text,
         trigger_message_json='{"schema":"sample","message_id":"message"}',
     )
-
-
-def test_parent_has_real_input_foreign_keys_and_no_payload_cache(tmp_path):
-    store = AutoReplyStore(tmp_path / "db.sqlite3")
-    task = store.ensure_reply_task(**values()).id
-    with sqlite3.connect(store.path) as db:
-        keys = {(r[3], r[2], r[4]) for r in db.execute("pragma foreign_key_list(tasks)")}
-        assert ("current_input_id", "tasks", "id") in keys
-        assert ("claimed_input_id", "tasks", "id") in keys
-        parent = db.execute(
-            "select current_input_id,json(payload_json) "
-            "from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?", (task,)
-        ).fetchone()
-        assert parent[0] is not None
-        parent_fields = {column[0] for column in TASK20_COLUMNS["reply_tasks"]}
-        assert parent_fields.isdisjoint({
-            "trigger_text", "trigger_message_json", "input_compacted", "input_provenance_json",
-        })
-        cached_values = json.loads(parent[1])
-        assert values()["trigger_text"] not in cached_values
-        assert values()["trigger_message_json"] not in cached_values
 
 
 def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
@@ -57,7 +36,7 @@ def test_claim_keeps_exact_input_when_current_context_changes(tmp_path):
     assert execution.trigger_message_id == "message"
     with sqlite3.connect(store.path) as db:
         current, original = db.execute(
-            "select current_input_id, claimed_input_id from tasks where record_type='reply_tasks' and cast(legacy_key as integer)=?",
+            "select current_input_id, claimed_input_id from tasks where kind='reply' and id=?",
             (task_id,),
         ).fetchone()
         assert current != original
@@ -124,7 +103,6 @@ def test_manual_rerun_appends_exact_new_input(tmp_path):
 def test_frozen_skill_reader_uses_claimed_material_after_current_input_changes(
     tmp_path,
 ):
-    import json
     from app.agent_cli import build_role_server
     from app.agent_cron.commands import (
         ServiceCommandConsumerContext,
@@ -318,47 +296,3 @@ def test_reviewed_dingtalk_reply_handler_uses_claimed_message_after_new_input(
     assert observed == ["message"]
 
 
-def test_wechat_execution_finalizer_records_claimed_source_while_current_differs(
-    tmp_path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "wechat-claimed.sqlite3")
-    first = values()
-    first.update(channel="wechat", single_chat=True)
-    task = store.ensure_reply_task(**first)
-    claimed = store.claim_reply_task(task.id)
-    second = values("latest current")
-    second.update(
-        channel="wechat",
-        single_chat=True,
-        trigger_message_id="later",
-        business_object_key=task.business_object_key,
-    )
-    store.ensure_reply_task(**second)
-    observed = []
-    original_prepare = store._prepare_outbound_postfix_in_transaction
-
-    def prepare(db, **kwargs):
-        observed.append(kwargs["original_text"])
-        return original_prepare(db, **kwargs)
-
-    monkeypatch.setattr(store, "_prepare_outbound_postfix_in_transaction", prepare)
-    attempt = store.finalize_wechat_reply_task(
-        task_id=task.id,
-        expected_execution_generation=claimed.execution_generation,
-        action="send_reply",
-        sensitivity_kind="normal",
-        codex_reason="reviewed",
-        draft_reply_text="Reviewed reply",
-        audit_summary="approved",
-        send_status="done",
-        account_id="account",
-        target_type="direct",
-        target_id="target",
-        conversation_id="chat",
-        reply_text="Reviewed reply",
-    )
-    persisted = store.get_reply_attempt(attempt)
-    assert persisted.trigger_message_id == "message"
-    assert persisted.trigger_text == "first"
-    assert observed == ["first"]
-    assert store.get_reply_task(task.id).trigger_text == "latest current"

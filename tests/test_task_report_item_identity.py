@@ -3,8 +3,10 @@ import hashlib
 
 import pytest
 
+from app.business_source_reader import PreparedSources
 from app.store import AutoReplyStore
 from app.task_agent import (
+    _prepare_decision_sources,
     _report_item_source_body,
     _validate_identity_proposal,
     apply_task_agent_decision,
@@ -54,6 +56,7 @@ def _record_formal_task(
     owner_source_ref: str | None = None,
     owner_source_body: str | None = None,
     source_type: str = "management_weekly_report",
+    originals: dict[int, str] | None = None,
 ):
     document_node = source_ref.removeprefix("dingtalk-doc:").partition("#")[0]
     persisted_body = json.dumps(
@@ -99,24 +102,29 @@ def _record_formal_task(
             ),
         )
     )
+    if originals is not None:
+        originals[result.signal_id] = persisted_body
     if owner_ref != source_ref:
         owner_node = owner_ref.removeprefix("dingtalk-doc:").partition("#")[0]
+        owner_persisted_body = json.dumps(
+            {
+                "report": {
+                    "title": "2026年8月24日-管理周报收集",
+                    "document_id": owner_node,
+                },
+                "markdown": owner_body,
+            },
+            ensure_ascii=False,
+        )
         owner_signal_id = store.create_business_task_signal(
             source_type=source_type,
             source_ref=owner_ref,
-            evidence_text=json.dumps(
-                {
-                    "report": {
-                        "title": "2026年8月24日-管理周报收集",
-                        "document_id": owner_node,
-                    },
-                    "markdown": owner_body,
-                },
-                ensure_ascii=False,
-            ),
+            evidence_text=owner_persisted_body,
             dedupe_key=f"owner-proof:{owner_ref}",
             context_json="{}",
         )
+        if originals is not None:
+            originals[owner_signal_id] = owner_persisted_body
         store.link_business_task_evidence(
             task_id=result.task_id,
             signal_id=owner_signal_id,
@@ -145,8 +153,22 @@ def _record_formal_task(
     return result
 
 
+def _prepared_originals(store, decision, originals):
+    """Make the exact original report bodies of this test's Signals readable."""
+    prepared = (
+        PreparedSources(store.business_source_reader())
+        if decision is None else _prepare_decision_sources(store, decision)
+    )
+    for signal_id, body in originals.items():
+        fact = store.get_business_task_signal(signal_id)
+        prepared.add(fact)
+        prepared.add_current(fact, body)
+    return prepared
+
+
 def test_same_versioned_report_item_and_owner_can_merge_duplicate_tasks(tmp_path):
     store = AutoReplyStore(tmp_path / "report-item-identity.sqlite3")
+    originals: dict[int, str] = {}
     first_body = f"本周进展\n\n- {REPORT_ITEM}\n"
     second_body = f"本周进展已更新\n\n- {REPORT_ITEM}\n- 其他独立事项\n"
     first = _record_formal_task(
@@ -154,6 +176,7 @@ def test_same_versioned_report_item_and_owner_can_merge_duplicate_tasks(tmp_path
         source_ref=_report_ref(first_body),
         body=first_body,
         owner_id="",
+        originals=originals,
     )
     older_owner_body = f"上周进展\n- {REPORT_ITEM}\n"
     second = _record_formal_task(
@@ -163,6 +186,7 @@ def test_same_versioned_report_item_and_owner_can_merge_duplicate_tasks(tmp_path
         owner_id="",
         owner_source_ref=_report_ref(older_owner_body),
         owner_source_body=older_owner_body,
+        originals=originals,
     )
     work_item = WorkItem.model_validate(
         {
@@ -211,6 +235,7 @@ def test_same_versioned_report_item_and_owner_can_merge_duplicate_tasks(tmp_path
         work_item=work_item,
         decision=decision,
         record_run=False,
+        prepared_sources=_prepared_originals(store, decision, originals),
     )
 
     assert result.task_ids == (second.task_id,)
@@ -241,6 +266,7 @@ def test_same_versioned_report_item_and_owner_can_merge_duplicate_tasks(tmp_path
 )
 def test_source_item_merge_rejects_insufficient_identity_proof(tmp_path, case):
     store = AutoReplyStore(tmp_path / f"reject-{case}.sqlite3")
+    originals: dict[int, str] = {}
     source_line = REPORT_ITEM
     target_line = (
         "准备Subway客户workshop并覆盖至少7个场景@Claire Huang(Claire)"
@@ -280,6 +306,7 @@ def test_source_item_merge_rejects_insufficient_identity_proof(tmp_path, case):
         excerpt=source_line,
         owner_id="claire-id",
         source_type=source_type,
+        originals=originals,
     )
     owner_source_ref = None
     owner_source_body = None
@@ -295,6 +322,7 @@ def test_source_item_merge_rejects_insufficient_identity_proof(tmp_path, case):
         owner_source_ref=owner_source_ref,
         owner_source_body=owner_source_body,
         source_type=target_type,
+        originals=originals,
     )
     proposal = TaskIdentityProposal.model_validate(
         {
@@ -308,5 +336,9 @@ def test_source_item_merge_rejects_insufficient_identity_proof(tmp_path, case):
         }
     )
 
-    with pytest.raises(ValueError, match="same_source_item_same_owner"):
-        _validate_identity_proposal(store, proposal, db=None)
+    prepared = _prepared_originals(store, None, originals)
+    with (
+        store.business_task_transaction() as db,
+        pytest.raises(ValueError, match="same_source_item_same_owner"),
+    ):
+        _validate_identity_proposal(store, proposal, db=db, prepared_sources=prepared)

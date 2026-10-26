@@ -273,6 +273,15 @@ def _display_message_body(message: Message) -> str:
     return visible_email_text(payload)
 
 
+def _reply_trigger_json_sql(alias: str = "") -> str:
+    """The Reply input's trigger JSON, read from its source facts once the input is compacted."""
+    prefix = alias + "." if alias else ""
+    return (
+        f"case when {prefix}input_compacted=1 then json_extract({prefix}input_provenance_json,'$.source') "
+        f"else {prefix}trigger_message_json end"
+    )
+
+
 _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
     select effects.action_identity as effect_action_identity,
            effects.effect_digest as effect_digest,
@@ -285,7 +294,7 @@ _AUDITED_UNSUBSCRIBE_LINEAGE_SQL = f"""
            tasks.channel as task_channel,
            tasks.conversation_id as task_conversation_id,
            tasks.trigger_message_id,
-           tasks.trigger_message_json,
+           {_reply_trigger_json_sql('tasks')} as trigger_message_json,
            tasks.execution_generation as task_execution_generation,
            tasks.status as task_status
     from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) as effects
@@ -5900,7 +5909,7 @@ class EmailStore:
                        consumer.operation_id as consumer_operation_id,
                        tasks.channel as task_channel,
                        tasks.trigger_message_id,
-                       tasks.trigger_message_json,
+                       {_reply_trigger_json_sql('tasks')} as trigger_message_json,
                        tasks.execution_generation as task_generation
                 from ({AGENT_RUN_SQL}) as audit
                 join ({AGENT_RUN_SQL}) as consumer
@@ -8878,16 +8887,17 @@ class EmailStore:
                 task_rows = db.execute(
                     f"""
                     select id, conversation_id, trigger_message_id,
-                           trigger_message_json, execution_generation,
+                           {_reply_trigger_json_sql()} as trigger_message_json,
+                           execution_generation,
                            status, error, created_at
                     from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
                     where channel='email'
-                      and json_valid(trigger_message_json)
+                      and json_valid({_reply_trigger_json_sql()})
                       and json_extract(
-                            trigger_message_json, '$.classification_id'
+                            {_reply_trigger_json_sql()}, '$.classification_id'
                           )=?
                       and json_extract(
-                            trigger_message_json, '$.action_type'
+                            {_reply_trigger_json_sql()}, '$.action_type'
                           )='unsubscribe'
                     order by created_at, id
                     """,
@@ -9946,10 +9956,13 @@ class EmailStore:
             and not exists(select 1 from ({REPLY_TASK_CURRENT_SQL}) t where t.channel='email'
                 and json_extract(t.trigger_message_json,'$.classification_id')=emails.classification_id
                 and t.status not in ('done','skipped'))
-            and not exists(select 1 from actions a where a.email_classification_id=emails.classification_id
-                and ((a.record_type='email_actions' and a.email_status not in ('done','skipped'))
-                  or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
-                      and a.email_status<>'done')))"""
+            and not exists(select 1 from actions a where
+                (a.record_type='action' and a.action_classification_id=emails.classification_id
+                  and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')
+                  and a.action_status not in ('done','skipped'))
+                or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')
+                  and a.email_classification_id=emails.classification_id
+                  and a.email_status<>'done'))"""
 
     def compact_email_message_body(self, classification_id: int, *, source_reader) -> bool:
         """Retire one completed original with an exact source and no unfinished dependency."""

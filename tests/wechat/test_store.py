@@ -15,6 +15,7 @@ from app.task20_definitions import task20_column
 from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
 from tests.wechat.support import approve_delivery
+from tests.wechat.support import create_wechat_delivery
 
 WECHAT_SQL = task_delivery_projection("wechat_deliveries")
 
@@ -46,7 +47,7 @@ def _seed_exhausted_target_open_failure(tmp_path, *, retry_count=MAX_AUTOMATIC_R
         action="send_reply", sensitivity_kind="normal",
         send_status="pending", channel="wechat",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -293,7 +294,7 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
         trigger_sender="Alex",
         trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1,
         account_id="acct-1",
         target_type="direct",
@@ -308,7 +309,7 @@ def test_recreating_pre_action_failed_delivery_makes_it_retryable(tmp_path):
         pre_action_failure=True,
     )
 
-    store.create_wechat_delivery(
+    create_wechat_delivery(store,
         reply_task_id=1,
         account_id="acct-1",
         target_type="direct",
@@ -331,7 +332,7 @@ def test_generation_rotation_supersedes_ready_delivery_atomically(tmp_path):
         trigger_create_time="2026-07-30T10:00:00",
         trigger_sender="Alex", trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="old reply",
     )
@@ -355,7 +356,7 @@ def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_pa
         trigger_sender="Alex", trigger_text="hi",
     )
     task = store.claim_reply_tasks(1, channel="wechat")[0]
-    store.create_wechat_delivery(
+    create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="old reply",
     )
@@ -364,20 +365,9 @@ def test_new_generation_replaces_superseded_delivery_with_corrected_reply(tmp_pa
     assert claimed is not None
     assert claimed.execution_generation == new_generation
 
-    store.finalize_wechat_reply_task(
-        task_id=task.id,
-        expected_execution_generation=new_generation,
-        action="send_reply",
-        sensitivity_kind="general",
-        codex_reason="reviewed correction",
-        draft_reply_text="corrected reply",
-        audit_summary="corrected reply queued",
-        send_status="pending",
-        account_id="acct-1",
-        target_type="direct",
-        target_id="u1",
-        conversation_id="u1",
-        reply_text="corrected reply",
+    create_wechat_delivery(
+        store, reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="corrected reply",
     )
 
     delivery = store.get_wechat_delivery_for_task(task.id)
@@ -396,7 +386,7 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
         trigger_sender="Alex", trigger_text="hi",
     )
     task = store.claim_reply_tasks(1, channel="wechat")[0]
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="old reply",
     )
@@ -411,20 +401,9 @@ def test_new_generation_replaces_confirmed_unperformed_delivery(tmp_path):
     claimed = store.claim_reply_task(task.id)
     assert claimed is not None
 
-    store.finalize_wechat_reply_task(
-        task_id=task.id,
-        expected_execution_generation=new_generation,
-        action="send_reply",
-        sensitivity_kind="general",
-        codex_reason="fresh decision",
-        draft_reply_text="new reply",
-        audit_summary="fresh reply queued",
-        send_status="pending",
-        account_id="acct-1",
-        target_type="direct",
-        target_id="u1",
-        conversation_id="u1",
-        reply_text="new reply",
+    create_wechat_delivery(
+        store, reply_task_id=task.id, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="new reply",
     )
 
     delivery = store.get_wechat_delivery_for_task(task.id)
@@ -450,7 +429,7 @@ def test_new_generation_does_not_replace_started_or_uncertain_delivery(tmp_path)
             trigger_sender="Alex", trigger_text="hi",
         )
         task = store.claim_reply_tasks(1, channel="wechat")[0]
-        delivery_id = store.create_wechat_delivery(
+        delivery_id = create_wechat_delivery(store,
             reply_task_id=task.id, account_id="acct-1", target_type="direct",
             target_id="u1", conversation_id="u1", reply_text="old reply",
         )
@@ -476,7 +455,7 @@ def test_normalize_user_rejected_wechat_deliveries_is_terminal_and_idempotent(tm
         trigger_sender="Avery",
         trigger_text="Please do not send this.",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1,
         account_id="acct-1",
         target_type="direct",
@@ -500,7 +479,7 @@ def test_stale_wechat_delivery_cannot_record_completion_after_rotation(tmp_path)
         trigger_sender="Alex", trigger_text="hi",
     )
     task = store.claim_reply_tasks(1, channel="wechat")[0]
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="old reply",
     )
@@ -543,7 +522,7 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
             send_status="pending",
             channel="wechat",
         )
-        store.create_wechat_delivery(
+        create_wechat_delivery(store,
             reply_task_id=task.id,
             account_id="acct-1",
             target_type="direct",
@@ -565,51 +544,34 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     assert new_attempt.send_status == "pending"
 
 
-def test_finalize_reply_supersedes_older_unsent_delivery_for_same_conversation(
+def test_a_newer_delivery_supersedes_the_older_unsent_one_for_the_same_conversation(
     tmp_path,
 ):
     store = _store(tmp_path)
-    attempts = []
     tasks = []
-    for message_id in ("m1", "m2"):
+    for index, message_id in enumerate(("m1", "m2"), start=1):
         store.enqueue_reply_task(
             channel="wechat",
             conversation_id="u1",
             conversation_title="Alex",
             single_chat=True,
             trigger_message_id=message_id,
-            trigger_create_time=f"2026-07-28T10:0{len(attempts) + 1}:00",
+            trigger_create_time=f"2026-07-28T10:0{index}:00",
             trigger_sender="Alex",
             trigger_text=message_id,
         )
         task = store.claim_reply_tasks(1, channel="wechat")[0]
         tasks.append(task)
-        attempts.append(
-            store.finalize_wechat_reply_task(
-                task_id=task.id,
-                expected_execution_generation=task.execution_generation,
-                action="send_reply",
-                sensitivity_kind="normal",
-                codex_reason="reply requested",
-                draft_reply_text=f"reply {message_id}",
-                audit_summary="reply queued",
-                send_status="pending",
-                account_id="acct-1",
-                target_type="direct",
-                target_id="u1",
-                conversation_id="u1",
-                reply_text=f"reply {message_id}",
-            )
+        create_wechat_delivery(
+            store, reply_task_id=task.id, account_id="acct-1", target_type="direct",
+            target_id="u1", conversation_id="u1", reply_text=f"reply {message_id}",
         )
 
     old_delivery = store.get_wechat_delivery_for_task(tasks[0].id)
     new_delivery = store.get_wechat_delivery_for_task(tasks[1].id)
-    old_attempt = store.get_reply_attempt(attempts[0])
 
     assert old_delivery.status == "superseded"
     assert old_delivery.error == f"superseded_by_newer_wechat_trigger:{tasks[1].id}"
-    assert old_attempt.send_status == "skipped"
-    assert old_attempt.send_error == f"superseded_by_newer_wechat_trigger:{tasks[1].id}"
     assert new_delivery.status == "ready_to_send"
 
 
@@ -627,7 +589,7 @@ def test_stale_ready_delivery_can_be_superseded_without_send(tmp_path):
         action="send_reply", sensitivity_kind="normal",
         send_status="pending", channel="wechat",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="stale reply",
     )
@@ -658,7 +620,7 @@ def test_stale_ready_cleanup_cannot_overwrite_started_delivery(tmp_path):
         trigger_create_time="2026-07-30T10:00:00",
         trigger_sender="Alex", trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -690,7 +652,7 @@ def test_exhausted_stale_wechat_delivery_is_skipped_with_attempt_sync(tmp_path):
         action="send_reply", sensitivity_kind="normal",
         send_status="pending", channel="wechat",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -738,7 +700,7 @@ def test_exhausted_stale_wechat_ui_failure_is_skipped_with_attempt_sync(tmp_path
         action="send_reply", sensitivity_kind="normal",
         send_status="pending", channel="wechat",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -931,7 +893,7 @@ def test_sent_revision_supersedes_same_task_pre_action_failure(tmp_path, pre_act
         trigger_create_time="2026-07-28T10:01:00", trigger_sender="Alex",
         trigger_text="message",
     )
-    old_id = store.create_wechat_delivery(
+    old_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="old reply",
     )
@@ -941,7 +903,7 @@ def test_sent_revision_supersedes_same_task_pre_action_failure(tmp_path, pre_act
         pre_action_failure=pre_action_failure,
     )
     store.rotate_reply_task_execution_generation(1)
-    newer_id = store.create_wechat_delivery(
+    newer_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="revised reply",
     )
@@ -967,7 +929,7 @@ def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
             trigger_text=f"message {sequence}",
         )
         tasks.append(task)
-        store.create_wechat_delivery(
+        create_wechat_delivery(store,
             reply_task_id=task.id,
             account_id="acct-1",
             target_type="direct",
@@ -1012,7 +974,7 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
             trigger_text=f"message {sequence}",
         )
         tasks.append(task)
-    old_delivery_id = store.create_wechat_delivery(
+    old_delivery_id = create_wechat_delivery(store,
         reply_task_id=tasks[0].id,
         account_id="acct-1",
         target_type="direct",
@@ -1028,7 +990,7 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
         ValueError,
         match="WeChat delivery reconciliation required before a newer trigger",
     ):
-        store.create_wechat_delivery(
+        create_wechat_delivery(store,
             reply_task_id=tasks[1].id,
             account_id="acct-1",
             target_type="direct",
@@ -1055,7 +1017,7 @@ def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
         action="send_reply", sensitivity_kind="normal",
         send_status="pending", channel="wechat",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="stale reply",
     )
@@ -1099,7 +1061,7 @@ def test_wechat_delivery_claim_records_action_start_time(tmp_path):
         trigger_create_time="2026-07-30T10:00:00",
         trigger_sender="Alex", trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -1127,7 +1089,7 @@ def test_active_unknown_delivery_cannot_be_superseded(tmp_path):
         trigger_create_time="2026-07-30T10:00:00",
         trigger_sender="Alex", trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="stale reply",
     )
@@ -1158,7 +1120,7 @@ def test_reject_cannot_overwrite_delivery_claimed_by_sender(tmp_path):
         trigger_create_time="2026-07-30T10:00:00",
         trigger_sender="Alex", trigger_text="hi",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -1445,7 +1407,7 @@ def _seed_failed_pre_action_delivery(tmp_path, *, error, action_started_at, pre_
         action="send_reply", sensitivity_kind="normal",
         send_status="pending", channel="wechat",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1, account_id="acct-1", target_type="direct",
         target_id="u1", conversation_id="u1", reply_text="reply",
     )
@@ -1480,9 +1442,9 @@ def test_user_can_retry_a_failed_pre_action_delivery_without_the_cli_skip(tmp_pa
 
 
 def test_failed_delivery_never_claimed_cannot_be_retried_by_the_user(tmp_path):
-    """An Audit rejection fails the delivery before any claim, so no action start."""
+    """A delivery that failed before any claim has no action start."""
     store, delivery_id, _ = _seed_failed_pre_action_delivery(
-        tmp_path, error="wechat_audit_rejected", action_started_at="",
+        tmp_path, error="failed_before_claim", action_started_at="",
     )
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
 

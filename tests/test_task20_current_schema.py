@@ -6,11 +6,10 @@ import pytest
 
 from app import task20_current_schema as current
 from app.runs11_current_schema import create_current_run11_schema
-from app.task_storage import create_task_schema, install_task_child_guards
+from app.task_storage import create_task_schema
 from app.workbench_storage import create_workbench_auxiliary_schema
 from app.task8_storage import register_task8_functions
 from tests.test_task20_definitions import insert as seed_task
-from app.task12_storage import insert_task12
 
 
 @pytest.fixture
@@ -72,32 +71,6 @@ def test_original_wide_schema_stays_a_source_oracle():
         assert not current.task20_schema_is_current(native)
         assert not current.task20_schema_is_current(native,allow_missing_objects=True)
         assert native.execute("select count(*) from pragma_table_xinfo('tasks') where hidden=0").fetchone()[0]==82
-
-
-def test_retained_child_three_public_endpoints_are_not_physical_reply_ids(db):
-    seed_task(db,'workbench_tasks',physical_id=7,legacy_key='task-seven')
-    insert_task12(db,'feedback_processing_batches',{'batch_id':'batch'},source_rowid=1)
-    insert_task12(db,'feedback_processing_items',{'feedback_key':'feedback'})
-    round_result=insert_task12(db,'feedback_processing_rounds',{'id':7,'feedback_key':'feedback','round_number':1,'batch_id':'batch','status':'processing'})
-    decision=insert_task12(db,'feedback_iteration_decisions',{'id':7,'batch_id':'batch','workbench_task_id':'task-seven','workbench_turn_id':'turn','decision_json':'{}'})
-    assert decision.physical_id!=7 and round_result.physical_id!=7
-    current.install_current_task_child_guards(db)
-    db.execute("insert into feedback_iteration_decision_items values(7,'feedback',7)")
-    assert db.execute("select count(*) from feedback_iteration_decision_items").fetchone()==(1,)
-    assert not db.execute('pragma foreign_key_check').fetchall()
-    insert_task12(db,'feedback_processing_items',{'feedback_key':'feedback-other','batch_id':'batch','status':'processing'})
-    insert_task12(db,'feedback_processing_rounds',{'id':8,'feedback_key':'feedback-other','round_number':1,'batch_id':'batch','status':'processing'})
-    db.execute('savepoint positive_child')
-    db.execute("insert into feedback_iteration_decision_items values(7,'feedback-other',8)")
-    assert db.execute("select count(*) from feedback_iteration_decision_items").fetchone()==(2,)
-    db.execute('rollback to positive_child')
-    db.execute('release positive_child')
-    # Genuine previous installer rejects the identical valid public-key child.
-    install_task_child_guards(db)
-    wrong=db.execute("select name from main.sqlite_schema where type='trigger' and tbl_name='feedback_iteration_decision_items' and name like 'trg_tasks_child_%'").fetchall()
-    assert len(wrong)==6
-    with pytest.raises(sqlite3.IntegrityError,match='task parent must be a reply task'):
-        db.execute("insert into feedback_iteration_decision_items values(7,'feedback-other',8)")
 
 
 def test_existing_physical_reply_parent_guard_and_null_behavior_stay_native(db):

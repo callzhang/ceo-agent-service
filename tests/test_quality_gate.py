@@ -20,6 +20,7 @@ from app.cli import WorkerSettings, quality_check_command
 from app.email_store import EmailStore
 from app.store import AgentRole, AutoReplyStore
 from app.action_feedback_storage import resolve_feedback_events
+from tests.wechat.support import create_wechat_delivery
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
@@ -1296,7 +1297,7 @@ def test_quality_gate_treats_user_rejected_wechat_delivery_as_terminal(tmp_path)
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
         task_id = _insert_canonical_reply_task(db, channel='wechat', conversation_id='conversation', conversation_title='chat', single_chat=1, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='done').lastrowid
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task_id,
         account_id="account",
         target_type="direct",

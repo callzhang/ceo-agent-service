@@ -1,4 +1,4 @@
-"""A WeChat task runs on the standard Consumer -> Audit flow (migration, off by default).
+"""A WeChat task runs on the standard Consumer -> Audit flow.
 
 Derek 2026-10-24, phase 3. Only the context, the message preparation and the
 target binding are WeChat specific; the switch routing a target to this path is
@@ -11,7 +11,6 @@ import pytest
 
 from app.agent_contracts import ConsumerAgentResult, ProposedAction
 from app.agent_context import AgentTaskContext
-from app.config import wechat_standard_pipeline_targets
 from app.consumer_agent import ResultParseError, _prepare_outgoing_wechat_messages
 from app.store import AutoReplyStore
 from app.wechat.models import WechatAccount, WechatMessage
@@ -122,13 +121,6 @@ def test_other_channels_are_left_alone(tmp_path):
     result = _proposal(context, capability="dingtalk-chat", operation="x", target={"a": "b"})
     assert _prepare_outgoing_wechat_messages(
         result, store=store, task=task, context=other, proposal_revision=0) is result
-
-
-def test_no_target_uses_the_standard_pipeline_unless_named(monkeypatch):
-    monkeypatch.delenv("CEO_WECHAT_STANDARD_PIPELINE_TARGETS", raising=False)
-    assert wechat_standard_pipeline_targets() == frozenset()
-    monkeypatch.setenv("CEO_WECHAT_STANDARD_PIPELINE_TARGETS", " filehelper , ,u9 ")
-    assert wechat_standard_pipeline_targets() == frozenset({"filehelper", "u9"})
 
 
 def test_the_worker_runs_a_claimed_wechat_task_through_the_shared_orchestrator(tmp_path):

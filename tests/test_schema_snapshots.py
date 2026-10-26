@@ -87,6 +87,25 @@ NO_SINGLE_MODEL: dict[str, str] = {
     "wechat_memory_dedupe.schema.json": (
         "envelope around a list of app.wechat.memory_import.DurableMemoryMatch"
     ),
+    "audit_agent_native_output.schema.json": (
+        "strict Codex native-output schema for the Audit role; app.native_agent_output selects it "
+        "and tests/test_native_audit_output.py checks it"
+    ),
+    "consumer_general_agent_native_output.schema.json": (
+        "strict Codex native-output schema for the general Consumer purpose; "
+        "tests/test_native_consumer_output.py checks it"
+    ),
+    "consumer_oa_agent_native_output.schema.json": (
+        "strict Codex native-output schema for the OA Consumer purpose; "
+        "tests/test_native_consumer_output.py checks it"
+    ),
+    "meeting_alignment_audit.schema.json": (
+        "output contract of the Meeting audit step, read by app.meeting_alignment_agent; "
+        "tests/test_meeting_alignment_agent.py exercises it"
+    ),
+    "repository_release_summary.schema.json": (
+        "output contract of the repository release-note summary, read by app.repository_release_notes"
+    ),
 }
 
 

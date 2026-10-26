@@ -1,9 +1,8 @@
 """A WeChat delivery from the standard pipeline is sent only on an exact approval.
 
-Audit-class change (Derek 2026-10-24, option G2): the send gate accepts either
-the original WeChat review or the standard Consumer -> Audit review, and the
-standard one is bound to exactly the reviewed target and text. Every other case
-below must stay unapproved.
+The send gate accepts only the standard Consumer -> Audit review, bound to exactly
+the reviewed target and text (Derek 2026-10-24 option G2; the original WeChat
+review was retired 2026-10-25). Every other case below must stay unapproved.
 """
 
 import json
@@ -14,6 +13,7 @@ from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.reviewed_candidates import candidate_digest
 from app.store import AgentRole, AutoReplyStore
 from app.wechat.models import WechatReplyScope
+from tests.wechat.support import create_wechat_delivery
 
 IDENTITY = "send-wechat-reply"
 TEXT = "收到，稍后回复你。"
@@ -167,7 +167,7 @@ def test_a_review_of_another_task_does_not_release_this_delivery(tmp_path):
         trigger_sender="Sam", trigger_text="hello")
     second = store.claim_reply_tasks(1, channel="wechat")[0]
     assert second.id != first.id
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=second.id, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text=TEXT)
     evidence = {"standard_candidate_id": str(other_candidate["id"]),
@@ -177,20 +177,10 @@ def test_a_review_of_another_task_does_not_release_this_delivery(tmp_path):
     assert store.wechat_delivery_review_approved(delivery_id) is False
 
 
-def test_the_original_pipeline_cannot_set_standard_evidence(tmp_path):
-    store = AutoReplyStore(tmp_path / "legacy.sqlite3")
-    task = _task(store)
-    with pytest.raises(ValueError, match="service-owned"):
-        store.create_wechat_delivery(
-            reply_task_id=task.id, account_id="acct-1", target_type="direct",
-            target_id="u9", conversation_id="u9", reply_text=TEXT,
-            evidence={"standard_review_id": "1"})
-
-
-def test_a_legacy_delivery_without_any_review_stays_unapproved(tmp_path):
+def test_a_delivery_without_any_review_stays_unapproved(tmp_path):
     store = AutoReplyStore(tmp_path / "plain.sqlite3")
     task = _task(store)
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id, account_id="acct-1", target_type="direct",
         target_id="u9", conversation_id="u9", reply_text=TEXT)
     assert store.wechat_delivery_review_approved(delivery_id) is False

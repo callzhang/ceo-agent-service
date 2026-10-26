@@ -35,7 +35,12 @@ def test_rerun_uses_terminal_metadata_without_native_hydration(refused):
             )
 
         def get_reply_task_for_message(self, *args, **kwargs):
+            if refused:
+                return None
             raise QueuingBoundaryReached
+
+        def get_conversation(self, *args, **kwargs):
+            raise AssertionError("a refused rerun is decided before the conversation lookup")
 
     if refused:
         status, _, body = handle_rerun_attempt_post(Store(), attempt.id)

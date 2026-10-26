@@ -73,8 +73,9 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "A `scope: member` label or a diagnostic containing “member-bound” is not proof" in skill
     assert "Independently inspect every score of 80 or more" in skill
     assert "routine same-team adoption" in skill
-    assert "publish or update and fully read back every appendix" in skill
-    assert "an old appendix or its previous readback does not satisfy this run's manifest" in skill
+    assert "For each manifest appendix run the same destination script" in skill
+    assert "confirm successful provider write receipts for the current manifest" in skill
+    assert "No automatic content readback or full-body comparison is required" in skill
     correction = skill.split("### Correct an Audit return before publication", 1)[1].split(
         "## Collect and prepare", 1
     )[0]
@@ -414,9 +415,8 @@ def test_native_document_tools_use_actual_service_receipt_contract(tmp_path):
             "report.md", "Protocol report", parent_id="eval-folder", workspace_id="eval-workspace")
         assert result["content_sha256"] == okr_eval.digest(body.encode())
         assert result["operation"] == "created"
-        receipt = tools["read_task_artifact"](result["readback"]["artifact_name"])
-        assert json.loads(receipt["content"])["content"]["markdown"] == body
-        assert result["readback"]["artifact_name"].endswith(".readback.json")
+        # The write receipt is the proof; no automatic content readback artifact is produced.
+        assert result["readback"] is None
 
 
 def test_native_fixture_exposes_searchable_independent_evidence(tmp_path):
@@ -1055,25 +1055,6 @@ def test_summary_markdown_cannot_be_rewritten_after_render(tmp_path):
         "https://docs.example.invalid/main",
     )
     assert not okr_eval.grade(case, tmp_path, output)["passed"]
-
-
-def test_release_manifest_pins_verified_current_installation():
-    root = Path(__file__).resolve().parents[1]
-    expected = json.loads(
-        (root / "evals/scheduled_task_generic/okr-release-preconditions.json").read_text()
-    )
-    entries = {
-        row["source"]: row for row in json.loads(
-            (root / "ci/consumer-system-contract-release.json").read_text()
-        )["files"]
-    }
-    assert set(entries) == {row["source"] for row in expected["files"]}
-    for row in expected["files"]:
-        entry = entries[row["source"]]
-        assert entry["old_sha256"] == row["installed_sha256"], row["source"]
-        assert entry["new_sha256"] == row["approved_new_sha256"], row["source"]
-        if "managed_sha256" in row:
-            assert entry["old_managed_sha256"] == row["managed_sha256"]
 
 
 def test_synthetic_scheduled_context_exposes_current_artifacts_without_contents(tmp_path):

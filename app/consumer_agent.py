@@ -1463,8 +1463,7 @@ def consumer_developer_sections_by_runtime(
                     f"## Native Output Schema SHA-256\n{schema_fingerprint}\n\n"
                     "## Native Output Format\n"
                     "Return only the native JSON object, with action, target and payload "
-                    "inside decision. Read current field definitions on demand with "
-                    f'agent_cli.read_consumer_output_schema(purpose="{purpose_name}"). '
+                    "inside decision. "
                     "The service decodes this transport before business validation.",
                 ),
             )

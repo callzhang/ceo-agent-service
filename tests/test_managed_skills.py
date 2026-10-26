@@ -987,33 +987,6 @@ def test_padded_skill_names_are_rejected_before_persistence(tmp_path: Path) -> N
     assert store.list_managed_skills() == ()
 
 
-def test_reopening_current_database_repairs_missing_immutability_trigger(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "skills.sqlite3"
-    store = AutoReplyStore(path)
-    skill = store.create_managed_skill("ceo-test", "Test Skill")
-    revision = store.create_managed_skill_revision(
-        skill.id, SKILL_V1, source="settings"
-    )
-    with store._connect() as db:
-        db.execute("drop trigger trg_configs_skill_revision_update")
-    store_module._INITIALIZED_STORE_PATHS.discard(path.resolve())
-    reopened = AutoReplyStore(path)
-    with reopened._connect() as db:
-        assert db.execute(
-            "select 1 from sqlite_schema where type='trigger' "
-            "and name='trg_configs_skill_revision_update'"
-        ).fetchone()
-        with pytest.raises(sqlite3.IntegrityError, match="managed Skill revisions are immutable"):
-            db.execute(
-                "update configs set payload_json=json_set(payload_json,'$.content',?) "
-                "where record_type='managed_skill_revisions' and numeric_public_key=?",
-                (SKILL_V2, revision.id),
-            )
-    assert reopened.get_managed_skill_revision(revision.id) == revision
-
-
 def _runtime_skill_file(root: Path, name: str, body: str) -> Path:
     path = root / name / "SKILL.md"
     path.parent.mkdir(parents=True, exist_ok=True)

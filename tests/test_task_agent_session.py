@@ -3,6 +3,7 @@ import threading
 
 import pytest
 
+from app.state_definitions import state_projection
 from app.store import AutoReplyStore
 from app.task_agent_session import (
     TASK_AGENT_SESSION_SCOPE_ID,
@@ -94,13 +95,14 @@ def test_task_agent_runtime_prompt_keeps_current_shared_source_body_once(
         1,
     )[1].lstrip()
     semantic, _ = json.JSONDecoder().raw_decode(semantic_text)
-    assert semantic["current_work_item"]["context"]["sender_user_id"] == "u1"
-    assert semantic["source_metrics"]["document_count"] == 1
+    # The saved Signal is listed once as a source document; its original body is not
+    # repeated in the semantic context (the prompt above already carries it once).
     assert len(semantic["source_documents"]) == 1
     document = semantic["source_documents"][0]
-    assert document["document_id"] == semantic["current_work_item"]["document_id"]
+    assert document["author_user_id"] == "u1"
+    assert document["source_ref"] == item.source.ref
     assert semantic["source_signals"][0]["doc"] == document["doc"]
-    assert "".join(span["text"] for span in document["visible_ranges"]) == item.summary
+    assert document["visible_ranges"] == []
     assert store.get_work_summary_input(id).status.value != "failed"
 
 
@@ -150,7 +152,7 @@ def test_task_agent_session_lease_renews_until_closed(tmp_path):
     assert not lease._renew_thread.is_alive()
     with store._connect() as db:
         row = db.execute(
-            "select owner from codex_session_locks where conversation_id=?",
+            f"select owner from ({state_projection('codex_session_locks')}) where conversation_id=?",
             (TASK_AGENT_SESSION_SCOPE_ID,),
         ).fetchone()
     assert row is None
