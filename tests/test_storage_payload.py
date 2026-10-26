@@ -13,8 +13,13 @@ from app.task20_definitions import TASK20_COLUMNS, TASK20_PAYLOAD_FIELDS
 
 def test_real_type_codes_are_stable_and_include_empty_supported_families():
     assert len(SOURCE_ACTION_RECORD_TYPES.names) == 61
-    assert ACTION_RECORD_TYPES.names[:-1] == SOURCE_ACTION_RECORD_TYPES.names
+    assert ACTION_RECORD_TYPES.names[:len(SOURCE_ACTION_RECORD_TYPES.names)] == SOURCE_ACTION_RECORD_TYPES.names
     assert ACTION_RECORD_TYPES.name(62) == "candidate_execution_alias"
+    assert ACTION_RECORD_TYPES.names[61:] == (
+        "candidate_execution_alias", "plan_version_reviewed", "plan_version_email",
+        "effect_step_email", "action_attempt_reviewed", "action_attempt_email",
+        "effect_step_email_reply", "effect_step_email_unsubscribe", "action",
+    )
     assert ACTION_RECORD_TYPES.code("review_candidates") == 1
     assert ACTION_RECORD_TYPES.code("business_task_signals") == 58
     assert ACTION_RECORD_TYPES.name(61) == "email_historical_operations"
@@ -23,7 +28,7 @@ def test_real_type_codes_are_stable_and_include_empty_supported_families():
     assert TASK_RECORD_TYPES.name(20) == "workbench_attachments"
     with pytest.raises(KeyError):
         ACTION_RECORD_TYPES.code("unknown_action")
-    for invalid in (0, 63, True, "1"):
+    for invalid in (0, 71, True, "1"):
         with pytest.raises(ValueError):
             ACTION_RECORD_TYPES.name(invalid)
 
