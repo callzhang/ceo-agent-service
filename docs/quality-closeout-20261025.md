@@ -239,3 +239,32 @@ parameterized cases passed in16.21 seconds. The original expected lifecycle,
 Audit counts, external effects and retry limits remain unchanged. No second full
 file run was performed; final candidate CI is still a distinct gate. Final independent SPEC
 and QUALITY increment reviews approved.
+
+## Main reconciliation and CI instruction input — 2026-10-26
+
+Normal merge with main `7ec0f0cdb` preserves its separately authorized G1
+provider-receipt-only document write contract: no automatic body readback.
+The exact native `doc +list` pre/post identity lookup and already-applied
+`doc.operation.v1` partial-success identity/error receipt remain covered; no
+new Audit, authorization, retry or reconciliation policy was introduced.
+Historical Business owner conversion/inverse tests remain because the explicit
+conversion APIs still exist; the current Store import-owner test is separate.
+The merge inventory/Action/Postfix/historical owner group passed82 tests.
+
+Quality `40266574005` exposed a host dependency: CI has no shared AGENTS input.
+An isolated HOME reproduced Consumer completed / Audit running before an Audit
+runtime attempt existed. The required-file loader runs after claim and throws;
+the existing orchestrator then defers on the active lease. Tests now supply their
+own shared instruction file and patch only its test path. Application missing-file
+behavior is unchanged and its negative test still passes. With missing HOME and
+CI skills root,24 focused cases pass, including both deterministic E2E cases,
+Worker cases, the exact missing-instruction failure, native lease expiry and all
+17 document recovery cases. The native lease regression also no longer updates
+retired Run record_type/legacy_key columns. The preceding combined run had69
+passes and that one stale SQL failure; it is not reported as green.
+
+Consumer manifest source digests were recalculated after preserving both parents'
+skill changes. Weekly-report old hashes match installed main; WeChat already
+matches its new source hash, so its old installed hash is advanced to that same
+verified value for the publisher's strict preflight. Current-head remote Quality,
+standard release, live readback and final artifact cleanup are still pending.

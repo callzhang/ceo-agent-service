@@ -195,3 +195,13 @@ def isolate_service_mcp_manifest(tmp_path, monkeypatch):
         encoding="utf-8",
     )
     monkeypatch.setenv("CEO_SERVICE_MCP_CONFIG_PATH", str(manifest))
+
+
+@pytest.fixture(autouse=True)
+def isolate_audit_shared_instructions(tmp_path, monkeypatch):
+    """Audit tests own required instruction input instead of relying on HOME."""
+    from app import audit_agent
+
+    shared = tmp_path / "shared-agent-instructions.md"
+    shared.write_text("Shared instructions for isolated Agent tests.\n", encoding="utf-8")
+    monkeypatch.setattr(audit_agent, "SHARED_AGENT_INSTRUCTIONS_PATH", shared)

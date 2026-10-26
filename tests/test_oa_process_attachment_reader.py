@@ -6,6 +6,7 @@ from pathlib import Path
 from zipfile import ZipFile
 
 import pytest
+from mcp.server.fastmcp.exceptions import ToolError
 
 from app import agent_cli
 from app import dws_client
@@ -143,6 +144,98 @@ def test_both_roles_expose_process_attachment_reader_with_paged_pdf_input(monkey
         payload = json.loads(response[0][0].text)
         assert payload["ocr_required"] is True
         assert payload["ocr_page_numbers"] == [1]
+
+
+def test_both_roles_read_only_expose_process_bound_form_image_reader(
+    monkeypatch, tmp_path,
+):
+    process_id = "process-1"
+    image_url = "https://static.dingtalk.com/media/proof.jpg"
+
+    class FakeDws:
+        def read_oa_approval_detail(self, requested_process_id):
+            assert requested_process_id == process_id
+            return {
+                "result": {
+                    "processInstanceId": process_id,
+                    "formValueVOS": [{
+                        "id": "proof",
+                        "value": json.dumps([image_url]),
+                    }],
+                }
+            }
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "image/jpeg", "Content-Length": "8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _size):
+            return b"jpegdata"
+
+        def geturl(self):
+            return image_url
+
+    class Opener:
+        def open(self, request, timeout):
+            assert request.full_url == image_url
+            assert timeout == 15
+            return Response()
+
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: FakeDws())
+    monkeypatch.setattr(agent_cli, "build_opener", lambda *_handlers: Opener())
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    monkeypatch.setattr(agent_cli.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(agent_cli, "read_text_file", lambda path: {
+        "format": "image", "ocr_required": True,
+        "ocr_input_base64": "fixture-image", "ocr_mime_type": "image/jpeg",
+        "path": path,
+    })
+
+    for role in ("consumer", "audit"):
+        tool = agent_cli.build_role_server(role)._tool_manager.get_tool(
+            "read_dingtalk_oa_form_image"
+        )
+        response = asyncio.run(tool.run({
+            "process_instance_id": process_id,
+            "image_url": image_url,
+        }, convert_result=True))
+        payload = json.loads(response[0][0].text)
+        assert payload["process_instance_id"] == process_id
+        assert payload["ocr_required"] is True
+        assert payload["sha256"] == hashlib.sha256(b"jpegdata").hexdigest()
+
+
+def test_process_bound_form_image_reader_rejects_url_from_another_process(
+    monkeypatch, tmp_path,
+):
+    class FakeDws:
+        def read_oa_approval_detail(self, requested_process_id):
+            return {
+                "result": {
+                    "processInstanceId": requested_process_id,
+                    "formValueVOS": [{"id": "proof", "value": "[]"}],
+                }
+            }
+
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: FakeDws())
+    monkeypatch.setattr(
+        agent_cli, "build_opener",
+        lambda *_handlers: pytest.fail("unbound form image URL must not be fetched"),
+    )
+    tool = agent_cli.build_role_server("consumer")._tool_manager.get_tool(
+        "read_dingtalk_oa_form_image"
+    )
+    with pytest.raises(ToolError, match="oa_form_image_not_in_process"):
+        asyncio.run(tool.run({
+            "process_instance_id": "process-1",
+            "image_url": "https://static.dingtalk.com/media/other.jpg",
+        }, convert_result=True))
 
 
 def test_process_attachment_reader_is_registered_once(caplog):

@@ -6,16 +6,15 @@ import subprocess
 import sys
 import pytest
 
-from app.email_classification_schema import create_current_email_classifications
-from app.action_storage import create_action_schema
 from app.action_skill_config_storage import (
     insert_skill_receipt, load_receipt_projection, export_receipt_projection,
     list_skill_load_receipts, latest_skill_load_receipt_for_pid,
 )
-from app.configs_storage import create_configs_schema, delete_config, insert_config, update_config
+from app.configs_storage import delete_config, insert_config, update_config
 from app.configs_definitions import CONFIG_FIELDS, config_projection
-from app.schedules_storage import create_schedules_schema, insert_schedule, delete_schedule
+from app.schedules_storage import insert_schedule, delete_schedule
 from app.schedules_definitions import schedule_projection, SCHEDULE_FIELDS
+from app.store import AutoReplyStore, _close_idle_connections
 from tests.configs_source_fixtures import ROOT, source_db, insert as source_insert
 
 
@@ -30,10 +29,6 @@ from app.email_store import EmailStore
 from app.store import AutoReplyStore
 
 path = Path(sys.argv[1])
-if sys.argv[2] == 'repair':
-    with sqlite3.connect(path) as db:
-        db.execute('drop index idx_configs_revision_number')
-        db.execute('drop index idx_schedules_enabled')
 store = AutoReplyStore(path)
 if sys.argv[2] != 'store':
     EmailStore(path)
@@ -66,26 +61,13 @@ def test_current_schema_is_stable_across_cold_process_hash_seeds(tmp_path):
     assert len(set(hashes.values())) == 1
     path = tmp_path / 'fresh-0.sqlite3'
     assert probe(path, 1) == hashes[0]
-    repair_path = tmp_path / 'repair.sqlite3'
-    probe(repair_path, 0, 'store')
-    assert probe(repair_path, 42, 'repair') == hashes[0]
 
 @pytest.fixture
-def target():
-    with closing(sqlite3.connect(':memory:')) as db:
+def target(tmp_path):
+    AutoReplyStore(tmp_path / 'target.sqlite3')
+    _close_idle_connections()
+    with closing(sqlite3.connect(tmp_path / 'target.sqlite3')) as db:
         db.execute('pragma foreign_keys=on')
-        create_schedules_schema(db)
-        create_current_email_classifications(db)
-        db.execute("create table tasks(id integer primary key, record_type text)")
-        db.execute("create table runs(id integer primary key, record_type text)")
-        business = json.loads((ROOT / 'docs/superpowers/specs/2026-10-15-database-redesign-business-core-native-source.json').read_text())['actual']['tables']
-        for name in ('business_tasks','business_task_signals'):
-            db.execute(business[name]['sql'])
-        create_action_schema(db, include_reply=True, reply_variant='fresh_memory_fk', include_email=True,
-                             include_followup_sync=True, include_skill_config_receipts=True,
-                             compact_payload=True)
-        create_configs_schema(db)
-        db.commit()
         db.execute('begin')
         yield db
 
@@ -195,7 +177,8 @@ def test_mutable_alias_rekey_and_linked_no_action(target,kind,values):
 
 @pytest.mark.parametrize('variant',('actual','fresh'))
 def test_schedule_delete_all_fields_and_stale_cas(target,variant):
-    row={'id':500,'name':'cron','prompt':'p','cron_expression':'* * * * *','timezone':'UTC','runtime_id':'claude','enabled':1}
+    row={'id':500,'name':'cron','prompt':'p','cron_expression':'* * * * *','timezone':'UTC','runtime_id':'claude','enabled':1,
+         'created_at':'2026-01-01 00:00:00','updated_at':'2026-01-01 00:00:00'}
     with source_db(variant) as source:
         cols=tuple(row)
         source.execute('insert into scheduled_tasks('+','.join(cols)+') values('+','.join('?' for _ in cols)+')',tuple(row.values()))

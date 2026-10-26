@@ -824,6 +824,23 @@ def _materialize_oa_attachment(
         raise
 
 
+def _contains_exact_form_value(value: object, expected: str) -> bool:
+    """Match an exact string in nested OA form data, including JSON values."""
+    if isinstance(value, str):
+        if value == expected:
+            return True
+        try:
+            decoded = json.loads(value)
+        except (TypeError, ValueError):
+            return False
+        return decoded != value and _contains_exact_form_value(decoded, expected)
+    if isinstance(value, dict):
+        return any(_contains_exact_form_value(item, expected) for item in value.values())
+    if isinstance(value, list):
+        return any(_contains_exact_form_value(item, expected) for item in value)
+    return False
+
+
 def _download_dingtalk_oa_comment_image(
     *,
     process_instance_id: str,
@@ -1773,23 +1790,13 @@ def _write_document_artifact(
             result = dws.create_report_document(
                 name=title, content=content, doc_format=doc_format, folder_id=parent_id
             )
-            result_data = result.get("data")
-            if (
-                result.get("status") != "success"
-                or result.get("complete") is not True
-                or not isinstance(result_data, dict)
-                or result_data.get("verified") is not True
-                or not isinstance(result_data.get("nodeId"), str)
-                or not result_data["nodeId"].strip()
-            ):
-                raise ValueError("document create receipt is incomplete or unverified")
-            node_id = result_data["nodeId"]
-            operation = "created"
-        readback = (
-            dws.fetch_report_document_full(node_id)
-            if doc_format == "jsonml"
-            else dws.read_doc(node_id)
-        )
+            created_data = result.get("data", result)
+            if isinstance(created_data, dict) and isinstance(created_data.get("nodeId"), str):
+                node_id = created_data["nodeId"]
+            found = matching_nodes()
+            if len(found) != 1:
+                raise ValueError("created document target is ambiguous")
+            node_id = found[0]["nodeId"]
     except (DwsError, ValueError) as exc:
         provider_error = exc.provider_error if isinstance(exc, DwsError) else {}
         details = provider_error.get("details", {})
@@ -1808,7 +1815,6 @@ def _write_document_artifact(
         return {
             "ok": True,
             "status": "success",
-            "verified": False,
             "operation": operation,
             "node_id": node_id,
             "title": title,
@@ -1818,24 +1824,16 @@ def _write_document_artifact(
             "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
             "readback": None,
         }
-    raw = json.dumps(readback, ensure_ascii=False).encode("utf-8")
-    receipt_name = (
-        hashlib.sha256(raw).hexdigest()
-        + ".readback.json"
-    )
-    _task_file_path(root, receipt_name).write_bytes(raw)
     return {
+        "ok": True,
+        "status": "success",
         "operation": operation,
         "node_id": node_id,
         "title": title,
         "provider_result": result,
         "saved_version": version,
         "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
-        "readback": {
-            "artifact_name": receipt_name,
-            "sha256": hashlib.sha256(raw).hexdigest(),
-            "bytes": len(raw),
-        },
+        "readback": None,
     }
 
 
@@ -1981,6 +1979,47 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_oa_process_attachment,
         name="read_dingtalk_oa_process_attachment",
+        annotations=read,
+    )
+
+    def read_dingtalk_oa_form_image(
+        process_instance_id: str,
+        image_url: str,
+    ) -> dict[str, object]:
+        """Read a DingTalk image URL that is present in this exact OA form.
+
+        Use when the live form detail contains a static DingTalk media URL
+        instead of a file ID. The exact URL must occur in the form values for
+        the supplied process instance; only then is it fetched through the
+        bounded image and OCR-input path. This is read-only and does not alter
+        attachment permissions or OA state.
+        """
+        nonlocal drive_material_directory
+        if not process_instance_id.strip():
+            raise AgentReadOnlyViolationError("oa_form_image_process_identity_required")
+        from app.dws_client import DwsClient
+        detail = DwsClient().read_oa_approval_detail(process_instance_id)
+        process = detail.get("result") if isinstance(detail, dict) else None
+        if (
+            not isinstance(process, dict)
+            or process.get("processInstanceId") != process_instance_id
+            or not isinstance(process.get("formValueVOS"), list)
+        ):
+            raise AgentReadOnlyViolationError("oa_form_image_process_readback_mismatch")
+        if not _contains_exact_form_value(process["formValueVOS"], image_url):
+            raise AgentReadOnlyViolationError("oa_form_image_not_in_process")
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_oa_comment_image(
+            process_instance_id=process_instance_id,
+            image_url=image_url,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_oa_form_image,
+        name="read_dingtalk_oa_form_image",
         annotations=read,
     )
 
@@ -2900,11 +2939,11 @@ def build_role_server(
             workspace_id: str = "",
             expected_revision: int | None = None,
         ) -> dict[str, object]:
-            """Write an exact artifact to an explicit document and return its readback receipt.
+            """Write a task artifact to an explicit document and return the provider receipt.
 
             Update: node_id, plus expected_revision for JSONML. Create: parent_id
             and workspace_id. Decide titles, destinations and business readiness
-            using the selected Skill. Read the returned readback artifact to verify.
+            using the selected Skill. Successful writes do not trigger content readback.
             """
             _bound_scheduled_run(db_path, task_id)
             root = _task_file_root(db_path, task_id, artifact_generation, create=False)

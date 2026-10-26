@@ -3,7 +3,6 @@
 from datetime import UTC, datetime
 import hashlib
 import importlib.util
-import json
 from pathlib import Path
 import sys
 from types import SimpleNamespace
@@ -140,7 +139,7 @@ def test_scheduled_activity_rejects_window_after_trigger_before_read(
 
 @pytest.mark.parametrize("document_exists", [False, True])
 @pytest.mark.parametrize("url_field", ["url", "docUrl", None])
-def test_skill_destination_preserves_exact_provider_folder_and_generic_write_readback(
+def test_skill_destination_preserves_exact_provider_folder_and_generic_write_receipt(
     tmp_path,
     monkeypatch,
     document_exists,
@@ -224,10 +223,9 @@ def test_skill_destination_preserves_exact_provider_folder_and_generic_write_rea
     assert destination["folder"] == folder
     assert result["node_id"] == document["nodeId"]
     assert result["title"] == title
-    readback = (tmp_path / result["readback"]["artifact_name"]).read_bytes()
-    assert json.loads(readback) == {"content": "# Verified report"}
-    assert result["readback"]["sha256"] == hashlib.sha256(readback).hexdigest()
-    assert result["readback"]["bytes"] == len(readback)
+    assert result["ok"] is True and result["status"] == "success"
+    assert result["readback"] is None
+    assert not list(tmp_path.glob("*.readback.json"))
     assert result["content_sha256"] == hashlib.sha256(b"# Verified report").hexdigest()
     assert result["operation"] == ("updated" if document_exists else "created")
     assert writes[0][0] == result["operation"]

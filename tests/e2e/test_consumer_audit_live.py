@@ -286,6 +286,8 @@ class CalendarRunnerContractExecutor:
         self.commands: list[list[str]] = []
         self.prompts: list[str] = []
         self.sessions: list[str] = []
+        self.event_types: list[tuple[str, ...]] = []
+        self.return_codes: list[int] = []
 
     def __call__(self, command, *, prompt: str, on_stdout_line, **_kwargs):
         self.commands.append(list(command))
@@ -299,6 +301,9 @@ class CalendarRunnerContractExecutor:
             *(json.dumps(record) for record in records),
             json.dumps({"type": "turn.completed", "turn": {"id": session}}),
         ]
+        self.event_types.append(
+            tuple(str(json.loads(line).get("type", "")) for line in lines)
+        )
 
 
         stdout = "\n".join(lines)
@@ -306,7 +311,9 @@ class CalendarRunnerContractExecutor:
             stdout = native_consumer_stream_for_command(stdout, list(command))
         for line in lines:
             on_stdout_line(line)
-        return ProcessRunResult(0, stdout, "")
+        result = ProcessRunResult(0, stdout, "")
+        self.return_codes.append(result.returncode)
+        return result
 
     def _skill_records(self, role: str) -> list[dict[str, object]]:
         records = []
@@ -471,6 +478,62 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
         ]
 
 
+def _orchestration_failure_diagnostics(store, task, executor) -> dict[str, object]:
+    """Expose runtime lifecycle metadata without logging prompts or result bodies."""
+    runs = store.list_agent_runs_for_task_generation(
+        task.id, task.execution_generation, load_events=False
+    )
+    run_diagnostics = []
+    for run in runs:
+        attempts = store.list_agent_runtime_attempts(run.id)
+        try:
+            error = json.loads(run.structured_error_json or "{}")
+        except json.JSONDecodeError:
+            error = {}
+        run_diagnostics.append({
+            "role": run.role.value,
+            "status": run.status,
+            "error_fields": {
+                key: error[key]
+                for key in ("code", "retryable", "authorization_required", "source_code")
+                if key in error
+            },
+            "lease_active": (
+                store.agent_run_lease_is_active(run.id)
+                if run.status == "running" else False
+            ),
+            "transcript_range": (run.transcript_start_line, run.transcript_end_line),
+            "session_present": bool(run.codex_session_id),
+            "attempts": tuple({
+                "attempt_number": attempt.attempt_number,
+                "route": attempt.route_name,
+                "runtime_kind": attempt.runtime_kind,
+                "credential_mode": attempt.credential_mode,
+                "status": attempt.status,
+                "failure_class": attempt.failure_class,
+                "failure_code": attempt.failure_code,
+                "session_mode": attempt.session_mode.value,
+                "source_session_present": bool(attempt.source_session_id),
+                "session_present": bool(attempt.session_id),
+                "transcript_range": (attempt.transcript_start, attempt.transcript_end),
+                "transcript_kind": attempt.transcript_reference.partition(":")[0],
+                "result_schema_present": bool(attempt.result_schema_id),
+            } for attempt in attempts),
+        })
+    return {
+        "runs": tuple(run_diagnostics),
+        "executor": {
+            "call_count": len(executor.commands),
+            "command_programs": tuple(
+                command[0] if command else "" for command in executor.commands
+            ),
+            "session_count": len(executor.sessions),
+            "event_types": tuple(executor.event_types),
+            "return_codes": tuple(executor.return_codes),
+        },
+    }
+
+
 def _persisted_skill_receipts(run) -> dict[str, tuple[str, str]]:
     receipts = {}
     for event in run.tool_events:
@@ -576,12 +639,7 @@ def test_deterministic_native_runner_calendar_clarification_contract(
 
     assert result.status == "executed", (
         result.summary,
-        [
-            (run.status, run.structured_error_json)
-            for run in store.list_agent_runs_for_task_generation(
-                task.id, task.execution_generation
-            )
-        ],
+        _orchestration_failure_diagnostics(store, task, executor),
     )
     assert result.final_role is AgentRole.AUDIT
     assert result.audit_result is not None
@@ -701,12 +759,7 @@ def test_deterministic_silent_meeting_reads_material_then_accepts(
 
     assert result.status == "executed", (
         result.summary,
-        [
-            (run.status, run.structured_error_json)
-            for run in store.list_agent_runs_for_task_generation(
-                task.id, task.execution_generation
-            )
-        ],
+        _orchestration_failure_diagnostics(store, task, executor),
     )
     runs = store.list_agent_runs_for_task_generation(
         task.id, task.execution_generation

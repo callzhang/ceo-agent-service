@@ -1,8 +1,8 @@
 import pytest
 
 from app.action_storage import update_action
-from app.run_storage import insert_run
 from app.store import AutoReplyStore
+from tests.support.native_run_rows import insert_run_row
 from tests.test_action_receipt_callers import _update_reply_task_fixture
 
 
@@ -22,7 +22,7 @@ def test_attention_follows_original_run_task_after_scanner_trigger_changes(tmp_p
         send_status="failed",
     )
     with store._connect() as db:
-        run_id = insert_run(db, "agent_runs", {
+        run_id = insert_run_row(db, {
             "task_id": task.id, "execution_generation": task.execution_generation,
             "role": "audit", "status": "completed",
         }).lastrowid

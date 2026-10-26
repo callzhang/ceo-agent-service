@@ -65,9 +65,9 @@ areas are CEO judgment, company metrics and appended new tracking rows.
 
 ## Evidence and completion
 
-The write returns provider metadata and a readback artifact reference. Read it
-with read_task_artifact; follow next_offset until the complete content is read.
-Compare managed areas and retained content with before.json, using a local
-script for large comparisons. Artifact availability and a local render alone
-do not establish an external write. Report the real document identity, readback
-and any unresolved business/material gap in the result.
+The write returns provider metadata and document identity. Retain this receipt;
+no automatic content readback or full-body comparison is required. Artifact
+availability and a local render alone do not establish an external write.
+Report the real document identity, write receipt and any unresolved
+business/material gap in the result. Inspect the target when execution status
+is unknown before deciding whether another write is needed.

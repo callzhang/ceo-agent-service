@@ -7,6 +7,8 @@ from pathlib import Path
 
 import pytest
 
+from tests.support.current_inventory import CURRENT_TABLES
+
 from app import action_storage
 from app.action_followup_sync_storage import LINK_TRIGGER_SQL
 from app.action_task_delivery_definitions import TASK_DELIVERY_PARENTS
@@ -177,7 +179,8 @@ def test_fresh_paired_constructors_publish_final_inventory(tmp_path, first):
             name for kind, name, _table, _sql in schema_objects(db)
             if kind == "table"
         }
-        assert actual_tables == expected_tables
+        assert expected_tables == CURRENT_TABLES
+        assert actual_tables == CURRENT_TABLES
         assert schema_objects(db) == current_objects(email_ledger=True)
         assert store._schema_manifest_is_current_in_connection(
             db, include_run_snapshots=True,

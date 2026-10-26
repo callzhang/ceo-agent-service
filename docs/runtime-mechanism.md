@@ -1042,6 +1042,12 @@ DWS CLI's read-only `attachment download-url` command, limits downloaded bytes,
 and shares the same extraction, OCR-page handoff, temporary lifetime and response
 size checks. Generic Drive access denial does not prove that this OA-scoped read
 is unavailable. This path does not call `authorize-preview` or modify access.
+Some OA image fields are represented directly as DingTalk static media URLs rather
+than file IDs. Consumer and Audit can use `read_dingtalk_oa_form_image` for these
+fields; the reader first verifies the exact URL is present in the live form values
+for the supplied process instance, then applies the same origin, redirect, size,
+OCR and temporary-file bounds as OA comment images. A URL from another process is
+rejected before any network fetch.
 
 When the premium comment download is unavailable (for example the tenant's OA
 Premium benefit has expired) or the form download is refused, the Consumer runs
@@ -1527,12 +1533,12 @@ Workbench 领取轮询先只读检查是否存在 queued 或租约已过期的 r
 检查保持不变；显式空路径配置不会重新加载默认值，仍检查固定临时路径。该修复减少
 逐字段重复解析环境与主目录的计算成本，不代表所有数据库 I/O 或锁等待均已消除。
 
-日报的 task-bound `consumer_document_write` 回执除报告文档和正文读回外，还原样返回
+日报的 task-bound `consumer_document_write` 回执除报告文档和 provider 写入结果外，还原样返回
 已从目标知识库完整目录解析出的 `folder` 元数据。Consumer 使用其中 provider 实际提供的
 `url` / `docUrl` 完成日报文件夹链接要求；服务不由 node ID 拼接 URL，也不为返回该元数据
 新增写操作。provider 未提供链接时仍保留缺失事实。周报回执、审核和消息投递边界不变。
 
-通用文档写入在 DWS 明确返回 `doc.operation.v1` 的对应写操作 `partial_success` 时保留其结构化错误及已执行步骤；写入返回后服务读回失败也保留已有 provider 结果。已确认写入执行成功即返回 `ok=true/status=success`；目标解析、读回或核验失败独立保留为 `verified=false/readback=null` 及原始错误，不把核验失败当作写入失败，不制造成功读回回执、不自动重写；未执行或提交状态未知仍是原错误。Agent 继续使用现有读取入口核对目标，现有 Audit 与任务续跑规则不变。
+通用文档写入采用 DWS 原生 `doc create/update`，成功返回 `ok=true/status=success`、provider 写入回执、文档身份及正文 SHA；`readback=null`，不输出内容核验结论。自动正文读回、格式比较和读回产物生成已移除。JSONML 输入解析、revision 检查及版本保存保留，未执行或提交状态未知仍抛出错误，不自动重写。创建后目标解析失败保留已执行的写入回执及解析错误。Agent/Audit 仍判断业务目标是否达到，执行状态不明或具体内容有疑问时可使用既有读取入口调查。
 
 所有系统业务审核项必须对应实际系统任务及其当前业务实例；工具或接口存在不构成审核需求。没有对应系统任务就不设置该业务的系统审核项。当前对应关系见 [系统任务与审核范围](audit-task-scope.md)。小青面试与提交由 Derek 在个人对话中处理，不属于本次后台系统审核范围。扫描、下载和登录命令沿用既有技术结果验证，不因这条范围规则新增 Audit 回合。
 
@@ -1546,10 +1552,8 @@ Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取当
 作为耐久参考区、禁止把临时代码、测试、数据库、日志、下载、截图、缓存、草稿、中间结果或单次运行
 工件存入 memory，临时文件只使用 task-bound `/tmp` 工作区；有价值的最终材料仅在已有授权目的地按主题
 归档。部署前遗留的 workspace 工件会在任务下次读写时迁入 `/tmp`，终态清理也会清除尚未访问的旧位置。
-`consumer_document_write` 处理当前 scheduled 任务产物和显式文档目标。创建前通过
-`dws doc +list --folder <parent_id> --page-all` 完整核对同名目标；创建后使用成功且已验证的
-provider 回执 nodeId 进行正文读回，不把文档 ID 交给 Wiki 节点列表接口。工具返回的实际内容读回及 SHA
-证明普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
+`consumer_document_write` 处理当前 scheduled 任务产物和显式文档目标。工具返回的 provider 回执与提交正文 SHA
+记录普通材料写入，不是已审核消息或 OA 动作的 System 回执。原生 V8 可调用具名工具和计算，
 Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audit 只读。实际不可用的工具应如实报告，不能伪造执行。
 系统注册且需要审核的动作仍只由 SystemExecutor 执行。Consumer 的结果解析只验证严格 wire，
 不再对整份文字扫描“已发送”等完成短语；历史事实和本轮工作由完整来源及真实回执支撑，
@@ -2051,7 +2055,7 @@ Task 且已确认关联同 Project；当前显示成员仍只取 open/waiting。
 零 Task 项目仍可读 context、当前职责/事实证明与有界近期来源，context revision limit=1，
 证据有界并固定保留引用 ID。current_project_attention 保留真实卡成员和原 assessment 原文。
 Task 语义上下文用无损紧凑 JSON 序列化，省去排版缩进；字段、顺序、原文字符串、引用偏移和检索选择保持不变。
-source_documents 以完整来源绑定身份键提供精确版本的共享正文一次，每份 document 带 `doc` 序号和其 Signal 共有的来源字段（source_type/source_ref/source_time、会话、作者）及 `document_id` 一次；source_signals 只保留 Signal id、`doc`、`context_json`、`created_at`，某个共有字段取值与其 document 不同时才在该 Signal 上重复写出（真实回放 104 条 Signal 的这两部分 JSON 由 76,825 降到 48,279 字符）。Agent 引用仍是 Signal id 加该 document 的 source_ref，服务校验引文不变；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
+source_documents 以完整来源绑定身份键提供精确版本的共享正文一次，每份 document 带 `doc` 序号和其 Signal 共有的来源字段（source_type/source_ref/source_time、会话、作者）及 `document_id` 一次；source_signals 只保留 Signal id、`doc`、`context`（指向 `signal_contexts` 里的 context_json 文本，相同文本只写一次）、`created_at`，某个共有字段取值与其 document 不同时才在该 Signal 上重复写出（真实回放 104 条 Signal 的这两部分 JSON 由 76,825 降到 48,279 字符）。Agent 引用仍是 Signal id 加该 document 的 source_ref，服务校验引文不变；数据库内部 dedupe_key 不进入 Agent 输入，持久去重键及其查询行为不变。
 同一轮 Task semantic context 中完全相同的 `visible_ranges` 与 `decoded_excerpts` 只序列化一次，其余文档用 `duplicate_of_document_id` 指向首份投影；文档身份、元数据、信号和引用保持独立，展开后与原始 source bundle 完全一致。若压缩后的完整 bundle 不更短，则保留原始表示。
 Task 输入里，当前 WorkItem 的正文就是 Work Item JSON 里的 `summary`，只出现一次；语义上下文不再含
 `current_work_item`，也没有 `source_metrics`。来源绑定带外部定位信息（provider 或 native 定位，`source_ref`
@@ -2761,7 +2765,7 @@ fallback 换到其余配置线路（Derek 2026-09-24，此前定时任务固定�
 provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停状态，不逐次写 Attention。
 
 创建 Audit 输入时，编排器从当前代次、当前 reply task 且已完成的 Consumer 运行中（包括此前反馈修订的运行），读取
-`agent_cli.consumer_document_write` 已完成调用的结构化返回，或 Claude 轨迹中单个文本块／字符串承载的同一 JSON 对象，并投影文档身份、读回对象摘要和
+`agent_cli.consumer_document_write` 已完成调用的结构化返回，或 Claude 轨迹中单个文本块／字符串承载的同一 JSON 对象，并投影文档身份、provider 写入结果摘要和
 字节数；不把报告正文重复注入。无匹配返回时 Audit 明确看到空列表。该证据只证明服务工具
 返回了什么，不证明文档已被独立核实或报告事实正确。该交接适用于 `channel=scheduled` 的
 Agent 任务，不增加日报或周报专属规则，也不改变 Audit 的独立审查标准。
@@ -2876,7 +2880,7 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 
 定时任务固定 Agent 案例在独立离线原生 CLI 中运行。评测 Consumer、Audit 和修订共享同一传输字段、标签与身份投影定义；业务规则仍来自各自精确 Skill 快照。冻结案例和评分函数，不改标历史失败；首轮、一次审核修订、实际正文/动作草稿与外部发布分别记录。参见 [Agent 验收记录](scheduled-task-generic-agent-validation.md)。评测协议不改变生产 Consumer/Audit 契约。
 
-`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。返回 provider 结果及完整读回产物的引用；Agent/Audit 读取全部分页或使用本地脚本比较。DWS 命令失败诊断会隐藏 `--content` 和 `--content-file` 的值，不把文档正文或本地内容路径写入 trajectory。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
+`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。通过 DWS 原生 `doc create/update` 提交，返回 `ok=true/status=success`、provider 写入回执、文档身份和提交正文 SHA；不自动读回正文、不生成 readback 产物，也不进行内容或格式比对。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
 
 日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。Consumer 先读取服务事实和群消息；仅当会议管理细节仍缺失时，才读取本任务冻结的 `dingtalk-minutes` Skill 并查询听记摘要。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。目标周会文档若是只有议程的新模板、没有「重点问题及待办跟踪」「CEO本周判断」「公司级重点指标」三个编号区块，渲染器在文档顶部按这个顺序补上缺的区块（跟踪表用标准表头），原有内容全部保留在其后；已有的区块不动，重复的仍然拒绝渲染（2026-10-25，周报运行 417414 曾因此首轮失败，由 Agent 临时补结构）。管理周报缺 CRM、财务、遥测或业务线材料时写「无数据」并披露覆盖缺口，照常发布；只有已声明的读取或文档写入本身失败才报 `failed`，不能因证据不全报 `operation_unavailable`（2026-10-24 周报任务 417411 曾这样自行终止，没有经过 Audit）。CRM 实际用 Consumer shell 里的 `sharecrm` 只读命令读取，其钥匙串登录需按 Consumer 权限模型请求提权；财务暂无可读来源。
 

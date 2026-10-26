@@ -159,15 +159,19 @@ suggestion, and saved Attention citations also retain their original Signals.
 
 `source_bundle` renders each exact source version once in `source_documents`,
 numbered `doc` within the input, together with what its Signals share: source
-type/ref/time, conversation and actor. `source_signals` keeps the real Signal ID,
-`context_json` and `created_at`, and points each Signal at its document by `doc`;
+type/ref/time, conversation and actor. `source_signals` keeps the real Signal ID and `created_at`, and points each
+Signal at its document by `doc` and at its `context_json` text by `context`;
+`signal_contexts` holds each distinct `context_json` text once, keyed by that
+number (Signals of one meeting or report usually share it);
 a Signal repeats one of the shared fields only when its value differs from its
 document's (for example a renamed conversation). The `document_id` identity key
 is written once, on the document. Citation is unchanged: the Agent gives the
 Signal id and that document's `source_ref`, and the service checks the quote
 against the Signal's own bound version. On a real replay of 104 Signals the
 `source_documents` plus `source_signals` JSON fell from 76,825 to 48,279 characters
-(72,025 to 36,280 for a conversation with no external-locator sources). The
+with the shared source fields, and on to 29,937 once `context_json` was written once
+(45,536 before that step; 36,280 to 22,741 for a conversation with no
+external-locator sources). The
 current Work Item is not part of this context: its text is the `summary` in the
 prompt's Work Item JSON, once.
 

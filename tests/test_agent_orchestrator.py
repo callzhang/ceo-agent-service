@@ -163,9 +163,10 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
                 "tool": "consumer_document_write", "id": "write-1",
                 "arguments": {"content": "report body"},
                 "result": {"structuredContent": {
+                    "ok": True, "status": "success",
                     "operation": "updated", "node_id": "doc-7", "title": "Report",
                     "provider_result": {"nodeId": "doc-7"},
-                    "readback": {"content": "report body"},
+                    "readback": None,
                 }},
             },
         }],
@@ -177,8 +178,8 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
         "consumer_run_id": 77, "tool_call_id": "write-1",
         "operation": "updated", "document_node_id": "doc-7",
         "document_title": "Report",
-        "readback_sha256": hashlib.sha256(b'{"content":"report body"}').hexdigest(),
-        "readback_bytes": len(b'{"content":"report body"}'),
+        "provider_result_sha256": hashlib.sha256(b'{"nodeId":"doc-7"}').hexdigest(),
+        "provider_result_bytes": len(b'{"nodeId":"doc-7"}'),
     },)
     assert "report body" not in str(receipts)
 
@@ -187,9 +188,10 @@ def test_scheduled_audit_receives_compact_service_report_receipt_only():
 def test_scheduled_audit_reads_claude_text_tool_return_without_report_body(text_result):
     task = type("Task", (), {"id": 42, "channel": "scheduled", "execution_generation": "generation-1"})()
     returned = {
+        "ok": True, "status": "success",
         "operation": "created", "node_id": "doc-8", "title": "Weekly Report",
         "provider_result": {"nodeId": "doc-8"},
-        "readback": {"content": "private synthetic weekly report"},
+        "readback": None,
     }
     run = type("Run", (), {
         "id": 78, "reply_task_id": 42, "execution_generation": "generation-1",
@@ -217,9 +219,10 @@ def test_scheduled_receipts_ignore_other_server_and_failed_tool_result():
         "type": "mcp_tool_call", "tool": "consumer_document_write",
         "id": "write-1", "arguments": {"content": "report body"},
         "result": {"structuredContent": {
-            "operation": "updated", "node_id": "doc-7", "title": "Report",
+            "ok": True, "status": "success",
+                    "operation": "updated", "node_id": "doc-7", "title": "Report",
             "provider_result": {"nodeId": "doc-7"},
-            "readback": {"content": "report body"},
+            "readback": None,
         }},
     }
     run = type("Run", (), {
@@ -261,6 +264,7 @@ def test_scheduled_audit_receipt_projection_excludes_unbound_events(
                 "type": "mcp_tool_call", "server": "agent_cli", "tool": tool,
                 "id": "write-1", "arguments": {"content": "x"},
                 "result": {"structuredContent": {
+                    "ok": True, "status": "success",
                     "operation": "updated", "node_id": "doc-7", "title": "Report",
                     "readback": {"content": "x"},
                 }},
@@ -495,7 +499,7 @@ def test_active_audit_lease_defers_and_expiry_creates_append_only_attempt(tmp_pa
     assert waiting.status == "failed_retryable"
     assert len(audit.calls) == 0
     with sqlite3.connect(store.path) as db:
-        db.execute("update runs set lease_expires_at='2000-01-01 00:00:00' where record_type='agent_runs' and cast(legacy_key as integer)=?", (active.id,))
+        db.execute("update runs set lease_expires_at='2000-01-01 00:00:00' where id=?", (active.id,))
     resumed = driver.process(task, context, refresh_context=lambda: context)
     assert resumed.status == "executed"
     assert [run.turn_attempt for run in store.list_agent_runs_for_task_generation(

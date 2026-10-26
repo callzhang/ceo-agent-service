@@ -209,8 +209,7 @@ def test_arbitrary_scheduled_document_uses_exact_artifact_and_revision(
     update = next(c[1] for c in fake.calls if c[0] == "update")
     assert update["content"] == content and update["expected_revision"] == 12
     assert result["operation"] == "updated" and result["node_id"] == "node"
-    saved = json.loads((tmp_path / result["readback"]["artifact_name"]).read_text())
-    assert saved["content"]["nodeId"] == "node"
+    assert result["ok"] is True and result["readback"] is None
     assert "publishable" not in result
 
 
@@ -245,7 +244,7 @@ def test_generic_document_mechanical_failures_are_not_business_judgments(
         assert not [x for x in fake.calls if x[0] in {"create", "update"}]
 
 
-def test_generic_document_creation_and_large_body_readback(tmp_path, monkeypatch):
+def test_generic_document_creation_preserves_large_body_without_readback(tmp_path, monkeypatch):
     fake = FakeDws()
     monkeypatch.setattr("app.dws_client.DwsClient", lambda: fake)
     content = "report body\n" * 15000
@@ -259,12 +258,11 @@ def test_generic_document_creation_and_large_body_readback(tmp_path, monkeypatch
         workspace_id="ws",
     )
     assert next(x[1] for x in fake.calls if x[0] == "create")["content"] == content
-    assert result["node_id"] == "new" and "content" not in result["readback"]
-    listing = next(x[1] for x in fake.calls if x[0] == "list")
-    assert listing == [
+    assert result["node_id"] == "new" and result["readback"] is None
+    listings = [x[1] for x in fake.calls if x[0] == "list"]
+    assert listings == [[
         "dws", "doc", "+list", "--folder", "parent", "--page-all", "--format", "json"
-    ]
-    assert len([x for x in fake.calls if x[0] == "list"]) == 1
+    ]] * 2
 
 
 def test_tool_catalog_has_no_named_report_gate_and_audit_is_read_only():
@@ -311,14 +309,15 @@ def test_document_write_preserves_crlf_and_exact_artifact_digest(tmp_path, monke
     assert receipt["content_sha256"] == hashlib.sha256(body).hexdigest()
 
 
-def test_document_readbacks_are_immutable_across_rewrites(tmp_path, monkeypatch):
+def test_document_receipts_preserve_authored_digest_across_rewrites(tmp_path, monkeypatch):
     fake = FakeDws()
     monkeypatch.setattr("app.dws_client.DwsClient", lambda: fake)
     (tmp_path / "body.md").write_bytes(b"first")
     first = agent_cli._write_document_artifact(root=tmp_path, artifact_name="body.md", title="Any", doc_format="markdown", node_id="node")
-    saved = (tmp_path / first["readback"]["artifact_name"]).read_bytes()
+    saved = dict(first)
     fake.read_doc = lambda node: {"nodeId": node, "text": "changed provider content"}
     (tmp_path / "body.md").write_bytes(b"second")
     second = agent_cli._write_document_artifact(root=tmp_path, artifact_name="body.md", title="Any", doc_format="markdown", node_id="node")
-    assert first["readback"]["artifact_name"] != second["readback"]["artifact_name"]
-    assert (tmp_path / first["readback"]["artifact_name"]).read_bytes() == saved
+    assert first["content_sha256"] != second["content_sha256"]
+    assert first == saved
+    assert first["readback"] is None and second["readback"] is None

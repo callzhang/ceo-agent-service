@@ -251,8 +251,9 @@ def _compact_by_document(
 ) -> dict:
     """Write each source's shared fields once and let Signals point to it.
 
-    `doc` is the entry's number within this input. Only what the Agent reads is
-    shortened: the Signal id, quotation and bound version are unchanged.
+    `doc` is the entry's number within this input, `context` the number of the
+    Signal's context_json text in `signal_contexts`. Only what the Agent reads
+    is shortened: the Signal id, quotation and bound version are unchanged.
     """
     numbers: dict[str, int] = {}
     documents = []
@@ -265,17 +266,24 @@ def _compact_by_document(
             **{name: first[name] for name in _DOCUMENT_SOURCE_FIELDS},
             **{name: value for name, value in entry.items() if name != "document_id"},
         })
+    # Signals of one meeting or report share the same context_json text.
+    contexts: dict[str, int] = {}
     signals = []
     for reference in references:
         key = reference["document_id"]
         first = first_reference[key]
+        context = contexts.setdefault(reference["context_json"], len(contexts) + 1)
         signals.append({
             "id": reference["id"], "doc": numbers[key],
             **{
                 name: reference[name] for name in _DOCUMENT_SOURCE_FIELDS
                 if reference[name] != first[name]
             },
-            "context_json": reference["context_json"],
+            "context": context,
             "created_at": reference["created_at"],
         })
-    return {"source_documents": documents, "source_signals": signals}
+    return {
+        "source_documents": documents,
+        "signal_contexts": {str(number): text for text, number in contexts.items()},
+        "source_signals": signals,
+    }

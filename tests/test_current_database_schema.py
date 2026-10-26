@@ -7,6 +7,7 @@ import pytest
 from app.store import AutoReplyStore
 from app.email_store import EmailStore
 from app.current_schema_manifest import schema_is_current
+from tests.support.current_inventory import CURRENT_TABLES
 
 
 @pytest.mark.parametrize("first", ("store", "email"))
@@ -18,9 +19,7 @@ def test_blank_and_cold_constructors_select_final_graph(tmp_path, first):
     EmailStore(path)
     with sqlite3.connect(path) as db:
         assert schema_is_current(db)
-        assert {row[0] for row in db.execute("select name from sqlite_schema where type='table' and name not glob 'sqlite_*'")} == {
-            "tasks", "runs", "actions", "business", "emails", "provenance", "configs",
-            "provider_state", "schedules", "state", "email_schema_migrations"}
+        assert {row[0] for row in db.execute("select name from sqlite_schema where type='table' and name not glob 'sqlite_*'")} == CURRENT_TABLES
         before = db.execute("select count(*) from configs").fetchone()[0]
     signal_id = store.create_business_task_signal(source_type="message", source_ref="original:one",
         evidence_text="A transient observed source", dedupe_key="one")
@@ -40,7 +39,10 @@ def test_known_auxiliary_damage_is_rejected(tmp_path):
     path = tmp_path / "damaged.sqlite3"
     AutoReplyStore(path)
     with sqlite3.connect(path) as db:
-        db.execute("drop index idx_actions_candidates_task")
+        index = db.execute(
+            "select name from sqlite_schema where type='index' and name like 'idx_actions_%' order by name"
+        ).fetchone()[0]
+        db.execute(f'drop index "{index}"')
         before = tuple(db.iterdump())
     with pytest.raises(sqlite3.IntegrityError, match="malformed"):
         AutoReplyStore(path)

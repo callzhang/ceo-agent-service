@@ -33,4 +33,4 @@ python3 -m scripts.render_dingtalk_jsonml --help
 The renderer validates its required input fields and JSONML in one invocation.
 Business coverage and report quality are judged by the Skill and Audit. The
 former service `publishable` publication condition is retired. Submit the exact
-rendered artifact with its target revision and verify the complete readback.
+rendered artifact with its target revision and retain the provider write receipt.

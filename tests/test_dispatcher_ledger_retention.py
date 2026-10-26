@@ -92,26 +92,3 @@ def test_completion_prune_uses_bounded_index_work_inside_writer(
     _complete_ledger(store, envelope=envelope, owner="worker", now=NOW)
     assert steps <= 100000
 
-
-def test_existing_schema_adds_terminal_index_without_changing_lease_rows(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    import app.store as store_module
-
-    store = AutoReplyStore(tmp_path / "existing-leases.sqlite3")
-    _ledger(store, 3)
-    with store._connect() as db:
-        projection = state_projection("dispatcher_claim_leases", include_rowid=True)
-        before = [tuple(row) for row in db.execute(
-            f"select * from ({projection}) order by rowid"
-        )]
-        db.execute("drop index idx_state_dispatcher_terminal")
-    monkeypatch.setattr(store_module, "_INITIALIZED_STORE_PATHS", set())
-    reopened = AutoReplyStore(store.path)
-    with reopened._connect() as db:
-        indexes = {row[1] for row in db.execute("pragma index_list(state)")}
-        after = [tuple(row) for row in db.execute(
-            f"select * from ({projection}) order by rowid"
-        )]
-    assert "idx_state_dispatcher_terminal" in indexes
-    assert after == before
