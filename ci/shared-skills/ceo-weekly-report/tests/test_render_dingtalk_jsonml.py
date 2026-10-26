@@ -243,10 +243,51 @@ class MeetingDocumentTests(unittest.TestCase):
         rows = self.tracking_rows(self.render())
         self.assertEqual(rows, self.tracking_rows(self.before))
 
-    def test_missing_section_blocks_render(self):
-        del self.before[5:7]
+    def test_duplicated_section_blocks_render(self):
+        self.before.insert(7, ["h1", {}, "二、CEO本周判断 （复制）"])
         with self.assertRaisesRegex(ValueError, "CEO本周判断"):
             self.render()
+
+    def test_agenda_only_template_gets_the_managed_sections(self):
+        agenda = [
+            ["h2", {}, "固定议程与参会规则"],
+            ["table", {}, ["tr", {}, _tc("议题")]],
+            ["p", {}, "各位各自准备好自己的周报"],
+        ]
+        self.before = ["root", {}, *agenda]
+        rendered = self.render()
+        titles = [node_text(node) for node in rendered if isinstance(node, list) and node[0] == "h1"]
+        self.assertEqual(
+            [title.partition("、")[2] for title in titles],
+            ["重点问题及待办跟踪", "CEO本周判断", "公司级重点指标"],
+        )
+        self.assertEqual(rendered[-3:], agenda)
+        self.assertIn("Friday上线标准需要闭环", str(rendered))
+        self.assertIn("口径与证据", str(rendered))
+        tracking = next(node for node in rendered if isinstance(node, list) and node[0] == "table")
+        rows = [row for row in tracking[2:] if row[0] == "tr"]
+        self.assertEqual(len(rows), 1 + len(self.report["issues"]))
+        self.assertEqual(
+            [node_text(c) for c in rows[0][2:]][:3], ["ID", "事项/跟踪主题", "责任人"]
+        )
+        self.assertEqual(check_document(rendered), [])
+
+    def test_rerun_on_an_agenda_only_template_adds_nothing_twice(self):
+        self.before = ["root", {}, ["h2", {}, "固定议程与参会规则"]]
+        once = self.render()
+        twice = render_meeting_document(once, self.report)
+        self.assertEqual(
+            len([node for node in twice if isinstance(node, list) and node[0] == "h1"]), 3
+        )
+        self.assertEqual(node_text(twice[3]), node_text(once[3]))
+
+    def test_only_the_missing_section_is_added(self):
+        del self.before[5:7]
+        rendered = self.render()
+        titles = [node_text(node) for node in rendered if isinstance(node, list) and node[0] == "h1"]
+        self.assertEqual(sum("CEO本周判断" in title for title in titles), 1)
+        self.assertEqual(sum("重点问题及待办跟踪" in title for title in titles), 1)
+        self.assertIn("口径与证据", str(rendered))
 
     def test_draft_holds_the_full_seven_sections(self):
         draft = str(render_draft(self.report))
