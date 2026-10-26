@@ -7659,21 +7659,6 @@ def _reply_task_progress_text(task: ReplyTask) -> str:
     return "任务尚未完成"
 
 
-def resolve_attempt_detail_reference(
-    store: AutoReplyStore, requested_id: int
-) -> int | None:
-    """Resolve a public Attempt ID or a historical Actions physical-ID URL."""
-    if store.get_reply_attempt(requested_id) is not None:
-        return requested_id
-    with store._connect() as db:
-        row = db.execute(
-            "select cast(legacy_key as integer) as public_id from actions "
-            "where record_type='reply_attempts' and id=?",
-            (requested_id,),
-        ).fetchone()
-    return int(row["public_id"]) if row is not None else None
-
-
 def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, str]:
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None:
@@ -10685,6 +10670,8 @@ def create_audit_app(
 
     @app.get("/attempts/{attempt_id}", response_class=HTMLResponse)
     def attempt_detail(attempt_id: int) -> HTMLResponse:
+        from app.web_api.attempts import resolve_attempt_detail_reference
+
         store = AutoReplyStore(db_path)
         canonical_id = resolve_attempt_detail_reference(store, attempt_id)
         if canonical_id is not None and canonical_id != attempt_id:
