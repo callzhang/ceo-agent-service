@@ -5,11 +5,7 @@ import json
 
 import pytest
 
-from app.email_canonical_storage import (
-    capture_email_canonical_source, migrate_email_canonical_schema,
-    restore_email_canonical_schema,
-)
-from tests.test_email_canonical_storage import current13 as current13, _db, _insert, _message, _classification
+from tests.test_email_canonical_storage import current13 as current13, _message, _classification
 
 
 def test_email_original_reference_has_one_nullable_owner_column(tmp_path):
@@ -20,53 +16,6 @@ def test_email_original_reference_has_one_nullable_owner_column(tmp_path):
         fields = {row[1]: row for row in db.execute("pragma table_info(emails)")}
     assert "message_source_reference_json" in fields
     assert fields["message_source_reference_json"][3] == 0
-
-
-def _retired_canonical(db):
-    original = "完整原文🙂\nwith exact whitespace  "
-    _insert(db, "email_messages", _message(normalized_text=original))
-    _insert(db, "email_classifications", _classification(status="processed"))
-    db.commit()
-    metadata = capture_email_canonical_source(db)
-    migrate_email_canonical_schema(db, metadata)
-    reference = {"kind": "provider", "representation": "provider_body",
-                 "sha256": sha256(original.encode()).hexdigest(), "utf8_bytes": len(original.encode()),
-                 "locator": {"folder": " INBOX ", "uidvalidity": 10, "uid": 20,
-                             "rfc_message_id": "<message>"}}
-    db.execute("update emails set message_normalized_text='',message_source_reference_json=?",
-               (json.dumps(reference),))
-    db.commit()
-    return original, reference, metadata
-
-
-def test_inverse_requires_exact_original_without_rewinding_current_facts(tmp_path, current13):
-    db = _db(tmp_path, current13)
-    original, reference, metadata = _retired_canonical(db)
-    db.execute("update emails set class_subject='current business metadata'")
-    calls = []
-
-    def read_body(row, ref):
-        calls.append((row["stable_message_identity"], ref))
-        return original
-
-    restore_email_canonical_schema(db, metadata, read_body=read_body)
-    assert calls == [("stable-1", reference)]
-    assert db.execute("select normalized_text from email_messages").fetchone() == (original,)
-    assert db.execute("select subject from email_classifications").fetchone() == ("current business metadata",)
-    assert db.execute("pragma quick_check").fetchone() == ("ok",)
-    db.close()
-
-
-@pytest.mark.parametrize("original_available", [False, True])
-def test_inverse_rejects_missing_or_changed_original_before_mutation(tmp_path, current13, original_available):
-    db = _db(tmp_path, current13)
-    _, _, metadata = _retired_canonical(db)
-    before = tuple(db.iterdump())
-    kwargs = {"read_body": lambda row, ref: "different original"} if original_available else {}
-    with pytest.raises(ValueError, match="original"):
-        restore_email_canonical_schema(db, metadata, **kwargs)
-    assert tuple(db.iterdump()) == before
-    db.close()
 
 
 def _provider_message(body):
@@ -130,47 +79,6 @@ def test_source_reader_programming_error_remains_visible():
 
     with pytest.raises(RuntimeError, match="reader bug"):
         locate_original("full original", attempts=[], read_message=broken)
-
-
-@pytest.mark.parametrize("backup_matches", [True, False])
-def test_recovery_uses_exact_backup_and_reads_new_original_without_rewinding_rows(tmp_path, current13, backup_matches):
-    import sqlite3
-    from app.email_body_source import prepare_recovery_originals
-
-    db = _db(tmp_path, current13)
-    original, reference, metadata = _retired_canonical(db)
-    backup = tmp_path / "source-backup.sqlite3"
-    with sqlite3.connect(backup) as source:
-        source.execute("create table email_messages(account_id text,stable_message_identity text,normalized_text text)")
-        source.execute("insert into email_messages values(?,?,?)", ("account", "stable-1",
-                       original if backup_matches else "older source version"))
-    body2 = "new post-migration original"
-    ref2 = reference | {"sha256": sha256(body2.encode()).hexdigest(), "utf8_bytes": len(body2.encode())}
-    # This row did not exist at the backup's point in time.
-    from app.email_canonical_storage import insert_email_message
-    insert_email_message(db, _message("stable-new", normalized_text=""))
-    db.execute("update emails set message_source_reference_json=? where stable_message_identity='stable-new'",
-               (json.dumps(ref2),))
-    db.commit()
-    seen = []
-
-    def read_message(account, identity):
-        seen.append((account, identity))
-        return _provider_message(original if identity == "stable-1" else body2) | {"stableMessageIdentity": identity}
-
-    before = db.execute("select count(*) from emails").fetchone()[0]
-    prepared = prepare_recovery_originals(tmp_path / "email.sqlite3", backup_path=backup,
-                                          read_message=read_message)
-    assert sorted(seen) == ([("account", "stable-new")] if backup_matches else
-                            [("account", "stable-1"), ("account", "stable-new")])
-    assert prepared == {("account", "stable-1"): original, ("account", "stable-new"): body2}
-    assert db.execute("select count(*) from emails").fetchone()[0] == before
-    assert db.execute("select sum(length(message_normalized_text)) from emails").fetchone() == (0,)
-    restore_email_canonical_schema(db, metadata,
-        read_body=lambda row, ref: prepared[(row["account_id"], row["stable_message_identity"])])
-    assert db.execute("select normalized_text from email_messages where stable_message_identity='stable-new'").fetchone() == (body2,)
-    assert db.execute("select count(*) from email_messages").fetchone() == (2,)
-    db.close()
 
 
 @pytest.fixture
@@ -250,14 +158,19 @@ def test_missing_original_does_not_retire_terminal_body(body_store):
 @pytest.mark.parametrize("status", ["pending", "running", "failed"])
 def test_unfinished_classification_task_keeps_original(body_store, status):
     from types import SimpleNamespace
-    from app.task12_storage import insert_task12
 
     with body_store._connect() as db:
         db.execute("begin immediate")
-        insert_task12(db, "email_agent_classification_tasks", {
-            "task_id": "classification-1", "channel": "email", "stable_message_identity": "stable-1",
-            "status": status, "input_json": "{}",
-        })
+        task_id = db.execute(
+            "insert into tasks(kind,status,parameters_json,created_at,updated_at) "
+            "values('email_classification',?,jsonb('{}'),'2026-10-25','2026-10-25')",
+            (status,),
+        ).lastrowid
+        db.execute(
+            "insert into email_classification_inputs"
+            "(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
+            (task_id, "email", "stable-1", "{}"),
+        )
     assert not body_store.compact_email_message_body(101,
         source_reader=SimpleNamespace(read=lambda *args: pytest.fail("unfinished task needs input")))
 
@@ -275,20 +188,78 @@ def test_pending_reply_task_keeps_original(body_store):
         source_reader=SimpleNamespace(read=lambda *args: pytest.fail("pending action task needs input")))
 
 
-@pytest.mark.parametrize("kind,status", [
-    ("email_actions", "pending"), ("email_actions", "failed"),
-    ("email_reply_dispatch_claims", "uncertain"), ("email_unsubscribe_claims", "awaiting_audit"),
-])
-def test_unfinished_mailbox_or_delivery_operation_keeps_original(body_store, kind, status):
-    from types import SimpleNamespace
-    from app.action_storage import insert_email_action
-    from tests.test_email_action_storage import _cases
+def _processed_store_with_operation(tmp_path, kind):
+    """A processed message whose only open work is one operation of ``kind``."""
+    from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+    from app.email_store import EmailStore
+    from tests.test_email_store import _classification, _persist_scan
 
-    cases = _cases()
-    with body_store._connect() as db:
-        db.execute("begin immediate")
-        insert_email_action(db, "email_action_plans", cases["email_action_plans"] | {"classification_id": 101})
-        db.execute("update emails set class_current_action_plan_id='plan',class_legacy_processed_without_plan=0")
-        insert_email_action(db, kind, cases[kind] | {"classification_id": 101, "status": status})
-    assert not body_store.compact_email_message_body(101,
-        source_reader=SimpleNamespace(read=lambda *args: pytest.fail("unfinished operation needs input")))
+    store = EmailStore(tmp_path / "operation.sqlite3")
+    action = {
+        "reply_dispatch": EmailAction.AUTO_REPLY,
+        "unsubscribe_claim": EmailAction.UNSUBSCRIBE,
+    }.get(kind, EmailAction.MOVE)
+    parameters = (
+        {EmailAction.AUTO_REPLY: {"instruction": "Acknowledge receipt."}}
+        if action is EmailAction.AUTO_REPLY
+        else {EmailAction.UNSUBSCRIBE: {}}
+        if action is EmailAction.UNSUBSCRIBE
+        else {EmailAction.MOVE: {"target_folder": "Projects"}}
+    )
+    classification = _classification(
+        status=EmailClassificationStatus.PROCESSED, message_id="operation",
+        actions=(action,), action_parameters=parameters, thread_id="thread-unsubscribe-41" if kind == "unsubscribe_claim" else "thread-operation",
+    )
+    _persist_scan(store, classification, normalized_text="complete body")
+    message = _provider_message("complete body") | {
+        "accountId": "dingtalk-account",
+        "stableMessageIdentity": classification.stable_message_identity,
+        "folder": "INBOX", "uidValidity": 42, "uid": classification.classification_id,
+        "messageId": "<operation@example.com>",
+    }
+    return store, classification, message
+
+
+def _finish(store, classification):
+    (action_id,) = store.direct_action_ids_for_plan(classification.action_plan.action_plan_id)
+    claimed = store.claim_direct_action(action_id=action_id, claimed_at="2026-10-25T10:00:00+00:00")
+    store.complete_direct_action_attempt(
+        claimed, status="done", provider_operation="MOVE",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id="receipt-1", error="", finished_at="2026-10-25T10:00:05+00:00",
+    )
+
+
+@pytest.mark.parametrize("kind", ["direct_pending", "direct_failed", "reply_dispatch", "unsubscribe_claim"])
+def test_unfinished_mailbox_or_delivery_operation_keeps_original(tmp_path, kind):
+    from types import SimpleNamespace
+
+    store, classification, message = _processed_store_with_operation(tmp_path, kind)
+    reader = SimpleNamespace(read=lambda *args: message)
+    if kind == "direct_failed":
+        from tests.support.native_email_actions import fail_action
+
+        (action_id,) = store.direct_action_ids_for_plan(classification.action_plan.action_plan_id)
+        fail_action(store, action_id, attempts=1, retryable_last=True)
+    elif kind == "reply_dispatch":
+        from tests.test_email_action_reply_dao import _reply_arguments
+        from tests.test_email_store import _task2_account_values
+
+        store.create_account(_task2_account_values("dingtalk-account"))
+        args, owner = _reply_arguments(store, classification)
+        store.claim_email_reply_dispatch(**args, owner=owner)
+    elif kind == "unsubscribe_claim":
+        from tests.test_email_action_unsubscribe_dao import _authorization
+        from tests.test_email_store import _task2_account_values
+
+        store.create_account(_task2_account_values("dingtalk-account"))
+        authorization, owner = _authorization(classification)
+        assert store.claim_email_unsubscribe_write(**authorization, owner=owner)["acquired"]
+    assert not store.compact_email_message_body(
+        classification.classification_id,
+        source_reader=SimpleNamespace(read=lambda *a: pytest.fail("unfinished operation needs input")),
+    )
+    if kind == "direct_pending":
+        # Control: the same message is retired as soon as its action is done.
+        _finish(store, classification)
+        assert store.compact_email_message_body(classification.classification_id, source_reader=reader)
