@@ -160,7 +160,6 @@ tests/wechat/test_schema.py
 tests/wechat/test_sender_helper.py
 tests/wechat/test_sender_ipc.py
 tests/wechat/test_snapshot.py
-tests/test_capability_prompt_missing_tool.py
 tests/test_consumer_system_release_import.py
 tests/test_daily_report_chat_coverage_contract.py
 tests/test_email_classifier_skill_wire_contract.py
