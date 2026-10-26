@@ -36,3 +36,11 @@ Audit 使用现有 `AuditAgentWireResult` 生成 Codex 原生 Schema。为满足
 重试和修订回归先失败于缺少 resume；针对连续无效结果和跨 revision 不可续接的负例也先失败。最终只运行这条变更影响的10项本地测试（4个新增节点、6个直接受影响的既有节点）：10 passed、26 deselected、9.91s。覆盖实际 AuditRunner→CLI resume 命令、RuntimeAttempt.source_session_id、候选 revision/digest、不可变旧 attempt、Consumer 槽隔离、路线/模型/运行时/认证方式/Task/代次不匹配、显式换新及已有重复失败规则。独立只读复核通过，先前发现的两处关联回归均已关闭，复核未运行测试或模型。原生 schema 已通过6项和所有模型案例不重跑；没有外部模型、业务 MCP 或生产写入。
 
 **服务接续代码及本地验收已补齐；草稿仍未合并、未部署。** API429 保持既有阻塞，本轮0次 API 探测，不循环重试。既有 Qwen/OAuth/G3 证据继续复用；缺失的 API 有效冷启动/续跑及正式发布、生产回读不能以本地通过替代。
+
+### PR325 发布条件回核（2026-10-25 18:03 PDT）
+
+在250c39867上按用户最新授权只重试一次原API失败session01a16f8f-b637-7cc1-9686-315a03e40aeb的continue。结果仍为HTTP429，exit1、0工具调用、无有效结果；原生轨迹累计47行，SHA256为6c0e06713e9240938fa953e200c7f9d304bd2673b3f2fa8affba356aa120a869。不继续循环，也不启动注定受相同容量阻塞的其他角色/冷启动。此前通过的6项原生格式测试、10项接续测试及Qwen/OAuth/G3模型案例均未重跑。
+
+现有[Quality检查](https://github.com/callzhang/ceo-agent-service/actions/runs/40248553539)在Ruff阶段失败，测试未启动。本地只重现静态检查，得到相同44条lint错误、12个文件；逐个Git blob核对，这12个文件与当前main dd3c4933bbf02b7b89f74d704bb2368bc028bc05完全相同，PR修改文件中的错误为0。它是主线共有门禁缺口，不能冒充本PR通过，也不将无关12文件清理夹进本修复。
+
+**发布条件未满足：PR325保持草稿，未合并、未部署、未作生产验收声明。** 核查时另有既有部署PID50850在运行，未启动第二个部署。有限下一步仍为：API恢复后仅补缺失的有效Consumer/Audit冷启动与续跑；复用主线后续修正来关闭Quality门禁；满足后再合并、正式部署并读回生产版本/PID/健康/队列/Attention/History。既有G1自然样本及其他优化不在本轮扩展范围内。

@@ -1,5 +1,5 @@
 {
-  "scope": "G2 Codex Audit native-format wiring candidate only. G1 remains pending natural behavior acceptance; latest user explicitly authorized proceeding with G2. No policy/tools/prompts/session changes.",
+  "scope": "G2 Codex Audit native-format and explicitly authorized native-session continuation candidate in draft PR325; no policy/tools/prompts/retry-limit changes. G1 remains pending natural sample.",
   "source_base": "a15dc205f5ed63bd9ebe913b9b9bf79a1df42c1f",
   "candidate_changes": [
     "remove credential-specific native Audit schema exclusion",
@@ -68,7 +68,7 @@
     "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
     "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
   },
-  "release_status": "Draft PR325, not merged/deployed. Local native-format and service-session wiring verified; API valid cold/resume remains blocked by existing429. Configured-route acceptance and formal deployment gate still apply; no fallback or partial-route publish.",
+  "release_status": "Draft PR325, not merged/deployed. Latest bounded API continue still429 with0tools; missing valid API cold/resume remains blocked. Quality is also red:44 lint errors in12 unchanged files identical to current main,0 in PR-changed files. No unrelated fixes or additional deploy started.",
   "session_continuation_followup": {
     "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
     "changes": [
@@ -94,5 +94,70 @@
     "api_requests_this_followup": 0,
     "api_status": "Existing429 blocker unchanged; no retry",
     "review": "Independent read-only review passed; repeated-invalid-result fresh rule and cross-revision noncontinuable blockers resolved. No reviewer test/model calls."
+  },
+  "release_closeout_20261025": {
+    "source_commit": "250c398675849f0ef1b0f1d17933741009a2f456",
+    "checked_at": "2026-10-25T18:03:46.021021-07:00",
+    "api_retry": {
+      "route": "codex_api",
+      "model": "gpt-5.6-luna",
+      "case": "mail-already-handled",
+      "phase": "continue",
+      "session_id": "01a16f8f-b637-7cc1-9686-315a03e40aeb",
+      "reused_session": true,
+      "exit_code": 1,
+      "canonical_valid": false,
+      "tool_calls": 0,
+      "native_lines": 47,
+      "native_sha256": "6c0e06713e9240938fa953e200c7f9d304bd2673b3f2fa8affba356aa120a869",
+      "native_terminal_error": {
+        "message": "exceeded retry limit, last status: 429 Too Many Requests",
+        "codex_error_info": {
+          "response_too_many_failed_attempts": {
+            "http_status_code": 429
+          }
+        }
+      },
+      "requests_scope": "one bounded invocation; no loop or additional role/cold/resume attempts"
+    },
+    "quality_gate": {
+      "run_url": "https://github.com/callzhang/ceo-agent-service/actions/runs/40248553539",
+      "head": "250c398675849f0ef1b0f1d17933741009a2f456",
+      "conclusion": "failure in Ruff before tests",
+      "baseline_main": "dd3c4933bbf02b7b89f74d704bb2368bc028bc05",
+      "lint_errors": 44,
+      "affected_files": 12,
+      "all_error_files_identical_to_current_main": true,
+      "errors_in_pr_changed_files": 0,
+      "error_files": [
+        "app/agent_contracts.py",
+        "app/dispatcher/adapters.py",
+        "app/reply_task_deferral.py",
+        "app/store.py",
+        "app/task_source_documents.py",
+        "app/web_api/dashboard.py",
+        "tests/conftest.py",
+        "tests/test_action_business_storage.py",
+        "tests/test_email_action_external_consumers.py",
+        "tests/test_error_code_migration.py",
+        "tests/test_store.py",
+        "tests/wechat/test_store.py"
+      ],
+      "error_codes": {
+        "F401": 30,
+        "F811": 2,
+        "F541": 2,
+        "E402": 9,
+        "F841": 1
+      }
+    },
+    "reused_evidence": "Prior6 native-schema/wiring tests,10 session tests, independent reviews and Qwen/OAuth/G3 cases retained; no test/model case reruns except the one previously failing API continue.",
+    "merge": "not attempted; release prerequisites unmet",
+    "deploy": "not started; another existing deploy process50850 was observed, and prerequisites remain unmet",
+    "next_minimal_steps": [
+      "After API capacity is restored, validate only missing configured API valid cold/resume Consumer/Audit cases.",
+      "Resolve shared main Quality lint gate in its owning scope or reuse upstream correction; do not bundle unrelated12-file cleanup into PR325.",
+      "Once gates pass, update branch, merge PR325 and use formal deployment gate and production readback."
+    ]
   }
 }
