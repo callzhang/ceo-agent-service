@@ -1,6 +1,7 @@
 """Exact runtime declarations; schema conversion belongs to release tools."""
 from contextlib import closing
 from functools import lru_cache
+import os
 from pathlib import Path
 import sqlite3
 
@@ -17,10 +18,40 @@ def create_current_email_migration_ledger(db):
 
 
 
+_SCHEMA_OBJECTS_CACHE: dict[tuple[str, int, int, int], tuple] = {}
+_SCHEMA_OBJECTS_CACHE_LIMIT = 16
+
+
+def _schema_cache_key(db):
+    """Identify one on-disk schema state: file identity plus SQLite's schema cookie.
+
+    The cookie changes on every DDL statement and on a restore into the file,
+    and a replaced file has a new inode, so an equal key means an equal schema.
+    In-memory and temporary databases have no file and are never cached.
+    """
+    main = next((row[2] for row in db.execute("pragma database_list") if row[1] == "main"), "")
+    if not main:
+        return None
+    try:
+        status = os.stat(main)
+    except OSError:
+        return None
+    cookie = db.execute("pragma main.schema_version").fetchone()[0]
+    return (main, status.st_dev, status.st_ino, cookie)
+
+
 def schema_objects(db):
-    return tuple(tuple(row) for row in db.execute(
+    key = _schema_cache_key(db)
+    if key is not None and key in _SCHEMA_OBJECTS_CACHE:
+        return _SCHEMA_OBJECTS_CACHE[key]
+    objects = tuple(tuple(row) for row in db.execute(
         "select type,name,tbl_name,sql from main.sqlite_schema "
         "where name not glob 'sqlite_*' order by type,name"))
+    if key is not None:
+        if len(_SCHEMA_OBJECTS_CACHE) >= _SCHEMA_OBJECTS_CACHE_LIMIT:
+            _SCHEMA_OBJECTS_CACHE.pop(next(iter(_SCHEMA_OBJECTS_CACHE)))
+        _SCHEMA_OBJECTS_CACHE[key] = objects
+    return objects
 
 
 @lru_cache(maxsize=2)
