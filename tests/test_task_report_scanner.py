@@ -3,8 +3,7 @@ from __future__ import annotations
 import json
 
 from app.dws_client import DwsDocumentSearchResult
-from app.store import AutoReplyStore
-from app.task20_definitions import task20_projection
+from app.store import WORK_SUMMARY_INPUT_SQL, AutoReplyStore
 from app.task_models import WorkItemSourceType
 from app.task_report_scanner import (
     REPORT_SCANNER,
@@ -85,7 +84,7 @@ def test_scan_task_reports_is_idempotent_and_preserves_report_provenance(tmp_pat
 
     with store._connect() as db:
         rows = db.execute(
-            f"select id, source_type, source_ref, payload_json from ({task20_projection('work_summary_inputs')}) order by id"
+            f"select id, source_type, source_ref, payload_json from ({WORK_SUMMARY_INPUT_SQL}) order by id"
         ).fetchall()
     assert {row["source_type"] for row in rows} == {
         WorkItemSourceType.MANAGEMENT_WEEKLY_REPORT.value,
