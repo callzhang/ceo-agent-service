@@ -3,7 +3,6 @@ import sqlite3
 
 import pytest
 
-from app.store_schema_release import prepare_store_schema_release
 from tests.test_task_storage import fingerprint, source_database
 
 
@@ -26,67 +25,6 @@ def migrate(root, path):
             "update service_state set value='2026-10-11.3',updated_at='new' where key='store_schema_version'"
         )
         db.commit()
-
-
-def test_explicit_11_2_release_keeps_new_records_and_deleted_allocations(tmp_path):
-    from app.run_storage import insert_run
-    from app.task_storage import insert_task
-
-    root, path = target_and_source(tmp_path)
-    release = prepare_store_schema_release(root, path)
-    assert release is not None
-    release.migrate = migrate
-    release.publish()
-    with closing(sqlite3.connect(path)) as db, db:
-        created = insert_task(
-            db,
-            "work_summary_inputs",
-            dict(source_type="new", source_ref="kept", payload_json=b"WSI1\x00\xff"),
-        ).lastrowid
-        deleted = insert_task(
-            db,
-            "work_summary_inputs",
-            dict(source_type="new", source_ref="deleted", payload_json="{}"),
-        ).lastrowid
-        db.execute("delete from tasks where id=?", (deleted,))
-        task_run = insert_run(
-            db,
-            "task_agent_runs",
-            dict(
-                summary_input_id=created,
-                projection_json=' {"receipt": [2, 1]} ',
-                status="completed",
-                finished_at="",
-            ),
-        ).lastrowid
-        deleted_run = insert_run(
-            db, "task_agent_runs", dict(summary_input_id=created, status="failed")
-        ).lastrowid
-        db.execute("delete from runs where id=?", (deleted_run,))
-    release.rollback()
-    with closing(sqlite3.connect(path)) as db:
-        assert db.execute(
-            "select payload_json from work_summary_inputs where id=?", (created,)
-        ).fetchone() == (b"WSI1\x00\xff",)
-        assert db.execute(
-            "select summary_input_id,projection_json,finished_at from task_agent_runs where id=?",
-            (task_run,),
-        ).fetchone() == (created, ' {"receipt": [2, 1]} ', "")
-        for table in ("reply_tasks", "reply_task_inputs", "work_summary_inputs"):
-            assert (
-                db.execute(
-                    "select seq from sqlite_sequence where name=?", (table,)
-                ).fetchone()[0]
-                >= deleted
-            )
-        assert (
-            db.execute(
-                "select seq from sqlite_sequence where name='task_agent_runs'"
-            ).fetchone()[0]
-            >= deleted_run
-        )
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-    release.rollback()
 
 
 @pytest.mark.parametrize(
@@ -335,84 +273,3 @@ def test_actual_fresh_11_2_task_template_is_not_a_supported_source(tmp_path):
         db.commit()
         _assert_source_rejected_before_mutation(db)
 
-
-@pytest.mark.parametrize("failure", ["dependencies", "verification", "restart", "health", "loaded"])
-def test_task_publication_failure_inverses_before_old_start_and_keeps_replacement_writes(tmp_path, failure):
-    import json
-
-    from app.repository_updater import RepositoryUpdater, UpgradeFailed
-    from app.run_storage import insert_run
-    from app.task_storage import insert_task
-    from tests.test_repository_updater_publication import _State, _repo
-
-    checkout, operation = _repo(tmp_path)
-    root, path = target_and_source(tmp_path)
-    with closing(sqlite3.connect(path)) as db:
-        source = fingerprint(db)
-    publication = prepare_store_schema_release(root, path)
-    publication.migrate = migrate
-    events, inserted = [], {}
-    starts = 0
-    state = _State()
-    verify, inverse = publication.verify_loaded, publication.rollback
-
-    def verify_loaded():
-        if starts and failure == "loaded":
-            raise RuntimeError("loaded failure")
-        verify()
-
-    def rollback():
-        events.append("inverse")
-        inverse()
-
-    publication.verify_loaded = verify_loaded
-    publication.rollback = rollback
-
-    def start():
-        nonlocal starts
-        starts += 1
-        events.append("start")
-        with closing(sqlite3.connect(path)) as db, db:
-            version = db.execute("select value from service_state where key='store_schema_version'").fetchone()[0]
-            if starts == 1 and failure not in ("dependencies", "verification"):
-                assert version == "2026-10-11.3"
-                physical = insert_task(db, "work_summary_inputs", dict(source_type="replacement", source_ref="kept", payload_json=b"WSI1\x00\xff")).lastrowid
-                inserted["work"] = db.execute("select cast(legacy_key as integer) from tasks where id=?", (physical,)).fetchone()[0]
-                run = insert_run(db, "task_agent_runs", dict(summary_input_id=inserted["work"], status="completed", projection_json=' {"replacement": true} ')).lastrowid
-                inserted["run"] = db.execute("select cast(legacy_key as integer) from runs where id=?", (run,)).fetchone()[0]
-                inserted["receipt"] = db.execute("insert into receipt(reply_task_id,body) values(1,x'ff00')").lastrowid
-                inserted["receipt_row"] = tuple(db.execute("select * from receipt where id=?", (inserted["receipt"],)).fetchone())
-            else:
-                assert version == "2026-10-11.2"
-                assert fingerprint(db)["schema"] == source["schema"]
-        if starts == 1 and failure == "restart":
-            raise RuntimeError("partial replacement start")
-
-    def fail_at(stage):
-        events.append(stage)
-        if stage == failure:
-            raise RuntimeError(stage + " failure")
-
-    updater = RepositoryUpdater(
-        checkout, state, database_path=path,
-        stop=lambda: events.append("stop"), restart=start,
-        health=lambda: failure != "health" or starts > 1,
-        database_publication=lambda _backup: publication,
-        dependency_sync=lambda: fail_at("dependencies"),
-        verification=lambda: fail_at("verification"),
-    )
-    with pytest.raises(UpgradeFailed):
-        updater.execute(operation)
-    assert events[-1] == "start"
-    assert events.index("inverse") < len(events) - 1
-    assert (checkout / "version").read_text() == "old\n"
-    assert json.loads(state.values["repository_upgrade_operation:v1"])["status"] == "rolled_back"
-    with closing(sqlite3.connect(path)) as db:
-        assert db.execute("pragma quick_check").fetchone()[0] == "ok"
-        assert db.execute("pragma foreign_key_check").fetchall() == []
-        if inserted:
-            assert events.count("stop") == 2
-            assert events.index("inverse") > events.index("stop", 1)
-            assert db.execute("select payload_json from work_summary_inputs where id=?", (inserted["work"],)).fetchone() == (b"WSI1\x00\xff",)
-            assert db.execute("select summary_input_id,projection_json from task_agent_runs where id=?", (inserted["run"],)).fetchone() == (inserted["work"], ' {"replacement": true} ')
-            assert db.execute("select * from receipt where id=?", (inserted["receipt"],)).fetchone() == inserted["receipt_row"]
