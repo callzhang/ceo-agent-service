@@ -451,3 +451,10 @@ green; the Worker remaining21-case group is covered by its initial10 passes and
 24 initial corrections, schema/progress8, extra lineage3 and compacted terminal1
 also pass. Root reviewed current-owner mutations, receipt/private-value
 assertions and source-backed full search separately from list previews.
+
+Current native recovery/preparation fixtures now emit the existing purpose wire
+and the command-selected native envelope. The historical native readback cases
+remain unchanged. Cross-line Basic redaction uses a genuine user:password
+credential; arbitrary base64 text remains governed by the existing redactor.
+Both current-role cases and all three credential cases pass5 in0.93s, retaining
+no copied result, no adopted candidate, failed preparation and no-secret checks.
