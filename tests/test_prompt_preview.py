@@ -69,7 +69,24 @@ def test_current_preview_renders_full_role_without_creating_profile_or_rule_file
 
 
 def test_current_oa_audit_preview_uses_saved_task_purpose(tmp_path, monkeypatch):
+    from app.business_skills import installed_runtime_skills
+
     monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "materials"))
+    skill_root = tmp_path / "skills"
+    skill_path = skill_root / "dingtalk-oa-approval" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\n"
+        "name: dingtalk-oa-approval\n"
+        "description: Test-owned OA approval review Skill.\n"
+        "---\n\n"
+        "# Test-owned OA approval review\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        "app.prompt_preview.default_task_skill_catalog",
+        lambda names: installed_runtime_skills(skill_root, names=names),
+    )
     store = AutoReplyStore(tmp_path / "preview.sqlite3")
     task, parent = task_and_run(store)
     audit = store.claim_agent_run(
@@ -91,6 +108,8 @@ def test_current_oa_audit_preview_uses_saved_task_purpose(tmp_path, monkeypatch)
     assert result["status"] != "unavailable"
     assert "same JS cell" in result["developer_instructions"]
     assert "mcp__ai_services__ocr_document" in result["developer_instructions"]
+    assert "dingtalk-oa-approval" in result["task_prompt"]
+    assert "Test-owned OA approval review Skill." in result["task_prompt"]
     assert "Saved OA task" in result["task_prompt"]
 
 

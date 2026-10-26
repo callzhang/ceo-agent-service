@@ -602,3 +602,11 @@ outcomes keep the original provider receipt across Task generation rotation,
 while conflicting bodies still reject and the new Task stays pending. Email
 constructor lock-order test excludes pytest template bootstrap, not business
 calls;3 cases pass1.57s and2 related receipt controls pass1.00s.
+
+The last two b4 nodes are fixed: the Store cache test observes the actual
+strict current constructor instead of pytest template bootstrap (exactly one
+on-disk creation); OA Audit preview reads a real metadata-valid test-owned Skill
+with exact purpose/tool/name/description assertions. The2 cases pass1.60s and
+all15 preview cases pass9.24s. All17 b4 failure nodes now have focused passing
+evidence; a new complete Quality at the integrated commit is still required.
+Complete app/tests Ruff and diff checks pass.

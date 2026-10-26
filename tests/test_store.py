@@ -4318,20 +4318,27 @@ def test_store_connections_close_after_context_exit(tmp_path: Path):
 
 
 def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatch):
+    from app import current_database_schema
+
     calls: list[Path] = []
-    original_initialize = AutoReplyStore._initialize
+    original_create = current_database_schema.create_current_database_schema
 
-    def counted_initialize(self: AutoReplyStore) -> None:
-        calls.append(self.path)
-        original_initialize(self)
+    def counted_create(db: sqlite3.Connection) -> None:
+        main = next(row[2] for row in db.execute("pragma database_list") if row[1] == "main")
+        if main:
+            calls.append(Path(main).resolve())
+        original_create(db)
 
-    monkeypatch.setattr(AutoReplyStore, "_initialize", counted_initialize)
+    monkeypatch.setattr(current_database_schema, "create_current_database_schema", counted_create)
     db_path = tmp_path / "worker.sqlite3"
+    # Existing blank files bypass the suite's pre-built Store template, so this
+    # test observes the real strict-current constructor and its process cache.
+    db_path.touch()
 
     AutoReplyStore(db_path)
     AutoReplyStore(db_path)
 
-    assert calls == [db_path]
+    assert calls == [db_path.resolve()]
 
 
 def test_store_skips_schema_work_when_another_process_finished_it(
