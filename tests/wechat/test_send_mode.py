@@ -1,3 +1,5 @@
+from types import SimpleNamespace
+
 import pytest
 
 from app.codex_decision import append_signature
@@ -6,6 +8,7 @@ from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.wechat import service
 from app.wechat.accessibility import AccessibilityResult, SendOutcome, WechatSender
 from app.wechat.models import WechatAccount, WechatMessage, WechatReplyScope
+from app.service_message_sender import agent_message_delivery_key
 from tests.wechat.support import approve_delivery, create_wechat_delivery
 
 
@@ -55,7 +58,7 @@ class FakeSender:
     def __init__(self):
         self.sent = []
 
-    def send(self, delivery, scope):
+    def send(self, delivery, scope, *, prepared=None):
         self.sent.append(delivery.id)
         return SendOutcome("sent")
 
@@ -97,9 +100,90 @@ def test_auto_mode_with_no_delivery_does_not_touch_sender(tmp_path):
 def test_auto_mode_sends(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     _seed(store)
+    delivery = store.get_wechat_delivery_for_task(1)
+    assert delivery is not None
+    assert service._prepared_delivery_message(store, delivery) is not None
     sender = FakeSender()
     assert service.process_ready_wechat_deliveries(store, sender, mode="auto", sender_enabled=True) == 1
     assert sender.sent == [1]
+
+
+def test_auto_mode_reuses_exact_audited_candidate_preparation(monkeypatch):
+    candidate = {
+        "task_id": 41,
+        "execution_generation": "generation-9",
+        "current_generation": "generation-9",
+        "proposal_revision": 3,
+        "business_object_key": "reply:melody115:m41",
+        "channel": "wechat",
+        "invalidated_at": "",
+    }
+    action_identity = "wechat:melody115:approved-reply"
+    key = agent_message_delivery_key(
+        business_object_key=candidate["business_object_key"],
+        action_identity=action_identity,
+        execution_generation=candidate["execution_generation"],
+        proposal_revision=candidate["proposal_revision"],
+    )
+    prepared = SimpleNamespace(
+        channel="wechat", delivery_key=key, final_body="审核后的固定消息",
+    )
+    delivery = SimpleNamespace(
+        id=146,
+        task_id=41,
+        account_id="acct-1",
+        target_type="direct",
+        target_id="melody115",
+        conversation_id="melody115",
+        execution_generation="generation-9",
+        evidence={
+            "standard_candidate_id": "401",
+            "standard_review_id": "702",
+            "standard_action_identity": action_identity,
+        },
+        reply_text=prepared.final_body,
+    )
+
+    class Store:
+        @staticmethod
+        def wechat_delivery_review_approved(delivery_id):
+            return delivery_id == 146
+
+        @staticmethod
+        def list_wechat_deliveries_by_status(status):
+            return [delivery] if status == "ready_to_send" else []
+
+        @staticmethod
+        def get_review_candidate(candidate_id):
+            return candidate if candidate_id == 401 else None
+
+        @staticmethod
+        def get_outbound_postfix(channel, delivery_key):
+            return prepared if (channel, delivery_key) == ("wechat", key) else None
+
+        @staticmethod
+        def get_wechat_reply_scope(*_args):
+            return SimpleNamespace(target_type="direct", binding_status="verified")
+
+    class Sender:
+        def __init__(self):
+            self.sent = []
+
+        def send(self, delivery_arg, _scope, *, prepared):
+            self.sent.append((delivery_arg.id, prepared))
+
+    monkeypatch.setattr(service, "recover_before_sender", lambda *_args, **_kwargs: [])
+    sender = Sender()
+    assert service.pending_wechat_deliveries(Store()) == [delivery]
+    assert Store.wechat_delivery_review_approved(delivery.id)
+    mismatched = SimpleNamespace(**(vars(delivery) | {"reply_text": "different text"}))
+    assert service._prepared_delivery_message(Store(), mismatched) is None
+    count = service.process_ready_wechat_deliveries(
+        Store(), sender, mode="auto", sender_enabled=True,
+    )
+
+    assert count == 1
+    assert sender.sent == [(146, prepared)]
 
 
 def test_auto_mode_refreshes_direct_binding_text_before_send(tmp_path):
@@ -322,9 +406,9 @@ def test_auto_mode_verifies_exact_direct_target_before_send(tmp_path):
             super().__init__()
             self.runner = Runner()
 
-        def send(self, delivery, scope):
+        def send(self, delivery, scope, *, prepared=None):
             assert scope.binding_status == "verified"
-            return super().send(delivery, scope)
+            return super().send(delivery, scope, prepared=prepared)
 
     sender = Sender()
 
@@ -394,7 +478,7 @@ def test_auto_mode_retries_delivery_when_no_wechat_action_was_performed(tmp_path
     )
 
     class RetryingSender(FakeSender):
-        def send(self, delivery, scope):
+        def send(self, delivery, scope, *, prepared=None):
             self.sent.append(delivery.id)
             store.mark_wechat_delivery_sending(delivery.id)
             store.set_wechat_delivery_status(delivery.id, "sent")

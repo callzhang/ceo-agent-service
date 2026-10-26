@@ -124,6 +124,67 @@ def pending_wechat_deliveries(store) -> list:
     return store.list_wechat_deliveries_by_status("ready_to_send")
 
 
+def _prepared_delivery_message(store, delivery):
+    """Read the immutable message already reviewed for this delivery.
+
+    Standard-pipeline WeChat messages are prepared under the Consumer action key,
+    while older deliveries use ``wechat:{delivery_id}``. Never create or rebuild
+    a preparation during recovery: a missing or mismatched record stays pending.
+    """
+    evidence = delivery.evidence or {}
+    candidate_id = str(evidence.get("standard_candidate_id") or "").strip()
+    review_id = str(evidence.get("standard_review_id") or "").strip()
+    action_identity = str(evidence.get("standard_action_identity") or "").strip()
+    standard_keys = (candidate_id, review_id, action_identity)
+    if not any(standard_keys):
+        prepared = store.get_outbound_postfix("wechat", f"wechat:{delivery.id}")
+        return (
+            prepared
+            if prepared is not None and prepared.final_body == delivery.reply_text
+            else None
+        )
+    if not all(standard_keys):
+        return None
+    try:
+        candidate_id_int = int(candidate_id)
+        int(review_id)
+    except ValueError:
+        return None
+    candidate = store.get_review_candidate(candidate_id_int)
+    if (
+        candidate is None
+        or int(candidate.get("task_id") or 0) != int(delivery.task_id)
+        or str(candidate.get("execution_generation") or "")
+        != str(delivery.execution_generation)
+        or str(candidate.get("current_generation") or "")
+        != str(delivery.execution_generation)
+        or str(candidate.get("channel") or "") != "wechat"
+        or candidate.get("invalidated_at") not in (None, "")
+    ):
+        return None
+    from app.service_message_sender import agent_message_delivery_key
+
+    try:
+        delivery_key = agent_message_delivery_key(
+            business_object_key=str(candidate.get("business_object_key") or ""),
+            action_identity=action_identity,
+            execution_generation=str(delivery.execution_generation),
+            proposal_revision=int(candidate.get("proposal_revision")),
+        )
+    except (TypeError, ValueError):
+        return None
+    prepared = store.get_outbound_postfix("wechat", delivery_key)
+    if prepared is not None and prepared.final_body == delivery.reply_text:
+        return prepared
+    # Older delivery rows prepared the same audited final text under the
+    # delivery id. The live review gate above still binds that exact text to the
+    # current candidate before this compatibility lookup is used.
+    legacy = store.get_outbound_postfix("wechat", f"wechat:{delivery.id}")
+    if legacy is not None and legacy.final_body == delivery.reply_text:
+        return legacy
+    return None
+
+
 def _scope_for_delivery(store, delivery):
     return store.get_wechat_reply_scope(
         delivery.account_id, delivery.target_type, delivery.target_id
@@ -189,6 +250,9 @@ def process_ready_wechat_deliveries(
     for delivery in deliveries:
         if not store.wechat_delivery_review_approved(delivery.id):
             continue
+        prepared = _prepared_delivery_message(store, delivery)
+        if prepared is None:
+            continue
         try:
             delivery = _refresh_direct_binding_evidence(delivery, reader, account)
         except Exception:
@@ -215,7 +279,7 @@ def process_ready_wechat_deliveries(
             scope = _scope_for_delivery(store, delivery)
             if scope is None:
                 continue
-        sender.send(delivery, scope)
+        sender.send(delivery, scope, prepared=prepared)
         sent += 1
     return sent
 
