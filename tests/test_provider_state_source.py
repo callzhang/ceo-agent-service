@@ -284,7 +284,7 @@ def test_application_identity_refresh_reconciliation_and_projection(tmp_path):
     with store._connect() as db:
         first = db.execute("select rowid,observed_at from provider_state "
                            "where record_type='observation' and account_id='account-a'").fetchone()
-        assert db.execute("select count(*) from email_classifications").fetchone()[0] == 0
+        assert db.execute("select count(*) from emails where classification_id is not null").fetchone()[0] == 0
     publish(store, [observation()], T2, accounts=None)
     with store._connect() as db:
         same = db.execute("select rowid,observed_at from provider_state "
