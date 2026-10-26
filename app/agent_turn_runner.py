@@ -910,7 +910,9 @@ class AgentTurnProcess(Generic[ResultT]):
                         f"claude_session:{new_session}" if is_claude else f"codex_session:{new_session}",
                         transcript_start=attempt_transcript_start,
                     )
-                if active_route is not None and active_route.name == "codex_oauth":
+                if active_route is not None and (
+                    run.role is AgentRole.AUDIT or active_route.name == "codex_oauth"
+                ):
                     self.store.set_agent_run_session(
                         run.id,
                         new_session,
@@ -1181,6 +1183,7 @@ class AgentTurnProcess(Generic[ResultT]):
             route_session_id = self._session_for_route(
                 route,
                 role=run.role,
+                run=run,
                 requested_session_id=session_id,
                 conversation_contract_hash=conversation_contract_hash,
                 force_new_session=force_new_session,
@@ -1552,6 +1555,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     route_session_id = self._session_for_route(
                         route,
                         role=run.role,
+                        run=run,
                         requested_session_id=_fallback_requested_session_id(
                             previous_route_name=previous_route_name,
                             next_route_name=route.name,
@@ -1777,18 +1781,45 @@ class AgentTurnProcess(Generic[ResultT]):
         *,
         role: AgentRole,
         requested_session_id: str | None,
+        run: AgentRun | None = None,
         conversation_contract_hash: str = "",
         force_new_session: bool = False,
     ) -> str | None:
         if force_new_session:
             return None
         if role is AgentRole.AUDIT:
-            # Audit retries are new immutable runs, but they continue the same
-            # runtime conversation when that route owns the recorded session.
-            # The proposal and operation identity stay fixed; opening a fresh
-            # session would discard the failed turn's context and can repeat
-            # feedback or an external action.
-            return requested_session_id if route.name == "codex_oauth" else None
+            # Native attempts own sessions for every route; the historical Run
+            # projection only holds OAuth sessions. Never use Consumer slots.
+            if run is None:
+                return None
+            audit_runs = [
+                prior for prior in self.store.list_agent_runs_for_task_generation(
+                    run.reply_task_id, run.execution_generation, load_events=False,
+                )
+                if prior.role is AgentRole.AUDIT and prior.id <= run.id
+                and prior.proposal_revision <= run.proposal_revision
+            ]
+            attempts_by_run = self.store.list_agent_runtime_attempts_for_runs(
+                [prior.id for prior in audit_runs],
+            )
+            for prior in reversed(audit_runs):
+                if prior.status == "failed":
+                    error = json.loads(prior.structured_error_json or "{}")
+                    if isinstance(error, dict) and error.get("session_continuable") is False:
+                        return None
+                attempts = attempts_by_run[prior.id]
+                if not attempts:
+                    continue
+                latest = attempts[-1]
+                if (
+                    latest.route_name == route.name
+                    and latest.runtime_kind == route.runtime_kind.value
+                    and latest.credential_mode == route.credential_mode.value
+                    and latest.model == route.model
+                ):
+                    return latest.session_id or latest.source_session_id or None
+                return None
+            return None
         persisted = self.store.get_conversation_runtime_session(
             self.task.conversation_id,
             route.name,

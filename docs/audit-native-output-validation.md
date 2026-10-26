@@ -25,4 +25,14 @@ Audit 使用现有 `AuditAgentWireResult` 生成 Codex 原生 Schema。为满足
 
 对原API失败Consumer session只补一次continue仍429（0工具调用），累计38行SHA4abecfeaf92a5229366fff007752793c9e309f9cbc2b86dd7b6787baad082132。无有效cold/resume结果，不继续重试。另确认现有AgentTurnProcess._session_for_route只为codex_oauth保留Audit请求session；qwen_gpu4匿名只读诊断返回None，CLI续跑成功不能代替服务续会话验收。
 
-**本候选未合并、未部署。** API容量恢复后补缺失API有效冷/续；非OAuth Audit服务接续需按既有路线/session绑定单独修正和验证，本候选不悄悄改变session机制。发布仍须满足原计划的配置路线验收及正式部署测试门禁，不做Qwen特例、不增加fallback或宽松解析。完整证据见[g2_native_audit_wiring.results.v1.json](../evals/trajectory_optimization/g2_native_audit_wiring.results.v1.json)。
+**该阶段候选未合并、未部署。** API容量恢复后补缺失API有效冷/续；当时发现的非OAuth Audit服务接续缺口已按用户后续明确授权补齐本地代码和验证，见下节；发布状态仍为草稿。发布仍须满足原计划的配置路线验收及正式部署测试门禁，不做Qwen特例、不增加fallback或宽松解析。完整证据见[g2_native_audit_wiring.results.v1.json](../evals/trajectory_optimization/g2_native_audit_wiring.results.v1.json)。
+
+### G2 非 OAuth Audit session 续接（2026-10-25）
+
+按用户明确授权，在草稿 PR325 上修复服务接续链路。此前非 OAuth session 已写入 RuntimeAttempt，但 Audit 从 OAuth 专属 Run 投影请求 session，选择器又只放行 codex_oauth，因此重试与修订都会冷启动。
+
+当前选择以同一 Task、execution generation、Audit 角色及当前 revision/Run 之前的原生 RuntimeAttempt 为来源，要求路线名、runtime kind、credential mode、model 与当前路线一致；只使用最新 Audit 所属会话，不读写 Consumer 会话槽。已有非 OAuth Run 投影为空的历史仍由原生记录证明归属，无历史迁移。CLI 原生会话事件中的所有 Audit 路线同步更新已有 Run session 投影，保证原有连续结果失败换新会话规则继续有效；不增加新字段或重试次数。force_new_session 仍优先，上一 revision 明确 session_continuable=False 同样禁止继承。
+
+重试和修订回归先失败于缺少 resume；针对连续无效结果和跨 revision 不可续接的负例也先失败。最终只运行这条变更影响的10项本地测试（4个新增节点、6个直接受影响的既有节点）：10 passed、26 deselected、9.91s。覆盖实际 AuditRunner→CLI resume 命令、RuntimeAttempt.source_session_id、候选 revision/digest、不可变旧 attempt、Consumer 槽隔离、路线/模型/运行时/认证方式/Task/代次不匹配、显式换新及已有重复失败规则。独立只读复核通过，先前发现的两处关联回归均已关闭，复核未运行测试或模型。原生 schema 已通过6项和所有模型案例不重跑；没有外部模型、业务 MCP 或生产写入。
+
+**服务接续代码及本地验收已补齐；草稿仍未合并、未部署。** API429 保持既有阻塞，本轮0次 API 探测，不循环重试。既有 Qwen/OAuth/G3 证据继续复用；缺失的 API 有效冷启动/续跑及正式发布、生产回读不能以本地通过替代。

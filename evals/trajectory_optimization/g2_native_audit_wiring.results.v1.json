@@ -65,7 +65,34 @@
       "requested": "anonymous-existing-session",
       "selected": null
     },
-    "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation."
+    "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
+    "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
   },
-  "release_status": "Draft candidate, not merged/deployed. API route validation still capacity blocked; production non-OAuth Audit same-session wiring also remains an explicitly identified gap. No provider fallback, permissive parser or partial-route publish."
+  "release_status": "Draft PR325, not merged/deployed. Local native-format and service-session wiring verified; API valid cold/resume remains blocked by existing429. Configured-route acceptance and formal deployment gate still apply; no fallback or partial-route publish.",
+  "session_continuation_followup": {
+    "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
+    "changes": [
+      "select latest Audit-owned native attempt for same Task/generation and current or previous revision/Run",
+      "require same route, runtime kind, credential mode and model",
+      "persist existing Run session projection for CLI-native Audit session events to preserve repeated-failure fresh rule",
+      "honor forced fresh and explicit noncontinuable previous revision; Consumer session slots and retry limits unchanged"
+    ],
+    "fail_first": [
+      "API Audit retry did not resume",
+      "API Audit revision did not resume",
+      "same-session invalid-result loop bypassed established fresh rule",
+      "previous revision explicit noncontinuable session was selected"
+    ],
+    "final_local_tests": {
+      "command": "pytest tests/test_audit_agent.py -k 'non_oauth_audit or audit_native_session_selection_requires_same_owner or audit_revision_resumes_audit_owned_session or audit_repeated_result_failure_starts_and_binds_fresh_session or audit_retry_does_not_resume_explicit_noncontinuable_session'",
+      "passed": 10,
+      "deselected": 26,
+      "duration_seconds": 9.91,
+      "scope": "4 new nodes plus 6 directly affected existing nodes; rerun only when session implementation changed"
+    },
+    "schema_and_model_cases_rerun": false,
+    "api_requests_this_followup": 0,
+    "api_status": "Existing429 blocker unchanged; no retry",
+    "review": "Independent read-only review passed; repeated-invalid-result fresh rule and cross-revision noncontinuable blockers resolved. No reviewer test/model calls."
+  }
 }
