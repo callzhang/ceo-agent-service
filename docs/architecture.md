@@ -4458,3 +4458,15 @@ The shared Consumer/Audit document-collaborator reader uses `dws drive permissio
 It returns one original provider page and accepts `next_token` for the next page;
 callers retain `hasMore`/`nextToken` rather than treating the first 50 members as complete.
 No permissions are changed by this reader.
+
+
+### Complete recent-conversation discovery (2026-10-26)
+
+The shared `recent_dingtalk_conversations` reader retains the scheduled-trigger cutoff,
+then calls `DwsClient.read_complete_recent_conversations`. A result is usable as a full
+discovery only when the provider reports success, an exhausted cursor and complete
+pagination, a matching half-open time window, and consistent collection/page counts.
+Incomplete or inconsistent discovery raises `DwsError` rather than looking like an
+empty or exhaustive conversation list. The original successful provider ledger is
+returned unchanged; this reader adds no retry, continuation loop or business action.
+Existing direct/group message-reading paths are unchanged.

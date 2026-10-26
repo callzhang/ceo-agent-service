@@ -2565,16 +2565,12 @@ def build_role_server(
     def recent_dingtalk_conversations(
         start: str, end: str,
     ) -> dict[str, object]:
-        """List conversations in a bounded window, capped at a scheduled trigger."""
+        """Read complete conversation discovery, capped at a scheduled trigger."""
         from app.dws_client import DwsClient
         if not start.strip() or not end.strip():
             raise ValueError("conversation window is required")
         _validate_scheduled_read_window(db_path, task_id, start, end)
-        dws = DwsClient()
-        return dws.run_json([
-            dws.dws_bin, "chat", "+recent-conversations", "--start", start,
-            "--end", end, "--page-limit", "50", "--format", "json",
-        ])
+        return DwsClient().read_complete_recent_conversations(start, end)
 
     def read_dingtalk_messages_in_window(
         conversation_id: str, start: str, end: str,
