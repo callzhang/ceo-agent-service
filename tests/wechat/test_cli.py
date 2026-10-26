@@ -283,38 +283,7 @@ def test_produce_once_builds_direction_aware_reader(tmp_path, monkeypatch):
     assert captured == [(reader, "self-1", "self-1")]
 
 
-def test_consume_once_builds_direction_aware_reader(tmp_path, monkeypatch):
-    from app.wechat import decision_runner
-
-    db = tmp_path / "worker.sqlite3"
-    store = AutoReplyStore(db)
-    store.upsert_wechat_read_state(
-        account_id="acct-1", account_dir="/account", db_dir="/account/db_storage",
-        app_version="4.1.10", self_user_id="self-1", capability_status="ready",
-    )
-    reader = object()
-    built_with = []
-    captured = []
-    monkeypatch.setattr(
-        decision_runner, "WechatDecisionRunner", lambda **kwargs: object()
-    )
-    monkeypatch.setattr(
-        cli, "_reader",
-        lambda: built_with.append(True) or reader,
-    )
-    monkeypatch.setattr(
-        cli.service, "run_consume_once",
-        lambda store, runner, used_reader, account: captured.append(
-            (used_reader, account.self_user_id)
-        ) or 0,
-    )
-
-    assert cli.cmd_consume_once(SimpleNamespace(db=str(db))) == 0
-    assert built_with == [True]
-    assert captured == [(reader, "self-1")]
-
-
-@pytest.mark.parametrize("command", [cli.cmd_produce_once, cli.cmd_consume_once])
+@pytest.mark.parametrize("command", [cli.cmd_produce_once])
 def test_automatic_once_commands_reject_ready_account_without_self_id(
     command, tmp_path, monkeypatch, capsys,
 ):
@@ -332,22 +301,3 @@ def test_automatic_once_commands_reject_ready_account_without_self_id(
     assert "no single ready account" in capsys.readouterr().out
 
 
-def test_main_initializes_runtime_once_for_consumer(monkeypatch, tmp_path):
-    calls = []
-
-    class Refresher:
-        def refresh_expired(self, *, force=False):
-            calls.append(("refresh", force))
-
-    monkeypatch.setattr(
-        "app.agent_runtime_production.build_production_runtime_refresher",
-        lambda **_kwargs: Refresher(),
-    )
-    monkeypatch.setattr(
-        cli,
-        "cmd_consume_once",
-        lambda _args: calls.append(("command",)) or 0,
-    )
-
-    assert cli.main(["consume-once", "--db", str(tmp_path / "worker.sqlite3")]) == 0
-    assert calls == [("refresh", True), ("command",)]

@@ -145,7 +145,7 @@ orphan Run 收尾也直接更新 Task／Run／RuntimeAttempt owner，服务失�
 error reconciliation、rerun、requeue 和相关读取改为 native Task／TaskInput／Run／
 RuntimeAttempt／adopted-result／Action／Receipt owner。候选仍未启用；
 `replace_pending_single_chat_reply_task_trigger` 已以原生 Task／TaskInput／TaskBusinessKey
-完成合并；WeChat 独立审核回执按原生 Task、Run 与 delivery Action 校验。共享
+完成合并；WeChat 审核回执按原生 Task、Run 与 delivery Action 校验。共享
 History／Attention、WeChat delivery 及其他 Reply 列表／详情读取仍保留来源投影。公共 Email
 unsubscribe receipt reconciliation 仍受全局 manifest 可用性门槛约束。方法、验证和其余
 发布门槛见 `task-reply-terminal-closure-report.md`。
@@ -854,7 +854,7 @@ Consumer 与 Audit 的实际只读工具目录提供 `read_dingtalk_group_member
 userId；身份关联必须由同一账号返回的稳定 ID 证明，空资料或 partial 仍是证据缺口。
 这些读取不新增审核、发送门禁或业务来源绑定，也不改变既有外部动作权限。
 
-本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 保留 DecisionRunner/persistent Sender，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
+本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 走同一 Consumer → Audit → SystemExecutor 流程并经现有 Sender 发送，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
 
 Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general 或 OA）；Codex Audit 使用从现有 Audit wire contract 生成的同一原生 Schema，不再按 OAuth/API 认证方式区分 schema、解码器或恢复指纹。本次验收按用户最新决定限定当前Codex CLI本机OAuth/gpt-6-luna，API诊断不作发布前提；服务接续缺口已补本地验证，正式发布及生产回读状态见 agent-optimization-final-acceptance.md 的G2续作记录，本地接线通过不是生产验收。两者的动态 JSON 对象通过键值条目表示，并在原有严格 Pydantic 校验前无损还原。Audit Schema 保留 outcome 与 feedback 的现有条件关系；候选 revision/digest 仍由服务从本轮 AuditTurnContext 绑定，候选字段断言仍执行原校验。字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；候选绑定、断言校验和审核决定不变。该传输层不改变结果字段、业务判断、SystemExecutor 外部动作流程或 Consumer 直发消息/邮件禁令；Claude 与 Friday 输出路径保持原样。
 
@@ -863,7 +863,7 @@ Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general �
 
 已发送的微信 Attempt 不能从普通重跑入口再次入队。历史详情仅对当前最新的已发送 Attempt、且原始输入未被精简时提供独立的“再次发送”操作；操作展示原消息内容和 ID，并把该 ID 随请求提交。服务在同一事务中核对来源 Attempt、会话、原消息 ID、最新 Attempt 与之前的再次发送记录，然后创建新执行代际。相同来源在新代际待处理时重复提交复用它，完成后不能再次使用旧 Attempt 发起。精简后缺少可执行原文的历史任务不提供该操作。失败 Attempt 的普通重跑、其他渠道和现有 Sender 投递规则不变。
 
-迁移期开关 `CEO_WECHAT_STANDARD_PIPELINE_TARGETS`（逗号分隔的会话 ID，默认空）：列出的会话的微信任务改走标准流程——`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经 G2 放行判定发送。未列出的会话仍走 `WechatReplyConsumer`。该开关只是迁移工具，旧路径退休时一并删除；离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
+微信回复任务统一走标准流程（Derek 2026-10-25：不要开关，统一逻辑，不留旧逻辑）：`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经放行判定发送。原来的 `WechatReplyConsumer`、`WechatDecisionRunner`、`WechatDeliveryAuditor`、`finalize_wechat_reply_task`、`create_wechat_delivery`、`record_wechat_delivery_review`、`wechat consume-once` 命令和 `wechat_audit_rejected` 状态已于同日删除。离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
 
 ```text
 pending -> processing -> done
@@ -2149,9 +2149,8 @@ Consumer 可以直接使用普通工作工具，写入并读回本任务本代�
 自然语言完成短语，也不把摘要转换成执行事实。是否引用历史完成、是否还需要业务动作，由
 完整候选、来源及实际回执判断；风险拒绝、授权缺失与历史拒绝不可重放的机制保留。
 
-上述 AgentOrchestrator 候选仍走完整的 Consumer → Audit → SystemExecutor。已授权微信会话的 task3 保留独立的 WechatReplyConsumer / WechatDecisionRunner、持久化 delivery 与 Sender；微信 Consumer 的 `audit_summary` 只是自述。微信待发送记录由服务先补全最终正文，再由独立 model-only Audit Agent 读取原始触发消息、同一会话最近消息及精确目标/正文，输出批准或拒绝。审核结果与当前任务代次、Consumer 父运行、delivery ID 和候选摘要绑定；自动发送、人工确认和重试都在同一个数据库领取入口校验已完成的批准运行及未变的目标/正文。拒绝关闭待发送记录，审核失败或来源不可读时保持不可发送。微信没有迁入通用 candidate/review/SystemExecutor 表，发送回执仍由现有 Sender 持久化。
-微信决策和独立审核在 Codex 与 Claude 路线都运行于 model-only 环境：Codex 禁用原生命令、浏览器、插件及全部 MCP server，使用只读 sandbox；Claude 关闭全部工具；不具备角色工具边界的 Friday 路线不参与。普通 Consumer 的角色工具列表没有发消息、发邮件或 OA 执行入口，原生命令位于无网络的工作区沙箱；文档与任务材料写入仍按原能力边界执行。审核通过后仍遵循 Sender 原有自动或人工确认模式。
-WechatDecisionRunner 的首轮 Developer 指令提供一个简短且有效的 `AgentEnvelope` 不回复示例，以及回复时须填写的字段；完整 Pydantic 校验、同 session 格式修正和独立发送阶段保持原有契约。该示例只进入微信决策入口，不注入通用 Consumer/Audit。
+上述 AgentOrchestrator 候选仍走完整的 Consumer → Audit → SystemExecutor。已授权微信会话的回复任务走同一 Consumer → Audit → SystemExecutor（Derek 2026-10-25：统一逻辑，不再有独立的微信决策和审核路径）。Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文，Audit 读取同一候选的精确目标和正文；通过后 `WechatSendMessageHandler` 创建绑定该审核的 delivery，由现有 Sender 发送并持久化回执。自动发送、人工确认和重试都在同一个数据库领取入口校验标准审核证据及未变的目标/正文；审核未通过时不创建 delivery。
+微信 Consumer 与 Audit 的工具边界与其他渠道相同（普通 Consumer 的角色工具列表没有发消息、发邮件或 OA 执行入口）。审核通过后仍遵循 Sender 原有自动或人工确认模式。
 
 发布可达性使用独立的显式单任务调度暂缓入口 `app.reply_task_deferral`，默认只读；本次操作
 仅授权原 386130/386131。应用需完整备份及精确业务对象/代次/输入版本/失败 run 指纹，锁内
@@ -2199,13 +2198,11 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 - `service_api` 路由（第三方 OpenAI 兼容 provider）没有 `codex-auto-review` 模型，`disable_automatic_review` 仍把它的 `approval_policy` 设为 `never`：该路由上的 Consumer 仍被沙箱限制，不能提权。需要沙箱外权限的任务不应路由到该路由，这是该路由已声明的能力差距，不在本次变更里绕过。
 - 不变：终态外发动作仍走 proposal → Audit → SystemExecutor，Audit 只读，Consumer 禁用工具清单有效；`dws` 仍用沙箱内的 `~/.dws` 和网络设置。
 
-### 微信发送放行：同时认原审核和标准审核（Derek 2026-10-24，方案 G2）
+### 微信发送放行：只认标准审核（Derek 2026-10-24 方案 G2；原微信审核于 2026-10-25 退休）
 
-微信投递只有在独立审核批准了「完全相同的目标和文本」之后才能被领取发送。放行判定现在认两种证据，二选一，不能混用：
-- 原微信流水线：投递证据里的 `audit_run_id` 等，绑定 `wechat-delivery:<id>` 的 Audit 运行（`WechatDeliveryAuditor`，阶段 4 前保持不变）。
-- 标准流水线：投递证据里的 `standard_candidate_id`、`standard_review_id`、`standard_action_identity`，指向被采纳的候选、它的 Audit 批准和候选里的 `wechat / send_message` 动作。
+微信投递只有在独立审核批准了「完全相同的目标和文本」之后才能被领取发送。放行判定只认一种证据：投递证据里的 `standard_candidate_id`、`standard_review_id`、`standard_action_identity`，指向被采纳的候选、它的 Audit 批准和候选里的 `wechat / send_message` 动作。原微信流水线（`WechatReplyConsumer`、`WechatDecisionRunner`、`WechatDeliveryAuditor`、`audit_run_id` 证据、`wechat_audit_rejected` 失败）与相关入口已删除。
 
-标准证据按失败即关闭的方式逐项核对，任何一项对不上都视为未放行：审核是 `approve` 且摘要等于候选摘要、候选未失效、候选属于已完成的 Consumer 运行、Audit 运行已完成且其父运行就是该候选、两者的任务与代次与投递一致、候选是普通 `proposal`、按 `action_identity` 唯一找到该动作、动作的账号／会话类型／对象／会话 ID 与投递完全一致、动作的 `payload.text` 与投递的 `reply_text` 逐字相等。`AutoReplyStore.create_standard_wechat_delivery` 从被批准的动作本身取目标和文本（不取调用方参数），审批文本已是最终正文，因此不再追加发送后缀。原流水线的 `create_wechat_delivery` 与 `finalize_wechat_reply_task` 不能写入这三个标准字段。本项只改放行判定和投递创建；`wechat / send_message` 动作登记、处理器和路由在后续提交。
+标准证据按失败即关闭的方式逐项核对，任何一项对不上都视为未放行：审核是 `approve` 且摘要等于候选摘要、候选未失效、候选属于已完成的 Consumer 运行、Audit 运行已完成且其父运行就是该候选、两者的任务与代次与投递一致、候选是普通 `proposal`、按 `action_identity` 唯一找到该动作、动作的账号／会话类型／对象／会话 ID 与投递完全一致、动作的 `payload.text` 与投递的 `reply_text` 逐字相等。`AutoReplyStore.create_standard_wechat_delivery` 从被批准的动作本身取目标和文本（不取调用方参数），审批文本已是最终正文，因此不再追加发送后缀。
 
 ### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
 
@@ -4360,7 +4357,7 @@ End of historical Task/Run Phase 2 candidate notes. The following sections descr
 
 ### 原生输出格式与解码契约一致
 
-Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明及 `agent_cli.read_consumer_output_schema(purpose=...)` 按需查询入口，不全量注入 native 或 Pydantic 业务 schema。该 Consumer metadata 查询通过现有 agent_cli 传输返回与解码器同一文件的完整紧凑 JSON，单一文本块、无重复 structured output；仅接受声明 purpose，不扩大任意文件、shell 或 Audit 权限。业务模型、无损还原、严格校验、路线、重试和 session 选择保持不变。公共/任务预览与实际提交复用同一装配；每轮保留当前入口与可解析指纹，不假设压缩后的 session 永久保有完整规则。冷启动查询仍占工具上下文，默认 prompt 减少不代表总 token 或耗时减少。
+Consumer 的原生输出段仅保留 schema 指纹及 JSON/decision 包装说明，不全量注入 native 或 Pydantic 业务 schema。Codex Consumer 在冷启动和同 session 续跑时都通过 `--output-schema` 提交当前原生 schema；重复的 `read_consumer_output_schema` 工具、工具目录条目及 prompt 查询提示已删除，不新增替代查询入口。原生解码、完整业务校验、schema 指纹、路线、重试和 session 选择不变。公共/任务预览与实际提交继续复用同一装配，历史已保存输入保留原样；不以 session 历史作为 schema 交付依据，也不预先宣称删除查询后 token 或耗时必然减少。
 
 
 ### DWS 文档格式核验与字面内容

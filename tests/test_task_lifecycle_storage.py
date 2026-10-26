@@ -68,16 +68,14 @@ def test_dispatch_claim_fences_and_renewal_use_task_owner(tmp_path):
     first = adapter.claim(now, owner="first", owner_pid=17, lease=timedelta(minutes=5))
     assert first is not None
     with store._immediate_write_transaction() as db:
-        assert db.execute("select lifecycle_lease_owner,lifecycle_generation from tasks "
-                          "where record_type='reply_tasks'").fetchone()[:] == ("first", first.generation)
-        db.execute("update tasks set lease_owner=jsonb('\"new-owner\"') "
-                   "where record_type='reply_tasks'")
+        assert db.execute("select lease_owner,generation from tasks "
+                          "where kind='reply'").fetchone()[:] == ("first", first.generation)
+        db.execute("update tasks set lease_owner='new-owner' where kind='reply'")
     # A stale passive ledger cannot authorize a claim whose Task owner changed.
     with pytest.raises(ValueError, match="no longer owned"):
         adapter.assert_current(first, owner="first", now=now + timedelta(seconds=1))
     with store._immediate_write_transaction() as db:
-        db.execute("update tasks set lease_owner=jsonb('\"first\"') "
-                   "where record_type='reply_tasks'")
+        db.execute("update tasks set lease_owner='first' where kind='reply'")
     adapter.renew(first, owner="first", now=now + timedelta(seconds=1), lease=timedelta(minutes=5))
     adapter.assert_current(first, owner="first", now=now + timedelta(seconds=2))
     adapter.release(first, owner="first", now=now + timedelta(seconds=3))
@@ -93,25 +91,27 @@ def test_due_claim_and_metrics_seek_kind_status_without_materialized_history(tmp
     from app.store import AutoReplyStore
     from app.dispatcher import adapters
     store = AutoReplyStore(tmp_path / "plans.sqlite3")
-    plans = []
-    connect = sqlite3.connect
+    statements = []
+    original_open = store._open_connection
 
-    class ObservedConnection(sqlite3.Connection):
-        def execute(self, sql, parameters=()):
-            if sql.startswith("select") and "task_status" in sql:
-                plans.append([row[3] for row in super().execute("explain query plan " + sql, parameters)])
-            return super().execute(sql, parameters)
+    def traced_open(*args, **kwargs):
+        connection = original_open(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
 
-    monkeypatch.setattr(sqlite3, "connect", lambda *args, **kwargs: connect(*args, **kwargs, factory=ObservedConnection))
+    monkeypatch.setattr(store, "_open_connection", traced_open)
     adapter = getattr(adapters, adapter_name)(store, owner_alive=lambda _: False)
     now = datetime(2026, 10, 19, tzinfo=timezone.utc)
     assert adapter.claim(now, owner="fixture", owner_pid=7, lease=timedelta(minutes=5)) is None
     assert adapter.metrics(now).due == 0
-    assert len(plans) == 6
+    queries = [sql for sql in statements if sql.lstrip().startswith("select") and "task_status" in sql]
+    assert len(queries) == 6
+    with store._connect() as db:
+        plans = [[row[3] for row in db.execute("explain query plan " + sql)] for sql in queries]
     for plan in plans:
-        assert any("SEARCH tasks USING INDEX idx_task_lifecycle_" in step
-                   and "_kind=? AND lifecycle_status=?" in step for step in plan), plan
-        assert not any("MATERIALIZE" in step or "SCAN tasks" in step for step in plan), plan
+        assert any("SEARCH task USING INDEX idx_tasks_claim_due (kind=? AND status=?)" in step
+                   for step in plan), plan
+        assert not any("MATERIALIZE" in step or "SCAN task" in step for step in plan), plan
 
 
 def test_history_pruning_cannot_clear_live_newer_or_other_adapter_claim(tmp_path):
@@ -127,15 +127,15 @@ def test_history_pruning_cannot_clear_live_newer_or_other_adapter_claim(tmp_path
     first = adapter.claim(now, owner="live", owner_pid=7, lease=timedelta(minutes=5))
     with store._immediate_write_transaction() as db:
         before = db.execute("select adapter_name,lease_owner,owner_pid,generation,lease_expires_at from tasks "
-                            "where record_type='reply_tasks'").fetchone()[:]
+                            "where kind='reply'").fetchone()[:]
         forget_pruned_claims(db, [("reply", first.source_id, first.generation)])
         assert db.execute("select adapter_name,lease_owner,owner_pid,generation,lease_expires_at from tasks "
-                          "where record_type='reply_tasks'").fetchone()[:] == before
+                          "where kind='reply'").fetchone()[:] == before
     adapter.release(first, owner="live", now=now)
     with store._immediate_write_transaction() as db:
         forget_pruned_claims(db, [("reply", first.source_id, first.generation - 1),
                                  ("scheduled_execution", first.source_id, first.generation)])
-        assert db.execute("select lifecycle_generation from tasks where record_type='reply_tasks'").fetchone()[0] == first.generation
+        assert db.execute("select generation from tasks where kind='reply'").fetchone()[0] == first.generation
 
 
 def test_task_domain_and_claim_commit_together_with_passive_history(tmp_path, monkeypatch):
@@ -146,8 +146,8 @@ def test_task_domain_and_claim_commit_together_with_passive_history(tmp_path, mo
     store = AutoReplyStore(tmp_path / "atomic.sqlite3")
     store.enqueue_reply_task(conversation_id="atomic", conversation_title="Atomic", single_chat=True,
         trigger_message_id="atomic", trigger_create_time="clock", trigger_sender="sender", trigger_text="text")
-    query = ("select lifecycle_status,lifecycle_attempts,lifecycle_lease_owner,lifecycle_generation "
-             "from tasks where record_type='reply_tasks'")
+    query = ("select status,attempts,lease_owner,generation "
+             "from tasks where kind='reply'")
     original = writer._write_claim_history
 
     def fail_after_task_cas(db, *args, **kwargs):

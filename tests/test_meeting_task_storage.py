@@ -1,10 +1,7 @@
 """Meeting's actual 11.2 declarations survive the paired 4B conversion."""
 
 from contextlib import closing
-from pathlib import Path
 import sqlite3
-import subprocess
-import sys
 
 import pytest
 
@@ -222,54 +219,6 @@ def test_actual_source_declarations_are_required_before_any_write(tmp_path, kind
             migrate_task_schema(db)
         assert fingerprint(db) == before
         db.rollback()
-
-
-def test_fresh_current_and_missing_index_repair_preserve_adopted_meeting_values(tmp_path):
-    from app.store import AutoReplyStore
-    from app.run_storage import insert_run
-    from app.task_storage import insert_task
-
-    path = tmp_path / "fresh.db"
-    def reopen():
-        # Exercise a genuine new process, without the existing process's
-        # initialized-path cache or mocking Store schema checks.
-        subprocess.run(
-            [sys.executable, "-c",
-             "from app.store import AutoReplyStore; from pathlib import Path; import sys; AutoReplyStore(Path(sys.argv[1]))",
-             str(path)],
-            cwd=Path(__file__).resolve().parents[1],
-            check=True, capture_output=True,
-        )
-
-    store = AutoReplyStore(path)
-    with closing(sqlite3.connect(path)) as db, db:
-        job = insert_task(db, "meeting_alignment_jobs", dict(
-            meeting_id="fresh", decision_json=' { "adopted": true } ',
-            final_message="exact adopted message", send_result_json=' { "id": 2 } ',
-            calendar_summary_status="failed", calendar_summary_result_json="not JSON",
-        )).lastrowid
-        insert_run(db, "meeting_alignment_runs", dict(
-            task_id=job, status="custom source status", updated_at="", finished_at="",
-        ))
-    reopen()
-    with closing(sqlite3.connect(path)) as db, db:
-        before = {
-            table: db.execute(f'select * from "{table}" order by rowid').fetchall()
-            for table in ("tasks", "runs", "meeting_memory_write_events",
-                          "meeting_alignment_delivery_claims")
-        }
-        db.execute("drop index idx_meeting_alignment_runs_active_job")
-    reopen()
-    with closing(sqlite3.connect(path)) as db:
-        assert {
-            table: db.execute(f'select * from "{table}" order by rowid').fetchall()
-            for table in before
-        } == before
-        assert not db.execute(
-            "select 1 from sqlite_master where name in "
-            "('meeting_alignment_jobs','meeting_alignment_runs')"
-        ).fetchone()
-    assert store._schema_is_current()
 
 
 @pytest.mark.parametrize("allow_missing", [False, True])

@@ -1,3 +1,4 @@
+from app.business_source_reader import PreparedSources
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
@@ -7,6 +8,15 @@ from app.task_semantic_service import PromoteCandidate, RecordTaskSuggestion, So
 from app.web_api.tasks import business_project_detail, business_project_list_response, business_task_detail
 from app.action_followup_sync_definitions import sync_action_projection
 import pytest
+
+
+def _prepared(store, citation):
+    """Make the cited original readable for this request (the excerpt is the whole body)."""
+    fact = store.get_business_task_signal(citation.signal_id)
+    prepared = PreparedSources(store.business_source_reader())
+    prepared.add(fact)
+    prepared.add_current(fact, citation.source_excerpt)
+    return prepared
 
 
 def _project(store, title="交付项目", name="张三"):
@@ -22,7 +32,10 @@ def _project(store, title="交付项目", name="张三"):
         "key": "验收", "text": "验收排期未确定", "evidence": [citation],
     }])
     with store.business_task_transaction() as db:
-        ProjectContextService(store).apply(project_id=project_id, context=context, signal_ids=(signal_id,), db=db)
+        ProjectContextService(store).apply(
+            project_id=project_id, context=context, signal_ids=(signal_id,), db=db,
+            prepared_sources=_prepared(store, citation),
+        )
     return project_id, anchor_id, citation, context
 
 
@@ -72,7 +85,7 @@ def test_project_suggestion_is_separate_from_actual_owner_and_task_counts(tmp_pa
     result = TaskSemanticService(store).record_suggestion(RecordTaskSuggestion(
         title="确认回款日期", description="核实排期", project_anchor_id=anchor,
         signal=SourceSignal(source_type="message", source_ref="m:risk", evidence_text="付款日期未确定。", dedupe_key="risk"), suggestion=suggestion,
-    ))
+    ), prepared_sources=_prepared(store, citation))
     detail = business_project_detail(store, project_id)
     assert detail.summary.overall_owner == "张三"
     assert detail.summary.confirmed_task_count == detail.summary.open_task_count == 0
@@ -161,7 +174,7 @@ def test_human_promoted_suggestion_is_an_actual_task_without_losing_origin(tmp_p
     result = service.record_suggestion(RecordTaskSuggestion(
         title="确认回款日期", project_anchor_id=anchor, suggestion=suggestion,
         signal=SourceSignal(source_type="message", source_ref="m:suggestion", evidence_text="排期未定。", dedupe_key="suggestion"),
-    ))
+    ), prepared_sources=_prepared(store, citation))
     service.promote_candidate(PromoteCandidate(
         task_id=result.task_id,
         signal=SourceSignal(source_type="message", source_ref="m:assignment", evidence_text="李四负责确认回款日期。", dedupe_key="assignment"),
@@ -189,7 +202,9 @@ def test_project_history_is_bounded_and_current_proof_remains_visible(tmp_path):
     for number in range(25):
         updated = context.model_copy(update={"scope": f"一期版本{number}"})
         with store.business_task_transaction() as db:
-            ProjectContextService(store).apply(project_id=project_id, context=updated, signal_ids=(citation.signal_id,), db=db)
+            ProjectContextService(store).apply(project_id=project_id, context=updated, signal_ids=(citation.signal_id,), db=db,
+                prepared_sources=_prepared(store, citation),
+            )
     detail = business_project_detail(store, project_id)
     assert len(detail.context_revisions) == 20
     assert detail.context_revision_meta.total == 26

@@ -50,8 +50,9 @@ def test_task_workitem_metadata_is_compact_and_context_unchanged(monkeypatch, tm
                                    'context': {'source_conversation_kind': 'file'}})
     facts = 'EXACT_CONTEXT\n原始正文\n不能丢失'
     prompt = build_task_agent_prompt(work, facts, current_time='2026-10-14T09:00:00Z')
+    # The Work Item JSON carries its summary ("the Work Item's summary above is its source text");
+    # the bound facts block is still emitted exactly once.
     expected = work.model_dump(mode='json')
-    expected.pop('summary')
     assert compact(expected) in prompt
     assert prompt.count(facts) == 1
     assert '2026-10-14T09:00:00Z' in prompt

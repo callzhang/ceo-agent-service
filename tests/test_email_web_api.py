@@ -265,6 +265,7 @@ def _signal_failed_move_plan(
 
 def test_processing_progress_counts_a_failed_action_the_way_the_list_filter_does(tmp_path: Path):
     client, store, identity = _signal_client(tmp_path, _FakeSignalProvider(set()))
+    # The failure is long past (outside the 24-hour window) and still failed.
     _signal_failed_move_plan(
         store, identity, attempts=3, error="provider_read_failed:ImapMessageUnavailable"
     )
@@ -1067,6 +1068,7 @@ def test_email_classification_list_and_detail_expose_persisted_text(
     assert detailed.json()["item"]["message_text"] == (
         "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
     )
+    # The default list reads local metadata only: the stored preview, never message_text.
     assert listed.json()["items"][0]["preview"] == (
         "正文\n\nFrom: quoted@example.com\nSubject: 转发邮件\n\n引用内容"
     )
@@ -1165,6 +1167,7 @@ def test_email_classification_list_all_unifies_statuses_with_persisted_body(
     ).json()
     assert {item["message_text"] for item in full["items"]} == {"正文 101", "正文 102"}
 
+    # An explicit full search reads the original text.
     for query, expected in [("正文 101", ["101"]), ("MESSAGE 102", ["102"]), ("SENDER@EXAMPLE", ["102", "101"]), ("%", []), ("' OR 1=1 --", [])]:
         found = client.get("/api/console/email/classifications", params={"status":"all", "q":query, "page_size":1, "search_scope":"full"}).json()
         assert found["meta"]["total"] == len(expected)
@@ -1487,6 +1490,7 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
             return None
 
     app = FastAPI()
+    # The original is read from the mailbox; this store has no stored message body.
     register_email_routes(
         app,
         lambda: DetailStore(),
@@ -2816,7 +2820,7 @@ def test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address
     tmp_path: Path,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
-    with sqlite3.connect(fixture.database) as db:
+    with fixture.store._connect(foreign_keys=False) as db:
         effects = db.execute(
             f"select action_identity,effect_digest from ({EMAIL_UNSUBSCRIBE_EFFECT_SQL}) "
             "where action_identity=?",
@@ -3008,6 +3012,8 @@ def test_email_detail_omits_lineage_when_exact_audited_chain_conflicts(
     mismatch: str,
 ) -> None:
     fixture = _audited_email_detail_fixture(tmp_path)
+    # Control: the unmodified fixture does show its audited lineage.
+    assert _audited_observability_event(fixture)["consumer_run_ids"] == [fixture.consumer.id]
     with fixture.task_store._connect() as db:
         if mismatch in {"account", "plan", "classification"}:
             payload = dict(fixture.task_payload)
@@ -3326,6 +3332,7 @@ def test_audit_app_rejects_non_text_shared_email_schema_identifier(tmp_path: Pat
         db.execute("pragma writable_schema = off")
 
     db.close()
+    # The exact current-schema comparison refuses it before any Email validator runs.
     _assert_audit_app_rejects_shared_schema(database, tmp_path)
 
 

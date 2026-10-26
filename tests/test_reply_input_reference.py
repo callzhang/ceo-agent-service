@@ -1,9 +1,11 @@
+import json
 import sqlite3
 
 import pytest
 
 from app.store import AutoReplyStore
 from app.task20_definitions import TASK20_COLUMNS
+from app.storage_maintenance import REPLY_TASK_INPUT_SQL
 
 
 def values(text="first"):
@@ -77,6 +79,9 @@ def test_terminal_input_persists_no_compact_json_but_projects_old_shape(tmp_path
             "from task_inputs where task_id=? order by id limit 1",
             (task_id,),
         ).fetchone() == ("", "", 1)
+        assert db.execute(
+            f"select trigger_text,trigger_message_json,input_compacted from ({REPLY_TASK_INPUT_SQL})"
+        ).fetchone() == ("", "", 1)
     assert (
         store.list_reply_task_inputs(task_id)[0]["trigger_message_json"]
         == result.trigger_message_json
@@ -124,7 +129,6 @@ def test_manual_rerun_appends_exact_new_input(tmp_path):
 def test_frozen_skill_reader_uses_claimed_material_after_current_input_changes(
     tmp_path,
 ):
-    import json
     from app.agent_cli import build_role_server
     from app.agent_cron.commands import (
         ServiceCommandConsumerContext,
@@ -318,47 +322,3 @@ def test_reviewed_dingtalk_reply_handler_uses_claimed_message_after_new_input(
     assert observed == ["message"]
 
 
-def test_wechat_execution_finalizer_records_claimed_source_while_current_differs(
-    tmp_path, monkeypatch
-):
-    store = AutoReplyStore(tmp_path / "wechat-claimed.sqlite3")
-    first = values()
-    first.update(channel="wechat", single_chat=True)
-    task = store.ensure_reply_task(**first)
-    claimed = store.claim_reply_task(task.id)
-    second = values("latest current")
-    second.update(
-        channel="wechat",
-        single_chat=True,
-        trigger_message_id="later",
-        business_object_key=task.business_object_key,
-    )
-    store.ensure_reply_task(**second)
-    observed = []
-    original_prepare = store._prepare_outbound_postfix_in_transaction
-
-    def prepare(db, **kwargs):
-        observed.append(kwargs["original_text"])
-        return original_prepare(db, **kwargs)
-
-    monkeypatch.setattr(store, "_prepare_outbound_postfix_in_transaction", prepare)
-    attempt = store.finalize_wechat_reply_task(
-        task_id=task.id,
-        expected_execution_generation=claimed.execution_generation,
-        action="send_reply",
-        sensitivity_kind="normal",
-        codex_reason="reviewed",
-        draft_reply_text="Reviewed reply",
-        audit_summary="approved",
-        send_status="done",
-        account_id="account",
-        target_type="direct",
-        target_id="target",
-        conversation_id="chat",
-        reply_text="Reviewed reply",
-    )
-    persisted = store.get_reply_attempt(attempt)
-    assert persisted.trigger_message_id == "message"
-    assert persisted.trigger_text == "first"
-    assert observed == ["first"]
-    assert store.get_reply_task(task.id).trigger_text == "latest current"

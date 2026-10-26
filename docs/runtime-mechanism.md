@@ -169,7 +169,7 @@ Task-backed adapter 的 State 引用在显式 Task 转换边界通过类型化�
 已将触达的 Reply terminal settlement、error reconciliation、rerun、requeue 和相关读取
 改为 native Task／TaskInput／Run／RuntimeAttempt／adopted-result／Action／Receipt owner；
 这是仍未启用的候选路径。`replace_pending_single_chat_reply_task_trigger` 已以原生
-Task／TaskInput／TaskBusinessKey 完成合并，WeChat 独立审核校验使用原生 Task、Run 与
+Task／TaskInput／TaskBusinessKey 完成合并，WeChat 审核校验使用原生 Task、Run 与
 delivery Action。共享 History／Attention、WeChat delivery 及其他 Reply 列表／详情读取仍使用来源投影。公共 Email
 unsubscribe receipt reconciliation 仍受全局 manifest 可用性门槛约束；精确方法与验证边界
 见 `task-reply-terminal-closure-report.md`。
@@ -2171,7 +2171,7 @@ Session 可用性测试同样按真实 `AgentRun` 提供业务 `status`；缺失
 Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 execution generation
 的记录，即使同一业务对象更新了 trigger message；旧 attempt 仍可在历史详情中查看。
 
-对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
+对进入 Consumer/Audit 的 task，当前投影结合当前 execution_generation 的候选、审核、人工选择、System execution 和真实回执。模型 run 完成或 Audit approve 不等于动作成功。System 已开始的精确动作在同一 candidate/review/generation/selection 下恢复；确认成功的持久化回执可完成执行投影，不要求为取得回执重新运行模型。已经开始的精确动作，其结果（verified／confirmed_no_effect／uncertain／failed）在 Task 的 execution_generation 已轮换之后仍然记录到该动作的原 Attempt，规则与供应商回执一致；轮换不会让已对外执行的动作停在未确认状态。无法确认的外部结果保持 uncertain，不取得再次发送资格。自动技术重试在同一 generation/revision 追加 turn；明确的人工 rerun 或来源补充通过正式入口创建新 generation；旧 run、attempt、session、runtime event 和回执保留为历史事实。真实 pending/processing 仍显示等待/执行中，旧 generation 的失败不覆盖当前进展。
 
 `needs_human` 的有效绑定选项对应已审核的 task-class 规则分支，由 System Executor 执行；停止选项按原方案写入 skipped 和原因。历史 `requested_input` 或新增事实作为新输入进入 Consumer/Audit 生成并审核新 revision，不能改写已经批准的方案，也不能将历史输入问题重新激活成当前 `needs_human`。旧无绑定选项不可执行，未收到规则反馈时不猜测决定。
 
@@ -5120,7 +5120,9 @@ in emails.message_source_reference_json (full UTF-8 hash/length, exact native or
 provider location and serialization form). The explicit Store compactor first
 checks actual native task attempts, then verifies the accurate provider original.
 Only processed rows without unfinished classification/reply/action/dispatch
-input dependencies can retire their original bytes; missing/changed sources keep
+input dependencies can retire their original bytes (a direct Action is a
+`record_type='action'` row with an email operation whose `action_status` is not
+`done`/`skipped`; the original stays until the last one finishes); missing/changed sources keep
 the bytes. The update compares the original, state, source clocks and current
 plan, preserving model features, business results and receipts. Native original references remain authoritative byte proofs; Console views and
 structured execution context obtain real provider headers for recipient roles
@@ -5444,7 +5446,7 @@ End of historical Task/Run Phase 2 candidate notes. The following sections descr
 
 ### 原生输出格式与解码契约一致
 
-Consumer 的原生输出段仅保留 schema 指纹、JSON/decision 包装说明及 `agent_cli.read_consumer_output_schema(purpose=...)` 按需查询入口，不全量注入 native 或 Pydantic 业务 schema。该 Consumer metadata 查询通过现有 agent_cli 传输返回与解码器同一文件的完整紧凑 JSON，单一文本块、无重复 structured output；仅接受声明 purpose，不扩大任意文件、shell 或 Audit 权限。业务模型、无损还原、严格校验、路线、重试和 session 选择保持不变。公共/任务预览与实际提交复用同一装配；每轮保留当前入口与可解析指纹，不假设压缩后的 session 永久保有完整规则。冷启动查询仍占工具上下文，默认 prompt 减少不代表总 token 或耗时减少。
+Consumer 的原生输出段仅保留 schema 指纹及 JSON/decision 包装说明，不全量注入 native 或 Pydantic 业务 schema。Codex Consumer 在冷启动和同 session 续跑时都通过 `--output-schema` 提交当前原生 schema；重复的 `read_consumer_output_schema` 工具、工具目录条目及 prompt 查询提示已删除，不新增替代查询入口。原生解码、完整业务校验、schema 指纹、路线、重试和 session 选择不变。公共/任务预览与实际提交继续复用同一装配，历史已保存输入保留原样；不以 session 历史作为 schema 交付依据，也不预先宣称删除查询后 token 或耗时必然减少。
 
 
 ### DWS 文档格式核验与字面内容

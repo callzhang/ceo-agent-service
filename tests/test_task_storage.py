@@ -21,7 +21,6 @@ def test_fresh_task_container_replaces_all_4b_sources(tmp_path):
             {
                 "reply_tasks",
                 "reply_task_inputs",
-                "work_summary_inputs",
                 "task_agent_runs",
                 "meeting_alignment_jobs",
                 "meeting_alignment_runs",
@@ -30,7 +29,8 @@ def test_fresh_task_container_replaces_all_4b_sources(tmp_path):
                 "weekly_okr_analysis_jobs",
             }
         )
-        assert {"okr_review_items", "runs"} <= tables
+        # The work-summary input body is a native table owned by its Task.
+        assert {"okr_review_items", "runs", "work_summary_inputs"} <= tables
 
 
 def source_database(path):
@@ -181,7 +181,6 @@ def typed_store(tmp_path):
             {
                 "reply_tasks",
                 "reply_task_inputs",
-                "work_summary_inputs",
                 "task_agent_runs",
             }
         )
@@ -466,7 +465,7 @@ def test_claim_remains_old_input_after_new_current_and_terminal_compacts_both(tm
     with store._connect() as db:
         assert (
             db.execute(
-                "select count(*) from tasks where record_type='reply_task_inputs'"
+                "select count(*) from task_inputs where task_id=?", (task_id,)
             ).fetchone()[0]
             == 2
         )

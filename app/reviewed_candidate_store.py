@@ -659,7 +659,11 @@ class ReviewedCandidateStoreMixin:
         body = _json(result)
         with self._immediate_write_transaction() as db:
             execution = self._leased_execution(db, execution_id, owner)
-            candidate = self._candidate_context(db, execution["candidate_id"])
+            # The action was already dispatched: its outcome is recorded even after the Task's
+            # execution generation moved on (same rule as the provider receipt).
+            candidate = self._adopted_candidate_row(db, execution["candidate_id"])
+            if candidate is None:
+                raise ValueError("candidate does not exist")
             attempt = candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone())
             if attempt is None:
                 raise ValueError("action was not dispatched")

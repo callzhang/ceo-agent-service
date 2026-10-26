@@ -85,6 +85,7 @@ from app.email_store import StoredEmailLocator
 
 
 def _update_task_facts(db, kind: str, public_id: int, values: dict[str, object]) -> None:
+    """Edit a native Reply Task (or, for kind reply_task_inputs, its input by input id)."""
     if kind == "reply_task_inputs":
         public_id = db.execute(
             "select task_id from task_inputs where id=?", (public_id,)
@@ -1249,6 +1250,22 @@ def test_scan_account_acquires_the_shared_connector_at_high_priority(
     assert acquire_calls == [
         ("account-1", "readonly", ConnectorPriority.HIGH, {"mailbox_address": "a@example.com"})
     ]
+
+
+def _schedule_failed_mark_read_retry(store) -> None:
+    """Make the failed mark-read action due again, as the retry clock would."""
+    from app import shared_action_lifecycle
+
+    with store._connect() as db:
+        db.execute("begin immediate")
+        for (action_id,) in db.execute(
+            f"select action_id from ({EMAIL_DIRECT_ACTION_SQL}) where action_type='mark_read'"
+        ).fetchall():
+            assert shared_action_lifecycle.schedule_direct_email_action(
+                db, action_id=action_id, expected_status="failed",
+                next_attempt_at="2020-01-01T00:00:00+00:00",
+                updated_at="2020-01-01T00:00:00+00:00",
+            ) is not None
 
 
 def test_historical_actions_use_changed_locator_preserve_read_and_persist_attempts(

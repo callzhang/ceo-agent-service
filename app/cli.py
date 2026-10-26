@@ -879,11 +879,11 @@ def build_parser() -> argparse.ArgumentParser:
             )
 
     # WeChat channel commands pass through to the self-contained app.wechat.cli
-    # (status / read-recent / produce-once / consume-once). REMAINDER keeps its
+    # (status / read-recent / produce-once). REMAINDER keeps its
     # own flags out of the shared DingTalk arg set.
     wechat_parser = subparsers.add_parser(
         "wechat",
-        help="WeChat channel diagnostics (status/read-recent/produce-once/consume-once)",
+        help="WeChat channel diagnostics (status/read-recent/produce-once)",
     )
     wechat_parser.add_argument("wechat_args", nargs=argparse.REMAINDER)
 
@@ -1212,10 +1212,7 @@ def run_agent_cron_dispatcher_loop(
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.task_agent import TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS, TASK_AGENT_MAX_TIMEOUT_SECONDS
-    from app import config as _config
     from app.wechat import service as wechat_service
-    from app.wechat.consumer import WechatReplyConsumer
-    from app.wechat.decision_runner import WechatDecisionRunner
 
     store = AutoReplyStore(settings.db_path)
     runtime = build_production_agent_runtime(
@@ -1245,10 +1242,7 @@ def run_agent_cron_dispatcher_loop(
             refresh_runtime_capabilities=runtime.refresh_runtime_capabilities,
         ),
     )
-    wechat_consumer: WechatReplyConsumer | None = None
-
     def consume_reply(envelope, guard) -> None:
-        nonlocal wechat_consumer
         task_id = int(envelope.source_id)
         current = store.get_reply_task(task_id)
         task = (
@@ -1262,35 +1256,14 @@ def run_agent_cron_dispatcher_loop(
             return
         if task.channel != "wechat":
             raise ValueError(f"unsupported reply dispatch channel: {task.channel}")
-        if task.conversation_id in _config.wechat_standard_pipeline_targets():
-            state = wechat_service.ready_account_state(store)
-            if state is None:
-                guard.release(datetime.now(timezone.utc))
-                return
-            reply_worker.process_claimed_wechat_task(
-                task, reader=wechat_service.build_reader(),
-                account=wechat_service.account_from_state(state), claim_guard=guard,
-            )
+        state = wechat_service.ready_account_state(store)
+        if state is None:
+            guard.release(datetime.now(timezone.utc))
             return
-        if wechat_consumer is None:
-            state = wechat_service.ready_account_state(store)
-            if state is None:
-                guard.release(datetime.now(timezone.utc))
-                return
-            account = wechat_service.account_from_state(state)
-            wechat_consumer = WechatReplyConsumer(
-                store,
-                WechatDecisionRunner(
-                    workspace=settings.workspace,
-                    store=store,
-                    timeout_seconds=settings.codex_timeout_seconds,
-                    idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-                ),
-                wechat_service.build_reader(),
-                account,
-            )
-        guard.assert_current(datetime.now(timezone.utc))
-        wechat_consumer.process(task)
+        reply_worker.process_claimed_wechat_task(
+            task, reader=wechat_service.build_reader(),
+            account=wechat_service.account_from_state(state), claim_guard=guard,
+        )
 
     meeting_dws = _create_meeting_dws(settings)
     meeting_runner = MeetingAlignmentCodexRunner(
@@ -3763,9 +3736,7 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     from app import config as _cfg
     from app.wechat import service as _wx
     from app.wechat.accessibility import WechatSender
-    from app.wechat.audit import WechatDeliveryAuditor
     from app.wechat.reader_ipc import ReaderIpcError
-    from app.agent_runtime_production import build_production_routed_codex_execution
 
     store = AutoReplyStore(settings.db_path)
     state = None
@@ -3780,16 +3751,6 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
     wsender = WechatSender(store, _wx.build_sender())
-    auditor = WechatDeliveryAuditor(
-        store,
-        build_production_routed_codex_execution(
-            store=store, workspace=settings.workspace,
-            total_timeout_seconds=settings.codex_timeout_seconds,
-            idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-        ),
-        reader,
-        account,
-    )
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
@@ -3803,7 +3764,6 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
                 sender_enabled=_cfg.wechat_sender_enabled(),
                 reader=reader,
                 account=account,
-                auditor=auditor,
             )
             store.resolve_unresolved_errors_by_kind(
                 "wechat_sender_loop_error",

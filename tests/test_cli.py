@@ -55,7 +55,7 @@ from app.external_retry import ExternalDependencyError
 from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.task_agent_session import TASK_AGENT_SESSION_SCOPE_ID, TaskAgentSessionLeaseLost
 from app.task_models import TaskAgentDecision, WorkItem
-from tests.wechat.support import approve_delivery
+from tests.wechat.support import approve_delivery, create_wechat_delivery
 
 
 
@@ -455,7 +455,7 @@ def seed_exhausted_stale_wechat_delivery(store: AutoReplyStore) -> tuple[int, in
     task = store.get_reply_task_for_message(
         "wechat-user-1", "wechat-message-1", channel="wechat"
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=task.id,
         account_id="wechat-account-1",
         target_type="direct",
@@ -7629,7 +7629,7 @@ def test_run_service_keeps_terminal_user_rejected_wechat_delivery(tmp_path, monk
         trigger_sender="Avery",
         trigger_text="第一条",
     )
-    delivery_id = store.create_wechat_delivery(
+    delivery_id = create_wechat_delivery(store,
         reply_task_id=1,
         account_id="acct-1",
         target_type="direct",

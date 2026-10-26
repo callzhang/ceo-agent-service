@@ -3,6 +3,7 @@
 import json
 from datetime import datetime, timezone
 
+from app.action_business_storage import insert_business_action
 from app.store import AutoReplyStore
 from tests.test_console_web_api import _client
 
@@ -49,13 +50,8 @@ def _signal(
 
 def _business_snapshot(store: AutoReplyStore) -> dict[str, tuple[tuple[object, ...], ...]]:
     with store._connect() as db:
-        tables = [
-            str(row[0])
-            for row in db.execute(
-                "select name from sqlite_master where type='table' and name like 'business_%' "
-                "order by name"
-            )
-        ]
+        # Business domain facts live in the business table and the typed actions table.
+        tables = ["business", "actions"]
         return {
             table: tuple(tuple(row) for row in db.execute(f'select * from "{table}" order by rowid'))
             for table in tables
@@ -68,11 +64,10 @@ def test_project_evidence_pages_cover_newest_window_without_overlap(tmp_path):
     signal_ids = [_signal(store, key=str(index)) for index in range(25)]
     with store.business_task_transaction() as db:
         for index, signal_id in enumerate(signal_ids):
-            db.execute(
-                "insert into business_project_evidence(project_id, signal_id, created_at) "
-                "values (?, ?, ?)",
-                (project_id, signal_id, f"2026-10-07T12:{index:02d}:00+00:00"),
-            )
+            insert_business_action(db, "business_project_evidence", {
+                "project_id": project_id, "signal_id": signal_id,
+                "created_at": f"2026-10-07T12:{index:02d}:00+00:00",
+            })
 
     with _client(tmp_path) as client:
         first = client.get(
@@ -134,11 +129,13 @@ def test_project_evidence_missing_empty_and_invalid_requests(tmp_path):
     assert invalid_page.status_code == invalid_size.status_code == 422
 
 
-def test_signal_read_returns_complete_original_source_and_distinct_versions(tmp_path):
+def test_signal_read_keeps_distinct_versions_and_reports_an_unreadable_original(tmp_path):
+    # Original bodies are not stored with the Signal: a complete original is returned only
+    # when its provider reader can reproduce the exact bound version
+    # (tests/test_source_provider_web.py covers the readable case).
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    decisive_middle = "DECISIVE-MIDDLE-" + ("原始证据" * 80)
     raw_body = json.dumps(
-        {"prefix": "x" * 2300, "decision": decisive_middle, "suffix": "y" * 2300},
+        {"prefix": "x" * 2300, "decision": "DECISIVE-MIDDLE", "suffix": "y" * 2300},
         ensure_ascii=False,
         separators=(",", ":"),
     )
@@ -167,13 +164,13 @@ def test_signal_read_returns_complete_original_source_and_distinct_versions(tmp_
     assert missing.status_code == 404
     first_item = first.json()["item"]
     second_item = second.json()["item"]
-    assert first_item == first_saved.model_dump(mode="json")
-    assert first_item["evidence_text"].encode() == raw_body.encode()
-    assert decisive_middle in first_item["evidence_text"]
-    assert first_item["source_document_id"] != second_item["source_document_id"]
+    assert first_item["id"] == first_saved.id == first_id
+    assert second_item["id"] == second_id != first_id
+    assert first_item["source_available"] is second_item["source_available"] is False
+    assert first_item["evidence_text"] is second_item["evidence_text"] is None
     assert first_item["source_ref"] == second_item["source_ref"] == "message:shared"
     assert first_item["source_time"] != second_item["source_time"]
-    assert first_item["evidence_text"] != second_item["evidence_text"]
+    assert first_item["dedupe_key"] != second_item["dedupe_key"]
 
 
 def test_evidence_and_signal_reads_do_not_mutate_business_domain_tables(tmp_path):
@@ -181,10 +178,9 @@ def test_evidence_and_signal_reads_do_not_mutate_business_domain_tables(tmp_path
     project_id = _project(store, title="Read only")
     signal_id = _signal(store, key="read-only")
     with store.business_task_transaction() as db:
-        db.execute(
-            "insert into business_project_evidence(project_id, signal_id) values (?, ?)",
-            (project_id, signal_id),
-        )
+        insert_business_action(db, "business_project_evidence", {
+            "project_id": project_id, "signal_id": signal_id,
+        })
 
     with _client(tmp_path) as client:
         before = _business_snapshot(store)

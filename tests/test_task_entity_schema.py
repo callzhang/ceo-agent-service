@@ -1232,59 +1232,6 @@ def test_native_workbench_session_collision_and_turn_preserve_source_uuid_and_op
         UUID(turn[0])
 
 
-def test_new_native_email_task_inverse_uses_predecessor_runtime_identity():
-    from hashlib import sha256
-    from app.task_entity_storage import create_task
-
-    with closing(_source()) as db:
-        db.row_factory = sqlite3.Row
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        source_metadata = capture_task_entities(db)
-        forward = migrate_task_entities(db, source_metadata)
-        now = db.execute("select current_timestamp").fetchone()[0]
-        task_values = {"kind": "email_classification", "status": "pending",
-                       "available_at": now, "attempts": 0, "error": "",
-                       "owner_pid": None, "generation": 0,
-                       "lease_owner": "", "lease_expires_at": "",
-                       "created_at": now, "updated_at": now}
-        remapped_task = create_task(db, values=task_values)
-        # Reuse a low, unoccupied canonical ID to exercise the inverse physical
-        # allocator independently from both the old Task water and public key.
-        db.execute("update tasks set id=1 where id=?", (remapped_task["id"],))
-        stable_identity_by_id = {1: "acct:mailbox:folder:uidvalidity:uid-low"}
-        allocated_task = create_task(db, values=task_values)
-        stable_identity_by_id[allocated_task["id"]] = "acct:mailbox:folder:uidvalidity:uid-high"
-        for task_id, stable_identity in stable_identity_by_id.items():
-            db.execute(
-                "insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
-                "values(?,?,?,?)",
-                (task_id, "email", stable_identity, "{}"),
-            )
-            db.execute("insert into task_results(task_id,result_kind,result_json) values(?,?,?)",
-                       (task_id, "email_classification", "{}"))
-
-        inverse = restore_task_entities(db, source_metadata, forward)
-        projection = task20_definitions.task20_projection("email_agent_classification_tasks")
-        from app.store import AutoReplyStore
-        handoff = {(row["source_kind"], row["canonical_id"]): row["source_physical_id"]
-                   for row in inverse["inverse_identity"]["owners"]}
-        assert handoff[("email_agent_classification_tasks", 1)] > source_metadata["task_sequence"][1]
-        for task_id, stable_identity in stable_identity_by_id.items():
-            expected = "email-classification:" + sha256(stable_identity.encode("utf-8")).hexdigest()
-            source_id = handoff.get(("email_agent_classification_tasks", task_id), task_id)
-            restored = db.execute(
-                "select id,legacy_key from tasks where record_type='email_agent_classification_tasks' "
-                "and id=?", (source_id,),
-            ).fetchone()
-            assert tuple(restored) == (source_id, str(task_id))
-            assert tuple(db.execute("select task_id from (" + projection + ") where task_id=?",
-                                    (expected,)).fetchone()) == (expected,)
-            assert AutoReplyStore._validate_runtime_operation_workload(
-                "email_classification", expected,
-            ) == ("email_classification", expected)
-            assert len(expected.removeprefix("email-classification:")) == 64
-        assert inverse["inverse_identity"]["version"] == 1
 
 
 def test_current_inverse_keeps_marker_shaped_text_parameter_as_text():
