@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.deploy import TEST_GATE_ARGS, require_green_suite
+from app.deploy import TEST_GATE_ARGS, TEST_GATE_MANIFEST, require_green_suite
 from tests.test_repository_updater import fixture_repo
 
 
@@ -17,6 +17,10 @@ def _runner(*, pytest_code=0, pytest_output="", checkout_code=0, timeout=False):
     def run(command, **kwargs):
         calls.append((list(command), kwargs))
         if command[0] == "git":
+            if command[1] == "clone" and not checkout_code:
+                clone = Path(command[-1])
+                (clone / "tests").mkdir(parents=True)
+                (clone / TEST_GATE_MANIFEST).write_text("tests/test_a.py\ntests/test_b.py\n")
             return SimpleNamespace(returncode=checkout_code, stderr=b"checkout failed" if checkout_code else b"")
         if timeout:
             raise subprocess.TimeoutExpired(command, kwargs["timeout"])
@@ -32,7 +36,8 @@ def test_gate_passes_and_leaves_nothing_behind(tmp_path: Path):
     require_green_suite(tmp_path / "root", "a" * 40, run=run)
 
     suite = calls[-1]
-    assert suite[0][1:] == list(TEST_GATE_ARGS)
+    assert suite[0][1:] == [*TEST_GATE_ARGS, "tests/test_a.py", "tests/test_b.py"]
+    assert "-n" not in suite[0]
     workdir = suite[1]["cwd"].parent
     assert not workdir.exists()
 
@@ -148,3 +153,11 @@ def test_suspended_gate_does_not_run(tmp_path: Path, monkeypatch):
     deploy_module.deploy(local, tmp_path / "db.sqlite3")
 
     assert calls == []
+
+
+def test_a_missing_manifest_refuses_the_deploy(tmp_path: Path):
+    def run(command, **kwargs):
+        return SimpleNamespace(returncode=0, stderr=b"")
+
+    with pytest.raises(SystemExit, match="gate_files.txt is missing or empty.*nothing was deployed"):
+        require_green_suite(tmp_path / "root", "e" * 40, run=run)
