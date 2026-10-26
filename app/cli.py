@@ -1212,10 +1212,7 @@ def run_agent_cron_dispatcher_loop(
     )
     from app.agent_runtime_production import build_production_routed_codex_execution
     from app.task_agent import TASK_AGENT_MAX_IDLE_TIMEOUT_SECONDS, TASK_AGENT_MAX_TIMEOUT_SECONDS
-    from app import config as _config
     from app.wechat import service as wechat_service
-    from app.wechat.consumer import WechatReplyConsumer
-    from app.wechat.decision_runner import WechatDecisionRunner
 
     store = AutoReplyStore(settings.db_path)
     runtime = build_production_agent_runtime(
@@ -1245,10 +1242,7 @@ def run_agent_cron_dispatcher_loop(
             refresh_runtime_capabilities=runtime.refresh_runtime_capabilities,
         ),
     )
-    wechat_consumer: WechatReplyConsumer | None = None
-
     def consume_reply(envelope, guard) -> None:
-        nonlocal wechat_consumer
         task_id = int(envelope.source_id)
         current = store.get_reply_task(task_id)
         task = (
@@ -1262,35 +1256,14 @@ def run_agent_cron_dispatcher_loop(
             return
         if task.channel != "wechat":
             raise ValueError(f"unsupported reply dispatch channel: {task.channel}")
-        if task.conversation_id in _config.wechat_standard_pipeline_targets():
-            state = wechat_service.ready_account_state(store)
-            if state is None:
-                guard.release(datetime.now(timezone.utc))
-                return
-            reply_worker.process_claimed_wechat_task(
-                task, reader=wechat_service.build_reader(),
-                account=wechat_service.account_from_state(state), claim_guard=guard,
-            )
+        state = wechat_service.ready_account_state(store)
+        if state is None:
+            guard.release(datetime.now(timezone.utc))
             return
-        if wechat_consumer is None:
-            state = wechat_service.ready_account_state(store)
-            if state is None:
-                guard.release(datetime.now(timezone.utc))
-                return
-            account = wechat_service.account_from_state(state)
-            wechat_consumer = WechatReplyConsumer(
-                store,
-                WechatDecisionRunner(
-                    workspace=settings.workspace,
-                    store=store,
-                    timeout_seconds=settings.codex_timeout_seconds,
-                    idle_timeout_seconds=settings.codex_idle_timeout_seconds,
-                ),
-                wechat_service.build_reader(),
-                account,
-            )
-        guard.assert_current(datetime.now(timezone.utc))
-        wechat_consumer.process(task)
+        reply_worker.process_claimed_wechat_task(
+            task, reader=wechat_service.build_reader(),
+            account=wechat_service.account_from_state(state), claim_guard=guard,
+        )
 
     meeting_dws = _create_meeting_dws(settings)
     meeting_runner = MeetingAlignmentCodexRunner(
