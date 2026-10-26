@@ -36,6 +36,7 @@ export interface ScheduledTaskDraft {
   required_runtime_capabilities: string[];
   working_directory: string;
   enabled: boolean;
+  notify_on_completion: boolean;
   skill_refs: ScheduledTaskSkillRef[];
 }
 
@@ -235,7 +236,7 @@ function validRun(value: unknown): value is ScheduledTaskRun {
     && typeof snapshot.cron_expression === "string" && typeof snapshot.timezone_name === "string"
     && typeof snapshot.runtime_id === "string" && validRuntimeOptions(snapshot.runtime_options)
     && validStringSet(snapshot.required_runtime_capabilities)
-    && typeof snapshot.working_directory === "string"
+    && typeof snapshot.working_directory === "string" && typeof snapshot.notify_on_completion === "boolean"
     && validPromptSkillRefs(snapshot.prompt, snapshot.command, snapshot.skill_refs));
 }
 
@@ -249,6 +250,7 @@ function validTask(value: unknown): value is ScheduledTask {
     && typeof item.runtime_id === "string" && validRuntimeOptions(item.runtime_options)
     && validStringSet(item.required_runtime_capabilities)
     && typeof item.working_directory === "string" && typeof item.enabled === "boolean"
+    && typeof item.notify_on_completion === "boolean"
     && positiveInteger(item.version) && validPromptSkillRefs(item.prompt, item.command, item.skill_refs)
     && (item.recent_run === null || validRun(item.recent_run))
     && typeof item.created_at === "string" && typeof item.updated_at === "string" && nullableString(item.deleted_at));

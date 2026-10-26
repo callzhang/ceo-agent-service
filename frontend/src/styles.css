@@ -2052,3 +2052,5 @@ h1, h2, h3, p { margin-top: 0; }
   .service-update-dialog footer { padding: 14px 18px; }
 }
 @media (prefers-reduced-motion: reduce) { .service-update-spinner { animation: none; } }
+
+.scheduled-task-notification-toggle { display: flex; align-items: center; gap: 0.55rem; margin: 1rem 0; }

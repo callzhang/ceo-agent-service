@@ -187,9 +187,15 @@ def test_schedule_delete_all_fields_and_stale_cas(target,variant):
         source.execute("update scheduled_tasks set updated_at=?,deleted_at=?,enabled=0,version=version+1 where id=? and version=? and deleted_at is null",('gone','gone',500,1))
         assert delete_schedule(target,500,1,'gone')==1
         assert delete_schedule(target,500,1,'later')==0
-        fields=','.join(SCHEDULE_FIELDS)
-        assert target.execute(schedule_projection()).fetchone()==source.execute('select '+fields+' from scheduled_tasks').fetchone()
+        fields=','.join(field for field in SCHEDULE_FIELDS if field != 'notify_on_completion')
+        target_values=target.execute(schedule_projection()).fetchone()
+        source_values=source.execute('select '+fields+' from scheduled_tasks').fetchone()
+        target_fields=tuple(field for field in SCHEDULE_FIELDS if field != 'notify_on_completion')
+        assert tuple(target_values[SCHEDULE_FIELDS.index(field)] for field in target_fields)==source_values
+        assert target_values[SCHEDULE_FIELDS.index('notify_on_completion')]==1
         for field in SCHEDULE_FIELDS:
+            if field == 'notify_on_completion':
+                continue
             assert target.execute('select typeof('+field+') from schedules').fetchone()==source.execute('select typeof('+field+') from scheduled_tasks').fetchone()
         assert target.execute('select updated_at,deleted_at,enabled,version from schedules').fetchone()==('gone','gone',0,2)
 

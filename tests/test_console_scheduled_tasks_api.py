@@ -250,12 +250,14 @@ def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
                 "version": created.json()["item"]["version"],
                 "name": "检查重要钉钉消息",
                 "cron_expression": "30 * * * * *",
+                "notify_on_completion": False,
             }
         )
         updated = client.put(
             f"/api/console/scheduled-tasks/{task_id}",
             json=update_payload,
         )
+        run = client.post(f"/api/console/scheduled-tasks/{task_id}/run")
 
     assert created.status_code == 201
     item = created.json()["item"]
@@ -263,6 +265,7 @@ def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
     assert item["next_run_at"] == "2026-09-08T12:01:00Z"
     assert item["runtime_options"] == {"thinking": "high"}
     assert item["recent_run"] is None
+    assert item["notify_on_completion"] is True
     assert item["skill_refs"] == [
         {
             "skill_source": "managed",
@@ -285,6 +288,9 @@ def test_scheduled_task_crud_returns_derived_schedule_and_exact_refs(
     assert listed.json()["items"] == [item]
     assert updated.status_code == 200
     assert updated.json()["item"]["name"] == "检查重要钉钉消息"
+    assert updated.json()["item"]["notify_on_completion"] is False
+    assert run.status_code == 201
+    assert run.json()["item"]["snapshot"]["notify_on_completion"] is False
     assert updated.json()["item"]["version"] == item["version"] + 1
     assert updated.json()["item"]["next_run_at"] == "2026-09-08T12:00:30Z"
 

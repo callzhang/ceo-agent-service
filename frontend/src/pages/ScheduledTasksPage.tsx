@@ -53,6 +53,7 @@ function emptyDraft(options: ScheduledTaskOptions | null): ScheduledTaskDraft {
     required_runtime_capabilities: [],
     working_directory: "",
     enabled: true,
+    notify_on_completion: true,
     skill_refs: [],
   };
 }
@@ -76,6 +77,7 @@ function taskDraft(task: ScheduledTask): ScheduledTaskDraft {
     required_runtime_capabilities: task.required_runtime_capabilities,
     working_directory: task.working_directory,
     enabled: task.enabled,
+    notify_on_completion: task.notify_on_completion,
     skill_refs: task.skill_refs,
   };
 }
@@ -794,6 +796,7 @@ export function ScheduledTasksPage() {
             </div>
             <div className="scheduled-task-skill-block"><div className="scheduled-task-section-heading"><h3>{commandTask ? "Consumer Agent Skills" : "Agent Skills"}</h3><span>由 Prompt 中的 $skill 确定性提取</span></div>{draft.skill_refs.length ? <div className="scheduled-task-skill-chips">{draft.skill_refs.map((ref, index) => { const choice = choices.find((item) => item.key === refKey(ref)); const label = choice?.label || ref.skill_name; return <SkillReference key={`${refKey(ref)}:${index}:${choice?.previewKey || ""}`} ref={ref} label={label} expectedSha256={choice?.sha256} removable onRemove={() => removeSkill(index)} />; })}</div> : <p className="scheduled-task-empty-copy">输入 <code>$</code> 搜索并选择至少一个 Skill。</p>}</div>
             </>}
+            <label className="scheduled-task-notification-toggle"><input aria-label="发送完成通知" type="checkbox" checked={draft.notify_on_completion} onChange={(event) => updateDraft("notify_on_completion", event.target.checked)} /><span>发送完成通知</span></label>
             <button type="submit" className="primary-button" disabled={mutationState === "saving" || Boolean(runtimeBlockReason)}>{mutationState === "saving" ? "保存中…" : creating ? "创建任务" : "保存更改"}</button>
           </form> : <TaskReadOnlyDetail task={selected!} commandOption={options?.service_command_options.find((item) => item.name === selected?.command)} choices={choices} />}
           {!creating && <RunHistory runs={runs} latestAttemptRun={latestAttemptRun} hasMore={historyHasMore} loading={historyLoading} onMore={() => void loadMoreRuns()} />}

@@ -79,6 +79,7 @@ def fixture(
     kind=RuntimeKind.CODEX_CLI,
     runtime_options=None,
     required_runtime_capabilities=(),
+    notify_on_completion=True,
 ):
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
     skill = store.create_managed_skill("managed-check", "Managed Check")
@@ -104,6 +105,7 @@ def fixture(
         runtime_options=runtime_options or {"model": "saved", "reasoning_effort": "high"},
         required_runtime_capabilities=required_runtime_capabilities,
         working_directory=str(workspace), enabled=True,
+        notify_on_completion=notify_on_completion,
         skill_refs=(
             ScheduledTaskSkillRef(
                 skill_source="managed", skill_name="managed-check",
@@ -154,14 +156,26 @@ def dispatch(store, run, options, *, registry=None, now=NOW, notification_sender
     return store.get_scheduled_task_run(run.id)
 
 
-def command_task_run(store):
+def command_task_run(store, *, notify_on_completion=True):
     task = store.create_scheduled_task(
         name="Producer", command="produce-once", cron_expression="0 * * * * *",
-        timezone_name="UTC", enabled=True, now=NOW,
+        timezone_name="UTC", enabled=True, notify_on_completion=notify_on_completion, now=NOW,
     )
     return store.create_scheduled_task_run(
         task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
     )
+
+
+def test_service_command_notification_preference_suppresses_terminal_notification(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-muted.sqlite3")
+    run = command_task_run(store, notify_on_completion=False)
+    notifications = []
+    persisted = dispatch(
+        store, run, None, registry=commands(lambda: unknown_service_result("done")),
+        notification_sender=lambda **kwargs: notifications.append(kwargs),
+    )
+    assert persisted.dispatch_status == "dispatched"
+    assert notifications == []
 
 
 def error_rows(store):
@@ -982,6 +996,25 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     assert task.status == "done"
     assert notifications == [{"title": "定时任务完成：Check", "message": "R1"}]
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
+
+
+def test_agent_notification_preference_suppresses_terminal_notification(tmp_path):
+    store, run, options = fixture(tmp_path, notify_on_completion=False)
+    execution_id = int(dispatch(store, run, options).execution_id)
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=Consumer(store, proposal("R0"), no_action("R1")),
+        audit=Audit(store, "return", "approve"),
+    )
+    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
+    envelope, guard = claim(adapter, execution_id, "execution")
+    notifications = []
+    ScheduledAgentConsumer(
+        store=store, option_service=options,
+        orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
+        notification_sender=lambda **kwargs: notifications.append(kwargs),
+    )(envelope, guard)
+    assert store.get_reply_task(execution_id).status == "done"
+    assert notifications == []
 
 
 def test_scheduled_audit_receives_exact_consumer_document_return(tmp_path, monkeypatch):

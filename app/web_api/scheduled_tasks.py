@@ -73,6 +73,7 @@ class ScheduledTaskCreatePayload(BaseModel):
     required_runtime_capabilities: list[str] = Field(default_factory=list)
     working_directory: str = ""
     enabled: bool = True
+    notify_on_completion: bool = True
     skill_refs: list[ScheduledTaskSkillRefPayload] = Field(default_factory=list)
 
     @model_validator(mode="after")
@@ -194,6 +195,7 @@ def _run_payload(
                 run.snapshot.required_runtime_capabilities
             ),
             "working_directory": run.snapshot.working_directory,
+            "notify_on_completion": run.snapshot.notify_on_completion,
             "skill_refs": [
                 _skill_ref_payload(ref) for ref in run.snapshot.skill_refs
             ],
@@ -226,6 +228,7 @@ def _task_payload(
         ),
         "working_directory": task.working_directory,
         "enabled": task.enabled,
+        "notify_on_completion": task.notify_on_completion,
         "version": task.version,
         "skill_refs": [_skill_ref_payload(ref) for ref in task.skill_refs],
         "recent_run": _run_payload(recent_run) if recent_run is not None else None,
@@ -398,6 +401,7 @@ def register_scheduled_task_routes(
                 working_directory=payload.working_directory,
                 skill_refs=_refs(payload),
                 enabled=payload.enabled,
+                notify_on_completion=payload.notify_on_completion,
                 now=current_time(),
             )
         except ValueError as exc:
@@ -452,6 +456,7 @@ def register_scheduled_task_routes(
                 ),
                 working_directory=payload.working_directory,
                 skill_refs=_refs(payload),
+                notify_on_completion=payload.notify_on_completion,
                 now=current_time(),
             )
         except ScheduledTaskVersionConflictError as exc:

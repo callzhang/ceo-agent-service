@@ -1,6 +1,6 @@
 """Unselected one-kind schedules declaration."""
-SCHEDULE_FIELDS = tuple("id migration_key name prompt cron_expression timezone runtime_id runtime_options_json working_directory enabled version created_at updated_at deleted_at required_runtime_capabilities_json command description".split())
-SCHEDULE_FRESH_FIELDS = tuple("id migration_key name description prompt command cron_expression timezone runtime_id runtime_options_json required_runtime_capabilities_json working_directory enabled version created_at updated_at deleted_at".split())
+SCHEDULE_FIELDS = tuple("id migration_key name prompt cron_expression timezone runtime_id runtime_options_json working_directory enabled notify_on_completion version created_at updated_at deleted_at required_runtime_capabilities_json command description".split())
+SCHEDULE_FRESH_FIELDS = tuple("id migration_key name description prompt command cron_expression timezone runtime_id runtime_options_json required_runtime_capabilities_json working_directory enabled notify_on_completion version created_at updated_at deleted_at".split())
 SCHEDULE_DDL = """create table schedules (
  id integer primary key autoincrement,
  migration_key text, name text not null, prompt text not null,
@@ -8,6 +8,7 @@ SCHEDULE_DDL = """create table schedules (
  runtime_options_json text not null default '{}',
  working_directory text not null default '',
  enabled integer not null check(enabled in (0,1)),
+ notify_on_completion integer not null default 1 check(notify_on_completion in (0,1)),
  version integer not null default 1 check(version>0),
  created_at text not null default current_timestamp,
  updated_at text not null default current_timestamp,

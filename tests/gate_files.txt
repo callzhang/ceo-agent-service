@@ -388,3 +388,7 @@ tests/test_project_candidate_refresh.py
 tests/test_consumer_session_prompt_fingerprint.py
 
 tests/test_scheduled_agent_consumer.py
+tests/test_scheduled_task_store.py
+tests/test_configs_target_integrated.py
+tests/test_console_scheduled_tasks_api.py
+tests/test_configs_schema_transfer.py

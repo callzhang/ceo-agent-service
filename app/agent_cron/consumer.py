@@ -151,9 +151,10 @@ class ScheduledTaskTriggerConsumer:
                     f"command {command} failed for event {run.event_id}: {exc}",
                 )
             guard.finish_source(failed_at, status="failed", reason=reason)
-            self._notification_sender(
-                title=f"定时任务失败：{run.snapshot.name}",
-                message=f"{run.snapshot.name} 执行失败：{exc}",
+            if run.snapshot.notify_on_completion:
+                self._notification_sender(
+                    title=f"定时任务失败：{run.snapshot.name}",
+                    message=f"{run.snapshot.name} 执行失败：{exc}",
             )
             return
         now = self._now().astimezone(UTC)
@@ -168,10 +169,11 @@ class ScheduledTaskTriggerConsumer:
             run.id, command_result=command_result,
         )
         self._store.resolve_errors_recovered_by_scheduled_service_command()
-        self._notification_sender(
-            title=f"定时任务完成：{run.snapshot.name}",
-            message=command_result.summary or f"{run.snapshot.name} 执行成功",
-        )
+        if run.snapshot.notify_on_completion:
+            self._notification_sender(
+                title=f"定时任务完成：{run.snapshot.name}",
+                message=command_result.summary or f"{run.snapshot.name} 执行成功",
+            )
         logger.info(
             "scheduled_task_service_command_completed",
             extra={
@@ -308,7 +310,7 @@ class ScheduledAgentConsumer:
                 codex_reason=result.summary, audit_summary=result.summary,
                 send_status=send_status, send_error=error, channel="scheduled",
             )
-            if task_status in {"done", "failed"}:
+            if task_status in {"done", "failed"} and run.snapshot.notify_on_completion:
                 self._notification_sender(
                     title=("定时任务完成" if task_status == "done" else "定时任务失败")
                     + f"：{run.snapshot.name}",
@@ -339,7 +341,7 @@ class ScheduledAgentConsumer:
             ),
             send_status=send_status, send_error=error, channel="scheduled",
         )
-        if task_status in {"done", "failed"}:
+        if task_status in {"done", "failed"} and run.snapshot.notify_on_completion:
             self._notification_sender(
                 title=("定时任务完成" if task_status == "done" else "定时任务失败")
                 + f"：{run.snapshot.name}",

@@ -5645,3 +5645,5 @@ turn resumes the same route session; a changed Developer contract still selects
 a fresh session under the existing rule. Audit hashes and route/retry/approval
 policy are unchanged. No backfill or old-hash compatibility lookup is added.
 The gated two-turn regression uses the real Store and substituted native CLI.
+
+定时任务的「发送完成通知」默认开启并保存在任务配置中；创建手动或 Cron run 时冻结到不可变 snapshot，编辑偏好只影响后续触发。关闭时 Agent 与服务命令路径都不发送该 run 的终态桌面通知，生命周期状态、Attention 与 History 保持原有行为。历史 snapshot 缺少此字段时按开启处理。

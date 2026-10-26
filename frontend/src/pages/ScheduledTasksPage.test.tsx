@@ -23,14 +23,14 @@ const run: ScheduledTaskRun = {
   dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
   attempts: [],
-  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
+  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", notify_on_completion: true, skill_refs: [operationRef] },
 };
 const task: ScheduledTask = {
   id: 7, migration_key: null, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
   cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟执行 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
   required_runtime_capabilities: [] as string[],
-  working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
+  working_directory: "/tmp/ceo-agent", enabled: true, notify_on_completion: true, version: 3, skill_refs: [operationRef], recent_run: run,
   created_at: "2026-09-08T10:00:00Z", updated_at: "2026-09-08T11:00:00Z", deleted_at: null,
 };
 type TestTask = ScheduledTask;
@@ -511,6 +511,21 @@ describe("ScheduledTasksPage", () => {
     expect(await screen.findByText(/当前 Runtime 缺少任务所需能力/)).toHaveTextContent("local_process_execution");
     expect(screen.getByRole("button", { name: "保存更改" })).toBeDisabled();
     expect(screen.queryByRole("button", { name: "立即运行" })).toBeNull();
+  });
+
+  it("defaults completion notification on and saves its checkbox independently from schedule activation", async () => {
+    const user = userEvent.setup();
+    setup([task]);
+    renderPage();
+    await editSelectedTask(user);
+    const checkbox = screen.getByRole("checkbox", { name: "发送完成通知" });
+    expect(checkbox).toBeChecked();
+    await user.click(checkbox);
+    await user.click(screen.getByRole("button", { name: "保存更改" }));
+    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(
+      task.id,
+      expect.objectContaining({ enabled: true, notify_on_completion: false, version: task.version }),
+    ));
   });
 
   it("defaults a new draft from the first available Runtime capability", async () => {

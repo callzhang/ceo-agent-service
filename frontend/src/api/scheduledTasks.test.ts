@@ -28,6 +28,7 @@ const task = {
   required_runtime_capabilities: [],
   working_directory: "/tmp/ceo-agent",
   enabled: true,
+  notify_on_completion: true,
   version: 3,
   skill_refs: [{ skill_source: "operation", skill_name: "dingtalk-chat", managed_skill_id: null, managed_revision_id: null, position: 0 }],
   recent_run: null,
@@ -53,7 +54,7 @@ const validOptions = {
 const commandTask = {
   ...task, id: 9, migration_key: "dingtalk-message-check-v1", name: "处理新的钉钉消息", description: "发现新的单聊或群聊 @ 消息后，由 Agent 读取最新上下文，决定回复、表态、澄清或不处理。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once",
   runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: task.skill_refs,
-  recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", skill_refs: task.skill_refs } },
+  recent_run: { ...validRun, id: 12, scheduled_task_id: 9, dispatch_status: "dispatched", execution_kind: "service_command", execution_id: "produce-once", dispatched_at: "2026-09-08T12:00:02Z", snapshot: { ...validRun.snapshot, task_id: 9, name: "检查 DingTalk 消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "使用 $dingtalk-chat 处理真实消息。", command: "produce-once", runtime_id: "", runtime_options: {}, working_directory: "", notify_on_completion: true, skill_refs: task.skill_refs } },
 } as const;
 
 afterEach(() => vi.unstubAllGlobals());
@@ -180,7 +181,7 @@ describe("scheduled tasks API", () => {
       timezone_name: task.timezone_name, runtime_id: task.runtime_id,
       runtime_options: task.runtime_options, working_directory: task.working_directory,
       required_runtime_capabilities: [...task.required_runtime_capabilities],
-      enabled: task.enabled, skill_refs: [...task.skill_refs],
+      enabled: task.enabled, notify_on_completion: false, skill_refs: [...task.skill_refs],
     };
 
     await createScheduledTask(draft);
@@ -190,7 +191,7 @@ describe("scheduled tasks API", () => {
     const calls = fetch.mock.calls as unknown as Array<[RequestInfo | URL, RequestInit | undefined]>;
 
     expect(fetch).toHaveBeenNthCalledWith(1, "/api/console/scheduled-tasks", expect.objectContaining({ method: "POST" }));
-    expect(JSON.parse(String(calls[1][1]?.body))).toMatchObject({ version: 3 });
+    expect(JSON.parse(String(calls[1][1]?.body))).toMatchObject({ version: 3, enabled: true, notify_on_completion: false });
     expect(fetch).toHaveBeenNthCalledWith(3, "/api/console/scheduled-tasks/7/disable", expect.objectContaining({ method: "POST", body: JSON.stringify({ version: 3 }) }));
     expect(fetch).toHaveBeenNthCalledWith(4, "/api/console/scheduled-tasks/7?version=3", expect.objectContaining({ method: "DELETE" }));
   });

@@ -976,6 +976,8 @@ headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；�
 
 ### Agent Cron 与统一 Dispatcher
 
+每个定时任务有独立的「发送完成通知」偏好，默认开启。偏好保存在任务配置中，并在创建手动或 Cron run 时冻结进该 run snapshot；后续编辑只影响之后创建的 run。关闭时只抑制该 run 的终态桌面通知，不改变任务/run 状态、Attention 或 History。没有该字段的历史 snapshot 按开启读取。
+
 用户可见的定时任务是 `任务描述 + Cron + Agent 能力（结构化 Skill 引用）+ Runtime`。任务描述是所有
 定时任务共有的可读用途说明；Agent 任务另有执行提示词，服务命令不把描述伪装成 Agent prompt。Scheduler 维护
 下一个触发点，并把一次触发保存为 `scheduled_task_run`；它不执行领域业务，

@@ -193,6 +193,7 @@ class ScheduledTask:
     required_runtime_capabilities_json: str
     working_directory: str
     enabled: bool
+    notify_on_completion: bool
     version: int
     skill_refs: tuple[ScheduledTaskSkillRef, ...]
     created_at: datetime
@@ -228,6 +229,7 @@ class ScheduledTaskSnapshot:
     runtime_options_json: str
     required_runtime_capabilities_json: str
     working_directory: str
+    notify_on_completion: bool
     skill_refs: tuple[ScheduledTaskSkillRef, ...]
 
     @property
@@ -261,6 +263,7 @@ class ScheduledTaskSnapshot:
                 task.required_runtime_capabilities_json
             ),
             working_directory=task.working_directory,
+            notify_on_completion=task.notify_on_completion,
             skill_refs=task.skill_refs,
         )
 
@@ -280,6 +283,7 @@ class ScheduledTaskSnapshot:
                 self.required_runtime_capabilities
             ),
             "working_directory": self.working_directory,
+            "notify_on_completion": self.notify_on_completion,
             "skill_refs": [ref.to_dict() for ref in self.skill_refs],
         }
         return json.dumps(
@@ -309,9 +313,14 @@ class ScheduledTaskSnapshot:
             "required_runtime_capabilities",
             "working_directory",
             "skill_refs",
+            "notify_on_completion",
         }
-        if not isinstance(payload, dict) or set(payload) != expected_keys:
+        old_expected_keys = expected_keys - {"notify_on_completion"}
+        if not isinstance(payload, dict) or set(payload) not in (expected_keys, old_expected_keys):
             raise ValueError("scheduled task snapshot has invalid fields")
+        notify_on_completion = payload.get("notify_on_completion", True)
+        if type(notify_on_completion) is not bool:
+            raise ValueError("scheduled task snapshot notification preference is invalid")
         if (
             type(payload["task_id"]) is not int
             or type(payload["task_version"]) is not int
@@ -365,6 +374,7 @@ class ScheduledTaskSnapshot:
                 required_runtime_capabilities_json
             ),
             working_directory=payload["working_directory"],
+            notify_on_completion=notify_on_completion,
             skill_refs=refs,
         )
 
