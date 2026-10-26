@@ -6,15 +6,13 @@ import subprocess
 import sys
 import pytest
 
-from app.email_classification_schema import create_current_email_classifications
-from app.action_storage import create_action_schema
 from app.action_skill_config_storage import (
     insert_skill_receipt, load_receipt_projection, export_receipt_projection,
     list_skill_load_receipts, latest_skill_load_receipt_for_pid,
 )
-from app.configs_storage import create_configs_schema, delete_config, insert_config, update_config
+from app.configs_storage import delete_config, insert_config, update_config
 from app.configs_definitions import CONFIG_FIELDS, config_projection
-from app.schedules_storage import create_schedules_schema, insert_schedule, delete_schedule
+from app.schedules_storage import insert_schedule, delete_schedule
 from app.schedules_definitions import schedule_projection, SCHEDULE_FIELDS
 from app.store import AutoReplyStore, _close_idle_connections
 from tests.configs_source_fixtures import ROOT, source_db, insert as source_insert
