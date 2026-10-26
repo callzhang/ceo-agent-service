@@ -63,7 +63,6 @@ def test_exact_release_inverse_preserves_new_actions_receipts_and_source_clock(t
         prepare_action_reference_trigger_release,
     )
     from app.action_entity_storage import create_action, append_action_receipt
-    from app.current_publication_sources import publication_task_sources
     from app.signal_source_owner_schema_release import source_objects as store_252_source_objects
     from app.store_schema_release import prepare_database_schema_release
     from pathlib import Path
@@ -78,7 +77,9 @@ def test_exact_release_inverse_preserves_new_actions_receipts_and_source_clock(t
     ))
     with closing(sqlite3.connect(path)) as db:
         assert schema_objects(db) == source_251
-        publication_task_sources(db)
+        from app.current_publication_sources import publication_task_sources
+        with pytest.raises(ValueError, match="unsupported current publication"):
+            publication_task_sources(db)
     with pytest.raises(sqlite3.IntegrityError, match="explicit paired"):
         AutoReplyStore(path)
     source_bytes = path.read_bytes()
