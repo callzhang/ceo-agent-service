@@ -1,4 +1,3 @@
-import sqlite3
 import sys
 import time
 import threading
@@ -7,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 
 import app.wechat.accessibility as accessibility
-from app.action_storage import delete_action
 from app.store import AutoReplyStore
 from app.wechat.accessibility import (
     AccessibilityResult, MacWechatAccessibility, SenderExecutionError,
@@ -191,21 +189,26 @@ def test_verified_binding_sends(store):
     assert runner.calls == [("Alex", delivery.reply_text, None, "hi")]
 
 
-@pytest.mark.xfail(
-    raises=sqlite3.OperationalError, strict=True,
-    reason="delete_action('outbound_postfixes') queries a column the live schema "
-           "does not have; the test needs another way to remove the prepared body",
-)
 def test_sender_rejects_delivery_without_matching_prepared_body(store):
     runner = FakeRunner(AccessibilityResult(True, True, "fp-1"))
     delivery = _seed_delivery(store)
+    delivery_key = f"wechat:{delivery.id}"
+    prepared = store.get_outbound_postfix("wechat", delivery_key)
+    assert prepared is not None and prepared.final_body == delivery.reply_text
     with store._connect() as db:
-        delete_action(db, "outbound_postfixes", ("wechat", f"wechat:{delivery.id}"))
+        deleted = db.execute(
+            "delete from actions where record_type='action' "
+            "and action_delivery_channel=? and action_delivery_key=?",
+            ("wechat", delivery_key),
+        )
+        assert deleted.rowcount == 1
+    assert store.get_outbound_postfix("wechat", delivery_key) is None
 
     with pytest.raises(ValueError, match="prepared WeChat delivery"):
         WechatSender(store, runner).send(delivery, _scope("verified"))
 
     assert runner.calls == []
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "ready_to_send"
 
 
 def test_two_senders_claim_delivery_once(store):

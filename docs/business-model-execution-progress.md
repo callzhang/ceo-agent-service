@@ -5,8 +5,9 @@
 WeChat sender follow-up: fresh13:07 America/Los_Angeles readback confirms the
 existing e00211098/bd2a3e117 repairs are already deployed in7a05e1126. All481
 matching historical errors are resolved and absent from Attention; no ready,
-sending or unknown WeChat delivery remains.113 scoped tests pass with1 existing
-retired-column fixture xfail; actual Store/substitute sender regression and
+sending or unknown WeChat delivery remains. The retired-column fixture is now
+fixed using the current Action owner and its xfail removed:114 scoped tests
+pass with no xfail or skips; actual Store/substitute sender regression and
 error/Attention UI pass. No duplicate runtime patch/restart/production send.
 Verified workflow backup and task artifacts are removed.
 See [sender verification](wechat-prepared-sender-verification.md).

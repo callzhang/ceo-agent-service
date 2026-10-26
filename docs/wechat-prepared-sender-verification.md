@@ -56,3 +56,21 @@ After complete-marker/full-integrity and zero-open-file/no-active-deploy checks,
 the exact current workflow backup and owned temporary root were removed and
 their absence verified. Production DB/native trajectories remain. No database
 space reduction is attributed to temporary artifact cleanup.
+
+## Current-structure fixture follow-up
+
+The previously reported xfail is now removed. Unmarking the original test first
+reproduced `sqlite3.OperationalError: no such column: channel` in the retired
+`delete_action('outbound_postfixes', ...)` fixture call. The fixture now deletes
+exactly one common Action by its current `action_delivery_channel` and
+`action_delivery_key`, verifies the preparation is absent, and retains the
+expected sender rejection and zero substitute calls. It also verifies the
+delivery stays `ready_to_send`, before any claim or external effect.
+
+The exact node passes in1.23s; the same five sender/service/accessibility/handler/
+review files now pass together:114 passed in45.68s, with zero xfail or skips.
+Ruff/diff checks pass. No runtime/schema/compatibility code or production data is
+changed, so no service restart or new deployment is required for this test-only
+fix. Temporary test data is removed after verification. The prior113+1xfail
+result above and its JSON are historical evidence, superseded for current test
+status by this follow-up.
