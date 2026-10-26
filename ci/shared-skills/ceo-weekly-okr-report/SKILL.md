@@ -40,7 +40,7 @@ message. For example, a missing stable member ID or a duplicated member/KR risk
 must be corrected in that member's analysis; editing the rendered report does
 not correct its source. Never write generated report outputs with
 `consumer_artifact_write`. Read the new rendered bytes, update affected provider
-documents, and verify their complete readbacks before returning the revised
+documents, and retain their provider write receipts before returning the revised
 candidate.
 
 ## Collect and prepare
@@ -297,7 +297,7 @@ evidence. Independently inspect every score of 80 or more and require explicit
 evidence of a result beyond that person's role standard; do not infer that
 repeated work, routine same-team adoption, or a reusable method alone exceeds a
 director's standard. Any correction must update affected person totals, report sections,
-average and summary before full readback.
+average and summary before publication.
 
 Before rendering, check `next_week_focus`, risk and improvement text against the
 current source evidence. Do not ask a member to produce acceptance, usage or
@@ -398,18 +398,16 @@ For each manifest appendix run the same destination script with --title and
 child of the main report.
 Use this same parent-scoped resolution on recovery, updating the existing child
 and its current revision. After any analysis correction, republish changed
-appendices as well as the main report. Before proposing the notification, compare
-all final provider readbacks with the current manifest artifacts and confirm
-each appendix's parent is the main node; Audit checks these same actual results.
-After every render, publish or update and fully read back every appendix in the
-current manifest, even when that member's analysis is unchanged. The report date,
-title, links or summary can change independently of the member analysis; an old
-appendix or its previous readback does not satisfy this run's manifest.
-Read back content through the returned readback artifact. Call
+appendices as well as the main report. Before proposing the notification, confirm
+successful provider write receipts for the current manifest and that each
+appendix's parent is the main node. No automatic content readback or full-body
+comparison is required. Reuse existing write receipts and unchanged artifacts;
+publish changed report or appendix artifacts when the date, title, links or
+analysis changes. Call
 `read_dingtalk_document_info(node_id)` to obtain each published document's
 canonical URL; preserve that provider URL for appendix links and delivery.
 The final purpose output must include the required `evidence_refs` array, with
-the saved report, appendix and readback artifact references supporting the
+the saved report, appendix and provider write receipt references supporting the
 proposed publication. Do not omit required schema fields when returning a
 completed plan.
 
@@ -430,7 +428,7 @@ For every Audit correction, change only the affected member analysis or
 `appendix-links.json`, then rerun the appropriate `render` command. Never write
 `main.md`, `full.md`, `summary.md` or an appendix file with
 `consumer_artifact_write`; read the exact rendered bytes and submit those same
-bytes to the document tools. Recheck all resulting provider readbacks after
+bytes to the document tools. Retain the resulting write receipts after
 each correction.
 Propose that body and the roster's
 conversation ID through the existing `dingtalk-chat`
@@ -444,5 +442,5 @@ ID. Use `reply_to_message` only when the trigger is an actual message and
 invent a message ID for a scheduled run.
 
 Report the document URL, coverage, unresolved evidence, appendix location and
-actual send result. A local rendered file is a draft; provider receipts and
-readback establish publication and delivery.
+actual send result. A local rendered file is a draft; provider write receipts
+establish publication, while message delivery uses its own execution receipt.

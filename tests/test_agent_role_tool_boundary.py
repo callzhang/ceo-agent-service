@@ -400,8 +400,8 @@ def test_report_document_client_has_only_fixed_dws_commands() -> None:
         folder_id="folder-1",
     )
     assert client.commands[-1] == [
-        "dws", "doc", "+create", "--name", "CEO 每日总结 2026-10-04",
-        "--content", "# 今日", "--doc-format", "markdown", "--folder",
+        "dws", "doc", "create", "--name", "CEO 每日总结 2026-10-04",
+        "--content", "# 今日", "--content-format", "markdown", "--folder",
         "folder-1", "--format", "json",
     ]
     client.overwrite_report_document(
@@ -409,9 +409,9 @@ def test_report_document_client_has_only_fixed_dws_commands() -> None:
         doc_format="jsonml", expected_revision=7,
     )
     assert client.commands[-1] == [
-        "dws", "doc", "+update", "--node", "doc-1", "--command",
-        "overwrite", "--content", '[{"name":"paragraph"}]', "--doc-format",
-        "jsonml", "--expected-revision", "7", "--yes", "--format", "json",
+        "dws", "doc", "update", "--node", "doc-1", "--mode",
+        "overwrite", "--content", '[{"name":"paragraph"}]', "--content-format",
+        "jsonml", "--revision", "7", "--yes", "--format", "json",
     ]
     with pytest.raises(ValueError, match="expected revision"):
         client.overwrite_report_document(

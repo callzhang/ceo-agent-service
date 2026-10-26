@@ -100,16 +100,17 @@ def _scheduled_consumer_work_receipts(
         operation = result.get("operation")
         node_id = result.get("node_id")
         title = result.get("title")
-        readback = result.get("readback")
+        provider_result = result.get("provider_result")
         if (
             operation not in {"created", "updated"}
             or not isinstance(node_id, str) or not node_id
             or not isinstance(title, str) or not title
-            or not isinstance(readback, dict)
+            or result.get("ok") is not True or result.get("status") != "success"
+            or not isinstance(provider_result, dict)
         ):
             continue
-        readback_bytes = json.dumps(
-            readback, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+        provider_bytes = json.dumps(
+            provider_result, ensure_ascii=False, sort_keys=True, separators=(",", ":")
         ).encode("utf-8")
         receipt = {
             "consumer_run_id": run.id,
@@ -117,8 +118,8 @@ def _scheduled_consumer_work_receipts(
             "operation": operation,
             "document_node_id": node_id,
             "document_title": title,
-            "readback_sha256": hashlib.sha256(readback_bytes).hexdigest(),
-            "readback_bytes": len(readback_bytes),
+            "provider_result_sha256": hashlib.sha256(provider_bytes).hexdigest(),
+            "provider_result_bytes": len(provider_bytes),
         }
         if receipt not in receipts:
             receipts.append(receipt)

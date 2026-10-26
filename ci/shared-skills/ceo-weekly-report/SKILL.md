@@ -87,8 +87,8 @@ shapes are described in the report contract and renderer.
    expected_revision for an existing target. For a missing target use the
    resolved year page as parent_id plus workspace_id. The materials script ensures the canonical year page exists under the
    meeting folder when --ensure-year-page is supplied.
-4. Read the complete readback artifact, compare its three managed areas and
-   verify unchanged participant content. A revision conflict requires a fresh
+4. Record the provider write receipt and document identity. No automatic
+   content readback is required. A revision conflict requires a fresh
    target read and a new render. A previously completed write remains a fact
    after interruption; read the target before deciding whether another write
    is needed. Record the document link and coverage in the final result.

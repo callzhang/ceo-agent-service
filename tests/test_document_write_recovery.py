@@ -46,51 +46,6 @@ def test_provider_error_survives_command_error_formatting(monkeypatch, stream):
     assert len(calls) == 1
 
 
-@pytest.mark.parametrize("create", [False, True])
-@pytest.mark.parametrize("stage", ["verify_write", "readback"])
-def test_applied_write_returns_unverified_result_without_replay(
-    tmp_path, monkeypatch, create, stage
-):
-    error = verification_error(operation="doc.create" if create else "doc.update")
-    writes = []
-    reads = []
-
-    class Provider:
-        dws_bin = "dws"
-
-        def run_json(self, command):
-            return {"data": {"nodes": [{"nodeId": "doc-1", "name": "Report"}]
-                            if writes else []}}
-
-        def create_report_document(self, **kwargs):
-            return self.overwrite_report_document(**kwargs)
-
-        def overwrite_report_document(self, **kwargs):
-            writes.append(kwargs)
-            if stage == "verify_write":
-                raise DwsError("provider failure", provider_error=error)
-            return {"nodeId": "doc-1", "verified": True}
-
-        def read_doc(self, node):
-            reads.append(node)
-            raise DwsError("read unavailable", provider_error={"reason": "read_failed"})
-
-    monkeypatch.setattr("app.dws_client.DwsClient", Provider)
-    (tmp_path / "report.md").write_text("# Report\n| Value |\n| ---: |\n| 1 |")
-    target = {"parent_id": "folder", "workspace_id": "wiki"} if create else {"node_id": "doc-1"}
-    result = _write_document_artifact(
-        root=tmp_path, artifact_name="report.md", title="Report", doc_format="markdown", **target
-    )
-    assert result["status"] == "success"
-    assert result["ok"] is True and result["verified"] is False
-    assert result["node_id"] == "doc-1"
-    assert result["readback"] is None
-    assert result["error"] == (error if stage == "verify_write" else {"reason": "read_failed"})
-    assert len(writes) == 1
-    assert len(reads) == (stage == "readback")
-    assert not list(tmp_path.glob("*.readback.json"))
-
-
 @pytest.mark.parametrize("error", [
     {"reason": "permission_denied"},
     {"reason": "doc_write_commit_unknown", "details": {"status": "unknown"}},
@@ -167,3 +122,59 @@ def test_unverified_document_result_is_not_a_successful_audit_receipt():
         }}],
     )
     assert _scheduled_consumer_work_receipts(task, run) == ()
+
+
+@pytest.mark.parametrize("doc_format", ["markdown", "jsonml"])
+@pytest.mark.parametrize("create", [False, True])
+def test_successful_write_does_not_read_or_verify_content(tmp_path, monkeypatch, doc_format, create):
+    class Provider:
+        dws_bin = "dws"
+
+        def __init__(self):
+            self.written = False
+
+        def run_json(self, command):
+            return {"data": {"nodes": [{"name": "Report", "nodeId": "doc-1"}] if self.written else []}}
+
+        def create_report_document(self, **kwargs):
+            self.written = True
+            return {"nodeId": "doc-1", "success": True}
+
+        def validate_report_jsonml(self, content):
+            return {"assessment": "passed"}
+
+        def save_report_document_version(self, node):
+            return {"version": "v1"}
+
+        def overwrite_report_document(self, **kwargs):
+            return {"nodeId": "doc-1", "success": True}
+
+        def read_doc(self, node):
+            pytest.fail("successful write must not read back content")
+
+        fetch_report_document_full = read_doc
+
+    monkeypatch.setattr("app.dws_client.DwsClient", Provider)
+    (tmp_path / "body").write_text('["root", {}, ["p", {}, "report"]]' if doc_format == "jsonml" else "# Report")
+    result = _write_document_artifact(root=tmp_path, artifact_name="body", title="Report",
+        doc_format=doc_format, **({"parent_id": "folder", "workspace_id": "ws"} if create else
+            {"node_id": "doc-1", "expected_revision": 7 if doc_format == "jsonml" else None}))
+    assert result["ok"] is True and result["status"] == "success"
+    assert result["provider_result"] == {"nodeId": "doc-1", "success": True}
+    assert result["readback"] is None and "verified" not in result
+    assert not list(tmp_path.glob("*.readback.json"))
+
+
+@pytest.mark.parametrize("create", [False, True])
+def test_document_uses_native_commands_without_content_verification(monkeypatch, create):
+    calls = []
+    monkeypatch.setattr(DwsClient, "run_json", lambda self, command: calls.append(command) or {"nodeId": "doc-1"})
+    client = DwsClient(dws_bin="dws")
+    if create:
+        client.create_report_document(name="Report", content="# Report", doc_format="markdown", folder_id="folder")
+    else:
+        client.overwrite_report_document(node_id="doc-1", content="[]", doc_format="jsonml", expected_revision=7)
+    assert calls[0][1:3] == ["doc", "create" if create else "update"]
+    assert "--content-format" in calls[0]
+    if not create:
+        assert calls[0][calls[0].index("--revision")+1] == "7"

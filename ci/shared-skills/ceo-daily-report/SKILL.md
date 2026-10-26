@@ -81,8 +81,8 @@ with nothing in it says `无`; never pad it.
    It resolves wiki `🎯  目标与执行` / `CEO 每日总结`, creates that folder if
    missing and returns the exact same-day target. Call `consumer_document_write`
    with artifact_name, title and doc_format="markdown"; use node_id for an
-   existing document, or parent_id + workspace_id for creation. Read the
-   returned readback artifact and compare it with your submitted body. Reuse
+   existing document, or parent_id + workspace_id for creation. Use the returned
+   provider receipt to record the write; no automatic content readback is required. Reuse
    the resolved folder URL in the direct message.
 2. Send Derek (磊哥) one direct message from his own account, not a bot:
    propose it as a `dingtalk-chat` action with a direct-message operation,
