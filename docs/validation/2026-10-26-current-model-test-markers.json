@@ -217,6 +217,110 @@
     "policy_change": false,
     "compatibility_added": false
   },
-  "publication": "pending standard exact-target deployment/readback",
-  "test_external_sends": 0
+  "publication": {
+    "status": "standard exact-target deploy complete",
+    "target_commit": "a8d3aba6d13907778a4c91b187ea896dfe195d61",
+    "mandatory_clean_clone_gate": "pass",
+    "before": {
+      "at": "2026-10-26T20:42:15.656368+00:00",
+      "production_commit": "b9244988e69ca2c7a45b1b62751fbbce3da19dcb",
+      "status": {
+        "http": 200,
+        "summary": {
+          "queue_count": 11,
+          "pending": 6,
+          "processing": 1,
+          "failed": 25,
+          "retryable": 0,
+          "attention": 3
+        }
+      },
+      "attention": {
+        "http": 200,
+        "total": 3
+      },
+      "history": {
+        "http": 200,
+        "total": 38570
+      },
+      "schema_objects": 476,
+      "schema_sha256": "982ba47f9d2054d9b05e50ce7c9b95329e412ed3da5aa4aa04835b18a6843bf9",
+      "fk_findings": [],
+      "backups": [
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3"
+      ]
+    },
+    "after": {
+      "at": "2026-10-26T20:58:22.421602+00:00",
+      "code": "a8d3aba6d13907778a4c91b187ea896dfe195d61",
+      "pid": "76100",
+      "schema_objects": 476,
+      "schema_sha256": "982ba47f9d2054d9b05e50ce7c9b95329e412ed3da5aa4aa04835b18a6843bf9",
+      "fk_findings": [],
+      "installed_completion_contract": "session_contract_hash_for_route(route)",
+      "healthz": {
+        "http": 200,
+        "value": {
+          "ok": true,
+          "status": "ok"
+        }
+      },
+      "api/console/status": {
+        "http": 200,
+        "summary": {
+          "queue_count": 11,
+          "pending": 6,
+          "processing": 1,
+          "failed": 27,
+          "retryable": 0,
+          "attention": 4
+        }
+      },
+      "api/console/attention": {
+        "http": 200,
+        "total": 4,
+        "items": 2
+      },
+      "api/console/history": {
+        "http": 200,
+        "total": 38572,
+        "items": 20
+      }
+    },
+    "existing_task_failure_timing": {
+      "failed_tasks": [
+        {
+          "id": 417543,
+          "kind": "reply",
+          "status": "failed",
+          "updated_at": "2026-10-26 20:56:50",
+          "error_excerpt": "audit_revision_exhausted"
+        }
+      ],
+      "failed_runs": [],
+      "process_start_local": "Mon Oct 26 13:57:04 2026"
+    }
+  },
+  "test_external_sends": 0,
+  "ui": {
+    "history_rows_visible": true,
+    "queue_tabs_visible": true,
+    "attention_section_visible": true,
+    "service_running": true,
+    "temporary_tab_closed": true
+  },
+  "cleanup": {
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-4d3fc1d8-2dbe-41b9-9715-644bd856f032.sqlite3",
+    "backup_complete": true,
+    "backup_integrity": "ok",
+    "temporary_root": "/private/tmp/ceo-current-test-markers.3i2SEj",
+    "open_files": 0,
+    "active_deploys": 0,
+    "status": "complete",
+    "temporary_root_absent": true,
+    "backup_absent": true,
+    "production_db_preserved": true,
+    "native_trajectories_preserved": true
+  },
+  "skip_alias_and_unittest_scan": "no additional skip aliases or unittest skips found"
 }

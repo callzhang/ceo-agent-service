@@ -55,4 +55,27 @@ suite was run, and no test sent to a real provider.
 
 The exact remaining sites and focused evidence are in the
 [marker record](validation/2026-10-26-current-model-test-markers.json).
-Publication/readback and temporary-artifact cleanup are recorded after completion.
+
+## Publication and closeout
+
+Standard exact-target deployment completed `b9244988e → a8d3aba6d` after the
+mandatory clean-clone gate passed under unchanged2GB/5minute limits. It waited
+for real production work to finish. At20:58:22 UTC, PID76100 loaded the exact
+target. Health, queues/status, Attention and History return200; actual Chrome
+Dashboard/History shows running service, queue tabs, Attention and history rows.
+Installed completion AST calls `session_contract_hash_for_route(route)`. All476
+schema objects have the exact prior hash and FK findings remain empty. No schema
+or historical-data migration was performed.
+
+The before/after aggregate failed count is25→27 and Attention3→4. The waiting
+production task417543 failed with audit_revision_exhausted at20:56:50 UTC before
+the new process started at20:57:04 UTC; this verification does not claim no
+existing business failures. No Task was replayed or rewritten by these tests.
+Current session behavior is verified by real-Store/substitute CLI regressions;
+no extra production model turn or real test send was triggered.
+
+The exact deployment workflow backup passed its completion marker and full
+SQLite integrity check. With no active deploy or open files, the owned temporary
+root and verified backup were removed and their absence verified. Production DB
+and native trajectory originals remain. The concise marker/publication record
+is retained; test DBs, raw logs and intermediate code are not archived.
