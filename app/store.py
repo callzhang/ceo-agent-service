@@ -162,7 +162,6 @@ from app.outbound_postfix import (
     outbound_body_echo_key,
 )
 from app.task_models import (
-    DingTalkTodoLinkStatus,
     FollowUpDraft,
     TaskAttentionProjectionReceipt,
     TodoEvidenceCandidate,
@@ -16899,15 +16898,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return row is not None
 
-    def sent_reply_exists(
-        self,
-        conversation_id: str,
-        trigger_message_id: str,
-    ) -> bool:
-        return self.has_sent_reply_for_trigger(
-            conversation_id,
-            trigger_message_id,
-        )
 
     def get_sent_reply(
         self, conversation_id: str, trigger_message_id: str
@@ -21733,33 +21723,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return int(row["count"])
 
-    def list_reply_attempts(
-        self,
-        limit: int | None = None,
-        offset: int = 0,
-        *,
-        send_status: str | None = None,
-        send_statuses: tuple[str, ...] | None = None,
-        query_text: str = "",
-    ) -> list[ReplyAttempt]:
-        with self._connect() as db:
-            query = f"""
-                select *
-                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
-            """
-            filters, args = self._reply_attempt_filters(
-                send_status=send_status,
-                send_statuses=send_statuses,
-                query_text=query_text,
-            )
-            if filters:
-                query = f"{query} where {' and '.join(filters)}"
-            query = f"{query} order by id desc"
-            if limit is not None:
-                query = f"{query} limit ? offset ?"
-                args.extend([limit, max(0, offset)])
-            rows = db.execute(query, args).fetchall()
-            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
     def list_history_items(
         self,
@@ -22881,25 +22844,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             rows = db.execute(query, args).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
-    def count_reply_attempts(
-        self,
-        *,
-        send_status: str | None = None,
-        send_statuses: tuple[str, ...] | None = None,
-        query_text: str = "",
-    ) -> int:
-        with self._connect() as db:
-            filters, args = self._reply_attempt_filters(
-                send_status=send_status,
-                send_statuses=send_statuses,
-                query_text=query_text,
-            )
-            where_sql = f" where {' and '.join(filters)}" if filters else ""
-            row = db.execute(
-                f"select count(*) as count from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts{where_sql}",
-                args,
-            ).fetchone()
-            return int(row["count"])
 
     def count_recoverable_blocked_reply_attempts(self) -> int:
         with self._connect() as db:
@@ -23305,13 +23249,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                              (project_id,)).fetchone()
             return None if row is None else WorkProject.model_validate(dict(row))
 
-    def get_work_todo(
-        self, todo_id: int, *, _db: sqlite3.Connection | None = None
-    ) -> WorkTodo | None:
-        with self._optional_connection(_db) as db:
-            row = db.execute(f"select * from ({BUSINESS_PROJECTIONS['work_todo']}) where id=?",
-                             (todo_id,)).fetchone()
-            return None if row is None else WorkTodo.model_validate(dict(row))
 
     def list_work_todos(
         self,
@@ -23335,99 +23272,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return [WorkTodo.model_validate(dict(row)) for row in db.execute(query, args)]
 
     @staticmethod
-    def _normalize_dingtalk_todo_link_status(status: object) -> str:
-        return DingTalkTodoLinkStatus(str(status)).value
-
-    @staticmethod
     def _normalize_dingtalk_todo_link_row(
         row: sqlite3.Row,
     ) -> WorkTodoDingTalkLink:
         return WorkTodoDingTalkLink.model_validate(dict(row))
 
-    def get_work_todo_dingtalk_link(
-        self,
-        link_id: int,
-    ) -> WorkTodoDingTalkLink | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) where id=?",
-                (link_id,),
-            ).fetchone()
-            return None if row is None else self._normalize_dingtalk_todo_link_row(row)
 
-    def get_active_work_todo_dingtalk_link(
-        self,
-        work_todo_id: int,
-    ) -> WorkTodoDingTalkLink | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})
-                where work_todo_id=?
-                  and status in ('creating', 'active')
-                order by id
-                limit 1
-                """,
-                (work_todo_id,),
-            ).fetchone()
-            return None if row is None else self._normalize_dingtalk_todo_link_row(row)
 
-    def list_work_todo_dingtalk_links(
-        self,
-        statuses: tuple[str, ...] | None = None,
-        limit: int = 100,
-        work_todo_id: int | None = None,
-        with_dingtalk_task_id: bool = False,
-    ) -> list[WorkTodoDingTalkLink]:
-        if limit <= 0:
-            return []
-        query = f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']})"
-        clauses: list[str] = []
-        args: list[str | int] = []
-        if work_todo_id is not None:
-            clauses.append("work_todo_id=?")
-            args.append(work_todo_id)
-        if with_dingtalk_task_id:
-            clauses.append("trim(coalesce(dingtalk_task_id, '')) != ''")
-        if statuses:
-            normalized_statuses = tuple(
-                self._normalize_dingtalk_todo_link_status(status)
-                for status in statuses
-            )
-            clauses.append(f"status in ({','.join('?' for _ in statuses)})")
-            args.extend(normalized_statuses)
-        if clauses:
-            query = f"{query} where {' and '.join(clauses)}"
-        query = f"{query} order by id limit ?"
-        args.append(limit)
-        with self._connect() as db:
-            return [
-                self._normalize_dingtalk_todo_link_row(row)
-                for row in db.execute(query, args)
-            ]
 
-    def list_work_todo_dingtalk_links_for_todo(
-        self,
-        work_todo_id: int,
-        *,
-        statuses: tuple[str, ...] | None = None,
-    ) -> list[WorkTodoDingTalkLink]:
-        query = (f"select * from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) "
-                 "where work_todo_id=?")
-        args: list[str | int] = [work_todo_id]
-        if statuses:
-            normalized_statuses = tuple(
-                self._normalize_dingtalk_todo_link_status(status)
-                for status in statuses
-            )
-            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
-            args.extend(normalized_statuses)
-        query = f"{query} order by id"
-        with self._connect() as db:
-            return [
-                self._normalize_dingtalk_todo_link_row(row)
-                for row in db.execute(query, args)
-            ]
 
     def list_work_todo_dingtalk_links_for_todos(
         self,
@@ -24104,26 +23956,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
 
 
-    def has_work_update(
-        self,
-        *,
-        project_id: int,
-        source_type: str,
-        source_ref: str,
-    ) -> bool:
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select 1
-                from ({SYNC_ACTION_PROJECTIONS['work_updates']})
-                where project_id=?
-                  and source_type=?
-                  and source_ref=?
-                limit 1
-                """,
-                (project_id, source_type, source_ref),
-            ).fetchone()
-            return row is not None
 
     def list_work_updates(self, project_id: int, limit: int = 50) -> list[WorkUpdate]:
         with self._connect() as db:
@@ -24690,24 +24522,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 for row in db.execute(query, args)
             ]
 
-    def list_follow_up_drafts_for_todo(
-        self,
-        todo_id: int,
-        *,
-        statuses: tuple[str, ...] = ("draft", "approved"),
-        _db: sqlite3.Connection | None = None,
-    ) -> list[FollowUpDraft]:
-        query = f"select * from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where todo_id=?"
-        args: list[str | int] = [todo_id]
-        if statuses:
-            query = f"{query} and status in ({','.join('?' for _ in statuses)})"
-            args.extend(statuses)
-        query = f"{query} order by scheduled_at, id"
-        with self._optional_connection(_db) as db:
-            return [
-                FollowUpDraft.model_validate(dict(row))
-                for row in db.execute(query, args)
-            ]
 
     def list_follow_up_drafts_for_todos(
         self,
@@ -24896,81 +24710,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return int(row["count"] or 0)
 
-    def list_recent_reply_attempts_for_follow_up(
-        self,
-        *,
-        conversation_id: str,
-        since: str,
-        limit: int = 20,
-    ) -> list[ReplyAttempt]:
-        if not conversation_id.strip() or not since.strip():
-            return []
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select *
-                from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts
-                where conversation_id=?
-                  and datetime(created_at) >= datetime(?)
-                order by created_at asc, id asc
-                limit ?
-                """,
-                (conversation_id.strip(), since.strip(), limit),
-            ).fetchall()
-            return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
-    def list_recent_follow_up_reactions(
-        self,
-        *,
-        project_id: int,
-        owner_user_id: str,
-        since: str,
-        limit: int = 10,
-    ) -> list[FollowUpDraft]:
-        clauses = [
-            "project_id=?",
-            "reaction_status != ''",
-            "sent_at != ''",
-            "datetime(sent_at) >= datetime(?)",
-        ]
-        args: list[object] = [project_id, since]
-        if owner_user_id.strip():
-            clauses.append("owner_user_id=?")
-            args.append(owner_user_id.strip())
-        args.append(limit)
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select *
-                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
-                where {' and '.join(clauses)}
-                order by sent_at desc, id desc
-                limit ?
-                """,
-                args,
-            ).fetchall()
-            return [FollowUpDraft.model_validate(dict(row)) for row in rows]
 
-    def list_sent_follow_ups_since(
-        self,
-        since: str,
-        *,
-        limit: int = 100,
-    ) -> list[FollowUpDraft]:
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select *
-                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
-                where status='sent'
-                  and sent_at != ''
-                  and datetime(sent_at) >= datetime(?)
-                order by sent_at desc, id desc
-                limit ?
-                """,
-                (since, limit),
-            ).fetchall()
-            return [FollowUpDraft.model_validate(dict(row)) for row in rows]
 
     def list_sent_todo_records(self, *, limit: int = 5000) -> list[SentTodoRecord]:
         if limit <= 0:

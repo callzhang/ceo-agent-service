@@ -32,8 +32,6 @@ TOKEN_RE = re.compile(r"[A-Za-z0-9_]+|[\u4e00-\u9fff]")
 @dataclass(frozen=True)
 class ProjectTaskDetail:
     project: WorkProject
-    score: float
-    match_reasons: tuple[str, ...]
     todos: tuple[WorkTodo, ...]
     updates: tuple[object, ...]
     follow_ups_by_todo: dict[int, tuple[object, ...]]
@@ -492,110 +490,11 @@ def load_project_task_detail(
     }
     return ProjectTaskDetail(
         project=project,
-        score=0.0,
-        match_reasons=("project_id",),
         todos=tuple(todos),
         updates=tuple(store.list_work_updates(project.id, limit=updates_per_project)),
         follow_ups_by_todo=follow_ups_by_todo,
         dingtalk_links_by_todo=links_by_todo,
     )
-
-
-def render_project_task_details(details: list[ProjectTaskDetail]) -> str:
-    if not details:
-        return ""
-
-    payload = []
-    for detail in details:
-        project = detail.project
-        payload.append(
-            {
-                "match": {
-                    "score": round(detail.score, 4),
-                    "reasons": list(detail.match_reasons),
-                },
-                "project": {
-                    "id": project.id,
-                    "detail_url": f"/tasks/legacy-project/{project.id}",
-                    "title": project.title,
-                    "category": _enum_value(project.category),
-                    "status": _enum_value(project.status),
-                    "owner": resolve_task_owner_display(project, detail.todos),
-                    "owner_user_id": project.owner_user_id,
-                    "owner_name": project.owner_name,
-                    "goal": project.goal,
-                    "background": project.background,
-                    "facts": _parse_json_list(project.facts_json),
-                    "current_state": project.current_state,
-                    "blocker": project.blocker,
-                    "next_step": project.next_step,
-                    "source_conversations": _parse_json_list(
-                        project.source_conversations_json
-                    ),
-                },
-                "todos": [
-                    {
-                        "id": todo.id,
-                        "detail_url": (
-                            f"/tasks/legacy-project/{project.id}#todo-{todo.id}"
-                        ),
-                        "title": todo.title,
-                        "description": todo.description,
-                        "status": _enum_value(todo.status),
-                        "owner": todo.owner_name or todo.owner_user_id,
-                        "owner_user_id": todo.owner_user_id,
-                        "owner_name": todo.owner_name,
-                        "deadline_at": todo.deadline_at,
-                        "follow_up_question": todo.follow_up_question,
-                        "blocker": todo.blocker,
-                        "completion_evidence": _parse_json_object(
-                            todo.completion_evidence_json
-                        ),
-                        "dingtalk_todos": [
-                            _model_payload(link)
-                            for link in detail.dingtalk_links_by_todo.get(todo.id, ())
-                        ],
-                        "follow_ups": [
-                            {
-                                **_model_payload(follow_up),
-                                "detail_url": (
-                                    f"/tasks/legacy-project/{project.id}"
-                                    f"#follow-up-{follow_up.id}"
-                                ),
-                            }
-                            for follow_up in detail.follow_ups_by_todo.get(todo.id, ())
-                        ],
-                    }
-                    for todo in detail.todos
-                ],
-                "recent_updates": [
-                    {
-                        **_model_payload(update),
-                        "changes": _parse_json_object(
-                            str(getattr(update, "changes_json", "{}"))
-                        ),
-                    }
-                    for update in detail.updates
-                ],
-            }
-        )
-    return json.dumps(payload, ensure_ascii=False, indent=2)
-
-
-def _parse_json_list(value: str) -> list[object]:
-    try:
-        parsed = json.loads(value or "[]")
-    except json.JSONDecodeError:
-        return []
-    return parsed if isinstance(parsed, list) else []
-
-
-def _parse_json_object(value: str) -> dict[str, object]:
-    try:
-        parsed = json.loads(value or "{}")
-    except json.JSONDecodeError:
-        return {}
-    return parsed if isinstance(parsed, dict) else {}
 
 
 def _model_payload(value: object) -> dict[str, Any]:
@@ -606,7 +505,3 @@ def _model_payload(value: object) -> dict[str, Any]:
     if hasattr(value, "__dict__"):
         return dict(value.__dict__)
     return {}
-
-
-def _enum_value(value: object) -> object:
-    return getattr(value, "value", value)

@@ -364,8 +364,10 @@ def test_uncertain_dingtalk_send_returns_to_consumer_for_receipt_followup(tmp_pa
     followup = consumer.calls[1]
     assert followup[1] == 1
     assert followup[3] is not None
-    assert "complete" in followup[3].observation
-    assert "never claim sent" in followup[3].requested_revision
+    assert "could not verify" in followup[3].observation
+    assert "dws" in followup[3].requested_revision
+    assert "do not resend until you know" in followup[3].requested_revision
+    assert "never claim a send you did not see" in followup[3].requested_revision.lower()
     uncertain_receipts = [
         receipt for receipt in followup[4].prior_receipts
         if receipt.operation == "dingtalk_message_delivery_verification"

@@ -31,7 +31,7 @@ def test_legacy_work_lists_are_retired_but_exact_history_readers_remain(tmp_path
     assert not hasattr(store, "list_work_todos_for_projects")
     assert not hasattr(store, "list_work_project_ids_for_todo_owner")
     assert store.get_work_project(project_id).id == project_id
-    assert store.get_work_todo(todo_id).id == todo_id
+    assert next((todo for todo in store.list_work_todos() if todo.id == todo_id), None).id == todo_id
 
 
 def test_current_task_execution_schema_has_no_legacy_auxiliary_tables(tmp_path):
@@ -549,7 +549,7 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
         todo_id,
         description="补齐来源链接，并写清每份材料用于哪个客户场景。",
     )
-    updated_todo = store.get_work_todo(todo_id)
+    updated_todo = next((todo for todo in store.list_work_todos() if todo.id == todo_id), None)
     assert updated_todo is not None
     assert updated_todo.description == "补齐来源链接，并写清每份材料用于哪个客户场景。"
 
@@ -949,7 +949,7 @@ def test_list_recent_follow_up_candidates_respects_non_positive_limit(
     )
 
 
-def test_historical_dingtalk_todo_link_get_and_active_lookup(tmp_path: Path):
+def test_historical_dingtalk_todo_link_batch_retains_recorded_facts(tmp_path: Path):
     store = _store(tmp_path)
     project_id = seed_legacy_work_project(store,
         title="客户交付",
@@ -976,11 +976,10 @@ def test_historical_dingtalk_todo_link_get_and_active_lookup(tmp_path: Path):
         status="creating",
     )
 
-    link = store.get_work_todo_dingtalk_link(link_id)
+    link = next((link for link in store.list_work_todo_dingtalk_links_for_todos([todo_id]).get(todo_id, []) if link.id == link_id), None)
     assert link is not None
     assert link.work_todo_id == todo_id
     assert link.status == "creating"
-    assert store.get_active_work_todo_dingtalk_link(todo_id).id == link_id
 
     with store._immediate_write_transaction() as db:
         from app.action_storage import update_sync_action
@@ -992,7 +991,7 @@ def test_historical_dingtalk_todo_link_get_and_active_lookup(tmp_path: Path):
             "last_push_at": "2026-06-27 10:00:00",
         })
 
-    updated = store.get_work_todo_dingtalk_link(link_id)
+    updated = next((link for link in store.list_work_todo_dingtalk_links_for_todos([todo_id]).get(todo_id, []) if link.id == link_id), None)
     assert updated.dingtalk_task_id == "dt-task-1"
     assert updated.status == "active"
     assert updated.last_dingtalk_done is False
@@ -1234,118 +1233,8 @@ def test_recent_single_chat_recovery_ignores_compacted_task_json(tmp_path: Path)
     assert records[0].direct_open_dingtalk_id == ""
 
 
-def test_list_work_todo_dingtalk_links_filters_by_work_todo_before_limit(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户交付",
-        category="projects",
-        status="active",
-    )
-    other_todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="同步其他事项",
-        owner_user_id="owner-1",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    target_todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-2",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    seed_legacy_todo_link(store,
-        work_todo_id=other_todo_id,
-        dingtalk_task_id="dt-other",
-        status="failed",
-    )
-    target_link_id = seed_legacy_todo_link(store,
-        work_todo_id=target_todo_id,
-        dingtalk_task_id="dt-target",
-        status="failed",
-    )
-
-    links = store.list_work_todo_dingtalk_links(
-        statuses=("failed",),
-        work_todo_id=target_todo_id,
-        limit=1,
-    )
-
-    assert [link.id for link in links] == [target_link_id]
-
-    second_target_todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认第二个验收 ETA",
-        owner_user_id="owner-3",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    seed_legacy_todo_link(store,
-        work_todo_id=second_target_todo_id,
-        dingtalk_task_id="",
-        status="failed",
-    )
-    second_target_link_id = seed_legacy_todo_link(store,
-        work_todo_id=second_target_todo_id,
-        dingtalk_task_id="dt-second-target",
-        status="failed",
-    )
-    recoverable_links = store.list_work_todo_dingtalk_links(
-        statuses=("failed",),
-        work_todo_id=second_target_todo_id,
-        with_dingtalk_task_id=True,
-        limit=1,
-    )
-
-    assert [link.id for link in recoverable_links] == [second_target_link_id]
 
 
-def test_list_work_todo_dingtalk_links_for_todo_returns_all_matches(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户交付",
-        category="projects",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="给客户同步验收 ETA",
-        owner_user_id="owner-1",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    other_todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="同步其他事项",
-        owner_user_id="owner-2",
-        status="open",
-        deadline_at="2026-07-01 18:00:00",
-    )
-    link_ids = [
-        seed_legacy_todo_link(store,
-            work_todo_id=todo_id,
-            dingtalk_task_id=f"dt-target-{index}",
-            status="failed",
-        )
-        for index in range(101)
-    ]
-    seed_legacy_todo_link(store,
-        work_todo_id=other_todo_id,
-        dingtalk_task_id="dt-other",
-        status="failed",
-    )
-
-    links = store.list_work_todo_dingtalk_links_for_todo(
-        todo_id,
-        statuses=("failed",),
-    )
-
-    assert [link.id for link in links] == link_ids
 
 
 def test_list_follow_up_drafts_for_todos_groups_by_todo(

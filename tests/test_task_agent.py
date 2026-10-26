@@ -1696,7 +1696,9 @@ def test_process_work_item_opens_and_completes_runtime_parent_before_decision(tm
     assert len(runs) == 1
     assert runs[0]["status"] == "completed"
     assert "decision_json" not in runs[0].keys()
-    assert store.get_professional_run(int(runs[0]["id"]))["native_available"] is False
+    from app.native_standalone import native_run_ref, task_decision
+    with store._connect() as db:
+        assert task_decision(native_run_ref(db, int(runs[0]["id"]), "task_agent_runs")).available is False
     assert store.get_work_summary_input(input_id).status.value == "skipped"
     assert codex.calls[0]["session_scope_id"] == "task-agent:work-tracking:v1"
 

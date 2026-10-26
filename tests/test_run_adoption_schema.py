@@ -102,7 +102,7 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     from app.execution_owner_storage import create_plan_execution
     from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
     from app.run_entity_schema import capture_run_entities, migrate_run_entities
-    from app.shared_action_lifecycle import _insert, persist_plan
+    from tests.support.candidate_source import insert_candidate_source
     from app.task_entity_schema import capture_task_entities, migrate_task_entities
     from tests.test_run_entity_schema import _run_handoff, _source_row
     from tests.test_task_entity_schema import _source as task_source
@@ -211,25 +211,25 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
         "decision_options": [{"key": "stop", "value": {"mode": "stop"}}],
     }, ensure_ascii=False, separators=(",", ":"))
     digest = hashlib.sha256(candidate_json.encode()).hexdigest()
-    persist_plan(db, "reviewed", {
+    insert_candidate_source(db, "review_candidates", {
         "id": 40, "task_id": 201, "execution_generation": generation,
         "consumer_run_id": 9006, "stage_index": 0, "proposal_revision": 0,
         "candidate_digest": digest, "candidate_json": candidate_json,
         "created_at": "candidate-clock",
     })
-    _insert(db, "candidate_reviews", {
+    insert_candidate_source(db, "candidate_reviews", {
         "id": 7, "candidate_id": 40, "audit_run_id": 9007,
         "decision": "approve", "candidate_digest": digest,
         "result_json": '{"outcome":"approve"}', "created_at": "review-clock",
     })
-    _insert(db, "candidate_selections", {
+    insert_candidate_source(db, "candidate_selections", {
         "id": 18, "candidate_id": 40, "review_id": 7,
         "option_key": "stop", "created_at": "selection-clock",
     })
-    _insert(db, "candidate_supplements", {
+    insert_candidate_source(db, "candidate_supplements", {
         "id": 30, "candidate_id": 40, "instruction": "first", "created_at": "supplement-1",
     })
-    _insert(db, "candidate_supplements", {
+    insert_candidate_source(db, "candidate_supplements", {
         "id": 31, "candidate_id": 40, "instruction": "second", "created_at": "supplement-2",
     })
     execution_id = create_plan_execution(db, candidate_id=40, review_id=7,
@@ -248,13 +248,13 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     second_json = json.dumps({"outcome": "no_action", "summary": "second"},
                              ensure_ascii=False, separators=(",", ":"))
     second_digest = hashlib.sha256(second_json.encode()).hexdigest()
-    persist_plan(db, "reviewed", {
+    insert_candidate_source(db, "review_candidates", {
         "id": 41, "task_id": 201, "execution_generation": generation,
         "consumer_run_id": 9010, "stage_index": 0, "proposal_revision": 0,
         "candidate_digest": second_digest, "candidate_json": second_json,
         "created_at": "candidate-clock-2",
     })
-    _insert(db, "candidate_reviews", {
+    insert_candidate_source(db, "candidate_reviews", {
         "id": 9, "candidate_id": 41, "audit_run_id": 9011,
         "decision": "approve", "candidate_digest": second_digest,
         "result_json": '{"outcome":"approve"}', "created_at": "review-clock-2",

@@ -1,3 +1,5 @@
+import json
+from app.run_entity_storage import get_run, get_run_provenance
 from contextlib import contextmanager
 
 import pytest
@@ -54,7 +56,7 @@ def test_native_task_agent_run_claim_finish_and_projection(native_store):
     parent = task(store.db, "work_summary", "processing")
     run_id = store.claim_professional_run(parent["id"])
     assert store.claim_professional_run(parent["id"]) == run_id
-    run = store.get_professional_run(run_id, load_native=False)
+    run = get_run(store.db, run_id)
     assert run["id"] == run_id
     assert run["task_id"] == parent["id"]
     assert run["role"] is None
@@ -73,7 +75,7 @@ def test_meeting_and_okr_native_runs_preserve_absent_lifecycle(native_store):
     meeting_run = store.claim_professional_run(meeting["id"])
     store.finish_professional_run(meeting_run, status="ready_to_send", session_id="meeting-session",
                                   transcript_start=3, transcript_end=8, error="")
-    meeting_fact = store.get_professional_run(meeting_run, load_native=False)
+    meeting_fact = get_run(store.db, meeting_run)
     assert (meeting_fact["status"], meeting_fact["session_id"],
             meeting_fact["transcript_start"], meeting_fact["transcript_end"]) == (
                 "ready_to_send", "meeting-session", 3, 8,
@@ -84,7 +86,7 @@ def test_meeting_and_okr_native_runs_preserve_absent_lifecycle(native_store):
     defaulted = task(store.db, "meeting_alignment", "processing", meeting_id="meeting-defaults")
     defaulted_run = store.claim_professional_run(defaulted["id"])
     store.finish_professional_run(defaulted_run, status="failed")
-    defaulted_fact = store.get_professional_run(defaulted_run, load_native=False)
+    defaulted_fact = get_run(store.db, defaulted_run)
     assert (defaulted_fact["transcript_start"], defaulted_fact["transcript_end"]) == (0, 0)
     assert defaulted_fact["error"] == ""
 
@@ -92,7 +94,7 @@ def test_meeting_and_okr_native_runs_preserve_absent_lifecycle(native_store):
     okr_run = store.create_professional_run(
         okr["id"], session_id="okr-session", transcript_start=1, transcript_end=5,
     )
-    okr_fact = store.get_professional_run(okr_run, load_native=False)
+    okr_fact = get_run(store.db, okr_run)
     assert (okr_fact["status"], okr_fact["error"], okr_fact["completed_at"],
             okr_fact["updated_at"]) == (None, None, None, None)
     with pytest.raises(ValueError, match="after its native result"):
@@ -106,14 +108,17 @@ def test_okr_audit_summary_comes_from_native_envelope(native_store, monkeypatch)
     run_id = native_store.create_professional_run(
         okr["id"], session_id="okr-session", transcript_start=1, transcript_end=5,
     )
-    monkeypatch.setattr(native_standalone, "okr_envelope", lambda _ref: (
-        '{"audit":{"summary":"reviewed"}}', "",
-    ))
-    monkeypatch.setattr(native_standalone, "_meeting_tool_events", lambda *_args: ("[]", False, "unavailable"))
-
-    run = native_store.get_professional_run(run_id)
-
-    assert run["audit_summary"] == "reviewed"
+    envelope_json = json.dumps({
+        "kind": "okr_review", "user_response": {"mode": "no_reply", "text": "", "sensitivity_kind": "general"},
+        "system_actions": [], "domain_payload": {},
+        "audit": {"summary": "reviewed", "documents": [], "confidence": 1.0},
+    })
+    stream = json.dumps({"type": "response_item", "payload": {"type": "message", "role": "assistant", "content": [{"type": "output_text", "text": envelope_json}]}})
+    monkeypatch.setattr(native_standalone, "_native_stream", lambda _ref: stream)
+    ref = native_standalone.native_run_ref(native_store.db, run_id, "okr_review_runs")
+    envelope, reason = native_standalone.okr_envelope(ref)
+    assert reason == ""
+    assert json.loads(envelope)["audit"]["summary"] == "reviewed"
 
 
 @pytest.mark.parametrize(("task_kind", "source_type", "workload_kind", "other_kind"), [
@@ -334,6 +339,6 @@ def test_historical_meeting_orphan_keeps_provenance_without_a_task(native_store)
         set_run_provenance(
             db, run_id=run["id"], source_type="meeting_alignment_runs", job_id=4908,
         )
-    hydrated = native_store.get_professional_run(run["id"], load_native=False)
+    hydrated = get_run(native_store.db, run["id"])
     assert hydrated["task_id"] is None
-    assert hydrated["job_id"] == 4908
+    assert get_run_provenance(native_store.db, run["id"])["job_id"] == 4908

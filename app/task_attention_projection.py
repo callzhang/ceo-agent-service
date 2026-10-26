@@ -304,12 +304,6 @@ class BusinessAttentionProjection:
                 reason=reason, _db=db,
             )
 
-    def record_viewed(self, *, item_id: int, viewed_at: str) -> None:
-        """A read is intentionally non-authoritative and leaves the projection unchanged."""
-        self._nonblank(viewed_at, field="viewed at")
-        if self.store.get_business_attention_item(item_id) is None:
-            raise ValueError("business attention item does not exist")
-
     def recompute_for_tasks(self, task_ids: tuple[int, ...]) -> tuple[int, ...]:
         """Refresh membership of previously proposed attention items only."""
         if not task_ids:

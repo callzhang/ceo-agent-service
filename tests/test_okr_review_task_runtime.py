@@ -1,3 +1,5 @@
+import json
+from app.run_entity_storage import get_run, get_run_provenance
 from contextlib import contextmanager
 from datetime import UTC, datetime
 import sqlite3
@@ -226,13 +228,13 @@ def test_actual_native_okr_task_run_and_returned_attempt_bind_after_validation(t
     monkeypatch.setattr("app.structured_agent.extract_codex_audit_events_from_session", lambda *a, **k: [])
     reply = process_okr_review_request(store=store, runner=runner, request=request, single_chat=True)
     attempt_id = routed.attempt_ids[0]
-    runs = store.list_okr_review_runs(task_id)
-    assert len(runs) == 1
-    run = runs[0]
+    run_ids = [row[0] for row in store.db.execute("select id from runs where task_id=?", (task_id,))]
+    assert len(run_ids) == 1
+    run = get_run(store.db, run_ids[0])
     attempt = get_runtime_attempt(store.db, attempt_id)
     assert run["id"] != task_id
     assert run["task_id"] == task_id
-    assert (run["source_type"], run["role"], run["execution_generation"], run["status"], run["error"]) == (
+    assert (get_run_provenance(store.db, run["id"])["source_type"], run["role"], run["execution_generation"], run["status"], run["error"]) == (
         "okr_review_runs", None, None, None, None,
     )
     assert attempt["parent_id"] == run["id"]
@@ -249,7 +251,9 @@ def test_actual_native_okr_task_run_and_returned_attempt_bind_after_validation(t
     monkeypatch.setattr(native_standalone, "okr_envelope", lambda ref: (
         observed.append(ref) or '{"audit":{"summary":"from actual attempt"}}', "",
     ))
-    assert store.get_professional_run(run["id"])["audit_summary"] == "from actual attempt"
+    envelope, reason = native_standalone.okr_envelope(native_standalone.native_run_ref(store.db, run["id"], "okr_review_runs"))
+    assert reason == ""
+    assert json.loads(envelope)["audit"]["summary"] == "from actual attempt"
     assert (observed[0].session_id, observed[0].start, observed[0].end) == (
         "structured-session", 2, 7,
     )
@@ -300,9 +304,9 @@ def test_okr_run_reader_keeps_native_run_id_when_task_parent_is_missing():
     store.db.execute("pragma foreign_keys=off")
     store.db.execute("delete from tasks where id=?", (task_id,))
     store.db.commit()
-    run = store.get_professional_run(run_id, load_native=False)
+    run = get_run(store.db, run_id)
     assert run is not None
     assert run["id"] == run_id
     assert run["task_id"] == task_id
-    assert run["source_type"] == "okr_review_runs"
+    assert get_run_provenance(store.db, run_id)["source_type"] == "okr_review_runs"
     assert get_run(store.db, run_id)["task_id"] == task_id

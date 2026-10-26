@@ -1,3 +1,4 @@
+from app.run_entity_storage import get_run
 from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_update
 import hashlib
 import json
@@ -69,7 +70,8 @@ def test_historical_work_input_compaction_is_idempotent_and_preserves_adopted_ro
                           "and cast(legacy_key as integer)=?", (project_id,)).fetchone()[0] == "Adopted project"
         assert db.execute("select sync_summary from actions where record_type='work_updates' "
                           "and cast(legacy_key as integer)=?", (update_id,)).fetchone()[0] == "Adopted business result"
-    assert store.get_professional_run(native_run_id, load_native=False)["session_id"] == "native-session"
+    with store._connect() as db:
+        assert get_run(db, native_run_id)["session_id"] == "native-session"
 
 
 def test_historical_reply_input_compaction_preserves_unsettled_rows(tmp_path):

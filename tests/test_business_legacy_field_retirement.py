@@ -120,7 +120,7 @@ with sqlite3.connect(s.path) as db:
 
 
 
-@pytest.mark.parametrize("surface", ["api", "retrieval", "html", "import"])
+@pytest.mark.parametrize("surface", ["api", "html", "import"])
 def test_current_history_consumers_read_retained_fields_without_removed_controls(tmp_path, surface):
     from app.business_storage import insert_business
     from app.action_storage import insert_sync_action
@@ -138,14 +138,9 @@ def test_current_history_consumers_read_retained_fields_without_removed_controls
         assert not set(RETIRED["work_updates"]).intersection(item["updates"][0])
         assert item["todos"][0]["follow_up_question"] == "Unique unsent question"
         assert item["updates"][0]["changes"] == {"actual_change": 1}
-    elif surface == "retrieval":
-        from app.task_retrieval import load_project_task_detail, render_project_task_details
-        output = render_project_task_details([load_project_task_detail(store, 1)])
-        assert "Unique unsent question" in output and "actual_change" in output
-        assert not any('"' + name + '":' in output for names in RETIRED.values() for name in names)
     elif surface == "html":
         from app.audit_web import _task_project_detail_rows, _task_todo_detail_item, _task_update_rows
-        project, todo = store.get_work_project(1), store.get_work_todo(1)
+        project, todo = store.get_work_project(1), next((todo for todo in store.list_work_todos() if todo.id == 1), None)
         assert all(row[0] != "Follow-up mode" for row in _task_project_detail_rows(project))
         assert "Unique unsent question" in _task_todo_detail_item(todo, [], {}, [])
         assert len(_task_update_rows(store.list_work_updates(1))[0]) == 4

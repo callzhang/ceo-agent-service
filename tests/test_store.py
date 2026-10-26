@@ -1,3 +1,5 @@
+from app.run_entity_storage import get_run
+from tests.support.reply_action_snapshot import reply_action_snapshot
 from tests.support.session_search import seed_session_search_metadata
 from tests.sent_fixtures import historical_sent_delivery
 
@@ -1651,7 +1653,8 @@ def test_meeting_run_begin_is_idempotent_and_finish_closes_running_parent(tmp_pa
     run_id = store.claim_professional_run(job_id)
     assert store.claim_professional_run(job_id) == run_id
     store.finish_professional_run(run_id, status="no_action")
-    assert store.get_professional_run(run_id)["status"] == "no_action"
+    with store._connect() as db:
+        assert get_run(db, run_id)["status"] == "no_action"
 
 
 @pytest.mark.parametrize(
@@ -1693,7 +1696,8 @@ def test_meeting_run_finish_accepts_production_terminal_statuses(
 
     store.finish_professional_run(run_id, status=status)
 
-    assert store.get_professional_run(run_id)["status"] == status
+    with store._connect() as db:
+        assert get_run(db, run_id)["status"] == status
 
 
 def test_wechat_import_jobs_are_distinct_per_invocation(tmp_path: Path):
@@ -3815,7 +3819,7 @@ def test_finalize_orchestration_reuses_current_reply_attempt_projection(
         send_error="temporary provider failure",
         channel=task.channel,
     )
-    assert store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(store)) == 1
 
     second_id = store.finalize_orchestrated_reply_task(
         task_id=task.id,
@@ -3840,7 +3844,7 @@ def test_finalize_orchestration_reuses_current_reply_attempt_projection(
         channel=task.channel,
     )
     assert second_id == first_id
-    assert store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(store)) == 1
     current = store.get_reply_attempt(first_id)
     assert current is not None
     assert current.codex_reason == "provider recovered"
@@ -3879,7 +3883,7 @@ def test_pre_run_failure_projection_is_reused_by_later_agent_run(
         send_error="worker_start_failed",
         channel=task.channel,
     )
-    assert store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(store)) == 1
 
     [retry_task] = store.claim_reply_tasks(limit=1)
     run = _claim_audit_run(
@@ -3916,7 +3920,7 @@ def test_pre_run_failure_projection_is_reused_by_later_agent_run(
         channel=retry_task.channel,
     )
     assert second_id == first_id
-    assert store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(store)) == 1
     assert store.get_reply_attempt(first_id).codex_reason == "recovered"
 
 
@@ -5302,7 +5306,7 @@ def test_reviewed_reply_and_rerun_roll_back_together(tmp_path: Path) -> None:
             reviewer_feedback="审核意见",
         )
 
-    attempts = store.list_reply_attempts(limit=20)
+    attempts = reply_action_snapshot(store)[:20]
     task = store.get_reply_task_for_message(
         "cid-atomic-review", "msg-atomic-review"
     )
@@ -5365,7 +5369,7 @@ def test_reviewed_reply_rerun_is_idempotent_across_concurrent_connections(
 
     matching_attempts = [
         attempt
-        for attempt in store.list_reply_attempts(limit=20)
+        for attempt in reply_action_snapshot(store)[:20]
         if attempt.codex_reason == "reviewed_message_reply"
     ]
     assert [attempt.id for attempt in matching_attempts] == list(attempt_ids)
@@ -5559,7 +5563,7 @@ def test_actionable_attempt_decision_rolls_back_queue_when_source_update_fails(
     assert source is not None and source.send_status == "failed"
     assert unchanged_task is not None and unchanged_task.status == "failed"
     assert unchanged_task.execution_generation == task.execution_generation
-    assert store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(store)) == 1
 
 
 def test_agent_run_is_unique_per_task_generation(tmp_path: Path):
@@ -8968,7 +8972,7 @@ def test_reply_attempt_tracing_and_feedback_round_trip(tmp_path: Path):
 
     attempt = store.get_reply_attempt(attempt_id)
 
-    assert store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(store)) == 1
     assert attempt is not None
     assert attempt.conversation_title == "技术部"
     assert attempt.trigger_message_id == "msg-1"
@@ -9372,15 +9376,16 @@ def test_lists_reply_attempts_newest_first_with_limit(tmp_path: Path):
         codex_reason="privacy",
     )
 
-    all_attempts = store.list_reply_attempts()
-    attempts = store.list_reply_attempts(limit=1)
-    offset_attempts = store.list_reply_attempts(limit=1, offset=1)
+    assert store.count_history_items(kinds=("reply",)) == 2
+    all_attempts = store.list_history_items(kinds=("reply",))
+    attempts = store.list_history_items(limit=1, kinds=("reply",))
+    offset_attempts = store.list_history_items(limit=1, offset=1, kinds=("reply",))
 
-    assert [attempt.id for attempt in all_attempts] == [second_id, first_id]
-    assert [attempt.id for attempt in attempts] == [second_id]
-    assert [attempt.id for attempt in offset_attempts] == [first_id]
-    assert attempts[0].conversation_title == "HR"
-    assert attempts[0].send_status == "pending"
+    assert [attempt.source_id for attempt in all_attempts] == [second_id, first_id]
+    assert [attempt.source_id for attempt in attempts] == [second_id]
+    assert [attempt.source_id for attempt in offset_attempts] == [first_id]
+    assert attempts[0].source_title == "HR"
+    assert attempts[0].status == "pending"
     assert first_id != second_id
 
 
@@ -10407,13 +10412,13 @@ def test_reply_attempt_round_trips_mail_action_state(tmp_path):
     assert attempt.mail_action_result_json == '{"success": true}'
 
 
-def test_sent_reply_exists_matches_exact_conversation_and_trigger(tmp_path: Path):
+def test_has_sent_reply_for_trigger_matches_exact_conversation_and_trigger(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.record_sent_reply("cid-1", "msg-1", "Sent")
 
-    assert store.sent_reply_exists("cid-1", "msg-1") is True
-    assert store.sent_reply_exists("cid-1", "msg-other") is False
-    assert store.sent_reply_exists("cid-other", "msg-1") is False
+    assert store.has_sent_reply_for_trigger("cid-1", "msg-1") is True
+    assert store.has_sent_reply_for_trigger("cid-1", "msg-other") is False
+    assert store.has_sent_reply_for_trigger("cid-other", "msg-1") is False
 
 
 def test_channel_login_claim_requires_owner_to_finalize_and_persists_safe_state(

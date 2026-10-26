@@ -1,0 +1,216 @@
+{
+  "date": "2026-10-26",
+  "baseline_commit": "013af535ee36f9f951e69293c3689d9b73f2be1d",
+  "scope": "Retire unused business paths; current models and explicit source fixtures; DDL unchanged",
+  "retired": {
+    "StoreQueries": [
+      "get_work_todo",
+      "get_work_todo_dingtalk_link",
+      "get_active_work_todo_dingtalk_link",
+      "list_work_todo_dingtalk_links",
+      "list_work_todo_dingtalk_links_for_todo",
+      "has_work_update",
+      "list_recent_reply_attempts_for_follow_up",
+      "list_follow_up_drafts_for_todo",
+      "list_recent_follow_up_reactions",
+      "list_sent_follow_ups_since",
+      "sent_reply_exists",
+      "list_reply_attempts",
+      "count_reply_attempts"
+    ],
+    "RunReaders": [
+      "get_professional_run",
+      "list_okr_review_runs"
+    ],
+    "ProjectRenderer": [
+      "render_project_task_details",
+      "_parse_json_list",
+      "_parse_json_object",
+      "_enum_value"
+    ],
+    "OtherEntrypoints": [
+      "record_viewed",
+      "current_business_schema_is_current",
+      "create_current_action_schema in business_legacy_fields only",
+      "current_action_variants",
+      "update_plan",
+      "persist_plan"
+    ],
+    "ProjectDetailFields": [
+      "score",
+      "match_reasons"
+    ],
+    "WriterArguments": [
+      "origin",
+      "plan_step_conflict"
+    ]
+  },
+  "new_internal_writer": "persist_email_plan(db, values, *, ignore=False)",
+  "database_schema_before": {
+    "objects": 476,
+    "sha256": "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f"
+  },
+  "production_before": {
+    "database": {
+      "schema_object_count": 476,
+      "schema_sha256": "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f",
+      "foreign_key_findings": [],
+      "captured_at": "2026-10-26T22:55:03.858709+00:00",
+      "production_commit": "013af535ee36f9f951e69293c3689d9b73f2be1d"
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "33729",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 6,
+      "processing": 1,
+      "failed": 24,
+      "retryable": 0,
+      "attention": 0
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 411; unavailable: 0.",
+      "checked_at": "2026-10-26T22:53:00.926868+00:00",
+      "violations": 1,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 411,
+        "unavailable": 0
+      }
+    }
+  },
+  "historical_facts_before": {
+    "work_project": {
+      "count": 975,
+      "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+    },
+    "work_todo": {
+      "count": 3327,
+      "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+    },
+    "work_updates": {
+      "count": 5468,
+      "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+    },
+    "work_todo_dingtalk_links": {
+      "count": 875,
+      "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+    },
+    "follow_up_drafts": {
+      "count": 2477,
+      "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+    }
+  },
+  "verification": [
+    {
+      "unit": "Store",
+      "baseline_passed": 87,
+      "initial_after_passed": 87,
+      "note": "Then removed two retired-only filter tests and renamed current cases; three affected cases passed again in 3.43s"
+    },
+    {
+      "unit": "Project detail/Attention/factories",
+      "baseline_passed": 84,
+      "after_runs": [
+        37,
+        32,
+        6,
+        1
+      ],
+      "note": "Overlapping runs, not an additive distinct count; final exact URL/anchor/receipt case passed"
+    },
+    {
+      "unit": "Run readers",
+      "baseline_passed": 28,
+      "after_passed": 28,
+      "related_six_files_passed": 52,
+      "note": "Final real-envelope parse case passed; full Ruff corrected import placement"
+    },
+    {
+      "unit": "Reviewed/Email writer",
+      "baseline_passed": 29,
+      "after_passed": 29,
+      "new_public_Email_cases_passed": 2,
+      "adoption_and_current_dao_passed": 18
+    },
+    {
+      "unit": "Root integration boundaries",
+      "passed": 17,
+      "seconds": 11.77,
+      "files": [
+        "tests/test_legacy_history_read_boundary.py",
+        "tests/test_documentation_contract.py",
+        "tests/test_legacy_todo_retirement.py"
+      ]
+    },
+    {
+      "unit": "Final Email insert simplification",
+      "passed": 4,
+      "seconds": 4.43,
+      "note": "Empty physical-reference scaffolding removed; same three SQL columns and parameters"
+    }
+  ],
+  "review": {
+    "Store": {
+      "spec": "approved",
+      "quality": "approved"
+    },
+    "Project detail/Attention/factories": {
+      "spec": "approved",
+      "quality": "approved"
+    },
+    "Run readers": {
+      "spec": "approved",
+      "quality": "approved"
+    },
+    "Reviewed/Email writer": {
+      "spec": "approved",
+      "quality": "approved"
+    },
+    "integration": "approved; static review after all four scoped SPEC/QUALITY approvals"
+  },
+  "external_test_sends": 0,
+  "production_test_tasks": 0,
+  "schema_migration": false,
+  "publication": "pending standard exact-target deployment and readback",
+  "cleanup": "pending acceptance; explicit task-owned temp root only",
+  "limitations": [
+    "No full local suite; fixed 2GB and 5minute limits retained",
+    "Focused run counts overlap; no combined full-suite-green claim",
+    "First production probe overlapped scheduled-notification deployment; ready baseline rebound after that deployment to 013af535 / Store26.1 / Email54"
+  ],
+  "source_fixture_equivalence": {
+    "catalog_entries": 362,
+    "catalog_exact": true,
+    "sequences_exact": true,
+    "candidate_rows": 7,
+    "candidate_types_exact": true,
+    "candidate_values_equal_after_clock_normalization": true,
+    "normalized_fields": [
+      "review_candidates.execution_created_at",
+      "review_candidates.execution_updated_at"
+    ],
+    "normalization": "Only two generated execution clocks in payload positions 13/14 and their generated column mirrors 402/403; explicit fixture created_at values remain untouched.",
+    "normalized_rows_pickle_sha256": "de55b21ab9a9841eedac6730fb61cf67fa447330b8a1c4278d2f6464d6931dce"
+  },
+  "lint": {
+    "changed_files": "complete Ruff passed",
+    "diff_check": "passed",
+    "unrelated_full_repository_findings": [
+      "scripts/recover_failed_okr_reviews.py:15-17 E402",
+      "tests/wechat/test_backend.py:256 E401"
+    ],
+    "unrelated_findings_modified": false
+  }
+}

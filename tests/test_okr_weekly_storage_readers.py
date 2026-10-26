@@ -1,5 +1,7 @@
 """OKR and weekly readers retain their public identities on typed storage."""
 
+from app.run_entity_storage import get_run
+
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -54,19 +56,24 @@ def test_request_failed_only_upsert_native_id_and_run_reference(tmp_path):
     run_id = store.create_professional_run(
         request_id, session_id="native-session", transcript_start=3, transcript_end=9,
     )
-    run = store.get_professional_run(run_id)
+    with store._connect() as db:
+        run = get_run(db, run_id)
     assert run is not None
     assert (run["id"], run["task_id"], run["session_id"],
             run["transcript_start"], run["transcript_end"]) == (
         run_id, request_id, "native-session", 3, 9
     )
-    assert not run["native_available"]
+    from app.native_standalone import native_run_ref, okr_envelope
+    with store._connect() as db:
+        assert okr_envelope(native_run_ref(db, run_id, "okr_review_runs"))[1] == "native_source_unavailable"
     second_run_id = store.create_professional_run(request_id, session_id="second-native-session",
                                                   transcript_start=10, transcript_end=19)
     with pytest.raises(ValueError, match="requires a Task Agent, Meeting, or OKR Task"):
         store.create_professional_run(999999, session_id="orphan-native-session")
-    assert store.get_professional_run(second_run_id)["task_id"] == request_id
-    assert [item["id"] for item in store.list_okr_review_runs(request_id)] == [second_run_id, run_id]
+    with store._connect() as db:
+        assert get_run(db, second_run_id)["task_id"] == request_id
+    with store._connect() as db:
+        assert [row[0] for row in db.execute("select id from runs where task_id=? order by id desc", (request_id,))] == [second_run_id, run_id]
     item_id = store.record_okr_review_item(
         request_id=request_id, objective_title="Objective", objective_weight=1,
         kr_title="KR", kr_weight=1, item_json='{"adopted": true}',

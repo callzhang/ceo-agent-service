@@ -2,6 +2,14 @@
 
 ## Authoritative completion — 2026-10-26
 
+Unused-business-path retirement is implemented and scoped reviews pass:
+callerless Store queries, test-only Run readers, old Project text rendering and
+constant scoring, viewed/schema entrypoints and the Reviewed plan writer leave
+current business code. Current History/native readers and Email-only plan writes
+retain their existing contracts. The476-object declaration is unchanged against
+the rebound Store26.1／Email54 baseline. Standard deployment/readback and owned
+artifact cleanup are pending; see [scoped acceptance](unused-business-path-retirement.md).
+
 Unmarked-test follow-up is test/documentation only: current Consumer session
 fixtures and exact route-contract assertions, two current copy-lifecycle owner
 queries and two Store cold-open checks are corrected. Focused verification

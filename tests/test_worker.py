@@ -1,3 +1,4 @@
+from tests.support.reply_action_snapshot import reply_action_snapshot
 from tests.support.native_task_fields import set_native_task_fields
 import errno
 from datetime import datetime, timezone
@@ -3378,7 +3379,7 @@ def test_produce_once_fast_path_skips_bare_minutes_link_before_backoff(
 
     queued = worker.produce_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert queued == 0
     assert worker.store.count_reply_tasks() == 0
     assert attempts == []
@@ -3610,7 +3611,7 @@ def test_single_chat_calendar_reply_is_not_suppressed_by_approximate_topic_match
         second,
     )
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert queued is True
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert all(
@@ -3832,7 +3833,7 @@ def test_fast_path_backoff_processes_trigger_when_unread_clears_without_user_rep
     worker.now_provider = lambda: fixed_worker_now() + timedelta(minutes=6)
     assert worker.run_once() is None
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert "cid-1" in dws.unread_message_reads
     assert worker.store.count_reply_tasks(status="done") == 1
     assert len(attempts) == 1
@@ -4580,7 +4581,7 @@ def test_worker_falls_back_to_chunked_reply_when_automatic_doc_permission_fails(
 
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert dws.created_markdown_docs == []
     assert dws.doc_editor_permissions == []
     sent = final_sent(dws)
@@ -4746,7 +4747,7 @@ def test_fast_path_backoff_skips_when_current_user_replied_after_trigger(
     assert worker.run_once() is None
 
     assert worker.store.count_reply_tasks(status="done") == 1
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(attempts) == 1
     assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "skipped"
@@ -4788,7 +4789,7 @@ def test_fast_path_backoff_skips_when_trigger_was_recalled_after_wait(
 
     assert dws.messages_by_id_reads == []
     assert worker.store.count_reply_tasks(status="done") == 1
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(attempts) == 1
     assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "skipped"
@@ -5901,7 +5902,7 @@ def test_consume_once_appends_feedback_links_when_configured(
     assert "feedback.example.com" not in runner.calls[0][2].render()
     assert final_sent(dws) == []
     assert worker.store.get_sent_reply("cid-1", "msg-1") is None
-    attempt = worker.store.list_reply_attempts(limit=1)[0]
+    attempt = reply_action_snapshot(worker.store)[:1][0]
     assert attempt.action == "agent_run"
     assert attempt.send_status == "completed"
 
@@ -6428,7 +6429,7 @@ def test_worker_does_not_turn_an_oa_read_change_into_a_retry_state(
     # rewrite a normal OA update into a second synthetic conflict state.
     assert persisted.status == "pending"
     assert persisted.error == "live_evidence_conflict"
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
 
 
 def test_runtime_provider_unreachable_is_deferred_after_retry_budget(
@@ -7081,7 +7082,7 @@ def test_consume_once_authorization_failure_waits_without_final_failure(
     task = worker.store.list_reply_tasks(statuses=("pending",), limit=1)[0]
     assert task.attempts == 0
     assert task.available_at == ""
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert gates["dingtalk"].calls == 2
 
 
@@ -7375,7 +7376,7 @@ def test_consume_once_external_dependency_honors_attempt_limit(
     )
     assert run is not None
     assert run.codex_session_id == "dependency-session"
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
 
 
 def test_consume_once_native_codex_transport_fallback_auth_failure_is_terminal(
@@ -8742,7 +8743,7 @@ def test_calendar_retry_ignores_old_system_notification_skip(
         == "test_calendar_retry_ignores_old_system_notification_skip"
     )
     assert latest.send_status == "needs_human"
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
 
 
 def test_calendar_invite_without_description_asks_for_attendance_reason(
@@ -9651,7 +9652,7 @@ def test_structured_link_card_is_skipped_before_codex(tmp_path: Path, monkeypatc
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -9753,7 +9754,7 @@ def test_structured_approval_card_is_processed_by_audit_agent(
     assert len(agent_runner(worker).calls) == 1
     assert "dws oa +list-pending --format json" not in agent_prompt(worker)
     assert any(item["read_commands"] == [] for item in _prompt_json_section(agent_prompt(worker), "Raw material references and exact read commands"))
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -9849,7 +9850,7 @@ def test_existing_commented_oa_attempt_is_terminal(tmp_path: Path, monkeypatch):
     assert len(agent_runner(worker).calls) == 0
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.action == "oa_approval"
@@ -10036,7 +10037,7 @@ def test_single_chat_oa_follow_up_reuses_recent_review_target(
     assert len(agent_runner(worker).calls) == 1
     assert "## Context Facts" in agent_prompt(worker)
     assert dws.oa_approval_actions == []
-    attempts = worker.store.list_reply_attempts(limit=2)
+    attempts = reply_action_snapshot(worker.store)[:2]
     assert attempts[0].trigger_message_id == "msg-1"
     assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "skipped"
@@ -10056,7 +10057,7 @@ def test_automatic_sync_notification_is_skipped_before_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -10072,7 +10073,7 @@ def test_file_state_notification_is_skipped_before_codex(tmp_path: Path, monkeyp
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -10090,7 +10091,7 @@ def test_project_status_notification_is_skipped_before_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -10172,7 +10173,7 @@ def test_bare_dingtalk_internal_link_is_skipped_before_codex(
 
     assert codex.calls == []
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen("msg-1") is True
 
 
@@ -10247,7 +10248,7 @@ def test_ding_approval_reminder_is_processed_by_audit_agent(
 
     assert len(agent_runner(worker).calls) == 0
     assert dws.oa_approval_actions == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     with worker.store._connect() as db:
         event = db.execute(
             "select event_kind, requires_reply from oa_notification_events "
@@ -10290,7 +10291,7 @@ def test_oa_approval_missing_applicant_records_failed_delivery(
     worker.run_once()
 
     assert dws.oa_approval_actions == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
@@ -10330,7 +10331,7 @@ def test_oa_reject_action_still_requires_task_id(tmp_path: Path, monkeypatch):
 
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
@@ -10372,7 +10373,7 @@ def test_oa_reject_action_requires_parseable_current_user_ownership(
 
     assert dws.oa_approval_actions == []
     assert dws.oa_approval_comments == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
     assert dws.oa_approval_actions == []
 
@@ -10426,7 +10427,7 @@ def test_oa_approval_does_not_execute_task_that_is_not_current_user(
     worker.run_once()
 
     assert dws.oa_approval_actions == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
@@ -10474,7 +10475,7 @@ def test_ding_approval_reminder_injects_openapi_detail_when_dws_form_is_empty(
     script_no_action(worker)
     worker.run_once()
     assert len(agent_runner(worker).calls) == 0
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
@@ -10641,7 +10642,7 @@ def test_oa_approval_detail_always_includes_openapi_comments(
     script_no_action(worker)
     worker.run_once()
     assert agent_runner(worker).calls == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
@@ -10688,7 +10689,7 @@ def test_oa_approval_detail_param_error_is_recovered_by_openapi(
     script_no_action(worker)
     worker.run_once()
     assert agent_runner(worker).calls == []
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert worker.store.has_seen(trigger.open_message_id) is True
 
 
@@ -10764,7 +10765,7 @@ def test_oa_approval_dry_run_uses_review_only_mode_and_keeps_live_retry_open(
     assert len(agent_runner(worker).calls) == 0
     assert dws.oa_approval_actions == []
     assert worker.store.count_reply_tasks(status="pending") == 0
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
 
 
 def test_bare_dingtalk_approval_wrapper_reaches_audit_agent(
@@ -11822,7 +11823,7 @@ def test_image_download_failure_is_passed_to_codex_prompt(tmp_path: Path, monkey
     assert "msg-image-1" in prompt
     assert "dws chat message download-media --type mediaId" in prompt
     assert "resource download unavailable" not in prompt
-    attempts = worker.store.list_reply_attempts()
+    attempts = reply_action_snapshot(worker.store)
     assert len(attempts) == 1
     assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "failed"
@@ -12037,7 +12038,7 @@ def test_codex_auth_required_stop_with_error_is_failed(tmp_path: Path, monkeypat
 
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert codex.calls == []
     assert gate.calls == 1
 
@@ -12074,7 +12075,7 @@ def test_codex_invalid_refresh_token_waits_for_authorization(
 
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert codex.calls == []
     assert gate.calls == 1
 
@@ -12112,7 +12113,7 @@ def test_codex_invalid_refresh_token_retries_without_duplicate_notification(
 
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="failed") == 0
-    assert worker.store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(worker.store)) == 0
     assert _get_audit_run(worker.store, 1, "initial") is None
     assert codex.calls == []
     assert gate.calls == 2
@@ -12214,7 +12215,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(tmp_path: Path, monke
 
     assert worker.store.count_reply_tasks(status="pending") == 1
     assert worker.store.count_reply_tasks(status="done") == 0
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     failed_attempt = worker.store.get_reply_attempt(1)
     assert failed_attempt is not None
     assert failed_attempt.send_status == "failed"
@@ -12232,7 +12233,7 @@ def test_codex_stop_with_error_keeps_queued_task_retryable(tmp_path: Path, monke
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     assert len(runner.calls) == 2
     assert runner.calls[0][1] == runner.calls[1][1]
     assert codex.calls == []
@@ -12646,7 +12647,7 @@ def test_stale_processing_task_with_terminal_attempt_is_requeued_not_completed(
     assert worker.store.count_reply_tasks(status="processing") == 0
     assert worker.store.count_errors() == 0
     assert len(agent_runner(worker).calls) == 1
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert [attempt.action for attempt in attempts] == ["agent_run"]
 
 
@@ -12797,13 +12798,13 @@ def test_queued_stop_with_error_becomes_terminal_at_retry_limit(
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     pending = worker.store.list_reply_tasks(limit=1, statuses=["pending"])[0]
     assert pending.available_at == "2026-05-13 17:01:00"
 
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     assert len(runner.calls) == 1
 
     with worker.store._connect() as db:
@@ -12814,7 +12815,7 @@ def test_queued_stop_with_error_becomes_terminal_at_retry_limit(
     assert worker.consume_once(max_tasks=1) == 0
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     assert len(runner.calls) == 2
     assert runner.calls[0][1] == runner.calls[1][1]
 
@@ -12860,7 +12861,7 @@ def test_queued_failed_non_send_attempt_does_not_create_duplicate_attempt(
     assert worker.consume_once(max_tasks=1) == 1
 
     assert worker.store.count_reply_tasks(status="done") == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     assert len(agent_runner(worker).calls) == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
@@ -12966,7 +12967,7 @@ def test_stale_codex_resume_retries_same_thread_before_opening_new_thread(
         (0, "failed", "session-1"),
         (1, "completed", "session-1"),
     ]
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -13062,7 +13063,7 @@ def test_stale_codex_resume_clears_session_and_retries_with_new_user_message(
     assert run is not None
     assert run.codex_session_id == "session-1"
     assert run.status == "failed"
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     attempt = worker.store.get_reply_attempt(1)
     assert attempt is not None
     assert attempt.action == "agent_run"
@@ -13127,7 +13128,7 @@ def test_existing_dry_run_attempt_does_not_call_codex_again(
 
     assert len(agent_runner(worker).calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.action == "agent_run"
@@ -13226,7 +13227,7 @@ def test_sent_reply_prevents_retry_when_latest_attempt_failed(
 
     assert len(agent_runner(worker).calls) == 1
     assert final_sent(dws) == []
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     latest = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert latest is not None
     assert latest.action == "agent_run"
@@ -13358,7 +13359,7 @@ def test_rerun_message_can_force_new_codex_decision(tmp_path: Path, monkeypatch)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
 
     assert len(agent_runner(worker).calls) == 1
-    assert worker.store.count_reply_attempts() == 1
+    assert len(reply_action_snapshot(worker.store)) == 1
     attempt = worker.store.get_reply_attempt(old_attempt_id)
     assert attempt is not None
     assert attempt.send_status == "completed"
@@ -14495,7 +14496,7 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
     assert "拉他们弄点合作或者挂个名" in context.trigger_text
     assert any("我比较想先把hsw弄出来" in item.text for item in context.messages)
     assert final_sent(dws) == []
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert attempts[0].trigger_message_id == "msg-new-peer-2"
 
 
@@ -14548,7 +14549,7 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
     assert isinstance(runner, FakeAgentResultRunner)
     context = runner.calls[0][2]
     assert context.trigger_text == "这条如果窗口开着也要处理"
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert attempts[0].trigger_message_id == "msg-missed-gap"
 
 
@@ -15572,7 +15573,7 @@ def test_group_mention_from_unread_conversation_is_processed_when_unread_tail_mi
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].trigger_message_id == "msg-mentioned"
     assert attempts[0].send_status == "skipped"
@@ -15598,7 +15599,7 @@ def test_group_agent_name_mention_from_search_is_processed_when_mentions_miss_it
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].trigger_message_id == "msg-agent-mentioned"
     assert attempts[0].send_status == "skipped"
@@ -15628,7 +15629,7 @@ def test_group_mention_from_unread_payload_is_processed_when_mention_lookup_miss
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert dws.unread_message_reads[0] == "cid-1"
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].trigger_message_id == "msg-unread-mention"
@@ -15916,7 +15917,7 @@ def test_group_all_mention_from_unread_conversation_is_processed(
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].trigger_message_id == "msg-all"
     assert attempts[0].send_status == "skipped"
@@ -15940,7 +15941,7 @@ def test_group_all_mention_is_case_insensitive_for_ascii_alias(
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].trigger_message_id == "msg-all-case"
     assert attempts[0].send_status == "skipped"
@@ -15972,7 +15973,7 @@ def test_group_mention_from_read_conversation_is_processed_from_mentions(
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].conversation_title == "MKT core"
     assert attempts[0].trigger_message_id == "msg-mkt-mention"
@@ -16003,7 +16004,7 @@ def test_group_all_mention_from_read_conversation_is_processed_from_broadcast_se
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].conversation_title == "官网迭代群"
     assert attempts[0].trigger_message_id == "msg-website-all"
@@ -16097,7 +16098,7 @@ def test_read_group_mention_is_skipped_when_later_current_user_text_replied(
     worker.consume_once()
 
     assert codex.calls == []
-    assert worker.store.list_reply_attempts(limit=10) == []
+    assert reply_action_snapshot(worker.store)[:10] == []
 
 
 def test_read_group_mention_after_seen_message_is_processed_from_mentions(
@@ -16262,7 +16263,7 @@ def test_group_mentions_are_processed_by_message_time_not_fetch_order(
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert len(attempts) == 1
     assert attempts[0].trigger_message_id == "msg-newer-mention"
@@ -16309,7 +16310,7 @@ def test_current_user_file_does_not_hide_unanswered_group_mention(
     script_no_action(worker)
     worker.run_once()
 
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert len(agent_runner(worker).calls) == 1
     assert attempts[0].trigger_message_id == "msg-trigger"
 
@@ -16342,7 +16343,7 @@ def test_processing_ack_does_not_hide_unanswered_group_mention(
     worker.run_once()
 
     prompt = agent_prompt(worker)
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert attempts[0].trigger_message_id == "msg-trigger"
     assert PROCESSING_ACK not in prompt
     assert "请审一下这个文档" in prompt
@@ -16376,7 +16377,7 @@ def test_untyped_personnel_subject_gap_is_failed_not_escalated(
     worker.run_once()
 
     assert final_sent(dws) == []
-    attempts = worker.store.list_reply_attempts(limit=10)
+    attempts = reply_action_snapshot(worker.store)[:10]
     assert attempts[0].action == "agent_run"
     assert attempts[0].send_status == "failed"
     assert attempts[0].send_error == "invalid_needs_human_result"
@@ -16847,7 +16848,7 @@ def test_pat_authorization_error_is_recorded_as_failed_without_retry_or_url(
     assert store.has_seen("msg-1") is False
     assert store.count_sent_replies() == 0
     assert store.count_reply_tasks(status="pending") == 1
-    assert store.count_reply_attempts() == 0
+    assert len(reply_action_snapshot(store)) == 0
     assert gate.calls == 1
     assert codex.calls == []
 
