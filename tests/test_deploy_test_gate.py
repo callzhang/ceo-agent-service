@@ -92,6 +92,7 @@ def test_deploy_runs_the_gate_before_anything_can_be_stopped_or_changed(tmp_path
         def __init__(self, *args, **kwargs):
             seen.append(("updater",))
 
+    monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", True)
     monkeypatch.setattr(deploy_module, "require_green_suite", refusing_gate)
     monkeypatch.setattr(deploy_module, "RepositoryUpdater", MustNotStart)
 
@@ -116,6 +117,7 @@ def test_deploy_hands_the_gate_the_exact_commit_it_will_install(tmp_path: Path, 
             order.append(("install", op.target_commit))
             return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
 
+    monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", True)
     monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit: order.append(("gate", commit)))
     monkeypatch.setattr(deploy_module, "RepositoryUpdater", Recording)
 
@@ -123,3 +125,26 @@ def test_deploy_hands_the_gate_the_exact_commit_it_will_install(tmp_path: Path, 
 
     assert [kind for kind, _ in order] == ["gate", "install"]
     assert order[0][1] == order[1][1]
+
+
+def test_suspended_gate_does_not_run(tmp_path: Path, monkeypatch):
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+
+    local, _ = fixture_repo(tmp_path)
+    calls = []
+
+    class Recording:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        def execute_locked(self, op):
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", False)
+    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit: calls.append(commit))
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", Recording)
+
+    deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    assert calls == []

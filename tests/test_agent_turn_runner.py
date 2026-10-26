@@ -90,13 +90,8 @@ def test_native_output_schema_is_selected_for_codex_consumer_and_audit():
     assert oa is not None and oa.name == "consumer_oa_agent_native_output.schema.json"
     audit = _native_output_schema_for_route(
         RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
-        credential_mode=CredentialMode.LOCAL_OAUTH,
     )
     assert audit is not None and audit.name == "audit_agent_native_output.schema.json"
-    assert _native_output_schema_for_route(
-        RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
-        credential_mode=CredentialMode.SERVICE_API,
-    ) is None
     assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.AUDIT) is None
     assert _native_output_schema_for_route(RuntimeKind.CLAUDE_CLI, AgentRole.CONSUMER) is None
 
@@ -111,18 +106,12 @@ def test_runtime_result_recovery_binds_native_consumer_schema(tmp_path, monkeypa
     )
     audit_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
-        credential_mode=CredentialMode.LOCAL_OAUTH,
     )
     oa_id = _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER, purpose="oa",
     )
 
-    audit_api_id = _runtime_result_schema_id(
-        execution_contract, RuntimeKind.CODEX_CLI, AgentRole.AUDIT,
-        credential_mode=CredentialMode.SERVICE_API,
-    )
-    assert len({native_id, claude_id, audit_id, audit_api_id, oa_id}) == 4
-    assert audit_api_id == claude_id
+    assert len({native_id, claude_id, audit_id, oa_id}) == 4
     assert audit_id != claude_id
     assert native_id == _runtime_result_schema_id(
         execution_contract, RuntimeKind.CODEX_CLI, AgentRole.CONSUMER,
@@ -826,3 +815,14 @@ def test_forced_fresh_session_applies_to_every_route(
     )
 
     assert session is None
+
+
+def test_native_audit_recovery_fingerprint_tracks_current_schema(tmp_path, monkeypatch):
+    schema = tmp_path / "audit-native.json"
+    schema.write_bytes(b'{"schema":"first"}')
+    monkeypatch.setattr(agent_turn_runner, "native_output_schema_path", lambda *args, **kwargs: schema)
+    first = _runtime_result_schema_id("audit-contract", RuntimeKind.CODEX_CLI, AgentRole.AUDIT)
+    schema.write_bytes(b'{"schema":"changed"}')
+    changed = _runtime_result_schema_id("audit-contract", RuntimeKind.CODEX_CLI, AgentRole.AUDIT)
+    assert first != changed
+    assert changed != _runtime_result_schema_id("audit-contract", RuntimeKind.CLAUDE_CLI, AgentRole.AUDIT)

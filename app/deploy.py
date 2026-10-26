@@ -201,6 +201,9 @@ TEST_GATE_ARGS = (
     "-m", "pytest", "-q", "-n", "2", "-p", "no:cacheprovider",
     "tests", "--ignore=tests/browser", "--ignore=tests/e2e",
 )
+#: Derek, 2026-10-25: suspended until the new gate suite is live, then set back
+#: to True. A source constant on purpose: no option or environment variable.
+TEST_GATE_ENABLED = False
 TEST_GATE_TIMEOUT_SECONDS = 3 * 60 * 60
 _TEST_GATE_ENV_KEYS = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV")
 
@@ -326,7 +329,8 @@ def _deploy_once(
             f"{root} has diverged from origin/{BRANCH}; nothing was deployed. "
             f"Commits only in production (move them to main, then reset production to origin/{BRANCH}):\n{stray}"
         )
-    require_green_suite(root, target)
+    if TEST_GATE_ENABLED:
+        require_green_suite(root, target)
     operation = UpgradeOperation(
         operation_id=operation_id or f"deploy-{uuid4()}",
         expected_fingerprint=repository.fingerprint(BRANCH, current, target, records),

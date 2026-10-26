@@ -291,14 +291,14 @@ def _compact(value: str) -> str:
     return "".join(value.split())
 
 
-def _h1_index(document: list, name: str) -> int:
-    """The level-1 heading whose title, after its number, starts with name.
+def _h1_matches(document: list, name: str) -> list[int]:
+    """The level-1 headings whose title, after its number, starts with name.
 
     The meeting template numbers its sections (`二、CEO本周判断 （10分钟）`),
     and the numbering and time notes change between weeks, so only the
     section name is compared.
     """
-    matches = [
+    return [
         index
         for index, node in enumerate(document)
         if index >= 2
@@ -306,9 +306,50 @@ def _h1_index(document: list, name: str) -> int:
         and node[0] == "h1"
         and _compact(node_text(node)).partition("、")[2].startswith(name)
     ]
+
+
+def _h1_index(document: list, name: str) -> int:
+    matches = _h1_matches(document, name)
     if len(matches) != 1:
         raise ValueError(f"expected one h1 section {name!r}, found {len(matches)}")
     return matches[0]
+
+
+TRACKING_HEADERS = [
+    "ID",
+    "事项/跟踪主题",
+    "责任人",
+    "原始问题",
+    "待办关闭标准",
+    "上周计划",
+    "上周计划完成情况",
+    "本周计划",
+    "待办发起时间",
+    "最新状态（延期/风险/进行中/完成）",
+]
+
+
+def _ensure_managed_sections(document: list) -> set[str]:
+    """Add the managed sections a meeting document does not have yet.
+
+    A freshly created meeting document can be a bare agenda template without
+    the numbered CEO sections. They go at the top, in meeting order, and
+    everything already in the document stays after them. A section that is
+    present is never touched, and a duplicated one still blocks the render.
+    Returns the names added, whose bodies are empty by construction.
+    """
+    added: list = []
+    fresh: set[str] = set()
+    for numeral, name, body in (
+        ("一", MEETING_TRACKING_SECTION, [table(TRACKING_HEADERS, [])]),
+        ("二", MEETING_JUDGMENT_SECTION, []),
+        ("三", MEETING_METRICS_SECTION, []),
+    ):
+        if not _h1_matches(document, name):
+            added.extend([heading(1, f"{numeral}、{name}"), *body])
+            fresh.add(name)
+    document[2:2] = added
+    return fresh
 
 
 def _section_end(document: list, heading_index: int) -> int:
@@ -471,13 +512,15 @@ def render_meeting_document(before: list, report: dict) -> list:
     topic discussion and the report links are left as they are.
     """
     document = copy.deepcopy(before)
+    fresh = _ensure_managed_sections(document)
     _append_tracking_rows(document, report)
     for name, nodes in (
         (MEETING_JUDGMENT_SECTION, _judgment_nodes(report)),
         (MEETING_METRICS_SECTION, [_metrics_table(report)]),
     ):
         start = _h1_index(document, name)
-        document[start + 1 : _section_end(document, start)] = nodes
+        end = start + 1 if name in fresh else _section_end(document, start)
+        document[start + 1 : end] = nodes
     return document
 
 

@@ -3,6 +3,7 @@ from app.state_definitions import state_projection
 
 from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS as SYNC_ACTION_PROJECTIONS
 
+from app.report_schedule_attention import report_schedule_attention_rows
 from app.store import (NATIVE_REPLY_TASK_CURRENT_SQL, NATIVE_AGENT_RUN_SQL, NATIVE_MEETING_TASK_SQL, NATIVE_REPLY_BUSINESS_KEY_SQL, WORK_SUMMARY_INPUT_SQL)
 from app.work_summary_payload import decode_work_summary_payload
 import json
@@ -3929,6 +3930,7 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
     rows = [row for row in rows
             if not (row["category"] == "Reply task" and row["id"] in pending_oa_ids)]
     rows.extend(pending_oa_rows)
+    rows.extend(report_schedule_attention_rows(store))
     from app.web_api.attention import attention_record_detail_url
 
     with store._connect() as db:

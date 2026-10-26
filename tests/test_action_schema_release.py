@@ -50,13 +50,13 @@ def test_store_bootstrap_rejects_action_name_collisions_before_schema_changes(tm
         assert db.execute('select * from unrelated').fetchall() == [('retained original',)]
 
 
-def test_store_bootstrap_preserves_unrelated_unicode_schema_name(tmp_path):
-    from app.store import AutoReplyStore
+def test_action_schema_factory_preserves_unrelated_unicode_schema_name(tmp_path):
+    from app.action_storage import create_action_schema
 
     path = tmp_path / 'unicode.db'
     with closing(sqlite3.connect(path)) as db:
+        create_action_schema(db)
         db.execute('create view "actionſ" as select 17 as retained')
+        create_action_schema(db)
         db.commit()
-    store = AutoReplyStore(path)
-    with store._connect() as db:
         assert db.execute('select * from "actionſ"').fetchone()[0] == 17

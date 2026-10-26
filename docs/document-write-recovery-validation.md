@@ -113,3 +113,8 @@ G1现为“服务交接已验收，非重复恢复未完成”，不再是“仅
 外部PR1551已更新为fd7b27cb，仍未合并；本机发布基线6747c671已推送fork。22:39:26 UTC原子安装`v1.0.65+ceo-docfmt.6747c671`，二进制SHA3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c。运行主进程6533的PATH指向该版本；仅CLI与一条既有Skill格式说明更新，CEO源码未改、无需重启。
 
 单次安装后查询截至22:40:12 UTC没有新增Consumer/Audit Run。**格式修复已在本机发布，生产非重复行为待首个自然相关trajectory验收**；不重放或无限轮询，不提前宣布G1完成。完整边界及证据见[最终对账第15节](agent-optimization-final-acceptance.md#15-g1-高亮语义修复审查与本机发布2026-10-25-1540-pdt)。
+
+
+### 自然样本续查截止更新（2026-10-25 15:52 PDT）
+
+截至22:52:06 UTC，新DWS安装后仍没有Consumer/Audit Run；无active RuntimeAttempt或running Agent Run。调度租约中的occurrence406331/406332尚无execution_id，不冒充写入样本。二进制SHA及PID6533未变，healthz正常。未取得可核对的正文/目标/回执/后续覆盖链，因此保持“已发布、生产行为待验收”，不推进G2，不重跑通过项或人为制造样本。见最终对账第15节续查及现有版本化发布证据。
