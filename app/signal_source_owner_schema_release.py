@@ -13,7 +13,8 @@ from pathlib import Path
 import sqlite3
 
 from app import action_storage as actions
-from app.current_schema_manifest import current_objects, schema_objects
+from app.current_schema_manifest import schema_objects
+from app.scheduled_task_notification_schema_source import previous_current_objects
 from app.provenance_definitions import SOURCE_FIELDS, SIGNAL_FIELDS, SIGNAL_FACT_FIELDS, provenance_objects
 from app.state_definitions import state_projection
 from app.state_storage import update_state_rows
@@ -33,7 +34,7 @@ STAGE = '_signal_owner_actions'
 
 @lru_cache(maxsize=1)
 def target_objects():
-    result = current_objects(email_ledger=True)
+    result = previous_current_objects(email_ledger=True)
     digest = hashlib.sha256(json.dumps(result, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest()
     if digest != TARGET_DIGEST:
         raise ValueError('frozen Signal target declaration changed')
@@ -223,8 +224,6 @@ class SignalSourceOwnerRelease:
         self._convert(inverse=False)
 
     def verify_loaded(self):
-        from app.current_schema_manifest import require_current_pair
-        require_current_pair(self.database_path)
         with closing(sqlite3.connect(self.database_path.as_uri() + '?mode=ro', uri=True)) as db:
             register_task8_functions(db)
             db.execute('begin')

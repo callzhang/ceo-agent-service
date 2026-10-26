@@ -87,6 +87,13 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             email_version = (db.execute(
                 "select max(version) from main.email_schema_migrations"
             ).fetchone()[0] if "email_schema_migrations" in tables else None)
+        from app.scheduled_task_notification_schema_release import (
+            EMAIL_VERSION as SCHEDULE_SOURCE_EMAIL_VERSION,
+            SOURCE_STORE_VERSION as SCHEDULE_SOURCE_STORE_VERSION,
+            prepare_scheduled_notification_release,
+        )
+        if marker == (SCHEDULE_SOURCE_STORE_VERSION,) and email_version == SCHEDULE_SOURCE_EMAIL_VERSION:
+            return prepare_scheduled_notification_release(path)
         from app.signal_source_owner_schema_release import (
             EMAIL_VERSION as SIGNAL_SOURCE_EMAIL_VERSION,
             SOURCE_STORE_VERSION as SIGNAL_SOURCE_STORE_VERSION,

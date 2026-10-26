@@ -76,7 +76,7 @@ def test_frozen_source_digest():
 
 def test_forward_new_signals_current_data_inverse_reforward(tmp_path):
     from app.signal_source_owner_schema_release import prepare_signal_source_owner_release, source_objects
-    from app.current_schema_manifest import schema_objects, require_current_pair
+    from app.current_schema_manifest import schema_objects
     from app.provenance_storage import insert_signal_version
     from app.action_entity_storage import create_action, append_action_receipt
     path = tmp_path / 'signals.sqlite3'
@@ -112,7 +112,9 @@ def test_forward_new_signals_current_data_inverse_reforward(tmp_path):
     release = prepare_signal_source_owner_release(path)
     release.publish()
     release.finalize()
-    require_current_pair(path)
+    from app.scheduled_task_notification_schema_source import previous_current_objects
+    with closing(sqlite3.connect(path)) as db:
+        assert tuple(tuple(row) for row in db.execute("select type,name,tbl_name,sql from sqlite_schema where name not glob 'sqlite_*' order by type,name")) == previous_current_objects(email_ledger=True)
     assert facts(path) == old_current
 
 

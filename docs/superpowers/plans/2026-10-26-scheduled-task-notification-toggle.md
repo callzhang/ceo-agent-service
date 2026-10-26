@@ -30,7 +30,7 @@
 
 ## File Structure
 
-- `app/schedules_definitions.py`: add the default-on persisted schedule field to current schema projection and DDL.
+- `app/schedules_definitions.py`, `app/current_schema_manifest.py`, `app/current_publication_sources.py`, `app/store_schema_release.py`, and the scheduled-notification schema release/source modules: add the default-on schedule field and the exact reversible Store25.3→26.1 database release.
 - `app/store.py`: map, create, update, and snapshot the preference using the current schedule version/CAS flow.
 - `app/agent_cron/models.py`: add the task/snapshot field, strict JSON serialization, and explicit prior-shape decoding.
 - `app/web_api/scheduled_tasks.py`: validate, return, and freeze the field in task and run payloads.
