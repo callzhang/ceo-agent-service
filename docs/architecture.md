@@ -4512,3 +4512,14 @@ metadata writer are removed. Existing search metadata remains readable, and
 native corpus/scoring is unchanged; only test fixtures seed retained metadata.
 No schema, business fact, provider action or Audit policy changes are involved.
 See [entrypoint cleanup](remaining-entrypoint-retirement.md).
+
+### Consumer session contract completion (2026-10-26)
+
+Consumer native session creation and RuntimeAttempt completion persist the same
+existing `selected-skills:consumer-developer` contract, including the exact
+Developer instructions. Completion must not overwrite it with the bare wire
+contract. With an unchanged saved native schema and Developer contract the next
+turn resumes the same route session; a changed Developer contract still selects
+a fresh session under the existing rule. Audit hashes and route/retry/approval
+policy are unchanged. No backfill or old-hash compatibility lookup is added.
+The gated two-turn regression uses the real Store and substituted native CLI.
