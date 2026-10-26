@@ -3288,6 +3288,12 @@ candidate; cross-channel grouping and existing result ordering are unchanged.
 Email provider-action aggregation scans actions before seeking their exact
 classification primary keys, retaining the same processed/current-plan filter.
 
+The HTML Attempt detail route resolves stable public Attempt IDs first. If an old
+link instead contains the physical `actions.id`, it redirects only when that
+number has no public-ID match, using the persisted public `legacy_key`. The alias
+is read-only and does not turn skipped or otherwise non-failed Attempts into
+Failed History or Attention records.
+
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. The list counts and sorts compact source
 keys, then hydrates only the requested page in the same read snapshot; it does
