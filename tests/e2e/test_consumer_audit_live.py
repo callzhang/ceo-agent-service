@@ -38,6 +38,20 @@ def _deterministic_native_contract_environment(tmp_path, monkeypatch, request):
     if request.node.get_closest_marker("live"):
         return
     monkeypatch.setenv("CEO_WORKSPACE", str(tmp_path / "workspace"))
+    prompt_root = tmp_path / "prompt-configuration"
+    monkeypatch.setenv(
+        "CEO_DEVELOPER_PROMPT_TEMPLATE_PATH",
+        str(prompt_root / "developer_prompt.md"),
+    )
+    monkeypatch.setenv(
+        "CEO_USER_PROMPT_TEMPLATE_PATH",
+        str(prompt_root / "user_prompt.md"),
+    )
+    monkeypatch.setenv("CEO_WORK_PROFILE_PATH", str(prompt_root / "work_profile.md"))
+    monkeypatch.setenv(
+        "CEO_AUDIT_RULES_TEMPLATE_PATH",
+        str(prompt_root / "audit_rules.md"),
+    )
     install_protocol_native_trajectories(tmp_path, monkeypatch, CalendarRunnerContractExecutor)
 
 

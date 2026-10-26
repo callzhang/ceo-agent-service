@@ -4,9 +4,7 @@ import sqlite3
 
 import pytest
 
-from app.current_schema_manifest import (
-    STORE_VERSION, create_current_email_migration_ledger, schema_objects,
-)
+from app.current_schema_manifest import schema_objects
 from app.store import AutoReplyStore
 from app.state_storage import update_state_rows
 
@@ -24,18 +22,27 @@ def test_current_schema_reparses_and_action_public_id_update_compiles():
 def _source(path):
     from app.action_reference_trigger_schema_release import RETIRED_TRIGGER_SQL, SOURCE_STORE_VERSION
     from app.action_entity_storage import create_action, append_action_receipt
+    from app.signal_source_owner_schema_release import source_objects as store_252_source_objects
+    from app.state_storage import insert_state
+    from app.task8_storage import register_task8_functions
 
-    AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db, db:
-        create_current_email_migration_ledger(db)
+        register_task8_functions(db)
+        objects = store_252_source_objects()
+        for category in ("table", "index", "trigger"):
+            for kind, _name, _owner, sql in objects:
+                if kind == category:
+                    db.execute(sql)
+        db.execute(RETIRED_TRIGGER_SQL)
         db.execute("begin")
         db.execute("insert into email_schema_migrations values(54,'original-email-clock')")
+        insert_state(db, "service_state", {
+            "key": "store_schema_version",
+            "value": SOURCE_STORE_VERSION,
+            "updated_at": "source-clock",
+        })
         action = create_action(db, values={"operation": "test", "status": "done"})
         append_action_receipt(db, action["id"], values={"provider_result_json": '{"receipt":"original"}'})
-        update_state_rows(db, "service_state", {
-            "value": SOURCE_STORE_VERSION, "updated_at": "source-clock",
-        }, where_sql="key=?", parameters=("store_schema_version",))
-        db.execute(RETIRED_TRIGGER_SQL)
 
 
 def _facts(path):
@@ -52,30 +59,47 @@ def _facts(path):
 
 def test_exact_release_inverse_preserves_new_actions_receipts_and_source_clock(tmp_path):
     from app.action_reference_trigger_schema_release import (
-        prepare_action_reference_trigger_release, source_objects,
+        RETIRED_TRIGGER_NAME, RETIRED_TRIGGER_SQL,
+        prepare_action_reference_trigger_release,
     )
     from app.action_entity_storage import create_action, append_action_receipt
     from app.current_publication_sources import publication_task_sources
-    from app.current_schema_manifest import require_current_pair
+    from app.signal_source_owner_schema_release import source_objects as store_252_source_objects
     from app.store_schema_release import prepare_database_schema_release
     from pathlib import Path
 
     path = tmp_path / "current-facts.sqlite3"
     _source(path)
     before = _facts(path)
+    store_252 = store_252_source_objects()
+    source_251 = tuple(sorted(
+        (*store_252, ("trigger", RETIRED_TRIGGER_NAME, "actions", RETIRED_TRIGGER_SQL)),
+        key=lambda item: (item[0], item[1]),
+    ))
     with closing(sqlite3.connect(path)) as db:
-        assert schema_objects(db) == source_objects()
+        assert schema_objects(db) == source_251
         publication_task_sources(db)
     with pytest.raises(sqlite3.IntegrityError, match="explicit paired"):
         AutoReplyStore(path)
-    release = prepare_database_schema_release(Path(__file__).parents[1], path)
-    assert release is not None
+    source_bytes = path.read_bytes()
+    with pytest.raises(ValueError, match="unsupported"):
+        prepare_database_schema_release(Path(__file__).parents[1], path)
+    assert path.read_bytes() == source_bytes
+
+    release = prepare_action_reference_trigger_release(path)
     release.publish()
     release.verify_loaded()
     release.finalize()
-    require_current_pair(path)
+    with closing(sqlite3.connect(path)) as db:
+        assert schema_objects(db) == store_252
     assert _facts(path) == before
+    published_bytes = path.read_bytes()
+    with pytest.raises(sqlite3.IntegrityError, match="explicit paired"):
+        AutoReplyStore(path)
+    assert path.read_bytes() == published_bytes
     with closing(sqlite3.connect(path)) as db, db:
+        from app.task8_storage import register_task8_functions
+        register_task8_functions(db)
         db.execute("begin")
         action = create_action(db, values={"operation": "new-test", "status": "done"})
         append_action_receipt(db, action["id"], values={"provider_result_json": '{"receipt":"new"}'})
@@ -83,14 +107,15 @@ def test_exact_release_inverse_preserves_new_actions_receipts_and_source_clock(t
     release.rollback()
     assert _facts(path) == current
     with closing(sqlite3.connect(path)) as db:
-        assert schema_objects(db) == source_objects()
+        assert schema_objects(db) == source_251
         assert db.execute("select value,updated_at from state where key='store_schema_version'").fetchone() == ("2026-10-25.1", "source-clock")
     release = prepare_action_reference_trigger_release(path)
     release.publish()
-    release.verify_loaded()
+    release.finalize()
     assert _facts(path) == current
     with closing(sqlite3.connect(path)) as db:
-        assert db.execute("select value from state where key='store_schema_version'").fetchone() == (STORE_VERSION,)
+        assert schema_objects(db) == store_252
+        assert db.execute("select value from state where key='store_schema_version'").fetchone() == ("2026-10-25.2",)
 
 
 @pytest.mark.parametrize("damage", ["marker", "email", "missing_trigger", "changed_trigger"])
