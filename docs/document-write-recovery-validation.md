@@ -139,4 +139,12 @@ Derek明确要求去掉内容核验；任务验收回到业务目标、真实写
 
 日报、周报、OKR周报及周报格式说明同步移除自动写后全文比对要求，保留业务质量标准与状态不明时的查询。外部DWS仓库未修改，原PR由维护者处理。旧G1“等待特定格式自然样本核验通过”的终点按用户决定取消，不再轮询；本变更的终点是定向回归、正式发布及实际进程/Skill加载回读。历史失败样本和格式修复证据保留，不改写为自然行为通过。
 
-验证：4项新回归先失败（2项调用自动读回、2项仍调用shortcut），最小修改后通过。受影响6个测试文件140项通过、1项旧主线夹具测试排除：`test_active_audit_lease_defers_and_expiry_creates_append_only_attempt`仍查询已删除的`runs.record_type/legacy_key`，主线同段完全相同；不夹带修复。发布器文件再验证30项通过。Ruff/diff通过，独立只读审查无阻塞。发布清单只更换5个Skill/说明资产，其余21个字节相同；既有已安装OKR及renderer pin刷新到实际已发布值，活动配置392的OKR revision为54d3e45e，与本次old-managed pin一致。正式发布与加载证据待追加。
+验证：4项新回归先失败（2项调用自动读回、2项仍调用shortcut），最小修改后通过。受影响6个测试文件140项通过、1项旧主线夹具测试排除：`test_active_audit_lease_defers_and_expiry_creates_append_only_attempt`仍查询已删除的`runs.record_type/legacy_key`，主线同段完全相同；不夹带修复。发布器文件再验证30项通过。Ruff/diff通过，独立只读审查无阻塞。发布清单只更换5个Skill/说明资产，其余21个字节相同；既有已安装OKR及renderer pin刷新到实际已发布值，活动配置392的OKR revision为54d3e45e，与本次old-managed pin一致。正式发布与加载证据待追加。后续新增创建路径无读回覆盖后，受影响5文件112项及发布器30项均通过，共142项；主线OA读图增量集成后角色边界30项通过（与112项重叠）。
+
+### PR327 正式发布与加载回读（2026-10-25 20:49 PDT）
+
+PR327合并为`f2f750e66870035b0b6a2fb303497dc2e8969856`，正式`app.deploy --target-commit ... --publish-consumer-system-contracts`在门禁及自然空闲后成功；回执`deploy-54a0236b-bb0f-4c7a-a7da-d5fc431ba310`为succeeded，未使用skip-quiet-wait。生产工作树干净，三处运行代码与该提交相同。新supervisor18607于20:47:16 PDT启动，晚于相关源文件写入；子进程18611/18612/18613于20:47:17启动。
+
+合同发布状态verified，配置392→393；真实worker18611、18613的加载回执无错误，摘要与活动配置393完全一致，PID确为该supervisor子进程，工作目录均为生产checkout。26个安装资产与清单相符：5个本次报告Skill/说明、1个主线已合并OA读图说明，其余20个（含Audit规则）未变。03:49:50–03:49:54 UTC回读healthz、queues、Attention、History均200；队列汇总1、Attention5、History38317。计数为当时快照，不宣称历史问题清零。源文件SHA、进程及加载/接口摘要保存在原G1 JSON的`content_verification_removal`。
+
+**G1按用户最新范围收口：自动内容核验已移除并上线，任务质量继续按业务目标审核。** 原“等特定格式自然样本核验通过”的条件已取消，不将未出现样本改写为行为通过，也不保证以后不存在其他原因的重复写入。本轮无真实业务文档写入或任务重放，已通过模型案例未重跑。

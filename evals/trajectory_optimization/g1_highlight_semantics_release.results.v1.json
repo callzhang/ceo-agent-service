@@ -1171,5 +1171,217 @@
       "binary_sha256": "3105fda34b277732a91070c38b677ad37162b8f3e70804fbec378bcbab74e97c",
       "conclusion": "8 newly ended natural runs (7 completed,1 failed),498 full native lines; no document writes. Later running runs excluded. G1 production nonrepeat acceptance remains pending; no replay or new tests."
     }
-  ]
+  ],
+  "content_verification_removal": {
+    "checked_at_utc": "2026-10-26T03:49:54.175885+00:00",
+    "production_commit": "f2f750e66870035b0b6a2fb303497dc2e8969856",
+    "supervisor_pid": 18607,
+    "processes": [
+      "18607     1 Sun Oct 25 20:47:16 2026     /Users/derek/miniforge3/bin/python",
+      "18611 18607 Sun Oct 25 20:47:17 2026     /Users/derek/miniforge3/bin/python",
+      "18612 18607 Sun Oct 25 20:47:17 2026     /Users/derek/miniforge3/bin/python",
+      "18613 18607 Sun Oct 25 20:47:17 2026     /Users/derek/miniforge3/bin/python"
+    ],
+    "all_load_receipt_pids_are_actual_supervisor_children": true,
+    "production_cwd_matches": true,
+    "active_skill_config_id": 393,
+    "skill_load_receipts": [
+      {
+        "pid": 18611,
+        "error": "",
+        "created_at": "2026-10-26 03:47:18",
+        "loaded_hashes_match_active_config": true
+      },
+      {
+        "pid": 18613,
+        "error": "",
+        "created_at": "2026-10-26 03:47:24",
+        "loaded_hashes_match_active_config": true
+      }
+    ],
+    "installed_assets": [
+      {
+        "target": "skills/ceo-weekly-report/SKILL.md",
+        "sha256": "8e01927d2a4e97d9d32392c6ffb99dfff94bf4da8b7e2266070fcad4247b85b2"
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/report_contract.py",
+        "sha256": "bc90cfe6efa735675fd833003363776aea5463e0cdf1f543357971dfaad8e13a"
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/validate_run.py",
+        "sha256": "3a4a2f00138492780b54107ddd37303649bb11e333ea1d13ed092a897299587e"
+      },
+      {
+        "target": "skills/ceo-weekly-report/references/dingtalk-runbook.md",
+        "sha256": "c617861797b07b256f7fade2882bc6c418e61ae9ce42f102460498edd51bae2d"
+      },
+      {
+        "target": "audit_rules",
+        "sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
+      },
+      {
+        "target": "skills/ceo-calendar-invite/SKILL.md",
+        "sha256": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175"
+      },
+      {
+        "target": "skills/ceo-daily-report/SKILL.md",
+        "sha256": "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa"
+      },
+      {
+        "target": "skills/ceo-document-review/SKILL.md",
+        "sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77"
+      },
+      {
+        "target": "skills/ceo-mail-review/SKILL.md",
+        "sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d"
+      },
+      {
+        "target": "skills/ceo-message-triage/SKILL.md",
+        "sha256": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc"
+      },
+      {
+        "target": "skills/ceo-wechat/SKILL.md",
+        "sha256": "dc2ae1f5aa4b3466d9fa03bf7bb608cba6734b84b7eeb64b8491c1e465472fae"
+      },
+      {
+        "target": "skills/dingtalk-oa-approval/SKILL.md",
+        "sha256": "744c1b570acdf99097097f5edd8a5230428b5bb76e7a034485a78e24d25965eb"
+      },
+      {
+        "target": "skills/stardust-oa-finance-review/SKILL.md",
+        "sha256": "bd4abac4109216f2ee32d919469e49be15b293e508f1366d0fa7d26fcfa107b9"
+      },
+      {
+        "target": "skills/stardust-oa-finance-review/references/finance-rule-cards.md",
+        "sha256": "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1"
+      },
+      {
+        "target": "skills/stardust-oa-people-review/SKILL.md",
+        "sha256": "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81"
+      },
+      {
+        "target": "skills/stardust-oa-attendance-travel-review/SKILL.md",
+        "sha256": "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375"
+      },
+      {
+        "target": "skills/ceo-daily-report/scripts/destination.py",
+        "sha256": "8458d3910b0ce94a3ded4c44264ff2a343107b7ce259b10edcfb4efefe1867ab"
+      },
+      {
+        "target": "skills/ceo-daily-report/scripts/window.py",
+        "sha256": "4f30d1b82c43076f74bb1c3c16137a905a6c03e14a35b79a59fb8b324ac6126d"
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/SKILL.md",
+        "sha256": "16fcdd9b765656e758a1ea98f425d5976c0bbbb33a0a53fa379b22d8f480294d"
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
+        "sha256": "2893dd0b0c0f20da0a097194ad97a6ff7605f68b061194c45a7b9660474aa52b"
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/scripts/report.py",
+        "sha256": "119a249dd9aa3398c5c6e9a49dfb821f06f05ce3e9e668c6de279ba11543af5d"
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/jsonml_check.py",
+        "sha256": "759e6a61f4b8f093712d15baee0cceb97ad870ff591fe5e34ba9f7dc98d7ce12"
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/materials.py",
+        "sha256": "9669e3000d2a319bfb36ac5d069a0a58ffb99452216714bc548056f6c45cae8e"
+      },
+      {
+        "target": "skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
+        "sha256": "94326d6138ae1b4a8a5560ed417b54bb1b9ad9317ed586c8b24f4963bbd44cd9"
+      },
+      {
+        "target": "skills/ceo-weekly-okr-report/scripts/destination.py",
+        "sha256": "9d2fad8841dfdab69d6da94b34eb04acb3cfcdbfab8e793f640b8395d2cc5a0a"
+      },
+      {
+        "target": "skills/ceo-weekly-report/README.md",
+        "sha256": "cfbbc80c7a384a64077e7e4bd75b7341f883ebd9bc7284fe86100d79e565ee40"
+      }
+    ],
+    "readback": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "meta": {},
+        "ok": true
+      },
+      {
+        "path": "/api/console/dashboard/queues",
+        "http": 200,
+        "meta": {
+          "page": 1,
+          "page_size": 20,
+          "total": 1,
+          "next_cursor": "",
+          "has_more": false,
+          "snapshot_at": "2026-10-26T03:49:50.814037+00:00"
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T03:49:52.104358Z",
+          "page": null,
+          "page_size": null,
+          "total": 5,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "ok": null
+      },
+      {
+        "path": "/api/console/history?page_size=1&include_chart=false",
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-26T03:49:54.160247Z",
+          "page": 1,
+          "page_size": 1,
+          "total": 38317,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "ok": null
+      }
+    ],
+    "status": "deployed_and_loaded",
+    "pr": "https://github.com/callzhang/ceo-agent-service/pull/327",
+    "deployment_operation_id": "deploy-54a0236b-bb0f-4c7a-a7da-d5fc431ba310",
+    "publication_status": "verified",
+    "scope": "Remove automatic document content verification; preserve write errors,identity,JSONML parsing/revision and business-goal review. Old G1 format-specific natural-sample gate explicitly cancelled.",
+    "code_files": {
+      "app/agent_cli.py": {
+        "sha256": "65093c1fbe6b30ceb9b920316ede4b679c7f236f68b54c5c7e484a697abcddd6",
+        "mtime_utc": "2026-10-26T03:47:05.171333+00:00"
+      },
+      "app/dws_client.py": {
+        "sha256": "cb64ac452839f386e36716978ede72546e53bea6740c0cd54aed7e62619316ff",
+        "mtime_utc": "2026-10-26T03:47:05.174240+00:00"
+      },
+      "app/agent_orchestrator.py": {
+        "sha256": "44d914caf41cef8507eaae548be94d75f240508e6b425162d7b1e095049c4380",
+        "mtime_utc": "2026-10-26T03:47:05.172639+00:00"
+      }
+    },
+    "supervisor_started_after_relevant_source_writes": true,
+    "tests": {
+      "initial_red": 4,
+      "affected": 112,
+      "contract_publication": 30,
+      "integrated_role_boundary": 30,
+      "integrated_role_boundary_overlaps_affected": true,
+      "excluded_unchanged_main_fixture": "test_active_audit_lease_defers_and_expiry_creates_append_only_attempt queries retired runs columns"
+    },
+    "review": "Independent source review and post-main integration review: no blockers",
+    "business_document_writes": 0,
+    "production_task_replays": 0
+  }
 }
