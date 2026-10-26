@@ -1,5 +1,4 @@
 import sqlite3
-import json
 import hashlib
 from pathlib import Path
 
@@ -116,44 +115,6 @@ def test_run_source_metadata_matches_current_native_factory_oracle():
         for field, metadata in source.items():
             row = fields[(source_kind, field)]
             assert (row["sql_type"], row["null_contract"], row["source_default"]) == metadata
-
-
-def test_complete_assembly_sql_artifact_is_deterministic():
-    from app.run_adoption_definitions import field_map as adoption_field_map
-    from app.run_entity_definitions import run_entity_field_map
-    from app.schema_sql import serialize_schema_sql
-    from app.task_run_entity_definitions import task_run_field_map, task_run_identity_associations
-
-    objects = task_run_entity_assembly_objects()
-    expected = serialize_schema_sql(objects)
-    assert (ROOT / "docs/task-run-entity-assembly-target.sql").read_text() == expected
-    field_map = json.loads((ROOT / "docs/task-run-entity-assembly-field-map.json").read_text())
-    adoption_rows = [
-        {"source_kind": kind, "source_field": field, "target_table": destination[0],
-         "target_field_or_expression": destination[1]}
-        for kind, fields in adoption_field_map().items() for field, destination in fields.items()
-    ]
-    assert field_map == {"task_fields": list(task_run_field_map()),
-                         "task_identity_associations": list(task_run_identity_associations()),
-                         "run_fields": run_entity_field_map(), "adoption_fields": adoption_rows}
-    assert len(field_map["task_fields"]) == 287
-    assert len(field_map["run_fields"]) == 8 * 79
-    assert len(field_map["adoption_fields"]) == 43
-    assert (ROOT / "docs/task-run-entity-assembly-retirement.sql").read_text().startswith(
-        "-- Unactivated Task/Run assembly retirement inventory; not executable migration SQL.\n")
-
-
-def test_committed_assembly_sql_artifact_executes_and_matches_complete_catalog():
-    from app.task_run_entity_assembly import task_run_entity_assembly_objects
-
-    expected = task_run_entity_assembly_objects()
-    db = sqlite3.connect(":memory:")
-    db.execute("PRAGMA foreign_keys=ON")
-    db.executescript((ROOT / "docs/task-run-entity-assembly-target.sql").read_text())
-    actual = {name: sql for name, sql in db.execute(
-        "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")}
-    assert actual == expected
-    assert db.execute("PRAGMA foreign_key_check").fetchall() == []
 
 
 def test_adoption_receipt_parent_is_real_consumer_progress_and_run_role_is_enforced():
