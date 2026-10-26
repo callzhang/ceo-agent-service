@@ -25206,7 +25206,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return cursor.rowcount
 
     def resolve_errors_recovered_by_scheduled_reply_task(self) -> int:
-        """Close scheduled Agent incidents after their reply task completes."""
+        """Close scheduled Agent incidents covered by a terminal reply task."""
         with self._connect() as db:
             cursor = db.execute(
                 f"""
@@ -25225,10 +25225,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             'scheduled-task:' || cast(run.scheduled_task_id as text)
                         and run.dispatch_status='dispatched'
                         and task.status in ('done', 'skipped')
-                        and datetime(task.updated_at) >= datetime(error_event.created_at)
+                        and (
+                            run.event_id=error_event.error_message_id
+                            or datetime(task.updated_at) >= datetime(error_event.created_at)
+                        )
                   )
                 """,
-                ("recovered by later successful scheduled reply task",),
+                ("covered by terminal scheduled reply task",),
             )
             return cursor.rowcount
 

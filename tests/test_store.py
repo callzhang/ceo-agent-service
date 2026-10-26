@@ -9769,7 +9769,7 @@ def test_resolve_errors_recovered_by_scheduled_reply_task(tmp_path: Path):
     assert store.resolve_errors_recovered_by_scheduled_reply_task() == 1
     [error] = store.list_errors()
     assert error.resolved_at
-    assert error.resolution == "recovered by later successful scheduled reply task"
+    assert error.resolution == "covered by terminal scheduled reply task"
 
 
 def test_resolve_errors_recovered_by_scheduled_task_seed(tmp_path: Path):

@@ -224,6 +224,7 @@ tests/test_config_runtime_paths.py
 tests/test_task_2d7j_workbench_artifact_routes.py
 tests/test_agent_context_provenance.py
 tests/test_scheduled_occurrence_refs.py
+tests/test_scheduled_error_reconciliation.py
 tests/test_needs_human_authorization_gate.py
 tests/test_business_console_source_reader.py
 tests/test_provider_state_current.py

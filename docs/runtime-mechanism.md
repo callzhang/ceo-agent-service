@@ -1732,7 +1732,7 @@ Attention 只投影当前未解决状态；已完成／已跳过任务不继续�
 
 当前代次的最新 Attempt 指向失败 run 时，即使关联任务进入 `pending` 等待重试，History 与 Attention
 仍显示该失败，直到后续有效 run/Attempt 给出新的当前状态。没有当前代次失败 run 的 pending
-任务本身不进入 Attention；旧代次失败也不污染新代次。对于同一定时 Agent task，Attention 只统计最新的已派发 run：较早 run 的失败 Reply task、失败 Attempt 及绑定该 run 的读取错误仅保留在 History，不再作为当前 Attention；当 `scheduled-task-run:<id>` 已无法关联到现存 run 时，其读取错误也仅保留在 History。最新 run 失败时仍显示其失败。未派发触发和其他 scheduled task 的成功均不覆盖当前状态。
+任务本身不进入 Attention；旧代次失败也不污染新代次。对于同一定时 Agent task，Attention 只统计最新的已派发 run：较早 run 的失败 Reply task、失败 Attempt 及绑定该 run 的读取错误仅保留在 History，不再作为当前 Attention；当 `scheduled-task-run:<id>` 已无法关联到现存 run 时，其读取错误也仅保留在 History。与 occurrence 关联的 `scheduled_task_execution_unavailable` 事件，如果同一 occurrence 已派发的 Reply task 当前为 `done` 或 `skipped`，即由该 task 终态覆盖；按相同 event ID 绑定，不依赖可能因写入顺序差异而倒置的时间戳。其他旧事件需后续已派发 run 的 Reply task 终态覆盖。最新 run 失败时仍显示其失败。未派发触发和其他 scheduled task 的成功均不覆盖当前状态。
 从失败 Attempt 手动重跑时，Consumer 与 Audit 的上下文必须带入来源代次的结构化 Audit 反馈；
 旧候选被否决的点仍须解决，或用新证据明确说明其不再适用，不得把相同候选当作未审核的新建议。
 已结案的 `skipped` OA review 仅在审核者提交明确反馈、同一钉钉 OA task 仍为 pending、流程/task
