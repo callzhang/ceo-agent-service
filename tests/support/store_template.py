@@ -53,12 +53,25 @@ def _build(original, store_class, template: Path) -> None:
         db.execute("pragma wal_checkpoint(truncate)")
 
 
+def _forget_live_events_of(target: Path) -> None:
+    """A reused temporary directory name must not inherit an earlier database's live events."""
+    from app.workbench import native_events
+
+    path = str(target.resolve())
+    with native_events._live_lock:
+        turn_ids = [turn_id for turn_path, turn_id in native_events._live_turn_events if turn_path == path]
+    for turn_id in turn_ids:
+        native_events.forget_live_turn(target, turn_id)
+
+
 def install(store_class, kind: str) -> None:
     """Make fresh-path construction of ``store_class`` start from the template."""
     original = store_class.__init__
 
     def init(self, path, *args, **kwargs):
         target = Path(path)
+        if not target.exists():
+            _forget_live_events_of(target)
         if not args and not kwargs and not target.exists() and target.parent.is_dir():
             template = _copy_of_template(kind, lambda built: _build(original, store_class, built))
             if template is not None:
