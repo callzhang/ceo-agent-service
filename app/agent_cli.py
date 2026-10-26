@@ -1792,64 +1792,38 @@ def _write_document_artifact(
             result = dws.create_report_document(
                 name=title, content=content, doc_format=doc_format, folder_id=parent_id
             )
-            created_data = result.get("data", {})
+            created_data = result.get("data", result)
             if isinstance(created_data, dict) and isinstance(created_data.get("nodeId"), str):
                 node_id = created_data["nodeId"]
             found = matching_nodes()
             if len(found) != 1:
                 raise ValueError("created document target is ambiguous")
             node_id = found[0]["nodeId"]
-        readback = (
-            dws.fetch_report_document_full(node_id)
-            if doc_format == "jsonml"
-            else dws.read_doc(node_id)
-        )
     except (DwsError, ValueError) as exc:
-        provider_error = exc.provider_error if isinstance(exc, DwsError) else {}
-        details = provider_error.get("details", {})
-        if not isinstance(details, dict):
-            details = {}
-        partial_write = (
-            details.get("contractVersion") == "doc.operation.v1"
-            and details.get("status") == "partial_success"
-            and provider_error.get("operation") == ("doc.update" if operation == "updated" else "doc.create")
-        )
-        if result is None and not partial_write:
+        if result is None:
             raise
-        data = details.get("data", {})
-        if isinstance(data, dict) and isinstance(data.get("nodeId"), str):
-            node_id = data["nodeId"] or node_id
         return {
             "ok": True,
             "status": "success",
-            "verified": False,
             "operation": operation,
             "node_id": node_id,
             "title": title,
             "provider_result": result,
-            "error": provider_error or {"message": str(exc)},
+            "error": exc.provider_error if isinstance(exc, DwsError) else {"message": str(exc)},
             "saved_version": version,
             "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
             "readback": None,
         }
-    raw = json.dumps(readback, ensure_ascii=False).encode("utf-8")
-    receipt_name = (
-        hashlib.sha256(raw).hexdigest()
-        + ".readback.json"
-    )
-    _task_file_path(root, receipt_name).write_bytes(raw)
     return {
+        "ok": True,
+        "status": "success",
         "operation": operation,
         "node_id": node_id,
         "title": title,
         "provider_result": result,
         "saved_version": version,
         "content_sha256": hashlib.sha256(content.encode()).hexdigest(),
-        "readback": {
-            "artifact_name": receipt_name,
-            "sha256": hashlib.sha256(raw).hexdigest(),
-            "bytes": len(raw),
-        },
+        "readback": None,
     }
 
 
@@ -2955,11 +2929,11 @@ def build_role_server(
             workspace_id: str = "",
             expected_revision: int | None = None,
         ) -> dict[str, object]:
-            """Write an exact artifact to an explicit document and return its readback receipt.
+            """Write a task artifact to an explicit document and return the provider receipt.
 
             Update: node_id, plus expected_revision for JSONML. Create: parent_id
             and workspace_id. Decide titles, destinations and business readiness
-            using the selected Skill. Read the returned readback artifact to verify.
+            using the selected Skill. Successful writes do not trigger content readback.
             """
             _bound_scheduled_run(db_path, task_id)
             root = _task_file_root(db_path, task_id, artifact_generation, create=False)

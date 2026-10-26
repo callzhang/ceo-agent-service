@@ -2913,8 +2913,8 @@ class DwsClient:
         if doc_format not in {"markdown", "jsonml"}:
             raise ValueError("unsupported report document format")
         payload = self.run_json([
-            self.dws_bin, "doc", "+create", "--name", name,
-            "--content", content, "--doc-format", doc_format,
+            self.dws_bin, "doc", "create", "--name", name,
+            "--content", content, "--content-format", doc_format,
             "--folder", folder_id, "--format", "json",
         ])
         if not isinstance(payload, dict):
@@ -2967,14 +2967,14 @@ class DwsClient:
         if doc_format not in {"markdown", "jsonml"}:
             raise ValueError("unsupported report document format")
         command = [
-            self.dws_bin, "doc", "+update", "--node", node_id,
-            "--command", "overwrite", "--content", content,
-            "--doc-format", doc_format,
+            self.dws_bin, "doc", "update", "--node", node_id,
+            "--mode", "overwrite", "--content", content,
+            "--content-format", doc_format,
         ]
         if doc_format == "jsonml":
             if type(expected_revision) is not int or expected_revision < 0:
                 raise ValueError("JSONML overwrite requires an expected revision")
-            command += ["--expected-revision", str(expected_revision)]
+            command += ["--revision", str(expected_revision)]
         payload = self.run_json(command + ["--yes", "--format", "json"])
         if not isinstance(payload, dict):
             raise DwsError("invalid report document update response")
