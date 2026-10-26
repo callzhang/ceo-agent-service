@@ -3825,6 +3825,8 @@ Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服�
 
 Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meeting Run 的十进制 ID；独立 Audit 使用 `workload_kind='meeting_audit'` 和同一准确 Run 的十进制 ID。两者在 native `runtime_attempts.parent_id` 上都指向经 `meeting_alignment_runs` provenance 核实的那个 Run；Task ID 或无关 Run 不能代替该 owner。显式 source/native 转换分别保留新 source 的 `meeting_audit` 数字键，同时继续仅在转换器中处理历史 source `meeting` 键加 `:audit` 的记录。失败、启动恢复和回放检查同时覆盖两种 workload。
 
+独立 Meeting Audit 的结果解析器对 `MeetingAlignmentAuditResult` 的结构错误和 `candidate_sha256` 与提交候选不一致都抛 `RoutedResultValidationError`，因此路由器对同一 Audit 会话执行唯一一次修正轮（`attempt_purpose=result_validation_correction`，提示要求保留精确 digest）。digest 比较本身不放宽；修正轮仍不一致或结构仍错，则该次尝试终止为 `runtime_result_validation_failed`，Meeting Task 失败。此前解析器抛普通 `ValueError`，一次模型抄错 digest 就直接记为 `runtime_result_invalid` 而不走修正轮（Task 417472，2026-10-26）。
+
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。检查使用 Phase 2 TaskBusinessKey 中保存的原生公开投递键，并同时检查主键、`:sensitive` 键和 `:target:` 派生键；准备好的 Action 即使没有 provider 回执也阻止重放。不得从 native Task ID 重建 source key。prepared outbound 仍由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
 ## Meeting Audience Recovery
