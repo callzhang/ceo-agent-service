@@ -68,7 +68,7 @@
     "consequence": "Previously passed CLI same-session probes do not establish production non-OAuth Audit continuation.",
     "status": "Fixed in PR325 followup candidate under explicit user authorization; local validation passed, unmerged/undeployed."
   },
-  "release_status": "Draft PR325, not merged/deployed. Provider root cause confirmed as relay429/model_not_found/no available channel for gpt-5.6-luna in default group, not a demonstrated schema or prompt error. Shared44-error main lint gate also unresolved. No route/model changes or unrelated fixes.",
+  "release_status": "Current CLI acceptance reused and verified; API gate explicitly removed by latest user scope decision. PR325 publication pending normal merge/deployment gate/readback. Shared lint findings remain separately documented, not silently marked green.",
   "session_continuation_followup": {
     "base": "1045b3fbbff013fb015149310ae4c53e56131c2b",
     "changes": [
@@ -281,5 +281,23 @@
       "Separate shared lint cleanup must retain side-effecting setup calls,3GB ceiling and production-checkout refusal; rerun static check, without treating it as behavioral acceptance.",
       "After provider channel is usable, run only still-missing API cold/resume checks; then normal merge/deploy/readback."
     ]
+  },
+  "current_acceptance_scope": {
+    "decision": "User explicitly requires only current Codex CLI local OAuth/gpt-6-luna, superseding all-configured-routes acceptance.",
+    "route": "codex_oauth",
+    "model": "gpt-6-luna",
+    "api_gate_removed": true,
+    "route_config_unchanged": true,
+    "evidence_reused": {
+      "consumer_session": "01a16cf9-864c-7b11-8a2b-5e3982577263",
+      "consumer_45_line_prefix_sha_matches": true,
+      "audit_session": "01a16cf2-63d7-7720-b89d-a9b58d436ef9",
+      "audit_49_line_prefix_sha_matches": true,
+      "current_schema_hashes_unchanged": true,
+      "prior_local_native_wiring_passes": 6,
+      "prior_local_session_passes": 10,
+      "model_reruns": 0
+    },
+    "release": "pending ordinary merge, formal deployment gate and production readback; no API wait or unrelated lint cleanup"
   }
 }
