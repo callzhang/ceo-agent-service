@@ -1083,7 +1083,7 @@ scheduled_tasks[command]
 ```
 
 定时任务只有在服务命令或 Agent execution 已持久化为成功（`dispatched`/`done`）或失败
-（`failed`）时，才发送桌面通知，标题含任务名称，正文含结果摘要或错误。排队、等待重试、跳过和仍在执行时不通知；通知不改变运行状态或 Attention 规则。
+（`failed`）时，才发送桌面通知，标题含任务名称，正文含结果摘要或错误。排队、等待重试、跳过和仍在执行时不通知；通知不改变运行状态或 Attention 规则。终态保存后，通知以尽力投递处理；本机没有可用通知程序时记录错误并保留任务的真实终态。
 
 OA 的钉钉系统通知和聊天催办是外部观察事件，不是第二条审批执行入口。消息生产器将
 `OA审批` 系统通知以及 `[Ding]…提醒您审批` 聊天消息写入 `oa_notification_events`；前者只
@@ -4303,9 +4303,13 @@ claiming also close previously exhausted pending records, including ones with a
 future available_at, without incrementing their old count or calling the mail
 provider or Agent. Their source input, stable identity and original error remain
 available. Active unexpired claims and done tasks are not closed by this sweep.
-The existing explicit selected-task repair resets attempts and keeps task
-identity; discovery does not automatically reopen failed records. See
-`docs/email-classification-retry-budget-validation.md` for evidence.
+The Console retry endpoint accepts only a failed task with no saved result,
+requeues that selected task through its stable message identity, and confirms
+the original input was retained. It cannot reopen a pending, running or done
+task; discovery does not automatically reopen failed records. See
+`docs/email-classification-retry-budget-validation.md` for automatic budget
+evidence and `docs/email-classification-retry-api-validation.md` for the Console
+retry contract.
 
 When the original IMAP UID no longer returns a message, classification readback
 may relocate it only with the task's exact account-scoped RFC Message-ID in the

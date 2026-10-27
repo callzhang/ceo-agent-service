@@ -88,6 +88,24 @@ def test_notification_keeps_unicode_literals_for_applescript(monkeypatch):
     assert commands[0][0][2] == 'display notification "请总结候选人张三的售前能力和风险" with title "CEO question"'
 
 
+def test_notification_unavailable_on_non_macos_does_not_raise(monkeypatch, caplog):
+    monkeypatch.setattr("app.notification.shutil.which", lambda _name: None)
+    monkeypatch.setattr(
+        "app.notification._send_browser_notification",
+        lambda **_: False,
+    )
+
+    def missing_osascript(_command, *, check):
+        assert check is False
+        raise FileNotFoundError("osascript")
+
+    monkeypatch.setattr("app.notification.subprocess.run", missing_osascript)
+
+    send_macos_notification(title="定时任务完成：Check", message="done")
+
+    assert "macos_notification_delivery_unavailable" in caplog.text
+
+
 def test_notification_prefers_terminal_notifier(monkeypatch):
     commands = []
     browser_payloads = []
@@ -157,6 +175,28 @@ def test_notification_falls_back_to_browser_when_terminal_notifier_fails(monkeyp
             "url": "http://127.0.0.1:8765/open-dingtalk?cid=75217569357",
         }
     ]
+
+
+def test_notification_falls_back_to_browser_when_terminal_notifier_cannot_start(monkeypatch):
+    browser_payloads = []
+    monkeypatch.setattr(
+        "app.notification.shutil.which",
+        lambda _name: "/opt/homebrew/bin/terminal-notifier",
+    )
+
+    def missing_terminal_notifier(_command, *, check):
+        assert check is False
+        raise FileNotFoundError("terminal-notifier")
+
+    monkeypatch.setattr("app.notification.subprocess.run", missing_terminal_notifier)
+    monkeypatch.setattr(
+        "app.notification._send_browser_notification",
+        lambda **kwargs: browser_payloads.append(kwargs) or True,
+    )
+
+    send_macos_notification(title="CEO auto reply", message="已回复")
+
+    assert browser_payloads == [{"title": "CEO auto reply", "message": "已回复", "url": None}]
 
 
 def test_a_notification_click_reuses_the_open_console_tab(monkeypatch):

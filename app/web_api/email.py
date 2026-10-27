@@ -72,6 +72,7 @@ from app.email_store import (
 )
 from app.email_provider_actions import ImapMessageUnavailable, ImapProviderError
 from app.email_store import EmailPersistenceCorruption
+from app.email_task_adapter import EmailClassificationTaskAdapter
 from app.email_training_snapshot import TRAINING_SNAPSHOT_ID_PATTERN
 
 
@@ -1349,6 +1350,66 @@ def register_email_routes(
         return {
             "ok": True,
             **require_store().email_processing_progress(now=datetime.now(timezone.utc)),
+        }
+
+    @app.post("/api/console/email/classification-tasks/{task_id}/retry")
+    def retry_failed_email_classification_task(task_id: int):
+        adapter = EmailClassificationTaskAdapter(require_store())
+        task = adapter.get_task(str(task_id))
+        if task is None:
+            return error_response(
+                "email_classification_task_not_found",
+                "Email classification task not found",
+                404,
+            )
+        if task.status != "failed":
+            return error_response(
+                "email_classification_retry_not_allowed",
+                "Only a failed Email classification task can be retried",
+                409,
+            )
+        try:
+            result = json.loads(task.result_json or "null")
+        except json.JSONDecodeError:
+            return error_response(
+                "email_classification_result_invalid",
+                "Email classification task result is invalid",
+                409,
+            )
+        if result is not None:
+            return error_response(
+                "email_classification_retry_not_allowed",
+                "A task with a saved classification result cannot be retried",
+                409,
+            )
+
+        requeued = adapter.retry_failed_tasks((str(task_id),))
+        if requeued != 1:
+            return error_response(
+                "email_classification_retry_not_allowed",
+                "Email classification task is no longer failed",
+                409,
+            )
+        retried = adapter.get_task(str(task_id))
+        if (
+            retried is None
+            or retried.stable_message_identity != task.stable_message_identity
+            or retried.input_json != task.input_json
+        ):
+            return error_response(
+                "email_classification_retry_readback_failed",
+                "Retried Email classification task did not preserve its input",
+                500,
+            )
+        return {
+            "ok": True,
+            "item": {
+                "task_id": str(task_id),
+                "status": retried.status,
+                "requeued": True,
+                "stable_message_identity": retried.stable_message_identity,
+            },
+            "meta": meta(),
         }
 
     @app.get("/api/console/email/classifications")
