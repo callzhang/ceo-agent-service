@@ -706,8 +706,16 @@ candidate and that candidate's `revert_task` execution is `done` with a verified
 DWS `REDIRECT_PROCESS` receipt (including the DingTalk success response and
 matching process identity). The failed Attempt remains failed in History; an
 uncertain, incomplete, mismatched, or non-return receipt leaves it visible.
-This is an Attention projection only and does not change task state, receipts,
-or OA execution.
+Suppressing an older Attempt is only an Attention projection and does not
+change task state, receipts, or OA execution.
+
+For the same-generation OA return, if read-only reconciliation has already
+persisted the exact verified receipt but the Reply Task remains failed as
+`external_action_uncertain`, reconciliation closes that stale Task projection
+to `done` only while the same candidate and Audit approval remain current and
+its sole action remains verified with the matching external receipt. The
+original failed Attempt and its provider response stay in History; the return
+is not dispatched again.
 
 OA return readback determines event uniqueness from matching `REDIRECT_PROCESS`
 records for the exact task, current user, and remark. Unrelated `PROCESS_CC`
