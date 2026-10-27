@@ -151,6 +151,10 @@ def block_real_notifications_in_tests(monkeypatch, request):
         "app.notification._send_browser_notification",
         noop_browser_notification,
     )
+    monkeypatch.setattr(
+        "app.notification._send_terminal_notifier_notification",
+        lambda **kwargs: True,
+    )
 
 
 @pytest.fixture(autouse=True)

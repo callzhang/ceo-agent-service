@@ -91,6 +91,7 @@ tests/test_native_consumer_output.py
 tests/test_native_integer_binding.py
 tests/test_native_scalar_binding.py
 tests/test_notification.py
+tests/test_notification_test_isolation.py
 tests/test_oa_ai_services_namespace.py
 tests/test_oa_approval.py
 tests/test_oa_audit_return_same_stage.py
