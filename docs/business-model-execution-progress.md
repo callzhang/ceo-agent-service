@@ -1,22 +1,22 @@
 # Business model simplification: current completion and closeout
 
-## Current status — 2026-10-27, 12:52 America/Los_Angeles
+## Current status — 2026-10-27, 15:19 America/Los_Angeles
 
 | Scope | Verified status | Remaining boundary |
 | --- | --- | --- |
-| Code and frontend installed | Production758083c10; persisted standard deployment succeeded; PID90678, health200 and frontend stamp match. | Owner confirms this installation; newer9ed55b9c7 standard deployment is waiting for quiet while417666 progresses. |
-| Production feature readback | Attention1; History page2 returns20different rows, failed filter completes and resets page1; Attempt16137 shows Action125048/receipt20527. | Business health retains one unresolved-feedback finding. Historical failed results remain historical. |
-| Schema | Store26.1/Email54;476exact current SQL tuples, unchanged prior accepted digest, FK[]. | No API/DDL/runtime change in this closeout; no global optimality or zero-compatibility claim. |
-| Report and system Skill |26installed contract targets match manifest; active config400/weekly OKR revision279 matches installed hash. | Report417666 is processing;417576/417594/417637 remain failed. Final report/publication receipt and the newer deployment remain pending. |
-| Cleanup | Prior owned `/private/tmp/ceo-history-closeout.iqw5Li` is absent. Observed daily backup passed quick_check/appid/schema checks and had no open files. | Current backup generation ownership and peer-owned temporary cleanup await confirmation; retained. |
-| A5 exact original case |2026-10-25 real GPT-6 Luna CLI Consumer/Audit replay passed with one substitute provider call, verification and receipt after selection. | Historical failure is preserved; acceptance covers the original case. |
+| Code/frontend installed | Final standard operation installed d1efdbc28 at22:08Z; PID11030/health200/build stamp match. | Dated acceptance, not a permanent live-version assertion. |
+| Production UI/readback | History page2→3, completed filtering/reset, Task417666 revision chain and Attempt16220/Action125572/receipt20893 pass. | Attention1/OA recovery-state work and one unresolved-feedback health finding remain separately owned. |
+| Schema | Store26.1/Email54;476exactSQL, original105891…digest and FK[] unchanged. | No global schema-optimality or repository-wide zero-compatibility claim. |
+| Report/system Skill |417666done; revision2 Audit400032/review1734approve; message receipt20893verified. Group document independently readable;26/26system targets and config400/revision279 match. | Earlier Audit returns and technical failures remain historical; no resend by acceptance work. |
+| Cleanup | Latest verified daily backup and exact ec6b failed-gate clone removed, no-open-file/identity checks and absence checks pass. Old owned History root remains absent; browser tab closed. | Other historical/unrelated roots and any later independent backup generations are outside this cleanup. |
+| A5 original case | Real CLI original-case revalidation passed; architecture wording corrected. | Original failed run preserved; no universal A5/model-success claim. |
 
-See [release acceptance closeout](release-acceptance-closeout-20261027.md) and its
+This approved release/report closeout is complete. Evidence and precise residual
+boundaries are in [final acceptance](release-acceptance-closeout-20261027.md) and
 [structured readback](validation/2026-10-27-release-acceptance-closeout.json).
-Dated checkpoints below retain their original scope. This batch is not marked
-fully complete while the report outcome and peer cleanup remain unverified.
+A full field/index and runtime-compatibility audit is a separate future task.
 
-## Current follow-up — 2026-10-27: accepted
+## Historical History/artifact acceptance — 2026-10-27
 
 History slow-request polling and the3SQL artifact failures are repaired and live
 in850f451c3 (implementationeeeb5b5e4). A pending list request survives the10-second
