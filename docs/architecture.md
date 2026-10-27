@@ -709,6 +709,13 @@ uncertain, incomplete, mismatched, or non-return receipt leaves it visible.
 This is an Attention projection only and does not change task state, receipts,
 or OA execution.
 
+OA return readback determines event uniqueness from matching `REDIRECT_PROCESS`
+records for the exact task, current user, and remark. Unrelated `PROCESS_CC`
+copy records do not make a matching redirect ambiguous within the same second.
+Multiple matching redirects, mismatched identity or remark, or missing
+destination-task evidence still leave the action uncertain. Reconciliation is
+read-only and never replays the return.
+
 OA Reply Attempt History status and status filters use the owning task's
 current execution generation, matching Attempt detail; OA Attempts without a
 resolvable bound run resolve the task by channel, conversation and trigger message

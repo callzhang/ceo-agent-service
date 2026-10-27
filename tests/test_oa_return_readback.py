@@ -337,6 +337,24 @@ def test_ambiguous_millisecond_records_in_same_openapi_second_remain_uncertain()
     assert source.calls == []
 
 
+def test_same_second_process_cc_records_do_not_make_unique_return_ambiguous():
+    source = Source()
+    source.returned = True
+    source.records.extend([
+        {"operation_type": "PROCESS_CC", "userid": "principal",
+         "date": "2026-10-13 18:06:28", "remark": ""},
+        {"operation_type": "PROCESS_CC", "userid": "principal",
+         "date": "2026-10-13 18:06:28", "remark": ""},
+    ])
+
+    outcome = OaRevertHandler(source).reconcile(
+        action(), action_key="key", candidate=attempt("uncertain", acceptance()))
+
+    assert outcome.status == "verified"
+    assert outcome.provider_result["destination_task_ids"] == ["destination"]
+    assert source.calls == []
+
+
 def test_second_truncated_destination_created_in_redirect_second_is_verified(provider_read_clock):
     source = Source()
     source.returned = True

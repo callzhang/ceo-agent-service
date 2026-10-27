@@ -459,6 +459,8 @@ class OaRevertHandler(OaDecisionHandler):
             instant = self._event_time(item.get("operationTime"))
             if instant is None:
                 return unresolved
+            if operation_type == "PROCESS_CC":
+                continue
             precise_events.append((
                 operation_type if isinstance(operation_type, str) else "",
                 author if isinstance(author, str) else "",
@@ -478,6 +480,8 @@ class OaRevertHandler(OaDecisionHandler):
                 return unresolved
             operation_type = record.get("operation_type")
             author = record.get("userid")
+            if operation_type == "PROCESS_CC":
+                continue
             if isinstance(record.get("date"), str) and instant.microsecond == 0:
                 same_second = [precise for event_type, event_author, precise in precise_events
                     if event_type == operation_type and event_author == author
