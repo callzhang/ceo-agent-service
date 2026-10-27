@@ -37,9 +37,9 @@ HEADLESS_LOCK_TIMEOUT_SECONDS = 130
 LOCAL_SSO_TIMEOUT_MS = 10_000
 LOCAL_SSO_DIALOG_DELAY_MS = 1_500
 LOCAL_SSO_CONFIRM_PROCESS_SECONDS = 40
-# Finish before DwsLiveOkrSource's 120-second outer timeout so this wrapper can
-# always reap its isolated Chromium process group itself.
-HEADLESS_SOURCE_TIMEOUT_SECONDS = 110
+# The caller allows 240 seconds. Leave room for this wrapper to stop and reap
+# its isolated Chromium process group after a slow lock wait or browser refresh.
+HEADLESS_SOURCE_TIMEOUT_SECONDS = 220
 HEADLESS_SOURCE_SHUTDOWN_SECONDS = 5
 LOCAL_SSO_CURRENT_PAGE = ".app-page.app-page-curr"
 LOCAL_SSO_DIRECT_BUTTON = (

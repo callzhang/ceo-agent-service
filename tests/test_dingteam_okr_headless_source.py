@@ -24,6 +24,18 @@ def load_module():
     return module
 
 
+def test_headless_refresh_deadline_covers_lock_and_browser_startup_within_dws_budget():
+    module = load_module()
+
+    assert module.HEADLESS_LOCK_TIMEOUT_SECONDS < module.HEADLESS_SOURCE_TIMEOUT_SECONDS
+    assert module.HEADLESS_SOURCE_TIMEOUT_SECONDS >= 200
+    assert (
+        module.HEADLESS_SOURCE_TIMEOUT_SECONDS
+        + module.HEADLESS_SOURCE_SHUTDOWN_SECONDS
+        < 240
+    )
+
+
 def test_complete_personal_period_absence_emits_identity_bound_outcome(monkeypatch, capsys):
     module = load_module()
     class MissingPeriod(RuntimeError):
