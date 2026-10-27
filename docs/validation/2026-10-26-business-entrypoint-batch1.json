@@ -167,8 +167,350 @@
   "schema_migration": false,
   "external_test_sends": 0,
   "production_test_tasks": 0,
-  "publication": "source ready; standard deployment and production readback pending",
-  "cleanup": "pending production readback",
+  "publication": {
+    "status": "deployed; API/UI/schema/fact readback passed",
+    "target_commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+    "standard_gate": "passed through required exact-target deployment",
+    "quiet_wait": "standard; no skip flag; in_flight0before launch",
+    "operation": {
+      "operation_id": "deploy-b38ec509-a056-4925-89a3-4a9adb465daa",
+      "status": "succeeded",
+      "target_commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+      "installed_commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-b38ec509-a056-4925-89a3-4a9adb465daa.sqlite3",
+      "updated_at": "2026-10-27T02:44:03.658086+00:00"
+    },
+    "production_rebound_before": {
+      "captured_at": "2026-10-27T02:37:37.387071+00:00",
+      "schema_count": 476,
+      "schema_current": true,
+      "schema_sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+      "fk": [],
+      "historical_facts": {
+        "work_project": {
+          "count": 975,
+          "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+        },
+        "work_todo": {
+          "count": 3327,
+          "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+        },
+        "todo_evidence_candidate": {
+          "count": 3,
+          "sha256": "03b6c90ba133e317f8abc2a4be69cbc0bdb08acc0294a3798f920b63be2152db"
+        },
+        "work_updates": {
+          "count": 5468,
+          "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+        },
+        "follow_up_drafts": {
+          "count": 2477,
+          "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+        },
+        "follow_up_send_attempts": {
+          "count": 65,
+          "sha256": "bb0506c291c372b0cd420a86e6851df483484904a94736a2eede8de82aa7e38b"
+        },
+        "task_todo_sync_outbox": {
+          "count": 242,
+          "sha256": "fab7ff4ef836e0665007df0effa0eddeedba5fbc39c6b0329028eda590dde1d4"
+        },
+        "work_todo_dingtalk_links": {
+          "count": 875,
+          "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+        }
+      },
+      "deployment": {
+        "operation_id": "deploy-5398575d-3088-4391-a027-2a690c1a5a48",
+        "status": "succeeded",
+        "target_commit": "442a5951c95076a0402a1a9e8c2063912d5a6269",
+        "installed_commit": "442a5951c95076a0402a1a9e8c2063912d5a6269",
+        "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-5398575d-3088-4391-a027-2a690c1a5a48.sqlite3",
+        "updated_at": "2026-10-27T02:36:29.720236+00:00"
+      },
+      "active_reply_runs": [],
+      "production_commit": "442a5951c95076a0402a1a9e8c2063912d5a6269",
+      "http": {
+        "/healthz": 200,
+        "/api/console/status": 200,
+        "/api/console/attention": 200,
+        "/api/console/history?page=1&page_size=5": 200,
+        "/api/console/tasks/legacy-projects/1": 200
+      },
+      "status": {
+        "service": {
+          "label": "com.ceo-agent-service.main",
+          "target": "gui/501/com.ceo-agent-service.main",
+          "ok": true,
+          "state": "running",
+          "detail": "running",
+          "pid": "30325",
+          "runs": "1",
+          "initialized": "1",
+          "last_terminating_signal": "",
+          "returncode": 0
+        },
+        "summary": {
+          "queue_count": 11,
+          "pending": 16,
+          "processing": 0,
+          "failed": 25,
+          "retryable": 0,
+          "attention": 1
+        },
+        "system_health": {
+          "state": "degraded",
+          "detail": "email classification reached a non-retryable failure Native delivery results readable: 403; unavailable: 0.",
+          "checked_at": "2026-10-27T02:36:26.939904+00:00",
+          "violations": 3,
+          "components": [],
+          "native_delivery_coverage": {
+            "checked": 403,
+            "unavailable": 0
+          }
+        }
+      }
+    },
+    "production_after": {
+      "captured_at": "2026-10-27T02:44:25.850080+00:00",
+      "schema_count": 476,
+      "schema_current": true,
+      "schema_sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+      "fk": [],
+      "historical_facts": {
+        "work_project": {
+          "count": 975,
+          "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+        },
+        "work_todo": {
+          "count": 3327,
+          "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+        },
+        "todo_evidence_candidate": {
+          "count": 3,
+          "sha256": "03b6c90ba133e317f8abc2a4be69cbc0bdb08acc0294a3798f920b63be2152db"
+        },
+        "work_updates": {
+          "count": 5468,
+          "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+        },
+        "follow_up_drafts": {
+          "count": 2477,
+          "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+        },
+        "follow_up_send_attempts": {
+          "count": 65,
+          "sha256": "bb0506c291c372b0cd420a86e6851df483484904a94736a2eede8de82aa7e38b"
+        },
+        "task_todo_sync_outbox": {
+          "count": 242,
+          "sha256": "fab7ff4ef836e0665007df0effa0eddeedba5fbc39c6b0329028eda590dde1d4"
+        },
+        "work_todo_dingtalk_links": {
+          "count": 875,
+          "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+        }
+      },
+      "deployment": {
+        "operation_id": "deploy-b38ec509-a056-4925-89a3-4a9adb465daa",
+        "status": "succeeded",
+        "target_commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+        "installed_commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+        "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-b38ec509-a056-4925-89a3-4a9adb465daa.sqlite3",
+        "updated_at": "2026-10-27T02:44:03.658086+00:00"
+      },
+      "active_reply_runs": [],
+      "production_commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+      "http": {
+        "/healthz": 200,
+        "/api/console/status": 200,
+        "/api/console/attention": 200,
+        "/api/console/history?page=1&page_size=5": 200,
+        "/api/console/tasks/legacy-projects/1": 200
+      },
+      "status": {
+        "service": {
+          "label": "com.ceo-agent-service.main",
+          "target": "gui/501/com.ceo-agent-service.main",
+          "ok": true,
+          "state": "running",
+          "detail": "running",
+          "pid": "34587",
+          "runs": "1",
+          "initialized": "1",
+          "last_terminating_signal": "",
+          "returncode": 0
+        },
+        "summary": {
+          "queue_count": 11,
+          "pending": 13,
+          "processing": 0,
+          "failed": 25,
+          "retryable": 0,
+          "attention": 1
+        },
+        "system_health": {
+          "state": "degraded",
+          "detail": "email classification reached a non-retryable failure Native delivery results readable: 403; unavailable: 0.",
+          "checked_at": "2026-10-27T02:44:01.023937+00:00",
+          "violations": 3,
+          "components": [],
+          "native_delivery_coverage": {
+            "checked": 403,
+            "unavailable": 0
+          }
+        }
+      }
+    },
+    "runtime_sources_exact": [
+      "app/store.py",
+      "app/web_api/attempts.py",
+      "scripts/replay_task_attention.py"
+    ],
+    "remaining_retired_definitions": [],
+    "schema_and8historical_families_exact": true,
+    "details_api": {
+      "/api/console/tasks/legacy-projects/6": {
+        "http": 200,
+        "project_id": 6,
+        "todo_count": 13,
+        "update_count": 24,
+        "evidence": [
+          {
+            "id": 3,
+            "status": "rejected",
+            "todo_id": 15
+          },
+          {
+            "id": 2,
+            "status": "rejected",
+            "todo_id": 14
+          },
+          {
+            "id": 1,
+            "status": "rejected",
+            "todo_id": 13
+          }
+        ]
+      },
+      "/api/console/history/16137": {
+        "http": 200,
+        "id": 16137,
+        "session_roles": [
+          "consumer",
+          "audit"
+        ],
+        "calls": [
+          {
+            "run_id": 399752,
+            "role": "consumer",
+            "status": "completed",
+            "run_status": "completed",
+            "session_available": true,
+            "transcript_start": 0,
+            "transcript_end": 89
+          },
+          {
+            "run_id": 399753,
+            "role": "audit",
+            "status": "completed",
+            "run_status": "completed",
+            "session_available": true,
+            "transcript_start": 0,
+            "transcript_end": 69
+          }
+        ],
+        "delivery": {
+          "action_id": 125048,
+          "receipt_id": 20529,
+          "source_available": true,
+          "recall_status": ""
+        }
+      },
+      "/api/console/history?object_type=dingtalk&page=2&page_size=20": {
+        "http": 200,
+        "meta": {
+          "snapshot_at": "2026-10-27T02:45:16.511085Z",
+          "page": 2,
+          "page_size": 20,
+          "total": 6383,
+          "next_cursor": "3",
+          "has_more": true
+        },
+        "first_ids": [
+          "16110",
+          "16107",
+          "16106"
+        ]
+      }
+    },
+    "ui_readback": [
+      {
+        "url": "/tasks/legacy-project/6",
+        "result": "13Todos,24Updates and3rejected completion evidence records; decision JSON for evidence1 and DingTalk link712 receipt expanded"
+      },
+      {
+        "url": "/attempts/16137",
+        "result": "current Consumer/Audit sessions,2runtime calls and separate business/call states rendered"
+      },
+      {
+        "url": "/attempts/16137/execution/consumer",
+        "result": "completed current role detail and native link loaded"
+      },
+      {
+        "url": "/attempts/16137/execution/audit",
+        "result": "completed current role detail and native link loaded"
+      },
+      {
+        "url": "/tasks",
+        "result": "current Tasks/attention cards loaded"
+      },
+      {
+        "url": "/history?object_type=dingtalk&page=2",
+        "result": "loaded page2 with active/failed/queued tabs; dingtalk6383total;21-40;2/320"
+      }
+    ],
+    "production_test_actions": "none; no send/recall/rerun/save-feedback clicked",
+    "browser_tab": "owned verification tab closed",
+    "completed_at": "2026-10-27T02:52:54.244590+00:00"
+  },
+  "cleanup": {
+    "state": "complete; exact paths absent",
+    "backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+      "bytes": 514969600,
+      "mtime_ns": 1793069093966282161,
+      "mtime_utc": "2026-10-27T02:44:53.966282+00:00",
+      "integrity_check": [
+        [
+          "ok"
+        ]
+      ],
+      "application_id": 1128615746,
+      "operation_backup_exists": false,
+      "operation_backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-b38ec509-a056-4925-89a3-4a9adb465daa.sqlite3",
+      "new_workflow_backup_verified": true,
+      "state": "deleted after full integrity/marker verification and production readback"
+    },
+    "temp_root": "/private/tmp/ceo-retire-batch1.thgD8V",
+    "regular_files": 32,
+    "logical_bytes": 1655632,
+    "symlinks_not_followed": 121,
+    "open_files_check": "lsof found no open backup or temp files",
+    "gate": {
+      "deploy_pids": [
+        31876
+      ],
+      "gate_pid": 31927,
+      "gate_root": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.1j0s660m",
+      "pytest_roots": [
+        "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4557"
+      ]
+    },
+    "gate_paths_absent": true,
+    "production_database_and_native_trajectory": "preserved",
+    "verified_at": "2026-10-27T02:52:54.244590+00:00"
+  },
   "attempt_changes": {
     "retired_helper": "_transcript_owner",
     "removed_empty_placeholder_fields": [
@@ -184,5 +526,11 @@
     "changed_python_files": 50,
     "ruff": "passed",
     "diff_check": "passed"
-  }
+  },
+  "limitations": [
+    "Focused test groups overlap; no additive distinct/full-suite claim",
+    "One broad unrelated history run hit300s; affected14nodes separately passed; mandatory deployment gate passed",
+    "Production system_health retains3 pre-existing findings including nonretryable Email classification; failed25 unchanged",
+    "Only batch1 implemented; Project/claim fields and current declaration factory simplification untouched"
+  ]
 }

@@ -16,7 +16,7 @@ read independently; source push, installed runtime and business completion are s
 3. Both units independently SPEC then QUALITY approved; exact476 schema comparison
    passed. Combined19case integration and final review approved.
 4. Standard exact-target deployment, actual UI/API readback and verified backup/owned
-   temporary-artifact cleanup: pending.
+   temporary-artifact cleanup: complete.
 
 Keep all historical facts/provenance/results/receipts and actual current batch readers.
 The3 terminal rejected Todo evidence candidates,242 terminal legacy sync outbox rows,
@@ -68,7 +68,7 @@ SPEC required their restoration using an accepted historical fixture, preserving
 source, record, project, Todo, input, decision, category, status and title.
 
 [Machine-readable evidence](validation/2026-10-26-business-entrypoint-batch1.json)
-records each scope and the production fact/schema baseline. Publication is pending.
+records each scope and the production fact/schema baseline. Final publication and cleanup are recorded below.
 
 ## Attempt reader contract
 
@@ -83,4 +83,47 @@ review launched extra tests or broadened behavior.
 
 Root integration19passed8.48s; full changed-file Ruff(50Python files) and diff check
 passed. Final independent integration review approved the bounded runtime diff.
-Standard exact-target publication and post-deploy API/UI/fact readback remain pending.
+Standard exact-target publication and post-deploy API/UI/fact readback completed as below.
+
+## Production release and closeout — 2026-10-26 local time
+
+Source1e6db7a871e02a1dc8c6de1b501957e265b6dc09 was pushed after both units'
+SPEC/QUALITY reviews and final integration approval. Standard `python -m app.deploy
+--target-commit 1e6db7a871e02a1dc8c6de1b501957e265b6dc09` passed its mandatory
+exact-target gate under unchanged2GB/300s limits, used the normal quiet window,
+verified backup, import/health checks and deployed successfully. There was no
+skip-quiet flag: in-flight work was0 at launch. Another task had already installed
+442a5951c during development; the final pre-release snapshot was rebound to that
+version/PID30325 before this release. Operationdeploy-b38ec509-a056-4925-89a3-4a9adb465daa
+records successful target installation; newPID34587.
+
+Three deployed code files match the reviewed worktree byte-for-byte. All20Store
+methods, DTO and Attempt adapter are absent; RuntimeAttempt lookup is the required
+batch method. All476 schema declarations and the same8historical groups remain
+exactly equal across initial/ready/after snapshots, withFK[] throughout. This
+includes3Todo evidence candidates,65historical follow-up attempts and242terminal
+legacy outbox records. No database field/index/trigger/schema or business record is retired.
+
+Production `/healthz`,Status,Attention,History and Project APIs return200. Project6
+JSON/HTML retains13Todos,24Updates and3rejected evidence candidates; the evidence
+skip decision, source and Todo identity and existing DingTalk receipt were expanded
+in the browser. Current Tasks/attention cards, Attempt16137, Consumer/Audit detail,
+two role sessions and exact ranges0..89/0..69 are readable. History's filtered
+second page renders21–40 of6383records; actual Action/receipt source is available.
+No send, recall, rerun or feedback-save action was clicked, and no production test
+Task was created. The owned browser tab is closed.
+
+Failed summary remains25before/after this release; runtimeAttention1 and the prior
+system-health findings (including nonretryable Email classification) remain, not a
+new regression or a claim of a fully green service. Current service healthz isok.
+
+The startup daily backup replaced the operation backup. The new02:44:53UTC daily
+file was independently rechecked with fullintegrity_check=ok andCEOB completion
+marker; after readback it was deleted under the workflow directory lock after
+matchingmtime/size. Its exact514969600byte path is absent. The gate clone and its
+pytest4557root were already absent; this task's explicit temp root was removed
+without following121nested symlinks. Production DB/native trajectories and concise
+committed evidence remain. Cleanup is not a database-size reduction claim.
+
+Current declaration factory simplification and Project/claim-field retirement are
+separate next batches and have not been implemented here.
