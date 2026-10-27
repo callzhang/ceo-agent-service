@@ -21,6 +21,8 @@ from app.email_store import EmailStore
 from app.store import AgentRole, AutoReplyStore
 from app.action_feedback_storage import resolve_feedback_events
 from tests.wechat.support import create_wechat_delivery
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
+from tests.support.legacy_todo_facts import legacy_outbox_snapshot
 
 
 NOW = datetime(2026, 8, 7, 1, 0, tzinfo=timezone.utc)
@@ -783,7 +785,7 @@ def test_quality_gate_ignores_legacy_follow_up_drafts(tmp_path):
     for status, scheduled_at in (
         ("draft", overdue), ("approved", future), ("failed", overdue),
     ):
-        store.create_follow_up_draft(
+        seed_legacy_follow_up(store,
             project_id=1, status=status, scheduled_at=scheduled_at,
             dedupe_key=f"quality-gate:{status}",
         )
@@ -1402,7 +1404,7 @@ def _outbox_row(store: AutoReplyStore, *, key: str, status: str, attempts: int) 
     seed_legacy_todo_outbox(store,
         operation_key=key, work_todo_id=1, operation="create"
     )
-    row = store.list_task_todo_sync_outbox()[-1]
+    row = legacy_outbox_snapshot(store)[-1]
     with store._immediate_write_transaction() as db:
         update_sync_action(
             db, "task_todo_sync_outbox", int(row["id"]),
@@ -1429,7 +1431,7 @@ def test_quality_gate_keeps_failed_historical_outbox_as_facts_only(tmp_path):
     assert "task_todo_sync_outbox" not in report.checked_sources
     assert not [issue for issue in (*report.violations, *report.attention)
                 if issue.source == "task_todo_sync_outbox"]
-    assert {row["status"] for row in store.list_task_todo_sync_outbox()} == {"failed", "unknown"}
+    assert {row["status"] for row in legacy_outbox_snapshot(store)} == {"failed", "unknown"}
 
 
 def test_quality_gate_preserves_historical_retry_status_without_attention(tmp_path):
@@ -1442,7 +1444,7 @@ def test_quality_gate_preserves_historical_retry_status_without_attention(tmp_pa
 
     assert not any(issue.source == "task_todo_sync_outbox"
                    for issue in (*report.violations, *report.attention))
-    assert {row["status"] for row in store.list_task_todo_sync_outbox()} == {
+    assert {row["status"] for row in legacy_outbox_snapshot(store)} == {
         "failed", "completed", "skipped"
     }
 

@@ -13,6 +13,7 @@ from app.business_source_reader import (
     SourceUnavailableReason, SourceVersionBinding,
 )
 from app.task_semantic_models import BusinessTaskSignal
+from tests.support.business_task_seed import seed_task_signal
 
 
 SOURCE = {
@@ -139,7 +140,7 @@ def test_shared_source_bundle_keeps_every_signal_and_one_body_per_exact_version(
 ):
     store = AutoReplyStore(tmp_path / "bundle.sqlite3")
     ids = [
-        store.create_business_task_signal(**SOURCE, dedupe_key=f"s:{i}")
+        seed_task_signal(store, **SOURCE, dedupe_key=f"s:{i}")
         for i in range(80)
     ]
     signals = tuple(store.get_business_task_signal(id) for id in ids)
@@ -181,7 +182,7 @@ def test_shared_source_bundle_separates_versions_and_provenance(tmp_path):
             {"author_user_id": "u2"},
         )
     ):
-        id = store.create_business_task_signal(
+        id = seed_task_signal(store,
             **(SOURCE | changes), dedupe_key=f"v:{i}"
         )
         signals.append(store.get_business_task_signal(id))
@@ -195,7 +196,7 @@ def test_shared_source_bundle_separates_versions_and_provenance(tmp_path):
 def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key(tmp_path):
     store = AutoReplyStore(tmp_path / "signal-context.sqlite3")
     dedupe_key = "message:m:1:task-item:" + "a" * 64
-    signal_id = store.create_business_task_signal(**SOURCE, dedupe_key=dedupe_key)
+    signal_id = seed_task_signal(store, **SOURCE, dedupe_key=dedupe_key)
     signal = store.get_business_task_signal(signal_id)
     result = _bundle(store, (signal,), bodies={signal.id: SOURCE["evidence_text"]})
     reference = result["source_signals"][0]
@@ -214,7 +215,7 @@ def test_agent_source_projection_preserves_provenance_without_storage_dedupe_key
 
 def test_the_current_work_item_is_not_a_source_document_of_its_own(tmp_path):
     store = AutoReplyStore(tmp_path / "current.sqlite3")
-    id = store.create_business_task_signal(
+    id = seed_task_signal(store,
         source_type="reply_attempt",
         source_ref="m:1",
         source_time="t1",
@@ -238,7 +239,7 @@ def test_the_current_work_item_is_not_a_source_document_of_its_own(tmp_path):
 
 def test_a_source_with_an_external_locator_is_left_for_the_agent_to_read(tmp_path):
     store = AutoReplyStore(tmp_path / "located.sqlite3")
-    id = store.create_business_task_signal(**SOURCE, dedupe_key="located")
+    id = seed_task_signal(store, **SOURCE, dedupe_key="located")
     signal = store.get_business_task_signal(id)
     located = replace(
         signal, source=replace(signal.source, provider_locator_json='{"kind":"ai_minutes"}')
@@ -273,7 +274,7 @@ def test_a_source_with_an_external_locator_is_left_for_the_agent_to_read(tmp_pat
 def test_a_signal_repeats_only_the_source_fields_that_differ_from_its_document(tmp_path):
     store = AutoReplyStore(tmp_path / "override.sqlite3")
     ids = [
-        store.create_business_task_signal(
+        seed_task_signal(store,
             **SOURCE, conversation_title=title, dedupe_key=f"t:{i}"
         )
         for i, title in enumerate(("项目群", "项目群", "改名后的项目群"))
@@ -299,7 +300,7 @@ def test_a_signal_repeats_only_the_source_fields_that_differ_from_its_document(t
 def test_shared_source_bundle_reports_real_ranges_and_pins_middle_citation(tmp_path):
     store = AutoReplyStore(tmp_path / "ranges.sqlite3")
     body = "开头" + "甲" * 5000 + "王五负责商务和回款。" + "乙" * 5000 + "结尾"
-    id = store.create_business_task_signal(
+    id = seed_task_signal(store,
         source_type="meeting",
         source_ref="m:long",
         evidence_text=body,
@@ -332,7 +333,7 @@ def test_shared_source_bundle_locates_decoded_quote_without_joining_json_fields(
         },
         ensure_ascii=True,
     )
-    id = store.create_business_task_signal(
+    id = seed_task_signal(store,
         source_type="meeting", source_ref="json:1", evidence_text=raw, dedupe_key="json"
     )
     citation = SourceCitation(
@@ -351,7 +352,7 @@ def test_signals_with_different_context_json_point_at_their_own_text(tmp_path):
     store = AutoReplyStore(tmp_path / "contexts.sqlite3")
     contexts = ['{"work_item_title":"甲"}', '{"work_item_title":"乙"}', '{"work_item_title":"甲"}']
     ids = [
-        store.create_business_task_signal(
+        seed_task_signal(store,
             **(SOURCE | {"source_ref": f"m:{i}"}), context_json=text, dedupe_key=f"c:{i}"
         )
         for i, text in enumerate(contexts)

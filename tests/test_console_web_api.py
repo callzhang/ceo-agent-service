@@ -63,6 +63,8 @@ from app.web_api.common import (
     normalize_display_value,
 )
 from tests.wechat.support import create_wechat_delivery
+from tests.support.business_task_seed import seed_task
+from tests.support.legacy_todo_facts import seed_legacy_evidence_candidate
 
 
 class NonExecutingExecutor:
@@ -739,8 +741,8 @@ def test_console_tasks_endpoint_returns_paginated_json_envelope_and_serializable
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     _project(store, "Historical project")
-    first_id = store.create_business_task(title="Prepare release", stage="formal", formal_basis="explicit_assignment")
-    second_id = store.create_business_task(title="Review release", stage="formal", formal_basis="explicit_assignment")
+    first_id = seed_task(store, title="Prepare release", stage="formal", formal_basis="explicit_assignment")
+    second_id = seed_task(store, title="Review release", stage="formal", formal_basis="explicit_assignment")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/tasks?page=1&page_size=10")
@@ -761,7 +763,7 @@ def test_console_tasks_endpoint_displays_task_owner_without_legacy_fields(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="Assigned task", stage="formal", formal_basis="explicit_assignment", owner_name="孙伟", owner_user_id="owner-1")
+    task_id = seed_task(store, title="Assigned task", stage="formal", formal_basis="explicit_assignment", owner_name="孙伟", owner_user_id="owner-1")
 
     with _client(tmp_path) as client:
         response = client.get("/api/console/tasks?page=1&page_size=10")
@@ -805,7 +807,7 @@ def test_console_task_detail_contains_persisted_project_facts_todos_and_updates(
         description="Evidence candidate should be visible in detail.",
         status="open",
     )
-    store.upsert_todo_evidence_candidate(
+    seed_legacy_evidence_candidate(store,
         project_id=project_id,
         todo_id=todo_id,
         source_type="dws_message",

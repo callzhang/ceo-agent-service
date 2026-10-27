@@ -8,6 +8,8 @@ from app.dispatcher import adapters
 from app.store import AutoReplyStore
 from app.web_api.tasks import sent_todo_payload
 from tests.support.legacy_todo_facts import seed_legacy_todo_link, seed_legacy_todo_outbox, seed_legacy_work_project, seed_legacy_work_todo
+from tests.support.business_task_seed import seed_task
+from tests.support.legacy_todo_facts import legacy_outbox_snapshot
 
 
 def test_legacy_todo_operational_api_is_retired():
@@ -39,7 +41,7 @@ def test_recorded_active_legacy_todo_collision_stays_readable_and_cannot_dispatc
         project_id=project_id, title="Original assignment", owner_user_id="old-owner",
         status="open", deadline_at="2026-07-01 18:00:00",
     )
-    current_id = store.create_business_task(
+    current_id = seed_task(store,
         title="Unrelated current task", stage="formal", formal_basis="explicit_assignment",
         owner_user_id="current-owner", commitment_status="accepted",
     )
@@ -79,8 +81,8 @@ def test_recorded_active_legacy_todo_collision_stays_readable_and_cannot_dispatc
     assert recorded.last_dingtalk_payload_json == provider_json
     assert sorted(store.list_work_todo_dingtalk_links_for_todos([legacy_id]).get(legacy_id, []), key=lambda link: link.id) == [recorded]
     assert store.list_work_todo_dingtalk_links_for_todos([legacy_id]) == {legacy_id: [recorded]}
-    [operation] = store.list_task_todo_sync_outbox()
-    assert dict(store.get_task_todo_sync_outbox(outbox_id)) == dict(operation)
+    [operation] = legacy_outbox_snapshot(store)
+    assert dict(next(row for row in legacy_outbox_snapshot(store) if row["id"] == outbox_id)) == dict(operation)
     assert operation["evidence_json"] == '{"source":"original-source"}'
     assert json.loads(operation["receipt_json"])["dingtalk_task_id"] == "legacy-provider-id"
     [sent] = store.list_sent_todo_records()

@@ -3,7 +3,6 @@
 import json
 from collections.abc import Callable
 from datetime import datetime, timezone
-from types import SimpleNamespace
 from typing import Any
 from urllib.parse import quote
 
@@ -110,20 +109,6 @@ def _conversation_label(attempt: Any) -> str:
     return _CONVERSATION_LABELS.get(channel, "会话")
 
 
-def _transcript_owner(run: Any) -> Any:
-    """Address an agent run's transcript slice the way an Attempt row is read.
-
-    An agent run records the same three values an Attempt row does - session id
-    and the transcript line range it owns - under its own column names.
-    """
-    return SimpleNamespace(
-        codex_session_id=str(getattr(run, "codex_session_id", "") or ""),
-        codex_transcript_start_line=int(getattr(run, "transcript_start_line", 0) or 0),
-        codex_transcript_end_line=int(getattr(run, "transcript_end_line", 0) or 0),
-        audit_tool_events_json="",
-    )
-
-
 def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]:
     """Return each role's readable transcript.
 
@@ -137,10 +122,13 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
 
     sessions: list[dict[str, Any]] = []
     seen: set[str] = set()
-    candidates = [(_run_role(run), _transcript_owner(run)) for run in agent_runs]
-    candidates.append(("", attempt))
-    for role, owner in candidates:
-        session_id = str(getattr(owner, "codex_session_id", "") or "").strip()
+    candidates = [
+        (_run_role(run), str(getattr(run, "codex_session_id", "") or ""))
+        for run in agent_runs
+    ]
+    candidates.append(("", str(getattr(attempt, "codex_session_id", "") or "")))
+    for role, session_id in candidates:
+        session_id = session_id.strip()
         if not session_id or session_id in seen:
             continue
         if find_codex_session_path(session_id) is None:
@@ -165,12 +153,7 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
     )
 
     run_ids = [int(getattr(run, "id", 0) or 0) for run in agent_runs]
-    batch_reader = getattr(store, "list_agent_runtime_attempts_for_runs", None)
-    attempts_by_run = (
-        batch_reader(run_ids)
-        if callable(batch_reader)
-        else {run_id: store.list_agent_runtime_attempts(run_id) for run_id in run_ids}
-    )
+    attempts_by_run = store.list_agent_runtime_attempts_for_runs(run_ids)
     result = []
     for run in agent_runs:
         role = _run_role(run)

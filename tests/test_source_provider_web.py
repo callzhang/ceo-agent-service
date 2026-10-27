@@ -12,6 +12,7 @@ from app.store import AutoReplyStore
 from app.business_storage import insert_business
 from app.action_business_storage import insert_business_action
 from app.web_api.registration import register_console_routes
+from tests.support.business_task_seed import seed_task_signal
 
 
 @pytest.mark.parametrize("route", ("signals", "items"))
@@ -27,7 +28,7 @@ def test_source_detail_uses_existing_dws_factory(db, tmp_path, monkeypatch, rout
         # Full constructor selection is a separate final integration gate.
         patch.setattr(AutoReplyStore, "_ensure_initialized", lambda self: None)
         store = AutoReplyStore(path)
-    public_id = store.create_business_task_signal(
+    public_id = seed_task_signal(store,
         source_type=item.source_type, source_ref=item.source_ref, source_time=item.source_time,
         conversation_id=item.conversation_id, author_user_id=item.author_user_id,
         author_name=item.author_name, author_kind=item.author_kind,

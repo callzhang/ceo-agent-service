@@ -1,5 +1,6 @@
 from app.store import AutoReplyStore
 from tests.test_console_web_api import _client
+from tests.support.business_task_seed import seed_task
 
 
 def _events(store, task_id):
@@ -8,7 +9,7 @@ def _events(store, task_id):
 
 def test_ignoring_a_candidate_cancels_it_with_a_human_signal_and_restoring_reopens_it(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="整理访谈问题清单", stage="candidate")
+    task_id = seed_task(store, title="整理访谈问题清单", stage="candidate")
     with _client(tmp_path) as client:
         response = client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "ignore"})
         assert response.status_code == 200
@@ -30,7 +31,7 @@ def test_ignoring_a_candidate_cancels_it_with_a_human_signal_and_restoring_reope
 
 def test_a_second_click_on_the_same_state_is_refused_not_repeated(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="候选", stage="candidate")
+    task_id = seed_task(store, title="候选", stage="candidate")
     with _client(tmp_path) as client:
         assert client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "ignore"}).status_code == 200
         again = client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "ignore"})
@@ -43,7 +44,7 @@ def test_a_second_click_on_the_same_state_is_refused_not_repeated(tmp_path):
 
 def test_a_formal_task_cannot_be_set_aside_from_the_console(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="正式任务", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
+    task_id = seed_task(store, title="正式任务", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     with _client(tmp_path) as client:
         response = client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "ignore"})
         assert response.status_code == 409
@@ -53,7 +54,7 @@ def test_a_formal_task_cannot_be_set_aside_from_the_console(tmp_path):
 
 def test_unknown_task_and_unknown_action_are_rejected(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="候选", stage="candidate")
+    task_id = seed_task(store, title="候选", stage="candidate")
     with _client(tmp_path) as client:
         assert client.post("/api/console/tasks/items/9999/candidate-decision", json={"action": "ignore"}).status_code == 404
         assert client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "promote"}).status_code == 400

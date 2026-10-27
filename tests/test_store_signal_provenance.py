@@ -11,6 +11,8 @@ from tests.test_provenance_vector_storage import db as db, binding as binding
 from app.store import AutoReplyStore
 from app.business_source_reader import SourceVersionBinding
 from app.task_semantic_models import BusinessTaskSignal
+from tests.support.business_task_seed import seed_task_signal
+from tests.support.business_task_seed import signal_snapshot
 
 
 def signal_input(binding):
@@ -158,7 +160,7 @@ def test_store_public_signal_reads_and_console_reconstruction(db, tmp_path):
     with sqlite3.connect(path) as target:
         db.backup(target)
     store = AutoReplyStore(path)
-    public_id = store.create_business_task_signal(
+    public_id = seed_task_signal(store,
         **{field: getattr(binding, field) for field in (
             "source_type", "source_ref", "source_time", "conversation_id",
             "author_user_id", "author_name", "author_kind")}, evidence_text=BODY,
@@ -171,7 +173,7 @@ def test_store_public_signal_reads_and_console_reconstruction(db, tmp_path):
             reason=event.reason, _db=current)
     fact = store.get_business_task_signal(public_id)
     assert fact.source == binding
-    assert store.list_business_task_signals() == (fact,)
+    assert signal_snapshot(store) == (fact,)
     assert store.get_business_task_signal_for_task_source_ref(task_id=event.task_id, source_ref=REF) == fact
     reading = store.business_source_reader().resolve(binding)
     assert isinstance(reading, AvailableSource) and reading.body == BODY

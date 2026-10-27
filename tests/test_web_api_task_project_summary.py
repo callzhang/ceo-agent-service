@@ -8,6 +8,7 @@ from app.task_semantic_service import PromoteCandidate, RecordTaskSuggestion, So
 from app.web_api.tasks import business_project_detail, business_project_list_response, business_task_detail
 from app.action_followup_sync_definitions import sync_action_projection
 import pytest
+from tests.support.business_task_seed import seed_task, seed_task_signal
 
 
 def _prepared(store, citation):
@@ -24,7 +25,7 @@ def _project(store, title="交付项目", name="张三"):
     anchor_id = resolver.register_anchor(anchor_type="project", anchor_ref=f"project:{title}", title=title)
     project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source=f"meeting:{title}")
     text = f"{name}总负责交付与验收，王五负责商务回款。验收排期未确定。"
-    signal_id = store.create_business_task_signal(source_type="meeting", source_ref=f"meeting:{title}", evidence_text=text, dedupe_key=f"meeting:{title}")
+    signal_id = seed_task_signal(store, source_type="meeting", source_ref=f"meeting:{title}", evidence_text=text, dedupe_key=f"meeting:{title}")
     citation = SourceCitation(signal_id=signal_id, source_ref=f"meeting:{title}", source_excerpt=text)
     context = ProjectContext(goal="完成交付并回款", scope="一期", overall_owner={
         "person_name": name, "responsibility": "交付与验收", "evidence": [citation],
@@ -66,8 +67,8 @@ def test_unknown_project_context_does_not_borrow_task_owner(tmp_path):
     resolver = BusinessResolutionService(store)
     anchor = resolver.register_anchor(anchor_type="project", anchor_ref="unknown", title="待明确项目")
     project_id = resolver.register_official_project(anchor_id=anchor, registry_source="meeting:unknown")
-    task_id = store.create_business_task(title="执行事项", stage="formal", formal_basis="explicit_assignment", owner_name="执行者")
-    signal = store.create_business_task_signal(source_type="project_weekly_report", source_ref="report:old", evidence_text="报告说执行者负责某项任务。", dedupe_key="old-report")
+    task_id = seed_task(store, title="执行事项", stage="formal", formal_basis="explicit_assignment", owner_name="执行者")
+    signal = seed_task_signal(store, source_type="project_weekly_report", source_ref="report:old", evidence_text="报告说执行者负责某项任务。", dedupe_key="old-report")
     resolver.confirm_anchor_match(task_id=task_id, anchor_id=anchor, evidence_signal_id=signal)
     detail = business_project_detail(store, project_id)
     assert detail.context is None
@@ -114,8 +115,8 @@ def test_project_summaries_batch_task_project_membership_queries(tmp_path, monke
     store = AutoReplyStore(tmp_path / "batched-membership.sqlite3")
     first, anchor, _, _ = _project(store, title="一期")
     second, _, _, _ = _project(store, title="二期")
-    task_id = store.create_business_task(title="准备交付材料", stage="candidate")
-    signal_id = store.create_business_task_signal(
+    task_id = seed_task(store, title="准备交付材料", stage="candidate")
+    signal_id = seed_task_signal(store,
         source_type="meeting", source_ref="meeting:assignment",
         evidence_text="准备交付材料", dedupe_key="assignment",
     )
@@ -216,9 +217,9 @@ def test_project_history_is_bounded_and_current_proof_remains_visible(tmp_path):
 @pytest.mark.parametrize("date_type", ["requested_deadline_at", "committed_deadline_at", "external_deadline_at"])
 def test_task_summary_labels_only_matching_actual_deadline_evidence(tmp_path, date_type):
     store = AutoReplyStore(tmp_path / "deadline.sqlite3")
-    task_id = store.create_business_task(title="交付", stage="candidate", deadline_at="2026-10-09")
+    task_id = seed_task(store, title="交付", stage="candidate", deadline_at="2026-10-09")
     assert business_task_detail(store, task_id).summary.deadline_type == ""
-    signal_id = store.create_business_task_signal(source_type="message", source_ref="m:date", evidence_text="日期为2026-10-09。", dedupe_key="date")
+    signal_id = seed_task_signal(store, source_type="message", source_ref="m:date", evidence_text="日期为2026-10-09。", dedupe_key="date")
     with store.business_task_transaction() as db:
         store.create_business_task_date_evidence_in_transaction(task_id=task_id, source_signal_id=signal_id,
             date_type=date_type, value_at="2026-10-09", raw_phrase="2026-10-09", actor_kind="human", _db=db)

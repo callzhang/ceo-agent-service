@@ -24,6 +24,7 @@ from app.dispatcher.service import ConsumerDispatcher
 from app.meeting_alignment import consume_claimed_meeting_alignment_job
 from app.store import AutoReplyStore
 from app.worker import DingTalkAutoReplyWorker
+from tests.support.business_task_seed import seed_task
 
 
 NOW = datetime(2026, 9, 8, 12, 0, tzinfo=UTC)
@@ -226,7 +227,7 @@ def _update_claim_lease(
 
 
 def _business_task_todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title=f"Business Task {index}", stage="formal",
         formal_basis="explicit_assignment", commitment_status="accepted",
         owner_user_id="owner-1", owner_name="Alex",

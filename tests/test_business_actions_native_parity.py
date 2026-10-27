@@ -17,6 +17,8 @@ from app.action_business_definitions import business_action_projection
 from app.business_storage import insert_business
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
+from tests.support.business_task_seed import seed_task, seed_task_signal
+from tests.support.business_task_seed import project_candidate_snapshot
 
 
 def _public_business_fixture(store, prefix):
@@ -31,8 +33,8 @@ def _public_business_fixture(store, prefix):
         title="Copy-only " + prefix)
     project = service.register_official_project(
         anchor_id=anchor, registry_source="copy-proof-registry:" + prefix)
-    task = store.create_business_task(title="Copy-only task " + prefix, stage="candidate")
-    signal = store.create_business_task_signal(
+    task = seed_task(store, title="Copy-only task " + prefix, stage="candidate")
+    signal = seed_task_signal(store,
         source_type="meeting", source_ref="copy-proof-meeting:" + prefix,
         evidence_text="Synthetic local-copy migration proof " + prefix,
         dedupe_key="copy-proof-signal:" + prefix)
@@ -42,7 +44,7 @@ def _public_business_fixture(store, prefix):
         reason="Synthetic local-copy candidate")
     service.confirm_project_candidate(candidate_id=candidate, project_id=project,
                                       evidence_signal_id=signal)
-    assert store.get_business_project_candidate(candidate).status.value == "confirmed"
+    assert project_candidate_snapshot(store, candidate).status.value == "confirmed"
     with store.business_task_transaction() as db:
         attention = store.create_business_attention_item_in_transaction(
             stable_key="copy-proof-attention:" + prefix, category="decision",
@@ -61,7 +63,7 @@ def _public_business_fixture(store, prefix):
             _db=db)
         assert store.get_business_attention_item_in_transaction(
             item_id=attention, _db=db).stable_key == "copy-proof-attention:" + prefix
-    task2 = store.create_business_task(title="Copy-only related task " + prefix,
+    task2 = seed_task(store, title="Copy-only related task " + prefix,
                                        stage="candidate")
     with store.business_task_transaction() as db:
         ProjectContextService(store).apply(project_id=project, context=None,
@@ -374,8 +376,8 @@ def test_anchor_link_upsert_keeps_public_id_and_created_at(tmp_path):
 
 def test_selected_signal_and_date_observations_keep_values_and_are_immutable(tmp_path):
     store = AutoReplyStore(tmp_path / "immutable-current.sqlite3")
-    task = store.create_business_task(title="Immutable observations", stage="candidate")
-    signal = store.create_business_task_signal(
+    task = seed_task(store, title="Immutable observations", stage="candidate")
+    signal = seed_task_signal(store,
         source_type="meeting", source_ref="meeting:immutable",
         evidence_text="  Exact source body\n", dedupe_key="signal:immutable",
         context_json='{"source":true}',

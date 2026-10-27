@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from app.action_business_storage import insert_business_action
 from app.store import AutoReplyStore
 from tests.test_console_web_api import _client
+from tests.support.business_task_seed import seed_task_signal
 
 
 def _project(store: AutoReplyStore, *, title: str = "Evidence project") -> int:
@@ -32,7 +33,7 @@ def _signal(
     source_ref: str | None = None,
     source_time: str = "2026-10-07T12:00:00+00:00",
 ) -> int:
-    return store.create_business_task_signal(
+    return seed_task_signal(store,
         source_type="message",
         source_ref=source_ref or f"message:{key}",
         source_time=source_time,

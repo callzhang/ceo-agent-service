@@ -9,6 +9,8 @@ from tests.support.legacy_todo_facts import (
     seed_legacy_work_update,
 )
 from tests.test_console_web_api import _client
+from tests.support.business_task_seed import seed_task
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
 
 
 def test_formal_task_list_and_legacy_history_detail_have_disjoint_read_surfaces(tmp_path):
@@ -53,7 +55,7 @@ def test_formal_task_list_and_legacy_history_detail_have_disjoint_read_surfaces(
         last_dingtalk_done=True,
         last_dingtalk_payload_json=json.dumps({"id": "receipt-legacy", "done": True}),
     )
-    formal_id = store.create_business_task(
+    formal_id = seed_task(store,
         title="Current formal task",
         stage="formal",
         formal_basis="explicit_assignment",
@@ -113,7 +115,7 @@ def test_legacy_history_links_share_one_canonical_spa_and_html_detail_path(tmp_p
         title="Historical follow-up",
         status="open",
     )
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         target_kind="direct",

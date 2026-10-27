@@ -3,6 +3,8 @@ from tests.test_task_business_resolution import create_task
 
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
+from tests.support.business_task_seed import seed_task
+from tests.support.business_task_seed import project_candidate_snapshot
 
 
 def test_console_confirmation_creates_project_and_links_cluster_tasks(tmp_path):
@@ -33,7 +35,7 @@ def test_console_confirmation_creates_project_and_links_cluster_tasks(tmp_path):
     project = store.get_business_project(project_id)
     assert project is not None
     assert [item.id for item in store.list_business_task_project_links(task_id=task_id)] == [project_id]
-    candidate = store.get_business_project_candidate(candidate_id)
+    candidate = project_candidate_snapshot(store, candidate_id)
     assert candidate is not None
     assert candidate.status.value == "confirmed"
 
@@ -41,7 +43,7 @@ def test_console_confirmation_creates_project_and_links_cluster_tasks(tmp_path):
 def test_console_confirmation_requires_source_evidence(tmp_path):
     path = tmp_path / "worker.sqlite3"
     store = AutoReplyStore(path)
-    task_id = store.create_business_task(title="无来源任务", stage="candidate")
+    task_id = seed_task(store, title="无来源任务", stage="candidate")
     cluster_id = BusinessResolutionService(store).create_cluster(
         title="无证据项目", task_ids=[task_id]
     )

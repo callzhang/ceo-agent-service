@@ -17,6 +17,8 @@ from app.task_semantic_models import (
 )
 from app.task_semantic_service import RecordFormalTask, SourceSignal, TaskDateInput, TaskSemanticService
 from app.task_semantic_rules import FormalityEvidence
+from tests.support.business_task_seed import seed_task, seed_task_signal
+from tests.support.business_task_seed import project_candidate_snapshot
 
 
 @pytest.fixture
@@ -54,7 +56,7 @@ def create_task(store: AutoReplyStore, key: str, *, owner: str = "王明") -> in
 
 
 def evidence_signal(store: AutoReplyStore, key: str) -> int:
-    return store.create_business_task_signal(
+    return seed_task_signal(store,
         source_type="registry", source_ref=key, evidence_text=f"Evidence {key}",
         dedupe_key=f"evidence:{key}",
     )
@@ -63,7 +65,7 @@ def evidence_signal(store: AutoReplyStore, key: str) -> int:
 def test_cluster_keeps_member_task_truth_independent_and_never_creates_project(resolver):
     first = create_task(resolver.store, "one", owner="王明")
     second = create_task(resolver.store, "two", owner="李丽")
-    resolver.store.create_business_task(
+    seed_task(resolver.store,
         title="第三项", stage="candidate", status=BusinessTaskStatus.WAITING,
         owner_name="陈晨", deadline_at="2026-11-01T00:00:00+00:00",
     )
@@ -75,7 +77,7 @@ def test_cluster_keeps_member_task_truth_independent_and_never_creates_project(r
         cluster_id=cluster_id, title="美国客户成交", reason="持续多任务目标",
     )
 
-    assert resolver.store.get_business_project_candidate(candidate_id) is not None
+    assert project_candidate_snapshot(resolver.store, candidate_id) is not None
     assert resolver.store.list_business_projects() == []
     after = {task.id: task for task in resolver.store.list_business_tasks()}
     for task_id in (first, second, third):
@@ -130,7 +132,7 @@ def test_explicit_confirmation_atomically_creates_official_project_and_is_idempo
         anchor_id=anchor_id,
         evidence_signal_id=signal_id,
     ) == candidate_id
-    candidate = resolver.store.get_business_project_candidate(candidate_id)
+    candidate = project_candidate_snapshot(resolver.store, candidate_id)
     assert candidate is not None
     assert candidate.confirmation_signal_id == signal_id
     project = resolver.store.get_business_project(candidate.confirmed_project_id)
@@ -239,10 +241,10 @@ def test_confirmed_not_relevant_stays_searchable_but_is_excluded_from_projection
 
 def test_projection_input_does_not_truncate_eligible_tasks_at_one_hundred(resolver):
     created_ids = [
-        resolver.store.create_business_task(title=f"Candidate {index}", stage="candidate")
+        seed_task(resolver.store, title=f"Candidate {index}", stage="candidate")
         for index in range(101)
     ]
-    late_relevant_id = resolver.store.create_business_task(
+    late_relevant_id = seed_task(resolver.store,
         title="Late relevant task",
         stage="candidate",
         business_relevance=BusinessRelevance.RELEVANT,

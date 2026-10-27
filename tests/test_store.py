@@ -48,6 +48,7 @@ from app.store import (
     AutoReplyStore,
 )
 from tests.wechat.support import create_wechat_delivery
+from tests.support.business_task_seed import seed_task_signal
 
 RUNTIME_ATTEMPT_SQL = "select *, parent_id as agent_run_id from runtime_attempts"
 
@@ -1447,7 +1448,7 @@ def test_task_agent_projection_receipt_uses_existing_transaction(tmp_path: Path)
 
 
 def _create_receipt_attention(store, assessment_json=None):
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="receipt-message", evidence_text="Delivery is blocked",
         dedupe_key="receipt-message",
     )

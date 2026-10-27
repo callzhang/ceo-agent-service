@@ -23,6 +23,8 @@ from app.task_attention_projection import BusinessAttentionProjection
 from tests.support.task_native import record_task_fixture_run
 from tests.support.task_native import task_native_records  # noqa: F401
 from tests.support.task_native import read_task_fixture_decision, rewrite_task_fixture_decision
+from tests.support.business_task_seed import seed_task_evidence, seed_task_signal
+from tests.support.business_task_seed import signal_snapshot
 
 
 def evaluation_tool():
@@ -444,7 +446,7 @@ def test_evaluation_metrics_use_persisted_cards_and_detect_invalid_evidence(tmp_
     seed_report(store)
     source_item = report_item()
     prepared_sources = PreparedSources(store.business_source_reader())
-    for signal in store.list_business_task_signals():
+    for signal in signal_snapshot(store):
         if signal.source_ref == source_item.source.ref:
             prepared_sources.add_current(signal, source_item.summary)
     before = tool.read_domain(store)
@@ -504,7 +506,7 @@ def test_evaluation_allows_only_explicit_reviewed_task_counts(
     seed_report(store)
     source_item = report_item()
     prepared_sources = PreparedSources(store.business_source_reader())
-    for signal in store.list_business_task_signals():
+    for signal in signal_snapshot(store):
         if signal.source_ref == source_item.source.ref:
             prepared_sources.add_current(signal, source_item.summary)
     expected = {
@@ -802,7 +804,7 @@ def test_assessment_oracle_rejects_unlinked_positive_receipt_signal_without_task
     store = AutoReplyStore(tmp_path / "assessment-no-task-unlinked-signal.sqlite3")
     item, input_id, before, _, expected = recorded_no_task_assessment_case(store)
     required = expected["project_assessments"][0]["evidence"][0]
-    unlinked_signal_id = store.create_business_task_signal(
+    unlinked_signal_id = seed_task_signal(store,
         source_type=item.source.type.value,
         source_ref=required["source_ref"],
         evidence_text=required["source_excerpt"],
@@ -1016,7 +1018,7 @@ def test_assessment_oracle_rejects_unlinked_raw_positive_signal_absent_from_rece
     tool = evaluation_tool()
     store = AutoReplyStore(tmp_path / "assessment-unlinked-raw-positive.sqlite3")
     _, input_id, before, _, expected = recorded_assessment_case(store)
-    unrelated_signal_id = store.create_business_task_signal(
+    unrelated_signal_id = seed_task_signal(store,
         source_type="project_weekly_report",
         source_ref="report:fixture",
         evidence_text=RISK_QUOTE,
@@ -1053,7 +1055,7 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
         projection = json.loads(run["projection_json"])
     decision = read_latest_decision(store)
     receipt = projection["project_assessments"][0]
-    linked_signal_id = store.create_business_task_signal(
+    linked_signal_id = seed_task_signal(store,
         source_type="project_weekly_report",
         source_ref="report:fixture",
         evidence_text=f"本周经营风险：{RISK_QUOTE}",
@@ -1066,7 +1068,7 @@ def test_assessment_oracle_accepts_linked_extra_positive_signal_in_raw_and_recei
         store.get_business_task_signal(linked_signal_id),
         f"本周经营风险：{RISK_QUOTE}",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=receipt["task_ids"][0],
         signal_id=linked_signal_id,
         evidence_role="discovery",
@@ -1145,7 +1147,7 @@ def test_assessment_oracle_requires_actual_application_receipt(tmp_path, fault):
         projection["project_assessments"][0]["evidence"][0]["signal_id"] += 999
     elif fault in {"unlinked_real_signal", "unlinked_raw_and_receipt"}:
         original = projection["project_assessments"][0]["evidence"][0]
-        unlinked = store.create_business_task_signal(
+        unlinked = seed_task_signal(store,
             source_type="project_weekly_report",
             source_ref=original["source_ref"],
             evidence_text=original["source_excerpt"],
@@ -1714,7 +1716,7 @@ def prepared_report_sources(store, item=None):
         tuple(item) if isinstance(item, (tuple, list)) else (item,)
     )
     prepared = PreparedSources(store.business_source_reader())
-    for signal in store.list_business_task_signals():
+    for signal in signal_snapshot(store):
         source = next((item for item in items
                        if signal.source_ref == item.source.ref
                        and signal.source.matches_body(item.summary)), None)
@@ -1815,19 +1817,19 @@ def test_invalid_historical_citation_rejects_whole_proposal(tmp_path, fault):
     elif fault in {"forged", "wrong_ref"}:
         signal_id = seed.attention_proposals[0].signal_id
     else:
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type=fault,
             source_ref="report:fixture",
             evidence_text=RISK_QUOTE,
             dedupe_key=fault,
         )
         if fault in {"session_provenance", "memory_provenance"}:
-            store.link_business_task_evidence(
+            seed_task_evidence(store,
                 task_id=seed.task_ids[0], signal_id=signal_id, evidence_role="discovery"
             )
         if fault == "crossproject":
             other = seed_report_other_project(store)
-            store.link_business_task_evidence(
+            seed_task_evidence(store,
                 task_id=other.task_ids[0],
                 signal_id=signal_id,
                 evidence_role="discovery",
@@ -2285,13 +2287,13 @@ def test_folded_group_checks_each_current_signal_not_only_first(tmp_path):
     store = AutoReplyStore(tmp_path / "folded-provenance.sqlite3")
     seed = seed_report(store)
     applied = seed.attention_proposals[0]
-    cited = store.create_business_task_signal(
+    cited = seed_task_signal(store,
         source_type="session_provenance",
         source_ref="report:fixture",
         evidence_text=RISK_QUOTE,
         dedupe_key="cited",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=applied.task_ids[0], signal_id=cited, evidence_role="discovery"
     )
     prepared_sources = prepared_report_sources(store)
@@ -3508,7 +3510,7 @@ def test_existing_project_link_rejects_unproven_target_or_current_action(
             record_run=False,
         )
     assert len(store.list_business_tasks()) == 1
-    assert len(store.list_business_task_signals()) == 1
+    assert len(signal_snapshot(store)) == 1
 
 
 def test_new_evidence_updates_existing_project_attention_without_task_field_change(
@@ -3530,14 +3532,14 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
     # does not re-submit a Task→Project selector or alter the confirmed link.
     payload.pop("project")
     payload.pop("project_link_evidence")
-    follow_up_signal_id = store.create_business_task_signal(
+    follow_up_signal_id = seed_task_signal(store,
         source_type="reply_attempt",
         source_ref="source:pending-follow-up",
         evidence_text="待确认验收结果。",
         dedupe_key="source:pending-follow-up",
         conversation_id="group:delivery",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=seed.task_id,
         signal_id=follow_up_signal_id,
         evidence_role="discovery",
@@ -3567,7 +3569,7 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
             for row in store.list_business_task_todo_sync_outbox()
         ]
     events_before = store.list_business_task_events(seed.task_id)
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     result = apply_task_agent_decision(
         store,
         summary_input_id=1,
@@ -3595,7 +3597,7 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
     assert assessment.task_ids == [seed.task_id]
     assert assessment.attention_id == card_id
     assert result.applied_decisions == ()
-    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(signal_snapshot(store)) == len(signals_before) + 1
     signal = store.get_business_task_signal(assessment.evidence[0].signal_id)
     assert signal.source_ref == item.source.ref
     prepared_sources = PreparedSources(store.business_source_reader())
@@ -3671,7 +3673,7 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
         record_run=False,
     )
     assert replay_without_link.applied_decisions == ()
-    assert store.list_business_task_signals() == (*signals_before, signal)
+    assert signal_snapshot(store) == (*signals_before, signal)
     assert store.list_business_task_evidence(seed.task_id) == evidence_after
     assert store.list_business_attention_events(card_id) == events_after
     assert store.list_business_attention_tasks(card_id)[0].task_id == seed.task_id
@@ -3790,13 +3792,13 @@ def test_field_update_then_identical_attention_replay_preserves_evidence_roles(
     events_before = store.list_business_task_events(seed.task_id)
     attention_events_before = store.list_business_attention_events(card_id)
     card_before = store.get_business_attention_item(card_id)
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
 
     apply_task_agent_decision(
         store, summary_input_id=2, work_item=item, decision=decision, record_run=False
     )
 
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
     assert store.list_business_task_evidence(seed.task_id) == evidence_before
     assert store.list_business_task_events(seed.task_id) == events_before
     assert store.list_business_attention_events(card_id) == attention_events_before
@@ -3855,7 +3857,7 @@ def test_cited_memory_ref_does_not_replace_current_attention_source(tmp_path):
     )
     provenance = next(
         signal
-        for signal in store.list_business_task_signals()
+        for signal in signal_snapshot(store)
         if signal.source_type == "memory_provenance"
     )
     stored_task = store.get_business_task(seed.task_id)
@@ -3894,7 +3896,7 @@ def test_cited_memory_ref_does_not_replace_current_attention_source(tmp_path):
         store.get_business_task_signal(observed_id).source_type
         == current.source.type.value
     )
-    signals_after = store.list_business_task_signals()
+    signals_after = signal_snapshot(store)
     evidence_after = store.list_business_task_evidence(seed.task_id)
     events_after = store.list_business_task_events(seed.task_id)
     attention_events_after = store.list_business_attention_events(card_id)
@@ -3908,7 +3910,7 @@ def test_cited_memory_ref_does_not_replace_current_attention_source(tmp_path):
     )
     assert replay.applied_decisions[0].signal_id == observed_id
     assert store.get_business_task_signal(provenance.id) == provenance
-    assert store.list_business_task_signals() == signals_after
+    assert signal_snapshot(store) == signals_after
     assert store.list_business_task_evidence(seed.task_id) == evidence_after
     assert store.list_business_task_events(seed.task_id) == events_after
     assert store.list_business_attention_events(card_id) == attention_events_after
@@ -3930,7 +3932,7 @@ def test_cited_memory_ref_does_not_replace_current_attention_source(tmp_path):
     assert store.get_business_task_signal(provenance.id) == provenance
     # The changed immutable source has its own Project proof signal; it does
     # not replace the older memory provenance or Task-effect evidence.
-    assert len(store.list_business_task_signals()) == len(signals_after) + 1
+    assert len(signal_snapshot(store)) == len(signals_after) + 1
     assert len(store.list_business_task_evidence(seed.task_id)) == len(evidence_after) + 1
 
 
@@ -3939,7 +3941,7 @@ def test_invalid_evidence_only_attention_quote_does_not_save_signal(tmp_path):
         tmp_path
     )
     task = store.get_business_task(seed.task_id)
-    before_signals = store.list_business_task_signals()
+    before_signals = signal_snapshot(store)
     before_evidence = store.list_business_task_evidence(seed.task_id)
     proposal = dict(
         existing_project_assessment(
@@ -3978,7 +3980,7 @@ def test_invalid_evidence_only_attention_quote_does_not_save_signal(tmp_path):
         apply_task_agent_decision(
             store, summary_input_id=2, work_item=item, decision=decision, record_run=False
         )
-    assert store.list_business_task_signals() == before_signals
+    assert signal_snapshot(store) == before_signals
     assert store.list_business_task_evidence(seed.task_id) == before_evidence
     assert store.get_business_attention_item(card_id).title == "原验收风险"
 
@@ -3988,7 +3990,7 @@ def test_invalid_historical_attention_quote_does_not_save_current_proof(tmp_path
         tmp_path
     )
     task = store.get_business_task(seed.task_id)
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     evidence_before = store.list_business_task_evidence(seed.task_id)
     card_before = store.get_business_attention_item(card_id)
     events_before = store.list_business_attention_events(card_id)
@@ -4052,7 +4054,7 @@ def test_invalid_historical_attention_quote_does_not_save_current_proof(tmp_path
             record_run=False,
             prepared_sources=prepared_existing_project_source(store, seed),
         )
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
     assert store.list_business_task_evidence(seed.task_id) == evidence_before
     assert store.get_business_attention_item(card_id) == card_before
     assert store.list_business_attention_events(card_id) == events_before
@@ -4066,14 +4068,14 @@ def test_reconfirmed_relevance_with_attention_keeps_task_and_follow_up_unchanged
     )
     task = store.get_business_task(seed.task_id)
     assert task.business_relevance.value == "relevant"
-    follow_up_signal_id = store.create_business_task_signal(
+    follow_up_signal_id = seed_task_signal(store,
         source_type="reply_attempt",
         source_ref="source:pending-relevance-follow-up",
         evidence_text="待确认验收结果。",
         dedupe_key="source:pending-relevance-follow-up",
         conversation_id="group:delivery",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=seed.task_id,
         signal_id=follow_up_signal_id,
         evidence_role="discovery",

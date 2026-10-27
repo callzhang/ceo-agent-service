@@ -10,6 +10,7 @@ from app.task_agent_session import (
     TaskAgentSessionLease,
     TaskAgentSessionLeaseLost,
 )
+from tests.support.business_task_seed import seed_task, seed_task_evidence, seed_task_signal
 
 
 def test_task_agent_session_lease_serializes_store_instances(tmp_path):
@@ -51,8 +52,8 @@ def test_task_agent_runtime_prompt_keeps_current_shared_source_body_once(
             },
         }
     )
-    task = store.create_business_task(title="完整的本次来源", stage="candidate")
-    signal = store.create_business_task_signal(
+    task = seed_task(store, title="完整的本次来源", stage="candidate")
+    signal = seed_task_signal(store,
         source_type="reply_attempt",
         source_ref=item.source.ref,
         evidence_text=item.summary,
@@ -62,7 +63,7 @@ def test_task_agent_runtime_prompt_keeps_current_shared_source_body_once(
         author_name="张三",
         dedupe_key="current",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=task, signal_id=signal, evidence_role="discovery"
     )
     id = store.enqueue_work_summary_input(
