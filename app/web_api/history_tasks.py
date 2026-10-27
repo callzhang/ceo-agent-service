@@ -6,6 +6,7 @@ page that lists those runs and attempts.  Everything here is a read-only
 projection of stored rows.
 """
 
+import json
 from typing import Any
 
 from fastapi import FastAPI
@@ -172,3 +173,96 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
                 status_code=404,
             )
         return {"item": json_safe(payload), "meta": {"snapshot_at": snapshot_at()}}
+
+    @app.post("/api/console/history/tasks/{task_id}/retry")
+    def console_history_task_retry(task_id: int):
+        store = store_factory()
+        task = store.get_reply_task(task_id)
+        if task is None:
+            return JSONResponse(
+                {"ok": False, "code": "not_found", "message": "Task not found", "details": {}},
+                status_code=404,
+            )
+        if task.status != "failed":
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "reply_task_retry_not_allowed",
+                    "message": "Only a failed Reply Task can be retried",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        runs = store.list_agent_runs_for_task_generation(
+            task.id, task.execution_generation, load_events=False
+        )
+        latest = runs[-1] if runs else None
+        if latest is None or latest.status != "failed":
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "reply_task_retry_not_allowed",
+                    "message": "The current Task generation has no failed latest Agent run",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        try:
+            error = json.loads(latest.structured_error_json or "{}")
+        except (TypeError, json.JSONDecodeError):
+            error = {}
+        code = str(error.get("code") or "").strip() if isinstance(error, dict) else ""
+        if not code or error.get("retryable") is not True:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "reply_task_retry_not_allowed",
+                    "message": "The latest Agent failure is not marked retryable",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        from app.agent_reported_error import (
+            PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON,
+            is_provider_risk_rejection,
+        )
+
+        if is_provider_risk_rejection(
+            latest.structured_error_json, attempt_error=task.error
+        ):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "provider_risk_rejected",
+                    "message": PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON,
+                    "details": {},
+                },
+                status_code=409,
+            )
+        try:
+            retried = store.retry_failed_reply_task(
+                task.id,
+                latest.id,
+                reason=f"task_retry:{code}",
+                recovery_code=code,
+            )
+        except ValueError as exc:
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "reply_task_retry_not_allowed",
+                    "message": str(exc),
+                    "details": {},
+                },
+                status_code=409,
+            )
+        return {
+            "item": {
+                "task_id": retried.id,
+                "status": retried.status,
+                "execution_generation": retried.execution_generation,
+                "retried_run_id": latest.id,
+                "failure_code": code,
+            },
+            "meta": {"snapshot_at": snapshot_at()},
+        }
