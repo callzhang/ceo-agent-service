@@ -10,7 +10,8 @@
     "scope_messages_sent": true,
     "peer_report_deploy_files_modified": false,
     "no_other_deploy_process_at_start": true,
-    "peer_confirmed_no_parallel_deploy": true
+    "peer_confirmed_no_parallel_deploy": true,
+    "peer_release_lock_handoff": "confirmed no active deploy after readback; peer may separately publish system Skill/report fixes"
   },
   "regression": {
     "history_old": "slow pending signal aborted after30s:1failed19passed",
@@ -54,28 +55,64 @@
     "foreign_keys": []
   },
   "deployment": {
-    "status": "blocked by standard gate time limit; production unchanged",
+    "status": "standard gate passed; another standard deploy installed same runtime first; no duplicate checkout/restart",
     "attempt_target": "eeeb5b5e474d76a135255cf7a4b086b20f192762",
     "gate": "300s97percent; no observed assertion failure",
     "last_test": "tests/test_scheduled_agent_consumer.py::test_scheduled_audit_receives_exact_consumer_document_return",
     "policy_conflict": {
       "upstream_commit": "850f451c32bccef120bfc541090f9643654627e2",
       "change": "test budget5to10min; deploy backstop6to12min;2GiB unchanged",
-      "adopted": false,
+      "adopted": true,
       "explicit_user_decision_requested": true,
       "explicit_user_decision": "approved this release using independent10min budget commit,2GiB and every existing test retained"
     },
     "peer_system_skill_publication": "not in this task scope; peer retains explicit publish/recovery responsibility",
     "failed_gate_log_sha256": "df3ab1d5342a0a10352956b77219c83262af7cbab531b887b9f91a0b63ed6a91",
-    "failed_gate_tail": "................................................................... [ 95%]\n........................................................................ [ 96%]\n........................................................................ [ 97%]\n.....................................................\nTIME LIMIT EXCEEDED: this test process has run 300 s (limit 300 s) and was running tests/test_scheduled_agent_consumer.py::test_scheduled_audit_receives_exact_consumer_document_return.\nThe limit is fixed and must not be raised. Make the tests faster, or run fewer of them, so the run finishes inside the limit.\n"
+    "failed_gate_tail": "................................................................... [ 95%]\n........................................................................ [ 96%]\n........................................................................ [ 97%]\n.....................................................\nTIME LIMIT EXCEEDED: this test process has run 300 s (limit 300 s) and was running tests/test_scheduled_agent_consumer.py::test_scheduled_audit_receives_exact_consumer_document_return.\nThe limit is fixed and must not be raised. Make the tests faster, or run fewer of them, so the run finishes inside the limit.\n",
+    "approved_target": "bdd2a230fb1c410d9a53049a26ca54763ca9a35d",
+    "budget_regressions": "17passed8.95s",
+    "attempt_exit_code": 0,
+    "actual_installed_commit": "850f451c32bccef120bfc541090f9643654627e2",
+    "actual_operation": {
+      "operation_id": "deploy-988d2ebb-4fe0-4e98-a4f5-752aed67b8c4",
+      "status": "succeeded",
+      "original_commit": "edc5c51617134b4012e441018774edfa943e1b58",
+      "target_commit": "850f451c32bccef120bfc541090f9643654627e2",
+      "installed_commit": "850f451c32bccef120bfc541090f9643654627e2",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-988d2ebb-4fe0-4e98-a4f5-752aed67b8c4.sqlite3",
+      "updated_at": "2026-10-27T09:32:12.283897+00:00"
+    },
+    "own_successful_gate_clone_auto_removed": true
   },
   "cleanup": {
     "temporary_root": "/private/tmp/ceo-history-closeout.iqw5Li",
-    "status": "pending final readback",
+    "status": "complete: owned temp root and failed gate clone removed; exact verified backup generation removed; production DB/native trajectories preserved; subsequent peer backups excluded",
     "failed_gate_clone": {
       "path": "/private/tmp/ceo-history-closeout.iqw5Li/deploy-test-gate.keh9mmyg",
       "files": 4221,
       "bytes": 205219835,
+      "no_open_files": true,
+      "absent": true
+    },
+    "backups": [
+      {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-27.sqlite3",
+        "bytes": 514969600,
+        "mtime_ns": 1793093635772827694,
+        "integrity_check": "ok",
+        "application_id": 1128615746,
+        "schema_count": 476,
+        "schema_sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+        "changed_after_baseline": true,
+        "absent": true,
+        "state": "verified full integrity and exact schema; removed after production API/UI readback under backup directory lock"
+      }
+    ],
+    "task_root": {
+      "path": "/private/tmp/ceo-history-closeout.iqw5Li",
+      "files": 525,
+      "bytes": 51397375,
+      "symlinks_not_followed": 3423,
       "no_open_files": true,
       "absent": true
     }
@@ -91,5 +128,256 @@
     "docs/task-run-entity-assembly-retirement.sql": {
       "sha256": "718fc0b88bca3f87a2ca345d7310c6808f7d918e4ce21dc83669c583223621e0"
     }
-  }
+  },
+  "production_before": {
+    "at": "2026-10-27T09:26:29.502277+00:00",
+    "commit": "edc5c51617134b4012e441018774edfa943e1b58",
+    "main_pid": 98028,
+    "/healthz": {
+      "http": 200,
+      "seconds": 0.067,
+      "body": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "/api/console/status": {
+      "http": 200,
+      "seconds": 2.869,
+      "keys": [
+        "item",
+        "meta"
+      ],
+      "summary": {
+        "queue_count": 11,
+        "pending": 6,
+        "processing": 1,
+        "failed": 28,
+        "retryable": 0,
+        "attention": 1
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 387; unavailable: 0.",
+        "checked_at": "2026-10-27T09:26:32.686168+00:00",
+        "violations": 1,
+        "components": [],
+        "native_delivery_coverage": {
+          "checked": 387,
+          "unavailable": 0
+        }
+      }
+    },
+    "/api/console/attention": {
+      "http": 200,
+      "seconds": 0.999,
+      "meta": {
+        "snapshot_at": "2026-10-27T09:26:33.469724Z",
+        "page": null,
+        "page_size": null,
+        "total": 1,
+        "next_cursor": "",
+        "has_more": false
+      },
+      "ids": [
+        null
+      ]
+    },
+    "/api/console/history?object_type=dingtalk&page=2&page_size=20&include_chart=0": {
+      "http": 200,
+      "seconds": 4.347,
+      "meta": {
+        "snapshot_at": "2026-10-27T09:26:37.791299Z",
+        "page": 2,
+        "page_size": 20,
+        "total": 6424,
+        "next_cursor": "3",
+        "has_more": true
+      },
+      "ids": [
+        "16167",
+        "16166",
+        "16165",
+        "16164",
+        "16163",
+        "16162",
+        "16161",
+        "16160",
+        "16159",
+        "16158",
+        "16157",
+        "16156",
+        "16155",
+        "16154",
+        "16153",
+        "16151",
+        "16150",
+        "16149",
+        "16148",
+        "16147"
+      ],
+      "item_count": 20
+    },
+    "schema": {
+      "count": 476,
+      "sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+      "current_exact": true,
+      "foreign_keys": []
+    },
+    "deployment": {
+      "operation_id": "deploy-132be516-c445-4dd7-be7d-b9048b6e3324",
+      "status": "rolled_back",
+      "original_commit": "edc5c51617134b4012e441018774edfa943e1b58",
+      "target_commit": "7f8e25b31c6f33bc12260931a4d5c9f128138f1f",
+      "installed_commit": "",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-132be516-c445-4dd7-be7d-b9048b6e3324.sqlite3",
+      "updated_at": "2026-10-27T08:49:55.862058+00:00"
+    },
+    "markers": {
+      "store": "2026-10-26.1",
+      "email": 54
+    }
+  },
+  "production_after": {
+    "at": "2026-10-27T09:34:11.165035+00:00",
+    "commit": "850f451c32bccef120bfc541090f9643654627e2",
+    "main_pid": 72598,
+    "/healthz": {
+      "http": 200,
+      "seconds": 0.039,
+      "body": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "/api/console/status": {
+      "http": 200,
+      "seconds": 1.502,
+      "keys": [
+        "service",
+        "system_health",
+        "components",
+        "connectors",
+        "email",
+        "wechat",
+        "queues",
+        "dispatcher_queues",
+        "attention_rows",
+        "human_decision_rows",
+        "database",
+        "summary"
+      ],
+      "summary": {
+        "queue_count": 11,
+        "pending": 6,
+        "processing": 2,
+        "failed": 28,
+        "retryable": 0,
+        "attention": 1
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 389; unavailable: 0.",
+        "checked_at": "2026-10-27T09:33:27.693111+00:00",
+        "violations": 1,
+        "components": [],
+        "native_delivery_coverage": {
+          "checked": 389,
+          "unavailable": 0
+        }
+      }
+    },
+    "/api/console/attention": {
+      "http": 200,
+      "seconds": 0.792,
+      "meta": {
+        "snapshot_at": "2026-10-27T09:34:13.539056Z",
+        "page": null,
+        "page_size": null,
+        "total": 1,
+        "next_cursor": "",
+        "has_more": false
+      },
+      "ids": [
+        null
+      ]
+    },
+    "/api/console/history?object_type=dingtalk&page=2&page_size=20&include_chart=0": {
+      "http": 200,
+      "seconds": 1.446,
+      "meta": {
+        "snapshot_at": "2026-10-27T09:34:14.983621Z",
+        "page": 2,
+        "page_size": 20,
+        "total": 6425,
+        "next_cursor": "3",
+        "has_more": true
+      },
+      "ids": [
+        "16168",
+        "16167",
+        "16166",
+        "16165",
+        "16164",
+        "16163",
+        "16162",
+        "16161",
+        "16160",
+        "16159",
+        "16158",
+        "16157",
+        "16156",
+        "16155",
+        "16154",
+        "16153",
+        "16151",
+        "16150",
+        "16149",
+        "16148"
+      ],
+      "item_count": 20
+    },
+    "schema": {
+      "count": 476,
+      "sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+      "current_exact": true,
+      "foreign_keys": []
+    },
+    "deployment": {
+      "operation_id": "deploy-988d2ebb-4fe0-4e98-a4f5-752aed67b8c4",
+      "status": "succeeded",
+      "original_commit": "edc5c51617134b4012e441018774edfa943e1b58",
+      "target_commit": "850f451c32bccef120bfc541090f9643654627e2",
+      "installed_commit": "850f451c32bccef120bfc541090f9643654627e2",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-988d2ebb-4fe0-4e98-a4f5-752aed67b8c4.sqlite3",
+      "updated_at": "2026-10-27T09:32:12.283897+00:00"
+    },
+    "markers": {
+      "store": "2026-10-26.1",
+      "email": 54
+    }
+  },
+  "installed_files": {
+    "files_match": {
+      "frontend/src/pages/HistoryPage.tsx": true,
+      "app/predecessor_database_schema.py": true,
+      "docs/task-run-entity-assembly-target.sql": true,
+      "tests/test_task_run_entity_assembly.py": true
+    },
+    "frontend_needs_build": false
+  },
+  "ui_readback": {
+    "released_version": "850f451c3",
+    "history_page2": "loaded20rows,21-40,total6425 observed",
+    "next_page": "clicked3,received different20rows41-60",
+    "failed_filter": "clicked failed; completed0rows; page reset1",
+    "clear_filter": "clicked clear; recovered20rows,page1",
+    "task_history": "417569 detail loaded; completed Attempt16137 and Consumer399752/Audit399753 visible",
+    "verification_tabs_closed": [
+      6,
+      7
+    ],
+    "outbound_or_retry_controls_clicked": false
+  },
+  "completion": "requested History polling fix and all3artifact tests accepted and live; report/system Skill follow-up remains separate"
 }

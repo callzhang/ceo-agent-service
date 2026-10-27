@@ -59,18 +59,55 @@ Python test processes keep the repository's2GiB/300s ceilings; no full local
 suite is run. Frontend runs use one worker and a2048MiB Node heap cap. Providers
 and model calls are not used by these cases; no production sends or test jobs.
 
-## Publication and cleanup
+## Publication and production acceptance
 
-Independent code review found no blocking issues. A non-intercepting test
-monkeypatch was removed; the unchanged exact catalog digest and explicit absence
-of the later column remain the source regression assertions. Standard exact-target
-gate at eeeb5b5e ran to97% with no observed assertion failure, then stopped at
-300seconds on `test_scheduled_audit_receives_exact_consumer_document_return`.
-Production was not changed. Upstream850f451c3 separately raises the budget to
-10minutes; it has not been adopted by this task because the supplied rules
-require5minutes and explicit authorization has not yet been verified. Derek subsequently explicitly approved adopting the separate10-minute gate
-change for this release, retaining2GiB and all tests. The failed5-minute attempt
-remains recorded and is not relabeled as passed. Production API/UI readback and
-authorized own-artifact cleanup remain pending; no deployment backup was created.
-Implementation/test success is not a live-release claim. The prior report's
-business-publication failure remains the other task's responsibility.
+Independent review found no blocking issues. An ineffective monkeypatch was
+removed; the unchanged505/920b digest and explicit absence of the later column
+remain source assertions. The exact-target5-minute gate at eeeb5b5e stopped at
+97%/300s, no observed assertion failure, before production changes. This failed
+attempt remains recorded. Derek then explicitly approved adoption of the
+separate850f451c3 budget change for this release:10minutes,2GiB, every test
+retained,12-minute deployment backstop. Its17gate/memory regressions pass8.95s.
+No budget was silently raised or gate bypassed by the History change.
+
+The normally integrated exact target bdd2a230f passed the full standard gate.
+The deploy then exited0 with `another deploy got there first; production is at
+850f451c`. That other standard release already includes the reviewed eeeb5b5e
+runtime fix. Root verified the exact installed files rather than repeating the
+checkout/restart. Actual release operation deploy-988d2ebb-4fe0-4e98-a4f5-752aed67b8c4
+succeeded at2026-10-27T09:32:12Z. Do not label bdd2a230f as the installed version.
+
+Readback at09:34:11Z: production850f451c3, mainPID72598, health200;
+History dingtalk page2 returned20rows in1.446s. All476SQL tuples retain the
+pre-release digest, FK findings remain empty, Store26.1/Email54 unchanged.
+Four implementation/artifact/test files match the tested working tree and the
+frontend build stamp matches the installed frontend source.
+
+Actual browser checks pass: page2 shows21–40; clicking next receives distinct
+page3rows41–60; selecting failed finishes with0matching rows and resets page1;
+clearing the filter restores the20-row list. Existing Task417569 detail shows
+completed Attempt16137 and Consumer399752/Audit399753 under their original IDs.
+Both owned verification tabs were closed. No send/retry/replay control clicked.
+This closes the reproduced polling starvation and the three artifact failures;
+it is not an assertion that all server queries always finish below10seconds.
+
+Dated business baseline/readback: failed28/Attention1 before and after, pending6
+and processing1→2 in normal traffic. Healthz is healthy; business health retains
+one existing unresolved-feedback finding. The report417594 failure and explicit
+system-Skill publication/recovery remain the other task's separate scope; this
+release did not publish system contracts or replay reports.
+
+## Cleanup
+
+The205219835-byte failed gate clone was checked for open files, removed and
+verified absent; the successful gate clone was removed by standard deploy.
+The latest workflow backup (514969600bytes) passed full integrity, completion ID,
+exact476-object schema verification and no-open-file checks. After API/UI
+readback it was deleted under the backup-directory lock, guarded by its exact
+size/mtime so a replacement generation could not be deleted accidentally.
+Production DB and native trajectories remain untouched. Final task root
+`/private/tmp/ceo-history-closeout.iqw5Li` was checked for open files, deleted
+without following symlinks and verified absent. The peer was notified that no
+release process remains; its subsequent backups are excluded from cleanup.
+Concise dated acceptance is recorded in
+[structured evidence](validation/2026-10-27-history-artifact-closeout.json).

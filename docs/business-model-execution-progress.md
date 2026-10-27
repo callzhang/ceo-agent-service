@@ -1,17 +1,21 @@
 # Business model simplification: current completion and closeout
 
-## Current follow-up — 2026-10-27
+## Current follow-up — 2026-10-27: accepted
 
-History/SQL artifact closeout is locally implemented: the30-second pending
-History request is no longer aborted by10-second auto-refresh; changing filters
-or leaving still cancels obsolete requests. The3artifact failures are reproduced
-and repaired without changing their frozen digest or runtime schema: frozen
-Store21.1 uses its existing pre-notification schedules, while the current SQL
-artifact includes the existing notification field.17assembly,20frontend and
-28related source/current tests pass; reviews/publication/live-readback/cleanup
-remain pending. The prior production page2 already loaded in this observation;
-only the proven polling cancellation is fixed, no unmeasured SQL speedup claimed.
-See [focused closeout](history-artifact-closeout-20261027.md).
+History slow-request polling and the3SQL artifact failures are repaired and live
+in850f451c3 (implementationeeeb5b5e4). A pending list request survives the10-second
+auto-refresh; filter/page changes and leaving still cancel obsolete work. The
+frozen predecessor retains its original505/920b catalog; the current SQL artifact
+includes the existing notification column. No runtime compatibility or DDL change.
+17assembly/20frontend/28related tests and independent review pass;17budget tests
+also pass after Derek explicitly approved the separate10-minute/2GiB gate change.
+The integrated target passed the full standard gate. Another standard release
+installed the same runtime first; root did not repeat checkout/restart. Actual
+PID72598/health200,476exactSQL/FK[], History page2→3/filter/reset and stable Task
+history detail readbacks pass. Failed28/Attention1 and the existing business-health
+finding remain; the separate report/system-Skill follow-up is not closed here.
+Latest verified workflow backup/failed clone are removed; final owned temporary
+cleanup is in [closeout evidence](history-artifact-closeout-20261027.md).
 
 ## Authoritative completion — 2026-10-26
 
