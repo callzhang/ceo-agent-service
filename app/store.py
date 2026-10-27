@@ -213,7 +213,6 @@ from app.work_summary_payload import (
     decode_work_summary_payload,
     encode_work_summary_payload,
 )
-from app.task_source_documents import source_document_key
 from app.business_source_reader import (
     BusinessTaskSignalFact, RequestSourceReader, SourceVersionBinding,
 )
@@ -719,29 +718,6 @@ class ReplyAttempt(BaseModel):
     updated_at: str
 
 
-class RecentFollowUpCandidate(BaseModel):
-    follow_up_id: int
-    project_id: int
-    project_title: str = ""
-    project_status: str = ""
-    todo_id: int = 0
-    todo_title: str = ""
-    todo_status: str = ""
-    todo_deadline_at: str = ""
-    owner_user_id: str = ""
-    owner_name: str = ""
-    target_conversation_id: str = ""
-    target_kind: str = ""
-    question_text: str = ""
-    scheduled_at: str = ""
-    sent_at: str = ""
-    status: str = ""
-    reaction_status: str = ""
-    reaction_summary: str = ""
-    suppressed_reason: str = ""
-    evidence_check_json: str = "{}"
-    risk_check_json: str = "{}"
-    send_result_json: str = "{}"
 
 
 class ReplyError(BaseModel):
@@ -2784,24 +2760,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ).fetchone()
         return self._business_task_signal_from_row(row) if row is not None else None
 
-    @staticmethod
-    def _business_source_document_id(db: sqlite3.Connection, source: dict[str, object]) -> int:
-        identity_key = source_document_key(**{
-            field: source[field] for field in (
-                "source_type", "source_ref", "source_time", "conversation_id",
-                "author_user_id", "author_name", "author_kind", "evidence_text",
-            )
-        })
-        row = db.execute(
-            "select id from business_source_documents where identity_key=?", (identity_key,)
-        ).fetchone()
-        if row is not None:
-            return int(row["id"])
-        cursor = db.execute(
-            "insert into business_source_documents (identity_key, body) values (?, ?)",
-            (identity_key, source["evidence_text"]),
-        )
-        return int(cursor.lastrowid)
 
     def create_business_task_signal_in_transaction(
         self,
@@ -3059,39 +3017,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             raise RuntimeError("business Task Event insert did not create one action")
         return int(result.lastrowid)
 
-    def create_business_task_signal(
-        self,
-        *,
-        source_type: str,
-        source_ref: str,
-        evidence_text: str,
-        source_binding: SourceVersionBinding | None = None,
-        dedupe_key: str,
-        source_time: str = "",
-        conversation_id: str = "",
-        conversation_title: str = "",
-        author_user_id: str = "",
-        author_name: str = "",
-        author_kind: BusinessActorKind | str = BusinessActorKind.UNKNOWN,
-        context_json: str = "{}",
-        now: datetime | None = None,
-    ) -> int:
-        with self._immediate_write_transaction() as db:
-            return self.create_business_task_signal_in_transaction(
-                source_type=source_type, source_ref=source_ref, source_time=source_time,
-                conversation_id=conversation_id, conversation_title=conversation_title,
-                author_user_id=author_user_id, author_name=author_name,
-                author_kind=author_kind, evidence_text=evidence_text, source_binding=source_binding,
-                context_json=context_json, dedupe_key=dedupe_key, now=now, _db=db,
-            )
 
-    def list_business_task_signals(self) -> tuple[BusinessTaskSignalFact, ...]:
-        with self._connect() as db:
-            rows = db.execute(
-                f"select signal.* from ({BUSINESS_ACTION_ID_SQL['business_task_signals']}) signal "
-                "order by signal.id"
-            ).fetchall()
-            return tuple(self._business_task_signal_from_row(row) for row in rows)
 
     def get_business_task_signal(self, signal_id: int) -> BusinessTaskSignalFact | None:
         with self._connect() as db:
@@ -3106,37 +3032,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ).fetchone()
         return self._business_task_signal_from_row(row) if row else None
 
-    def create_business_task(
-        self,
-        *,
-        title: str,
-        stage: BusinessTaskStage | str,
-        status: BusinessTaskStatus | str = BusinessTaskStatus.OPEN,
-        commitment_status: CommitmentStatus | str = CommitmentStatus.NONE,
-        formal_basis: FormalTaskBasis | str | None = None,
-        business_relevance: BusinessRelevance | str = BusinessRelevance.UNKNOWN,
-        description: str = "",
-        origin: str = "source",
-        suggestion_json: str = "{}",
-        owner_user_id: str = "",
-        owner_name: str = "",
-        owner_evidence_json: str = "{}",
-        deadline_at: str = "",
-        missing_evidence_json: str = "[]",
-        merged_into_task_id: int | None = None,
-        last_activity_at: str | None = None,
-        now: datetime | None = None,
-    ) -> int:
-        with self._immediate_write_transaction() as db:
-            return self.create_business_task_in_transaction(
-                title=title, description=description, stage=stage, status=status,
-                commitment_status=commitment_status, formal_basis=formal_basis,
-                business_relevance=business_relevance, merged_into_task_id=merged_into_task_id,
-                owner_user_id=owner_user_id, owner_name=owner_name, owner_evidence_json=owner_evidence_json,
-                deadline_at=deadline_at, missing_evidence_json=missing_evidence_json,
-                origin=origin, suggestion_json=suggestion_json,
-                last_activity_at=last_activity_at, now=now, _db=db,
-            )
 
     def get_business_task(self, task_id: int) -> BusinessTask | None:
         with self._connect() as db:
@@ -3172,28 +3067,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchall()
             return tuple(self._business_task_from_row(row) for row in rows)
 
-    def link_business_task_evidence(
-        self,
-        *,
-        task_id: int,
-        signal_id: int,
-        evidence_role: BusinessEvidenceRole | str,
-    ) -> BusinessTaskEvidence:
-        evidence = BusinessTaskEvidence(
-            task_id=task_id, signal_id=signal_id,
-            evidence_role=evidence_role, created_at="",
-        )
-        with self._immediate_write_transaction() as db:
-            insert_business_action(db, "business_task_evidence", {
-                "task_id": evidence.task_id, "signal_id": evidence.signal_id,
-                "evidence_role": evidence.evidence_role.value,
-            })
-            row = db.execute(
-                f"select * from ({BUSINESS_ACTION_SQL['business_task_evidence']}) where task_id=? and signal_id=? and evidence_role=?",
-                (evidence.task_id, evidence.signal_id, evidence.evidence_role.value),
-            ).fetchone()
-            assert row is not None
-            return self._business_task_evidence_from_row(row)
 
     def list_business_task_evidence(
         self, task_id: int
@@ -3663,10 +3536,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if changed != 1:
             raise ValueError("project candidate must exist and be proposed")
 
-    def get_business_project_candidate(self, candidate_id: int) -> BusinessProjectCandidate | None:
-        with self._connect() as db:
-            row = db.execute(f"select * from ({candidate_projection('project_candidate')}) where id=?", (candidate_id,)).fetchone()
-            return BusinessProjectCandidate.model_validate(dict(row)) if row else None
 
     def get_business_project(self, project_id: int) -> BusinessProject | None:
         with self._connect() as db:
@@ -20425,25 +20294,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return False
         return True
 
-    @staticmethod
-    def _projection_failure_code(*payload_sources: str | None) -> str:
-        for payload_source in payload_sources:
-            try:
-                payload = json.loads(payload_source or "{}")
-            except (TypeError, json.JSONDecodeError):
-                continue
-            if not isinstance(payload, dict):
-                continue
-            source_code = payload.get("source_code")
-            if isinstance(source_code, str) and source_code.strip():
-                return source_code.strip()
-            code = payload.get("code")
-            if isinstance(code, str) and code.strip():
-                return code.strip()
-            error_code = payload.get("error_code")
-            if isinstance(error_code, str) and error_code.strip():
-                return error_code.strip()
-        return "invalid_needs_human_projection"
 
     def skip_failed_reply_tasks_superseded_by_terminal_business_object(self) -> int:
         """Close obsolete local projections once another task owns the business object.
@@ -23937,23 +23787,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where_sql="status='unknown'",
             ).rowcount == 1
 
-    def list_task_todo_sync_outbox(
-        self, *, statuses: tuple[str, ...] | None = None
-    ) -> list[sqlite3.Row]:
-        query = f"select * from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']})"
-        args: list[str] = []
-        if statuses:
-            query += f" where status in ({','.join('?' for _ in statuses)})"
-            args.extend(statuses)
-        with self._connect() as db:
-            return list(db.execute(f"{query} order by id", args).fetchall())
 
-    def get_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
-        with self._connect() as db:
-            return db.execute(
-                f"select * from ({SYNC_ACTION_PROJECTIONS['task_todo_sync_outbox']}) where id=?",
-                (outbox_id,),
-            ).fetchone()
 
 
 
@@ -23975,135 +23809,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _todo_evidence_candidate_row(row: sqlite3.Row) -> TodoEvidenceCandidate:
         return TodoEvidenceCandidate.model_validate(dict(row))
 
-    @contextmanager
-    def _todo_evidence_candidate_transaction(
-        self, db: sqlite3.Connection | None
-    ) -> Iterator[sqlite3.Connection]:
-        if db is None:
-            with self.business_task_transaction() as transaction:
-                yield transaction
-        else:
-            yield db
 
-    @staticmethod
-    def _todo_evidence_candidate_dedupe_key(
-        *,
-        todo_id: int,
-        source_type: str,
-        source_ref: str,
-    ) -> str:
-        payload = json.dumps(
-            {
-                "todo_id": int(todo_id),
-                "source_type": str(source_type or "").strip(),
-                "source_ref": str(source_ref or "").strip(),
-            },
-            ensure_ascii=False,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
-    def upsert_todo_evidence_candidate(
-        self,
-        *,
-        project_id: int,
-        todo_id: int,
-        source_type: str,
-        source_ref: str,
-        source_created_at: str = "",
-        evidence_text: str = "",
-        reason: str = "",
-        confidence: float = 0.0,
-        dedupe_key: str = "",
-        _db: sqlite3.Connection | None = None,
-    ) -> TodoEvidenceCandidate:
-        normalized_source_type = str(source_type or "").strip()
-        normalized_source_ref = str(source_ref or "").strip()
-        if not normalized_source_type or not normalized_source_ref:
-            raise ValueError("todo evidence candidate source is required")
-        dedupe = dedupe_key.strip() or self._todo_evidence_candidate_dedupe_key(
-            todo_id=todo_id,
-            source_type=normalized_source_type,
-            source_ref=normalized_source_ref,
-        )
-        with self._todo_evidence_candidate_transaction(_db) as db:
-            row = db.execute(
-                f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
-                "where dedupe_key=?",
-                (dedupe,),
-            ).fetchone()
-            if row is None:
-                insert_business(db, "todo_evidence_candidate", {
-                    "project_id": project_id,
-                    "todo_id": todo_id,
-                    "source_type": normalized_source_type,
-                    "source_ref": normalized_source_ref,
-                    "source_created_at": source_created_at,
-                    "evidence_text": evidence_text,
-                    "reason": reason,
-                    "confidence": float(confidence),
-                    "status": "candidate",
-                    "dedupe_key": dedupe,
-                })
-                row = db.execute(
-                    f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
-                    "where dedupe_key=?",
-                    (dedupe,),
-                ).fetchone()
-            else:
-                timestamp = db.execute("select current_timestamp").fetchone()[0]
-                update_business(db, "todo_evidence_candidate", row["id"], {
-                    "project_id": project_id,
-                    "todo_id": todo_id,
-                    "source_type": normalized_source_type,
-                    "source_ref": normalized_source_ref,
-                    "source_created_at": source_created_at,
-                    "evidence_text": evidence_text,
-                    "reason": reason,
-                    "confidence": float(confidence),
-                    "status": "candidate" if row["status"] == "error" else row["status"],
-                    "updated_at": timestamp,
-                })
-                row = db.execute(
-                    f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
-                    "where dedupe_key=?",
-                    (dedupe,),
-                ).fetchone()
-            if row is None:
-                raise RuntimeError("todo evidence candidate upsert failed")
-            return self._todo_evidence_candidate_row(row)
 
-    def get_todo_evidence_candidate(
-        self,
-        candidate_id: int,
-        *,
-        _db: sqlite3.Connection | None = None,
-    ) -> TodoEvidenceCandidate | None:
-        if candidate_id <= 0:
-            return None
-        with self._optional_connection(_db) as db:
-            row = db.execute(
-                f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) where id=?",
-                (candidate_id,),
-            ).fetchone()
-            return None if row is None else self._todo_evidence_candidate_row(row)
 
-    def get_todo_evidence_candidate_by_work_summary_input(
-        self,
-        work_summary_input_id: int,
-        *,
-        _db: sqlite3.Connection | None = None,
-    ) -> TodoEvidenceCandidate | None:
-        if work_summary_input_id <= 0:
-            return None
-        with self._optional_connection(_db) as db:
-            row = db.execute(
-                f"select * from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) "
-                "where work_summary_input_id=? order by id desc limit 1",
-                (work_summary_input_id,),
-            ).fetchone()
-            return None if row is None else self._todo_evidence_candidate_row(row)
 
     def list_todo_evidence_candidates(
         self,
@@ -24138,43 +23847,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 for row in db.execute(query, args).fetchall()
             ]
 
-    def mark_todo_evidence_candidate_enqueued(
-        self,
-        candidate_id: int,
-        work_summary_input_id: int,
-        *,
-        _db: sqlite3.Connection | None = None,
-    ) -> bool:
-        with self._todo_evidence_candidate_transaction(_db) as db:
-            row = db.execute(
-                f"select status from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) where id=?",
-                (candidate_id,),
-            ).fetchone()
-            if row is None or row["status"] not in ("candidate", "enqueued", "error"):
-                return False
-            timestamp = db.execute("select current_timestamp").fetchone()[0]
-            return update_business(db, "todo_evidence_candidate", candidate_id, {
-                "status": "enqueued",
-                "work_summary_input_id": work_summary_input_id,
-                "updated_at": timestamp,
-            }) == 1
 
-    def mark_todo_evidence_candidate(
-        self,
-        candidate_id: int,
-        *,
-        status: str,
-        decision_json: str = "{}",
-        _db: sqlite3.Connection | None = None,
-    ) -> bool:
-        normalized_status = TodoEvidenceCandidateStatus(status).value
-        with self._todo_evidence_candidate_transaction(_db) as db:
-            timestamp = db.execute("select current_timestamp").fetchone()[0]
-            return update_business(db, "todo_evidence_candidate", candidate_id, {
-                "status": normalized_status,
-                "decision_json": decision_json or "{}",
-                "updated_at": timestamp,
-            }) == 1
 
 
     def complete_superseded_stale_weekly_okr_analysis_jobs(
@@ -24357,136 +24030,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._agent_run_write_transaction(None) as (db, _):
             yield db
 
-    def create_follow_up_draft(
-        self, *, _db: sqlite3.Connection | None = None, **values
-    ) -> int:
-        allowed_columns = {
-            "project_id",
-            "todo_id",
-            "title",
-            "description",
-            "owner_user_id",
-            "owner_name",
-            "owners_json",
-            "target_conversation_id",
-            "target_kind",
-            "question_text",
-            "priority",
-            "tags_json",
-            "participants_json",
-            "files_json",
-            "risk_check_json",
-            "status",
-            "send_result_json",
-            "evidence_check_json",
-            "reaction_status",
-            "reaction_summary",
-            "suppressed_reason",
-            "dedupe_key",
-            "scheduled_at",
-            "sent_at",
-        }
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        filtered.setdefault("dedupe_key", self._follow_up_dedupe_key(filtered))
-        keys = list(filtered.keys())
-        with self._optional_connection(_db) as db:
-            dedupe_key = str(filtered.get("dedupe_key") or "").strip()
-            if dedupe_key:
-                existing = db.execute(
-                    f"""select id from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
-                    where dedupe_key=?
-                      and status in ('draft', 'approved', 'sent', 'completed', 'skipped', 'cancelled')
-                    order by id desc
-                    limit 1
-                    """,
-                    (dedupe_key,),
-                ).fetchone()
-                if existing is not None:
-                    return int(existing["id"])
-            cursor = insert_sync_action(
-                db, "follow_up_drafts", {key: filtered[key] for key in keys},
-            )
-            return int(cursor.lastrowid)
 
-    def update_follow_up_draft(
-        self, draft_id: int, *, _db: sqlite3.Connection | None = None, **values
-    ) -> None:
-        if not values:
-            return
-        allowed_columns = {
-            "project_id",
-            "todo_id",
-            "title",
-            "description",
-            "owner_user_id",
-            "owner_name",
-            "owners_json",
-            "target_conversation_id",
-            "target_kind",
-            "question_text",
-            "priority",
-            "tags_json",
-            "participants_json",
-            "files_json",
-            "risk_check_json",
-            "status",
-            "send_result_json",
-            "evidence_check_json",
-            "reaction_status",
-            "reaction_summary",
-            "suppressed_reason",
-            "dedupe_key",
-            "scheduled_at",
-            "sent_at",
-        }
-        filtered = self._filter_allowed_values(values, allowed_columns)
-        if filtered.get("status") == "sent" and "sent_at" not in filtered:
-            filtered["sent_at"] = "__CURRENT_TIMESTAMP__"
-        with self._optional_connection(_db) as db:
-            timestamp = db.execute("select current_timestamp").fetchone()[0]
-            filtered = {
-                key: timestamp if key == "sent_at" and value == "__CURRENT_TIMESTAMP__" else value
-                for key, value in filtered.items()
-            }
-            current = db.execute(
-                f"select revision from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where id=?",
-                (draft_id,),
-            ).fetchone()
-            if current is None:
-                return
-            cursor = update_sync_action(
-                db, "follow_up_drafts", draft_id, {
-                    **filtered,
-                    "revision": current["revision"] + 1,
-                    "send_claim_revision": 0,
-                    "send_claim_token": "",
-                    "send_claim_idempotency_uuid": "",
-                    "updated_at": timestamp,
-                },
-            )
-            if cursor.rowcount == 1:
-                attempts = list(db.execute(
-                    f"select id from ({SYNC_ACTION_PROJECTIONS['follow_up_send_attempts']}) "
-                    "where draft_id=? and state='claimed'", (draft_id,),
-                ))
-                for attempt in attempts:
-                    update_sync_action(
-                        db, "follow_up_send_attempts", attempt["id"],
-                        {"state": "invalidated", "updated_at": timestamp},
-                        where_sql="draft_id=? and state='claimed'", parameters=(draft_id,),
-                    )
 
-    def get_follow_up_draft(
-        self, draft_id: int, *, _db: sqlite3.Connection | None = None
-    ) -> FollowUpDraft | None:
-        if draft_id <= 0:
-            return None
-        with self._optional_connection(_db) as db:
-            row = db.execute(
-                f"select * from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) where id=?",
-                (draft_id,),
-            ).fetchone()
-            return None if row is None else FollowUpDraft.model_validate(dict(row))
 
     def list_follow_up_drafts(
         self,
@@ -24546,169 +24091,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             result.setdefault(draft.todo_id, []).append(draft)
         return result
 
-    def list_recent_follow_up_candidates(
-        self,
-        *,
-        conversation_id: str = "",
-        owner_user_id: str = "",
-        since: str,
-        limit: int = 20,
-    ) -> list[RecentFollowUpCandidate]:
-        conversation_id = conversation_id.strip()
-        owner_user_id = owner_user_id.strip()
-        if not since.strip() or (not conversation_id and not owner_user_id):
-            return []
-        if limit <= 0:
-            return []
-        owner_expr = """
-            coalesce(
-                nullif(f.owner_user_id, ''),
-                nullif(t.owner_user_id, ''),
-                nullif(p.owner_user_id, ''),
-                ''
-            )
-        """
-        owner_name_expr = """
-            coalesce(
-                nullif(f.owner_name, ''),
-                nullif(t.owner_name, ''),
-                nullif(p.owner_name, ''),
-                ''
-            )
-        """
-        recency_expr = """
-            coalesce(
-                nullif(f.sent_at, ''),
-                nullif(f.scheduled_at, ''),
-                f.created_at
-            )
-        """
-        clauses = [
-            "f.status in ('sent', 'draft', 'approved')",
-            f"{recency_expr} >= ?",
-        ]
-        args: list[object] = [since.strip()]
-        match_clauses: list[str] = []
-        if conversation_id:
-            match_clauses.append("f.target_conversation_id=?")
-            args.append(conversation_id)
-        if owner_user_id:
-            match_clauses.append(f"{owner_expr}=?")
-            args.append(owner_user_id)
-        if match_clauses:
-            clauses.append(f"({' or '.join(match_clauses)})")
-        args.extend(
-            [
-                conversation_id,
-                conversation_id,
-                owner_user_id,
-                owner_user_id,
-                limit,
-            ]
-        )
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select
-                    f.id as follow_up_id,
-                    f.project_id,
-                    coalesce(p.title, '') as project_title,
-                    coalesce(p.status, '') as project_status,
-                    f.todo_id,
-                    coalesce(t.title, '') as todo_title,
-                    coalesce(t.status, '') as todo_status,
-                    coalesce(t.deadline_at, '') as todo_deadline_at,
-                    {owner_expr} as owner_user_id,
-                    {owner_name_expr} as owner_name,
-                    f.target_conversation_id,
-                    f.target_kind,
-                    f.question_text,
-                    f.scheduled_at,
-                    f.sent_at,
-                    f.status,
-                    f.reaction_status,
-                    f.reaction_summary,
-                    f.suppressed_reason,
-                    f.evidence_check_json,
-                    f.risk_check_json,
-                    f.send_result_json
-                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) f
-                left join ({BUSINESS_PROJECTIONS['work_project']}) p on p.id=f.project_id
-                left join ({BUSINESS_PROJECTIONS['work_todo']}) t on t.id=f.todo_id
-                where {' and '.join(clauses)}
-                order by
-                    case
-                        when ? != '' and f.target_conversation_id=? then 0
-                        else 1
-                    end,
-                    case
-                        when ? != '' and {owner_expr}=? then 0
-                        else 1
-                    end,
-                    {recency_expr} desc,
-                    f.id desc
-                limit ?
-                """,
-                args,
-            ).fetchall()
-            return [RecentFollowUpCandidate.model_validate(dict(row)) for row in rows]
 
-    @staticmethod
-    def _follow_up_dedupe_key(values: dict[str, object]) -> str:
-        parts = [
-            str(values.get("project_id") or ""),
-            str(values.get("todo_id") or ""),
-            str(values.get("owner_user_id") or "").strip(),
-            str(values.get("target_conversation_id") or "").strip(),
-            str(values.get("target_kind") or "").strip(),
-            " ".join(str(values.get("question_text") or "").split()),
-        ]
-        raw_key = "\n".join(parts)
-        if not raw_key.strip():
-            return ""
-        return hashlib.sha256(raw_key.encode("utf-8")).hexdigest()
 
-    def count_sent_follow_ups_for_owner_since(
-        self,
-        owner_user_id: str,
-        since: str,
-    ) -> int:
-        if not owner_user_id.strip():
-            return 0
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select count(*) as count
-                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
-                where status='sent'
-                  and owner_user_id=?
-                  and sent_at != ''
-                  and datetime(sent_at) >= datetime(?)
-                """,
-                (owner_user_id.strip(), since),
-            ).fetchone()
-            return int(row["count"] or 0)
 
-    def count_sent_follow_ups_for_conversation_since(
-        self,
-        conversation_id: str,
-        since: str,
-    ) -> int:
-        if not conversation_id.strip():
-            return 0
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select count(*) as count
-                from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']})
-                where status='sent'
-                  and target_conversation_id=?
-                  and sent_at != ''
-                  and datetime(sent_at) >= datetime(?)
-                """,
-                (conversation_id.strip(), since),
-            ).fetchone()
-            return int(row["count"] or 0)
 
 
 

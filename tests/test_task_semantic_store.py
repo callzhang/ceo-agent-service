@@ -28,6 +28,8 @@ from app.business_source_reader import SourceVersionBinding
 from app.business_source_reader import PreparedSources
 from app.provenance_storage import insert_signal_version
 from app.run_storage import insert_run
+from tests.support.business_task_seed import seed_task, seed_task_evidence, seed_task_signal
+from tests.support.business_task_seed import signal_snapshot
 
 
 NOW = datetime(2026, 9, 22, 12, 0, tzinfo=timezone.utc)
@@ -526,7 +528,7 @@ def test_nonblank_text_preserves_surrounding_whitespace(store, table, column, co
 @pytest.mark.parametrize("body", ["", " ", "\t\u2003\u00a0"])
 def test_store_rejects_blank_signal_body_before_persisting(store, body):
     with pytest.raises(ValidationError, match="text must not be blank"):
-        store.create_business_task_signal(
+        seed_task_signal(store,
             source_type="reply_attempt", source_ref="message:42", evidence_text=body,
             dedupe_key="blank-body",
         )
@@ -640,7 +642,7 @@ def test_signal_preserves_original_evidence_and_provenance(store):
     values["evidence_text"] = " \t\u2003王明，周五前提交报价。\n\u00a0"
     input_signal = models.BusinessTaskSignal(id=1, created_at=STAMP, **values)
     expected_binding = SourceVersionBinding.from_signal(input_signal)
-    signal_id = store.create_business_task_signal(**values, now=NOW)
+    signal_id = seed_task_signal(store, **values, now=NOW)
     signal = store.get_business_task_signal(signal_id)
     assert signal is not None
     assert "evidence_text" not in vars(signal)
@@ -659,9 +661,9 @@ def test_signal_preserves_original_evidence_and_provenance(store):
     assert store.get_business_task_signal(signal.id) == signal
     assert store.get_business_task_signal(999) is None
     with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
-        store.create_business_task_signal(**values, now=NOW)
+        seed_task_signal(store, **values, now=NOW)
     changed = dict(values, evidence_text="王明：收到", dedupe_key="message:42:v2")
-    changed_id = store.create_business_task_signal(**changed, now=NOW)
+    changed_id = seed_task_signal(store, **changed, now=NOW)
     assert changed_id != signal_id
     changed_fact = store.get_business_task_signal(changed_id)
     assert changed_fact.source.identity_key != signal.source.identity_key
@@ -680,7 +682,7 @@ def test_business_task_can_exist_without_project(tmp_path):
     from app.task_semantic_models import BusinessTaskStage, CommitmentStatus
 
     store = AutoReplyStore(tmp_path / "service.sqlite3")
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="reply_attempt",
         source_ref="message:42",
         source_time="2026-09-22T10:00:00Z",
@@ -688,7 +690,7 @@ def test_business_task_can_exist_without_project(tmp_path):
         context_json="{}",
         dedupe_key="reply_attempt:message:42",
     )
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="提交美国客户报价第一版",
         stage="formal",
         status="open",
@@ -696,7 +698,7 @@ def test_business_task_can_exist_without_project(tmp_path):
         commitment_status="assigned_unaccepted",
         owner_name="王明",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=task_id,
         signal_id=signal_id,
         evidence_role="assignment",
@@ -752,8 +754,8 @@ def test_signal_observations_are_immutable(store, operation):
 
 @pytest.mark.parametrize("operation", ["update", "delete", "replace"])
 def test_shared_provenance_bindings_are_immutable(store, operation):
-    first_id = store.create_business_task_signal(**signal_input())
-    store.create_business_task_signal(**signal_input(dedupe_key="second-owner"))
+    first_id = seed_task_signal(store, **signal_input())
+    seed_task_signal(store, **signal_input(dedupe_key="second-owner"))
     with store._connect() as db:
         before = tuple(db.execute("select * from provenance where id=1").fetchone())
         assert before
@@ -835,7 +837,7 @@ def test_task_truth_round_trip_without_a_project(store):
     values = dict(ROWS["business_tasks"][1])
     for field in ("id", "created_at", "updated_at"):
         values.pop(field)
-    task_id = store.create_business_task(**values, now=NOW)
+    task_id = seed_task(store, **values, now=NOW)
     task = store.get_business_task(task_id)
     assert task is not None
     assert task.model_dump(mode="json") == ROWS["business_tasks"][1]
@@ -845,7 +847,7 @@ def test_task_truth_round_trip_without_a_project(store):
 
 
 def test_creation_uses_declared_fields_and_defaults(store):
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="Investigate pricing", stage="candidate", now=NOW
     )
     task = store.get_business_task(task_id)
@@ -856,7 +858,7 @@ def test_creation_uses_declared_fields_and_defaults(store):
     assert task.missing_evidence_json == "[]"
     assert task.last_activity_at == STAMP
     with pytest.raises(TypeError, match="unexpected keyword"):
-        store.create_business_task(
+        seed_task(store,
             title="bad", stage="candidate", injected_column="bad"
         )
 
@@ -870,7 +872,7 @@ def test_task_listing_combines_filters_and_paginates_stably(store):
         ("formal", "done", "not_relevant"),
     ]:
         task_ids.append(
-            store.create_business_task(
+            seed_task(store,
                 title=f"Task {len(task_ids)}",
                 stage=stage,
                 status=status,
@@ -896,11 +898,11 @@ def test_task_listing_combines_filters_and_paginates_stably(store):
 
 
 def test_default_task_listing_uses_updated_id_index_without_sorting(store):
-    first = store.create_business_task(title="First tied task", stage="candidate", now=NOW)
-    earlier = store.create_business_task(
+    first = seed_task(store, title="First tied task", stage="candidate", now=NOW)
+    earlier = seed_task(store,
         title="Earlier task", stage="candidate", now=NOW.replace(day=21)
     )
-    last = store.create_business_task(title="Last tied task", stage="candidate", now=NOW)
+    last = seed_task(store, title="Last tied task", stage="candidate", now=NOW)
     with store.read_snapshot(), store._connect() as db:
         queries = []
         db.set_trace_callback(queries.append)
@@ -926,21 +928,13 @@ def test_default_task_listing_uses_updated_id_index_without_sorting(store):
 def test_evidence_is_a_typed_unique_task_signal_role_link(store):
     with store._connect() as db:
         seed_references(db)
-    first = store.link_business_task_evidence(
-        task_id=1, signal_id=1, evidence_role="assignment"
-    )
-    second = store.link_business_task_evidence(
-        task_id=1, signal_id=1, evidence_role="acceptance"
-    )
-    assert first.evidence_role.value == "assignment"
-    assert {
-        row.evidence_role.value for row in store.list_business_task_evidence(1)
-    } == {"assignment", "acceptance"}
-    assert second.signal_id == first.signal_id
-    with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
-        store.link_business_task_evidence(
-            task_id=1, signal_id=1, evidence_role="assignment"
-        )
+    seed_task_evidence(store, task_id=1, signal_id=1, evidence_role="assignment")
+    seed_task_evidence(store, task_id=1, signal_id=1, evidence_role="acceptance")
+    seed_task_evidence(store, task_id=1, signal_id=1, evidence_role="assignment")
+    evidence = store.list_business_task_evidence(1)
+    assert {row.evidence_role.value for row in evidence} == {"assignment", "acceptance"}
+    assert {row.signal_id for row in evidence} == {1}
+    assert len(evidence) == 2
 
 
 INVALID_ROWS = [
@@ -1321,7 +1315,7 @@ def signal_input(**changes):
 
 def test_distinct_task_signals_share_one_exact_source_body(store):
     from app.business_source_reader import PreparedSources
-    first_id = store.create_business_task_signal(**signal_input(), now=NOW)
+    first_id = seed_task_signal(store, **signal_input(), now=NOW)
     with store.business_task_transaction() as db:
         second_id = store.create_business_task_signal_in_transaction(
             **signal_input(
@@ -1329,10 +1323,10 @@ def test_distinct_task_signals_share_one_exact_source_body(store):
                 context_json='{ "task_context": "另一项任务" }',
             ), now=NOW, _db=db,
         )
-    first_task = store.create_business_task(title="提交报价", stage="candidate")
-    second_task = store.create_business_task(title="安排演示", stage="candidate")
-    store.link_business_task_evidence(task_id=first_task, signal_id=first_id, evidence_role="assignment")
-    store.link_business_task_evidence(task_id=second_task, signal_id=second_id, evidence_role="discovery")
+    first_task = seed_task(store, title="提交报价", stage="candidate")
+    second_task = seed_task(store, title="安排演示", stage="candidate")
+    seed_task_evidence(store, task_id=first_task, signal_id=first_id, evidence_role="assignment")
+    seed_task_evidence(store, task_id=second_task, signal_id=second_id, evidence_role="discovery")
     first = store.get_business_task_signal(first_id)
     second = store.get_business_task_signal(second_id)
     assert first.id != second.id
@@ -1350,7 +1344,7 @@ def test_distinct_task_signals_share_one_exact_source_body(store):
         second_fact, second_body = prepared.require_body(store, second_id, db=db)
         assert first_fact == first and second_fact == second
         assert first_body == second_body == body
-    assert store.list_business_task_signals() == (first, second)
+    assert signal_snapshot(store) == (first, second)
     with store.business_task_transaction() as db:
         assert store.get_business_task_signal_by_dedupe_key(dedupe_key=second.dedupe_key, _db=db) == second
         assert store.get_business_task_signal_for_task_source_ref_in_transaction(
@@ -1375,10 +1369,10 @@ def test_distinct_task_signals_share_one_exact_source_body(store):
 
 @pytest.mark.parametrize("source_type", ["memory_provenance", "session_provenance"])
 def test_cited_provenance_does_not_share_observed_source_body(store, source_type):
-    cited_id = store.create_business_task_signal(
+    cited_id = seed_task_signal(store,
         **signal_input(source_type=source_type, dedupe_key=f"{source_type}:42"), now=NOW,
     )
-    observed_id = store.create_business_task_signal(**signal_input(), now=NOW)
+    observed_id = seed_task_signal(store, **signal_input(), now=NOW)
     cited = store.get_business_task_signal(cited_id)
     observed = store.get_business_task_signal(observed_id)
     assert cited.source_ref == observed.source_ref
@@ -1426,8 +1420,8 @@ def insert_preexisting_orphan_meeting_run(db):
     {"evidence_text": signal_input()["evidence_text"].strip()},
 ])
 def test_persisted_source_versions_keep_distinct_bindings(store, change):
-    first_id = store.create_business_task_signal(**signal_input())
-    second_id = store.create_business_task_signal(**signal_input(dedupe_key="second-signal", **change))
+    first_id = seed_task_signal(store, **signal_input())
+    second_id = seed_task_signal(store, **signal_input(dedupe_key="second-signal", **change))
     first = store.get_business_task_signal(first_id)
     second = store.get_business_task_signal(second_id)
     assert first.source.identity_key != second.source.identity_key
@@ -1450,12 +1444,12 @@ def test_persisted_source_versions_keep_distinct_bindings(store, change):
 
 
 def test_duplicate_signal_failure_preserves_the_original_body_binding(store):
-    signal_id = store.create_business_task_signal(**signal_input())
+    signal_id = seed_task_signal(store, **signal_input())
     original = store.get_business_task_signal(signal_id)
     original_body = signal_input()["evidence_text"]
     with pytest.raises(sqlite3.IntegrityError, match="UNIQUE"):
-        store.create_business_task_signal(**signal_input(evidence_text="不同的重复正文"))
-    assert store.list_business_task_signals() == (original,)
+        seed_task_signal(store, **signal_input(evidence_text="不同的重复正文"))
+    assert signal_snapshot(store) == (original,)
     prepared = PreparedSources(store.business_source_reader())
     prepared.add_current(original, original_body)
     with store.business_task_transaction() as db:

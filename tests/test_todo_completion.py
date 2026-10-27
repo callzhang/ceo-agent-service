@@ -7,6 +7,7 @@ from app.provenance_storage import signal_projection
 from app.task_attention_projection import AttentionProposal, BusinessAttentionProjection
 from app.task_semantic_models import AttentionCategory
 from app.todo_completion import complete_business_task_from_external_todo
+from tests.support.business_task_seed import seed_task
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -15,11 +16,11 @@ def _store(tmp_path: Path) -> AutoReplyStore:
 
 def test_external_dingtalk_completion_closes_only_the_linked_business_task(tmp_path):
     store = AutoReplyStore(tmp_path / "task.sqlite3")
-    first = store.create_business_task(
+    first = seed_task(store,
         title="客户验收", stage="formal", formal_basis="explicit_assignment",
         commitment_status="accepted", owner_user_id="alex", owner_name="Alex",
     )
-    sibling = store.create_business_task(
+    sibling = seed_task(store,
         title="客户合同", stage="formal", formal_basis="explicit_assignment",
         commitment_status="accepted", owner_user_id="alex", owner_name="Alex",
     )
@@ -51,7 +52,7 @@ def test_external_dingtalk_completion_closes_only_the_linked_business_task(tmp_p
 
 
 def _business_task_for_completion(store, *, title="客户验收", with_follow_up=False):
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title=title, stage="formal", formal_basis="explicit_assignment",
         owner_user_id="alex", owner_name="Alex", business_relevance="relevant",
     )
@@ -191,7 +192,7 @@ def test_business_task_link_lookup_by_provider_task_returns_newest_match(tmp_pat
 
 def test_external_todo_completion_rejects_unlinked_task(tmp_path):
     store = _store(tmp_path)
-    task_id = store.create_business_task(title="Unlinked", stage="formal", formal_basis="explicit_assignment", owner_user_id="alex", owner_name="Alex")
+    task_id = seed_task(store, title="Unlinked", stage="formal", formal_basis="explicit_assignment", owner_user_id="alex", owner_name="Alex")
 
     assert not complete_business_task_from_external_todo(
         store, business_task_id=task_id,

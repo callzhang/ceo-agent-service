@@ -35,6 +35,7 @@ from app.business_source_reader import PreparedSources
 from app.action_business_definitions import business_action_projection
 from app.action_storage import SYNC_ACTION_PROJECTIONS
 from app.provenance_storage import signal_projection
+from tests.support.business_task_seed import seed_task, seed_task_signal
 
 
 class FakeTodoDws:
@@ -60,7 +61,7 @@ def project(tmp_path):
         anchor_id=anchor_id, registry_source="meeting:p"
     )
     duty_text = "P 项目王五负责商务和回款。"
-    duty_id = store.create_business_task_signal(
+    duty_id = seed_task_signal(store,
         source_type="meeting",
         source_ref="meeting:p",
         evidence_text=duty_text,
@@ -87,7 +88,7 @@ def project(tmp_path):
         dedupe_key="chat:p:1:risk",
         author_kind=BusinessActorKind.HUMAN,
     )
-    risk_id = store.create_business_task_signal(**signal.__dict__)
+    risk_id = seed_task_signal(store, **signal.__dict__)
     prepared_sources = PreparedSources(store.business_source_reader())
     prepared_sources.add_current(store.get_business_task_signal(duty_id), duty_text)
     prepared_sources.add_current(store.get_business_task_signal(risk_id), risk_text)
@@ -409,7 +410,7 @@ def test_human_assignment_promotes_same_suggestion_without_losing_origin(project
 
 def test_old_task_shape_defaults_to_source_without_promotion(project):
     store, _, _, _ = project
-    task_id = store.create_business_task(title="旧候选", stage="candidate")
+    task_id = seed_task(store, title="旧候选", stage="candidate")
     task = store.get_business_task(task_id)
     assert task.origin == "source" and task.suggestion_json == "{}"
     assert task.stage.value == "candidate" and task.commitment_status.value == "none"
@@ -429,7 +430,7 @@ def test_unobserved_provenance_cannot_be_original_suggestion_proof(
             dedupe_key=f"{provenance_type}:risk",
         )
     else:
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type=provenance_type,
             source_ref="provenance:duty",
             evidence_text="王五负责商务和回款。款项尚未到账。",

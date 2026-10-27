@@ -17,6 +17,20 @@ Email 计划只使用 `persist_email_plan`；Reviewed 的旧计划写入及旧�
 本轮不改变 DDL、业务事实、审查、授权、重试或回执语义；部署状态与读回证据见
 [清退验收](unused-business-path-retirement.md)。
 
+### 第一批追加清退：当前业务入口与 Attempt 读取（2026-10-26）
+
+旧跟进草稿、Todo完成证据的生产写入／状态推进入口和测试专用Store包装器已退出当前
+应用；20个方法及RecentFollowUpCandidate重复DTO删除。历史Project／Todo／Update、
+跟进尝试、终态同步outbox、完成证据及其来源／决定／回执仍由原有历史owner持有，
+现行详情与History继续读取。重放脚本使用现有Signal事务入口；旧源码造数仅在
+冻结前版本测试中执行，不构成运行时旧结构兼容。
+
+Attempt会话列表直接读取当前Run，不再构造旧Attempt形状或空工具事件字段；
+RuntimeAttempt读取只使用现有批量接口。仍保留历史Attempt自身的真实session和
+缺少run关联时沿准确Task读取Run的逻辑；原生范围、可用性、角色和状态合同不变。
+本批不改DDL、历史行、审查／授权／重试／发送政策；不退休Project或领取字段。
+发布状态、测试范围和清理见[本批验收](business-entrypoint-batch1-cleanup.md)。
+
 ## 数据库结构与迁移合同
 
 当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本迁移和仅 Email 变化的迁移。当前 Signal 发布的上一版是 Store `2026-10-25.2`／Email54；更早的 Store `2026-10-19.12`／Email53 Action Entity 路径已退出自动发布分派。不能把旧 marker 当成可直接迁移的证据；不匹配的 schema 在任何写入前失败关闭。下方更早的阶段记录描述的是当时的候选与已完成工作，不代表当前可自动升级范围。

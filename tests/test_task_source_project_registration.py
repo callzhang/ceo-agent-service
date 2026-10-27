@@ -10,6 +10,7 @@ from app.business_storage import update_business
 from app.task_agent import apply_task_agent_decision
 from app.task_business_resolution import BusinessResolutionService
 from app.task_models import ProjectProposal, TaskAgentDecision, WorkItem
+from tests.support.business_task_seed import seed_task
 
 
 def source_registration(source_type, task_id, *, with_attention=False):
@@ -141,7 +142,7 @@ def test_current_source_reuses_exact_title_legacy_project_and_links_changed_task
 ):
     store = AutoReplyStore(tmp_path / "source.sqlite3")
     project = seed_project(store)
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="复核示例创智回款计划", stage="candidate", description="此前待完善"
     )
     item, decision = source_registration(source_type, task_id, with_attention=True)
@@ -184,7 +185,7 @@ def test_current_source_reuses_exact_title_legacy_project_and_links_changed_task
 def test_current_source_does_not_reuse_a_shorter_project_name(tmp_path, source_type):
     store = AutoReplyStore(tmp_path / "prefix.sqlite3")
     old = seed_project(store, title="示例")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="复核示例创智回款计划", stage="candidate"
     )
     item, decision = source_registration(source_type, task_id)
@@ -209,7 +210,7 @@ def test_multiple_active_exact_title_projects_are_an_identity_conflict(
     store = AutoReplyStore(tmp_path / "ambiguous.sqlite3")
     seed_project(store, ref="legacy:first")
     seed_project(store, ref="legacy:second")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="复核示例创智回款计划", stage="candidate", description="此前待完善"
     )
     item, decision = source_registration(source_type, task_id)
@@ -242,7 +243,7 @@ def test_only_active_official_exact_title_project_is_reused(tmp_path, source_typ
     BusinessResolutionService(store).register_anchor(
         anchor_type="project", anchor_ref="unregistered:same-name", title="示例创智"
     )
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="复核示例创智回款计划", stage="candidate"
     )
     item, decision = source_registration(source_type, task_id)

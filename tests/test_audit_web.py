@@ -81,6 +81,7 @@ from app.worker import MAX_REPLY_TASK_ATTEMPTS
 from tests.support.native_task_fields import set_native_task_fields
 from tests.wechat.support import approve_delivery
 from tests.wechat.support import create_wechat_delivery
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
 
 
 
@@ -1984,7 +1985,7 @@ def test_render_attempt_list_links_task_history_to_task_detail(tmp_path: Path):
         description="说明重要事项判断口径，并同步更新后的 TODO。",
         owner_name="Avery",
     )
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="user-mina",
@@ -2023,7 +2024,7 @@ def test_render_attempt_list_shows_draft_follow_up_as_scheduled(tmp_path: Path):
         category="sales",
         owner_name="Casey Huang",
     )
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         owner_name="Casey Huang",
         target_kind="direct",
@@ -2571,7 +2572,7 @@ def test_history_chart_waits_for_future_follow_up_schedule(tmp_path: Path):
         category="product",
         owner_name="Derek",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         title="Confirm release readiness",
         target_kind="direct",
@@ -4199,7 +4200,7 @@ def test_task_project_detail_renders_project_todos_and_sources(tmp_path: Path):
         summary="新增待办",
         changes_json='{"todo":"created"}',
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_name="Alex",
@@ -4261,7 +4262,7 @@ def test_task_project_detail_keeps_unlinked_followups_separate(tmp_path: Path):
         owner_name="Alex",
         status="open",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=9999,
         owner_name="Alex",
@@ -7128,7 +7129,7 @@ def test_failed_meeting_and_follow_up_expose_reason_and_safe_choices(
         category="people",
         owner_name="Avery",
     )
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         owner_name="Avery",
         target_kind="direct",
@@ -7164,7 +7165,7 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
         owner_name="Former owner",
         status="open",
     )
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="inactive-owner",
@@ -7182,7 +7183,7 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
             }
         ),
     )
-    draft = store.get_follow_up_draft(follow_up_id)
+    draft = next((draft for draft in store.list_follow_up_drafts(limit=10000) if draft.id == follow_up_id), None)
     assert draft is not None
 
     html = render_attempt_list(store, include_chart=False)
@@ -7213,7 +7214,7 @@ def test_confirmed_not_sent_legacy_follow_up_offers_no_repair_or_cancel(
     )
 
     assert response.status_code >= 400
-    unchanged = store.get_follow_up_draft(follow_up_id)
+    unchanged = next((draft for draft in store.list_follow_up_drafts(limit=10000) if draft.id == follow_up_id), None)
     assert unchanged is not None
     assert unchanged.status == "failed"
     assert unchanged.revision == draft.revision
@@ -7911,7 +7912,7 @@ def test_worker_attention_excludes_healthy_follow_up_drafts(tmp_path: Path):
         category="projects",
         status="active",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=0,
         owner_name="Alex",
@@ -10704,7 +10705,7 @@ def test_render_log_list_shows_recent_operations(tmp_path: Path):
         summary="新增待办",
         changes_json='{"todo":"created"}',
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=1,
         owner_name="Alex",
@@ -10761,7 +10762,7 @@ def test_render_workers_page_shows_service_and_queue_status(
         status="active",
     )
     store.enqueue_work_summary_input("reply_attempt", "1", '{"summary":"新增任务"}')
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=0,
         owner_name="Alex",

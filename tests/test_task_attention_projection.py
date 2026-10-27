@@ -19,6 +19,7 @@ from app.task_semantic_service import (
 )
 from app.task_semantic_rules import FormalityEvidence
 from app.task_semantic_models import BusinessTaskStatus, FormalTaskBasis
+from tests.support.business_task_seed import seed_task, seed_task_evidence, seed_task_signal
 
 
 @pytest.fixture
@@ -44,7 +45,7 @@ def _task_with_anchor(projection: BusinessAttentionProjection, key: str) -> tupl
             owner_evidence_json=f'{{"source_ref":"{key}","excerpt":"王明"}}',
         )
     ).task_id
-    signal_id = projection.store.create_business_task_signal(
+    signal_id = seed_task_signal(projection.store,
         source_type="registry", source_ref=f"anchor:{key}", evidence_text=f"{key} 是公司重点",
         dedupe_key=f"anchor:{key}",
     )
@@ -136,7 +137,7 @@ def _project_without_tasks(projection, key):
     project_id = resolver.register_official_project(
         anchor_id=anchor_id, registry_source=f"meeting:{key}"
     )
-    signal_id = projection.store.create_business_task_signal(
+    signal_id = seed_task_signal(projection.store,
         source_type="message", source_ref=f"message:{key}",
         evidence_text="客户验收标准尚未确认，需要关注交付风险。", dedupe_key=f"risk:{key}"
     )
@@ -166,7 +167,7 @@ def test_zero_task_attention_resolves_only_with_its_project_evidence(projection)
     assert other_anchor != anchor_id
     with pytest.raises(ValueError, match="resolution evidence signal must be linked to the Project"):
         projection.resolve(item_id=item_id, resolution_signal_id=unrelated_signal, reason="已解决")
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="resolved:zero", evidence_text="验收标准已经确认。",
         dedupe_key="resolved:zero"
     )
@@ -183,11 +184,11 @@ def test_zero_task_attention_resolves_only_with_its_project_evidence(projection)
 
 def test_project_attention_rejects_task_only_evidence(projection):
     anchor_id, _, _ = _project_without_tasks(projection, "project-proof")
-    task_id = projection.store.create_business_task(title="真实独立任务", stage="candidate")
-    task_signal = projection.store.create_business_task_signal(
+    task_id = seed_task(projection.store, title="真实独立任务", stage="candidate")
+    task_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="task-only", evidence_text="任务安排。", dedupe_key="task-only"
     )
-    projection.store.link_business_task_evidence(task_id=task_id, signal_id=task_signal, evidence_role="discovery")
+    seed_task_evidence(projection.store, task_id=task_id, signal_id=task_signal, evidence_role="discovery")
     with pytest.raises(ValueError, match="attention evidence signal must be linked to the Project"):
         projection.upsert(_proposal((), anchor_id, task_signal))
     assert projection.store.list_business_attention_items() == ()
@@ -198,7 +199,7 @@ def test_zero_task_attention_rejects_unregistered_project_or_nonproject_anchor(p
     anchor_id = BusinessResolutionService(projection.store).register_anchor(
         anchor_type=anchor_type, anchor_ref=f"unregistered:{anchor_type.value}", title="只有锚点"
     )
-    signal_id = projection.store.create_business_task_signal(
+    signal_id = seed_task_signal(projection.store,
         source_type="message", source_ref="unregistered:source", evidence_text="存在风险。", dedupe_key="unregistered:source"
     )
     with pytest.raises(ValueError, match="requires an official Project"):
@@ -258,11 +259,11 @@ def test_resolution_requires_signal(projection):
     with pytest.raises(ValueError, match="resolution evidence signal"):
         projection.resolve(item_id=item_id, resolution_signal_id=999_999, reason="已解决")
 
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="resolved:read", evidence_text="问题已解决",
         dedupe_key="resolved:read",
     )
-    projection.store.link_business_task_evidence(
+    seed_task_evidence(projection.store,
         task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
     )
     _link_project_signal(projection, anchor_id, resolution_signal)
@@ -271,8 +272,8 @@ def test_resolution_requires_signal(projection):
 
 
 def test_nonrelevant_task_is_not_eligible(projection):
-    task_id = projection.store.create_business_task(title="临时杂事", stage="candidate")
-    signal_id = projection.store.create_business_task_signal(
+    task_id = seed_task(projection.store, title="临时杂事", stage="candidate")
+    signal_id = seed_task_signal(projection.store,
         source_type="message", source_ref="incidental", evidence_text="临时杂事",
         dedupe_key="incidental",
     )
@@ -312,11 +313,11 @@ def test_recompute_preserves_category_and_resolved_state(projection):
     item_id = projection.upsert(
         _proposal((task_id,), anchor_id, signal_id, category=AttentionCategory.DECISION)
     )
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="resolved:preserve", evidence_text="已解决",
         dedupe_key="resolved:preserve",
     )
-    projection.store.link_business_task_evidence(
+    seed_task_evidence(projection.store,
         task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
     )
     _link_project_signal(projection, anchor_id, resolution_signal)
@@ -382,11 +383,11 @@ def test_resolution_can_use_historical_member_after_recompute_removes_it(project
         )
     )
     projection.recompute_for_tasks((task_id,))
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="historical-resolution", evidence_text="关注事项解决",
         dedupe_key="historical-resolution",
     )
-    projection.store.link_business_task_evidence(
+    seed_task_evidence(projection.store,
         task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
     )
 
@@ -405,11 +406,11 @@ def test_resolved_membership_change_stays_resolved_and_is_not_reopened(projectio
     resolver = BusinessResolutionService(projection.store)
     resolver.confirm_anchor_match(task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户")
     item_id = projection.upsert(_proposal((first,), anchor_id, signal_id))
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="resolved-membership", evidence_text="已解决",
         dedupe_key="resolved-membership",
     )
-    projection.store.link_business_task_evidence(task_id=first, signal_id=resolution_signal, evidence_role="resolution")
+    seed_task_evidence(projection.store, task_id=first, signal_id=resolution_signal, evidence_role="resolution")
     _link_project_signal(projection, anchor_id, resolution_signal)
     projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
 
@@ -425,11 +426,11 @@ def test_resolution_snapshot_includes_current_membership(projection):
     resolver = BusinessResolutionService(projection.store)
     resolver.confirm_anchor_match(task_id=second, anchor_id=anchor_id, evidence_signal_id=signal_id, reason="同一客户")
     item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="snapshot-resolution", evidence_text="已解决",
         dedupe_key="snapshot-resolution",
     )
-    projection.store.link_business_task_evidence(task_id=first, signal_id=resolution_signal, evidence_role="resolution")
+    seed_task_evidence(projection.store, task_id=first, signal_id=resolution_signal, evidence_role="resolution")
     _link_project_signal(projection, anchor_id, resolution_signal)
     projection.resolve(item_id=item_id, resolution_signal_id=resolution_signal, reason="已解决")
     event = projection.store.list_business_attention_events(item_id)[-1]
@@ -503,11 +504,11 @@ def test_initial_terminal_proposal_retains_resolution_lineage(projection):
     )
     item_id = projection.upsert(_proposal((task_id,), anchor_id, signal_id))
     assert projection.store.list_business_attention_tasks(item_id) == ()
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="initial-terminal:resolution", evidence_text="已解决",
         dedupe_key="initial-terminal:resolution",
     )
-    projection.store.link_business_task_evidence(
+    seed_task_evidence(projection.store,
         task_id=task_id, signal_id=resolution_signal, evidence_role="resolution"
     )
 
@@ -531,11 +532,11 @@ def test_resolution_uses_historical_proposal_membership_after_explicit_removal(p
         )
     item_id = projection.upsert(_proposal((first, second), anchor_id, signal_id))
     projection.upsert(_proposal((second,), anchor_id, signal_id))
-    resolution_signal = projection.store.create_business_task_signal(
+    resolution_signal = seed_task_signal(projection.store,
         source_type="message", source_ref="historical:resolution", evidence_text="已解决",
         dedupe_key="historical:resolution",
     )
-    projection.store.link_business_task_evidence(
+    seed_task_evidence(projection.store,
         task_id=first, signal_id=resolution_signal, evidence_role="resolution"
     )
 

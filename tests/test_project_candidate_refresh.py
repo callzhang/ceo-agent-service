@@ -9,6 +9,7 @@ from app.task_attention_projection import AttentionProposal, BusinessAttentionPr
 from app.task_business_resolution import BusinessResolutionService
 from app.task_models import TaskAgentDecision, WorkItem
 from app.task_semantic_models import AttentionCategory, BusinessRelevance
+from tests.support.business_task_seed import seed_task, seed_task_signal
 
 
 PROJECT_ROW = "| 示例项目 | 回款复核 | 降低现金流风险 | 09-30 | 有风险 |"
@@ -19,16 +20,16 @@ def test_report_confirmation_refreshes_existing_card_peer_without_swallowing_oth
     store = AutoReplyStore(tmp_path / "candidate-refresh.sqlite3")
     resolver = BusinessResolutionService(store)
     projection = BusinessAttentionProjection(store)
-    task_id = store.create_business_task(title="复核回款计划", stage="candidate")
-    peer_id = store.create_business_task(title="协调付款计划", stage="candidate")
-    other_id = store.create_business_task(title="整理项目培训资料", stage="candidate")
+    task_id = seed_task(store, title="复核回款计划", stage="candidate")
+    peer_id = seed_task(store, title="协调付款计划", stage="candidate")
+    other_id = seed_task(store, title="整理项目培训资料", stage="candidate")
     anchor_id = resolver.register_anchor(
         anchor_type="project", anchor_ref="project:example", title="示例项目"
     )
     project_id = resolver.register_official_project(
         anchor_id=anchor_id, registry_source="project_weekly_report:old"
     )
-    old_proof = store.create_business_task_signal(
+    old_proof = seed_task_signal(store,
         source_type="message", source_ref="message:old-risk",
         evidence_text="示例项目回款风险尚未解决。", dedupe_key="message:old-risk",
     )

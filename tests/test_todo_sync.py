@@ -12,6 +12,8 @@ from app.todo_sync import (
     scan_completed_dingtalk_todos,
     sync_completed_task_to_dingtalk,
 )
+from tests.support.business_task_seed import seed_task
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
 
 
 class FakeTodoDws:
@@ -121,7 +123,7 @@ def _formal_business_task(store: AutoReplyStore, **values) -> int:
         "deadline_at": "2026-07-01 18:00:00",
     }
     defaults.update(values)
-    task_id = store.create_business_task(**defaults)
+    task_id = seed_task(store, **defaults)
     with store._immediate_write_transaction() as db:
         signal_id = store.create_business_task_signal_in_transaction(
             source_type="dingtalk_message", source_ref=f"task:{task_id}:commitment",
@@ -455,7 +457,7 @@ def test_completion_scan_keeps_legacy_rows_history_only(tmp_path):
 def test_completion_scan_keeps_legacy_todo_history_only(tmp_path):
     store = _store(tmp_path)
     project_id, todo_id = _project_and_todo(store)
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-1",
@@ -490,7 +492,7 @@ def test_completion_scan_keeps_legacy_todo_history_only(tmp_path):
     assert todo.status == "open"
     assert todo.completion_evidence_json == "{}"
     assert next((link for link in store.list_work_todo_dingtalk_links_for_todos([todo_id]).get(todo_id, []) if link.id == link_id), None).status == "active"
-    follow_up = store.get_follow_up_draft(follow_up_id)
+    follow_up = next((draft for draft in store.list_follow_up_drafts(limit=10000) if draft.id == follow_up_id), None)
     assert follow_up is not None
     assert follow_up.status == "sent"
     assert follow_up.evidence_check_json == "{}"

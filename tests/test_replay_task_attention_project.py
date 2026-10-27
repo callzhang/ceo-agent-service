@@ -19,18 +19,19 @@ from app.task_semantic_models import AttentionCategory
 from app.task_models import TaskAgentDecision
 from app.task_source_documents import source_contains_quote
 from tests.support.task_native import record_task_fixture_run, task_native_records  # noqa: F401
+from tests.support.business_task_seed import seed_task_signal
 
 
 @pytest.fixture(autouse=True)
 def synthetic_exact_source_reader(monkeypatch):
     """Expose only synthetic bodies emitted by this test, bound to their exact hash."""
     records = {}
-    create_signal = AutoReplyStore.create_business_task_signal
+    create_signal = AutoReplyStore.create_business_task_signal_in_transaction
     business_source_reader = AutoReplyStore.business_source_reader
 
     def capture_signal(store, **values):
         signal_id = create_signal(store, **values)
-        fact = store.get_business_task_signal(signal_id)
+        fact = store.get_business_task_signal_in_transaction(signal_id=signal_id, _db=values["_db"])
         records.setdefault(store, {})[fact.source.identity_key] = (
             fact.source, values["evidence_text"],
         )
@@ -54,7 +55,7 @@ def synthetic_exact_source_reader(monkeypatch):
                 return UnavailableSource(binding, SourceUnavailableReason.QUOTE_MISSING)
             return AvailableSource(binding, body)
 
-    monkeypatch.setattr(AutoReplyStore, "create_business_task_signal", capture_signal)
+    monkeypatch.setattr(AutoReplyStore, "create_business_task_signal_in_transaction", capture_signal)
     monkeypatch.setattr(
         AutoReplyStore, "business_source_reader",
         lambda store, **_: SyntheticReader(store),
@@ -141,7 +142,7 @@ def _project(store):
     project_id = resolution.register_official_project(
         anchor_id=anchor_id, registry_source="meeting:readback",
     )
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="message:readback",
         evidence_text="验收日期未确定，影响本期回款。", dedupe_key="readback:source",
     )
@@ -171,7 +172,7 @@ def test_readback_zero_task_attention_requires_actual_project_proof(tmp_path, re
     if remove_project_proof:
         _delete_project_evidence(store, project_id)
     if primary_missing:
-        other_id = store.create_business_task_signal(source_type="message", source_ref="m:other", evidence_text="同项目另一资料。", dedupe_key="other")
+        other_id = seed_task_signal(store, source_type="message", source_ref="m:other", evidence_text="同项目另一资料。", dedupe_key="other")
         with store.business_task_transaction() as db:
             ProjectContextService(store).apply(project_id=project_id, context=None, signal_ids=(other_id,), db=db)
             card = store.get_business_attention_item_in_transaction(

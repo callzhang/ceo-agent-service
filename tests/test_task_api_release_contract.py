@@ -7,6 +7,7 @@ from app.store import AutoReplyStore
 from app.business_storage import insert_business
 from app.fxiaoke_customer_lookup import CrmCustomerCandidate, CrmCustomerLookup
 from tests.test_console_web_api import _client
+from tests.support.business_task_seed import seed_task
 
 
 def _signal(store, db, key: str) -> int:
@@ -18,7 +19,7 @@ def _signal(store, db, key: str) -> int:
 
 def test_semantic_detail_links_match_frontend_routes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment")
+    task_id = seed_task(store, title="Launch", stage="formal", formal_basis="explicit_assignment")
     legacy_id = seed_legacy_work_project(store, title="Historical", category="dev", status="active")
     with store._immediate_write_transaction() as db:
         signal_id = _signal(store, db, "link-source")
@@ -66,7 +67,7 @@ def test_project_candidate_query_treats_search_text_literally(tmp_path):
 
 def test_task_detail_contains_all_relations_and_anchor_links(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="Central", stage="formal", formal_basis="explicit_assignment")
+    task_id = seed_task(store, title="Central", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
         signal_id = _signal(store, db, "all-links")
         for index in range(101):
@@ -90,7 +91,7 @@ def test_task_detail_contains_all_relations_and_anchor_links(tmp_path):
 
 def test_task_detail_contains_all_follow_ups_beyond_store_page(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="Follow up", stage="formal", formal_basis="explicit_assignment")
+    task_id = seed_task(store, title="Follow up", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
         signal_id = store.create_business_task_signal_in_transaction(
             source_type="test", source_ref="follow-up-source",
@@ -115,8 +116,8 @@ def test_task_detail_contains_all_follow_ups_beyond_store_page(tmp_path):
 
 def test_project_member_count_agrees_in_task_and_project_details(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    first_id = store.create_business_task(title="First", stage="formal", formal_basis="explicit_assignment")
-    second_id = store.create_business_task(title="Second", stage="formal", formal_basis="explicit_assignment")
+    first_id = seed_task(store, title="First", stage="formal", formal_basis="explicit_assignment")
+    second_id = seed_task(store, title="Second", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
         signal_id = _signal(store, db, "members")
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="members", title="Members", _db=db)
@@ -151,8 +152,8 @@ def test_customer_grouping_uses_confirmed_crm_id_and_excludes_unlinked_projects(
 
 def test_task_customer_is_read_through_confirmed_project_not_copied_to_task(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    linked_task_id = store.create_business_task(title="准备甲客户验收材料", stage="formal", formal_basis="explicit_assignment")
-    standalone_task_id = store.create_business_task(title="整理内部周会", stage="formal", formal_basis="explicit_assignment")
+    linked_task_id = seed_task(store, title="准备甲客户验收材料", stage="formal", formal_basis="explicit_assignment")
+    standalone_task_id = seed_task(store, title="整理内部周会", stage="formal", formal_basis="explicit_assignment")
     with store._immediate_write_transaction() as db:
         signal_id = _signal(store, db, "project-customer-source")
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="customer-task", title="甲客户交付项目", _db=db)
@@ -201,7 +202,7 @@ def test_manual_crm_search_requires_human_confirmation_and_never_writes_crm(tmp_
 
 def test_sent_todos_includes_task_keyed_links_with_semantic_deep_link(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="Ship", stage="formal", formal_basis="explicit_assignment")
+    task_id = seed_task(store, title="Ship", stage="formal", formal_basis="explicit_assignment")
     link_id = store.create_business_task_dingtalk_link(
         business_task_id=task_id, dingtalk_task_id="dingtalk-ship",
         executor_user_id="owner-1", executor_name="Alex",

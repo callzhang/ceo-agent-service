@@ -11,6 +11,7 @@ from app.service_activity import collect_service_activity, scheduled_context
 from app.email_store import EmailStore
 from app.action_storage import insert_sync_action, update_action
 from app.store import AutoReplyStore
+from tests.support.business_task_seed import seed_task, seed_task_signal
 
 
 _window_path = (
@@ -48,7 +49,7 @@ def _set_reply_attempt(store: AutoReplyStore, row_id: int, **values) -> None:
 
 
 def _signal(store: AutoReplyStore, key: str) -> int:
-    return store.create_business_task_signal(
+    return seed_task_signal(store,
         source_type="reply_attempt",
         source_ref=key,
         source_time="2026-09-24T02:00:00Z",
@@ -59,7 +60,7 @@ def _signal(store: AutoReplyStore, key: str) -> int:
 
 
 def _task(store: AutoReplyStore, title: str, *, last_activity_at: str) -> int:
-    return store.create_business_task(
+    return seed_task(store,
         title=title,
         stage="candidate",
         owner_name="王明",

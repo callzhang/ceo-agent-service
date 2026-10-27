@@ -17,6 +17,8 @@ from app.task_retrieval import (
     retrieve_task_semantic_context,
     render_task_semantic_context,
 )
+from tests.support.business_task_seed import seed_task, seed_task_evidence, seed_task_signal
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
 
 
 def _work_item(summary: str) -> WorkItem:
@@ -65,7 +67,7 @@ def test_project_context_without_task_is_retrieved_from_its_own_sources(tmp_path
     resolver = BusinessResolutionService(store)
     anchor = resolver.register_anchor(anchor_type="project", anchor_ref="project:p", title="甲一期交付")
     project = resolver.register_official_project(anchor_id=anchor, registry_source="meeting:roles")
-    signal = store.create_business_task_signal(source_type="meeting", source_ref="meeting:roles", evidence_text="张三总负责交付和验收；王五负责商务和回款。付款日期未确定。", dedupe_key="roles")
+    signal = seed_task_signal(store, source_type="meeting", source_ref="meeting:roles", evidence_text="张三总负责交付和验收；王五负责商务和回款。付款日期未确定。", dedupe_key="roles")
     proof = {"signal_id": signal, "source_ref": "meeting:roles", "source_excerpt": "张三总负责交付和验收"}
     current = ProjectContext(goal="完成一期交付", scope="一期", overall_owner={"person_name": "张三", "responsibility": "交付和验收", "evidence": [proof]}, responsibilities=[], facts=[{"key": "payment", "text": "付款日期未确定", "evidence": [{**proof, "source_excerpt": "付款日期未确定"}]}])
     prepared = PreparedSources(store.business_source_reader())
@@ -100,10 +102,10 @@ def test_project_context_prioritizes_related_task_without_shared_words(tmp_path)
     resolver = BusinessResolutionService(store)
     anchor = resolver.register_anchor(anchor_type="project", anchor_ref="p:one", title="甲一期交付")
     resolver.register_official_project(anchor_id=anchor, registry_source="meeting:p")
-    task = store.create_business_task(title="完全不同措辞", stage="candidate")
-    signal = store.create_business_task_signal(source_type="meeting", source_ref="meeting:p", evidence_text="项目对应具体事项", dedupe_key="link")
+    task = seed_task(store, title="完全不同措辞", stage="candidate")
+    signal = seed_task_signal(store, source_type="meeting", source_ref="meeting:p", evidence_text="项目对应具体事项", dedupe_key="link")
     resolver.confirm_anchor_match(task_id=task, anchor_id=anchor, evidence_signal_id=signal)
-    store.create_business_task(title="甲一期交付 无关联资料", stage="candidate")
+    seed_task(store, title="甲一期交付 无关联资料", stage="candidate")
     context = retrieve_task_semantic_context(store, _work_item("甲一期交付"), limit_per_kind=1)
     assert [row.id for row in context.task_candidates] == [task]
 
@@ -113,15 +115,15 @@ def test_shared_source_same_source_formal_tasks_are_not_lost_to_rank_limit(tmp_p
     own = []
     own_signals = {}
     for i in range(4):
-        id = store.create_business_task(title=f"不同的交付事项{i}", stage="formal", formal_basis="explicit_assignment", owner_name="张三", owner_evidence_json=json.dumps({"source_ref": "meeting:own#old", "excerpt": "张三负责全部事项"}, ensure_ascii=False))
-        signal = store.create_business_task_signal(source_type="ai_minutes", source_ref="meeting:own#old", evidence_text="张三负责全部事项", dedupe_key=f"own:{i}")
-        store.link_business_task_evidence(task_id=id, signal_id=signal, evidence_role="assignment")
+        id = seed_task(store, title=f"不同的交付事项{i}", stage="formal", formal_basis="explicit_assignment", owner_name="张三", owner_evidence_json=json.dumps({"source_ref": "meeting:own#old", "excerpt": "张三负责全部事项"}, ensure_ascii=False))
+        signal = seed_task_signal(store, source_type="ai_minutes", source_ref="meeting:own#old", evidence_text="张三负责全部事项", dedupe_key=f"own:{i}")
+        seed_task_evidence(store, task_id=id, signal_id=signal, evidence_role="assignment")
         own.append(id)
         own_signals[signal] = "张三负责全部事项"
-    unverified = store.create_business_task(
+    unverified = seed_task(store,
         title="旧会谈中待核对事项", stage="formal", formal_basis="explicit_assignment",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=unverified, signal_id=next(iter(own_signals)), evidence_role="discovery",
     )
     item = WorkItem.model_validate({"source": {"type": "ai_minutes", "ref": "meeting:own#new"}, "summary": "完全变了的措辞", "context": {"source_conversation_kind": "minutes"}})
@@ -161,18 +163,18 @@ def test_semantic_context_stops_owner_reads_after_both_formal_buckets_are_full(t
         source_ref = f"message:{label}"
         excerpt = "王明负责美国客户报价"
         body = excerpt if has_owner_quote else "王明讨论美国客户报价"
-        task_id = store.create_business_task(
+        task_id = seed_task(store,
             title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
             owner_name="王明",
             owner_evidence_json=json.dumps({
                 "source_ref": source_ref, "excerpt": excerpt,
             }, ensure_ascii=False),
         )
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=source_ref,
             evidence_text=body, dedupe_key=source_ref,
         )
-        store.link_business_task_evidence(
+        seed_task_evidence(store,
             task_id=task_id, signal_id=signal_id, evidence_role="assignment",
         )
         reader.add_current(store.get_business_task_signal(signal_id), body)
@@ -200,9 +202,9 @@ def test_shared_source_owner_quote_in_decoded_json_remains_formal(tmp_path):
     store = AutoReplyStore(tmp_path / "decoded-owner.sqlite3")
     quote = "张三负责\n全部交付"
     body = json.dumps({"summary": quote, "padding": "甲" * 5000}, ensure_ascii=True)
-    task = store.create_business_task(title="全部交付", stage="formal", formal_basis="explicit_assignment", owner_name="张三", owner_evidence_json=json.dumps({"source_ref": "m:json", "excerpt": quote}, ensure_ascii=False))
-    signal = store.create_business_task_signal(source_type="ai_minutes", source_ref="m:json", evidence_text=body, dedupe_key="json:owner")
-    store.link_business_task_evidence(task_id=task, signal_id=signal, evidence_role="assignment")
+    task = seed_task(store, title="全部交付", stage="formal", formal_basis="explicit_assignment", owner_name="张三", owner_evidence_json=json.dumps({"source_ref": "m:json", "excerpt": quote}, ensure_ascii=False))
+    signal = seed_task_signal(store, source_type="ai_minutes", source_ref="m:json", evidence_text=body, dedupe_key="json:owner")
+    seed_task_evidence(store, task_id=task, signal_id=signal, evidence_role="assignment")
     context = retrieve_task_semantic_context(
         store, _work_item("全部交付"), limit_per_kind=1,
         source_reader=_fixture_source_reader(store, {signal: body}),
@@ -234,7 +236,7 @@ def test_project_context_uses_bounded_recent_proof_but_keeps_old_role_citation(t
     store = AutoReplyStore(tmp_path / "bounded-project.sqlite3")
     resolver = BusinessResolutionService(store)
     projects = []
-    first = store.create_business_task_signal(source_type="ai_minutes", source_ref="shared#old", evidence_text="一期张三负责总交付；二期李四负责总交付。", dedupe_key="shared")
+    first = seed_task_signal(store, source_type="ai_minutes", source_ref="shared#old", evidence_text="一期张三负责总交付；二期李四负责总交付。", dedupe_key="shared")
     prepared = PreparedSources.load(
         store, (first,),
         reader=_fixture_source_reader(store, {
@@ -270,18 +272,18 @@ def _sourced_formal_task(
 ) -> int:
     source_ref = f"message:owner:{suffix}"
     excerpt = f"王明负责{title}"
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title=title, stage="formal", formal_basis="explicit_assignment",
         commitment_status="assigned_unaccepted", owner_name="王明",
         owner_evidence_json=json.dumps({"source_ref": source_ref, "excerpt": excerpt}, ensure_ascii=False),
     )
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref=source_ref, evidence_text=excerpt,
         dedupe_key=source_ref,
     )
     if source_reader is not None:
         source_reader.add_current(store.get_business_task_signal(signal_id), excerpt)
-    store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
+    seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="assignment")
     return task_id
 
 
@@ -294,7 +296,7 @@ def test_semantic_context_returns_only_bounded_active_attention_for_selected_pro
         title=title) for i, title in enumerate(("报价", "无关"))]
     for anchor in anchors:
         resolver.register_official_project(anchor_id=anchor, registry_source="report:registry")
-    signal = store.create_business_task_signal(source_type="message", source_ref="message:risk",
+    signal = seed_task_signal(store, source_type="message", source_ref="message:risk",
         evidence_text="交付受阻", dedupe_key="message:risk")
     assessment = json.dumps({"inference": "影响交付", "evidence": [
         {"signal_id": signal, "source_ref": "message:risk", "source_excerpt": "交付受阻"}]}, ensure_ascii=False)
@@ -341,7 +343,7 @@ def test_semantic_context_renders_saved_attention_members_not_project_peers(tmp_
     peer_id = _sourced_formal_task(store, title="报价任务乙", suffix="peer")
     member_signal_id = 0
     for task_id, suffix in ((member_id, "member"), (peer_id, "peer")):
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=f"message:link:{suffix}",
             evidence_text=f"报价任务{suffix}属于报价项目", dedupe_key=f"message:link:{suffix}",
         )
@@ -384,7 +386,7 @@ def test_semantic_context_has_no_attention_without_official_project_anchor(tmp_p
     store = AutoReplyStore(tmp_path / "attention-no-anchor.sqlite3")
     anchor = BusinessResolutionService(store).register_anchor(
         anchor_type="project", anchor_ref="unregistered:quote", title="报价")
-    signal = store.create_business_task_signal(source_type="message", source_ref="message:no-project",
+    signal = seed_task_signal(store, source_type="message", source_ref="message:no-project",
         evidence_text="报价风险", dedupe_key="message:no-project")
     with store.business_task_transaction() as db:
         store.create_business_attention_item_in_transaction(stable_key="unregistered:attention",
@@ -398,15 +400,15 @@ def test_semantic_context_has_no_attention_without_official_project_anchor(tmp_p
 
 def test_semantic_context_keeps_legacy_ownerless_formal_searchable_but_unverified(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-legacy-owner.sqlite3")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
         commitment_status="assigned_unaccepted",
     )
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="message:legacy", evidence_text="讨论美国客户报价",
         dedupe_key="message:legacy",
     )
-    store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+    seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="discovery")
 
     context = retrieve_task_semantic_context(
         store, _work_item("美国客户报价"), limit_per_kind=1,
@@ -426,15 +428,15 @@ def test_semantic_context_keeps_legacy_ownerless_formal_searchable_but_unverifie
 
 def test_render_semantic_context_bounds_repeated_source_signal_evidence(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-signal-bound.sqlite3")
-    task_id = store.create_business_task(title="美国客户报价", stage="candidate")
+    task_id = seed_task(store, title="美国客户报价", stage="candidate")
     long_evidence = "开头证据\n" + ("完整会议原文。" * 5000) + "\n结尾证据"
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="ai_minutes",
         source_ref="meeting:long#todos-sha256=one",
         evidence_text=long_evidence,
         dedupe_key="meeting:long:signal",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=task_id, signal_id=signal_id, evidence_role="discovery"
     )
 
@@ -458,13 +460,13 @@ def test_render_semantic_context_bounds_repeated_source_signal_evidence(tmp_path
 
 def test_semantic_context_requires_attached_owner_source_not_merely_owner_fields(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-uncited-owner.sqlite3")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
         owner_name="王明", owner_evidence_json=json.dumps({
             "source_ref": "message:unlinked", "excerpt": "王明负责美国客户报价",
         }, ensure_ascii=False),
     )
-    store.create_business_task_signal(
+    seed_task_signal(store,
         source_type="message", source_ref="message:unlinked",
         evidence_text="王明负责美国客户报价", dedupe_key="message:unlinked",
     )
@@ -476,17 +478,17 @@ def test_semantic_context_requires_attached_owner_source_not_merely_owner_fields
 
 def test_semantic_context_requires_formal_role_for_owner_citation(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-owner-role.sqlite3")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
         owner_name="王明", owner_evidence_json=json.dumps({
             "source_ref": "message:discovery", "excerpt": "王明负责美国客户报价",
         }, ensure_ascii=False),
     )
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="message:discovery",
         evidence_text="王明负责美国客户报价", dedupe_key="message:discovery",
     )
-    store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+    seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="discovery")
 
     context = retrieve_task_semantic_context(store, _work_item("美国客户报价"), limit_per_kind=1)
     assert context.formal_tasks == ()
@@ -495,7 +497,7 @@ def test_semantic_context_requires_formal_role_for_owner_citation(tmp_path):
 
 def test_semantic_context_pins_middle_owner_citation_after_evidence_bounding(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-middle-owner.sqlite3")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="美国客户报价", stage="formal", formal_basis="explicit_assignment",
         owner_name="王明", owner_evidence_json=json.dumps({
             "source_ref": "message:middle", "excerpt": "王明负责美国客户报价",
@@ -505,13 +507,13 @@ def test_semantic_context_pins_middle_owner_citation_after_evidence_bounding(tmp
     source_reader = _FixtureSourceReader()
     for index in range(7):
         source_ref = "message:middle" if index == 3 else f"message:other:{index}"
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=source_ref,
             evidence_text="王明负责美国客户报价" if index == 3 else f"报价进度 {index}",
             dedupe_key=source_ref,
         )
-        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
-        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="correction")
+        seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="assignment")
+        seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="correction")
         if index == 3:
             owner_signal_id = signal_id
             source_reader.add_current(
@@ -541,7 +543,7 @@ def test_semantic_context_prioritizes_confirmed_active_link_over_early_proposals
             anchor_type="project", anchor_ref=f"registry:proposal:{index}",
             title=f"美国客户报价草案 {index}",
         )
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=f"message:proposal:{index}",
             evidence_text=f"可能属于草案 {index}", dedupe_key=f"message:proposal:{index}",
         )
@@ -552,7 +554,7 @@ def test_semantic_context_prioritizes_confirmed_active_link_over_early_proposals
     official_project_id = resolver.register_official_project(
         anchor_id=confirmed_anchor_id, registry_source="portfolio",
     )
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="message:confirmed",
         evidence_text="美国客户报价正式归属全球营收计划", dedupe_key="message:confirmed",
     )
@@ -583,11 +585,11 @@ def test_semantic_context_relation_and_anchor_support_signals_are_rendered_per_t
     ]
     support_ids = []
     for index, task_id in enumerate(task_ids):
-        target_id = store.create_business_task(title=f"支持事项 {index}", stage="candidate")
+        target_id = seed_task(store, title=f"支持事项 {index}", stage="candidate")
         anchor_id = resolver.register_anchor(
             anchor_type="customer", anchor_ref=f"customer:{index}", title=f"客户锚点 {index}",
         )
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=f"message:support:{index}",
             evidence_text=f"报价 {index} 属于客户锚点并支持签约", dedupe_key=f"message:support:{index}",
         )
@@ -623,13 +625,13 @@ def test_semantic_context_per_task_relation_and_link_cap_preserves_later_task(tm
     task_ids = [_sourced_formal_task(store, title="美国客户报价", suffix=str(index)) for index in range(2)]
     for index, task_id in enumerate(task_ids):
         for edge_index in range(2):
-            target_id = store.create_business_task(title=f"目标 {index}-{edge_index}", stage="candidate")
+            target_id = seed_task(store, title=f"目标 {index}-{edge_index}", stage="candidate")
             anchor_id = resolver.register_anchor(
                 anchor_type="customer", anchor_ref=f"cust:{index}:{edge_index}",
                 title=f"客户 {index}-{edge_index}",
             )
             ref = f"message:edge:{index}:{edge_index}"
-            signal_id = store.create_business_task_signal(
+            signal_id = seed_task_signal(store,
                 source_type="message", source_ref=ref,
                 evidence_text=f"关系和锚点 {index}-{edge_index}", dedupe_key=ref,
             )
@@ -664,7 +666,7 @@ def test_semantic_context_includes_linked_anchor_and_official_project_past_lexic
     linked_project_id = resolver.register_official_project(
         anchor_id=linked_anchor_id, registry_source="portfolio",
     )
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="message:project-link",
         evidence_text="美国客户报价归属全球营收计划", dedupe_key="message:project-link",
     )
@@ -682,7 +684,7 @@ def test_semantic_context_includes_cluster_members_not_only_cluster_title(tmp_pa
     store = AutoReplyStore(tmp_path / "semantic-cluster-members.sqlite3")
     resolver = BusinessResolutionService(store)
     matched_id = _sourced_formal_task(store, title="美国客户报价", suffix="cluster")
-    sibling_id = store.create_business_task(title="美国客户合同准备", stage="candidate")
+    sibling_id = seed_task(store, title="美国客户合同准备", stage="candidate")
     decoy_id = resolver.create_cluster(title="美国客户报价研究", task_ids=[sibling_id])
     linked_id = resolver.create_cluster(title="海外营收", task_ids=[matched_id, sibling_id])
 
@@ -701,17 +703,17 @@ def test_semantic_context_includes_cluster_members_not_only_cluster_title(tmp_pa
 
 def test_semantic_context_includes_old_formal_task_and_evidence_beyond_recent_window(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-retrieval.sqlite3")
-    matched = store.create_business_task(title="美国客户报价第一版", stage=BusinessTaskStage.FORMAL,
+    matched = seed_task(store, title="美国客户报价第一版", stage=BusinessTaskStage.FORMAL,
                                          formal_basis="explicit_assignment", commitment_status="assigned_unaccepted",
                                          owner_name="王明", owner_evidence_json=json.dumps({
                                              "source_ref": "message:old", "excerpt": "王明负责美国客户报价第一版",
                                          }, ensure_ascii=False))
-    signal_id = store.create_business_task_signal(source_type="message", source_ref="message:old",
+    signal_id = seed_task_signal(store, source_type="message", source_ref="message:old",
                                                   evidence_text="王明负责美国客户报价第一版",
                                                   dedupe_key="message:old")
-    store.link_business_task_evidence(task_id=matched, signal_id=signal_id, evidence_role="assignment")
+    seed_task_evidence(store, task_id=matched, signal_id=signal_id, evidence_role="assignment")
     for index in range(501):
-        store.create_business_task(title=f"其他工作 {index}", stage=BusinessTaskStage.CANDIDATE)
+        seed_task(store, title=f"其他工作 {index}", stage=BusinessTaskStage.CANDIDATE)
 
     context = retrieve_task_semantic_context(
         store, _work_item("美国客户报价第一版进展"), limit_per_kind=2,
@@ -730,7 +732,7 @@ def test_semantic_context_includes_old_formal_task_and_evidence_beyond_recent_wi
 
 def test_semantic_context_keeps_early_assignment_and_acceptance_after_many_later_signals(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-source-proof.sqlite3")
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title="美国客户报价第一版", stage=BusinessTaskStage.FORMAL,
         formal_basis="explicit_assignment", commitment_status="accepted",
         owner_name="王明", owner_evidence_json=json.dumps({
@@ -743,18 +745,18 @@ def test_semantic_context_keeps_early_assignment_and_acceptance_after_many_later
         ("assignment", "message:assign", "负责人指派王明交报价第一版"),
         ("acceptance", "message:accept", "王明答应交报价第一版"),
     ):
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=ref, evidence_text=excerpt, dedupe_key=ref,
         )
-        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role=role)
+        seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role=role)
         source_signal_ids.append(signal_id)
         source_reader.add_current(store.get_business_task_signal(signal_id), excerpt)
     for index in range(12):
         ref = f"message:progress:{index}"
-        signal_id = store.create_business_task_signal(
+        signal_id = seed_task_signal(store,
             source_type="message", source_ref=ref, evidence_text=f"报价进度 {index}", dedupe_key=ref,
         )
-        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+        seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="discovery")
 
     context = retrieve_task_semantic_context(
         store, _work_item("美国客户报价第一版进度"), limit_per_kind=2,
@@ -773,17 +775,17 @@ def test_semantic_context_includes_registry_clusters_and_anchor_links(tmp_path):
 
     store = AutoReplyStore(tmp_path / "semantic-relations.sqlite3")
     resolver = BusinessResolutionService(store)
-    task_id = store.create_business_task(title="美国客户报价", stage="formal",
+    task_id = seed_task(store, title="美国客户报价", stage="formal",
                                          formal_basis="explicit_assignment", commitment_status="assigned_unaccepted",
                                          owner_name="王明", owner_evidence_json=json.dumps({
                                              "source_ref": "message:assign", "excerpt": "王明负责美国客户报价",
                                          }, ensure_ascii=False))
-    assignment_id = store.create_business_task_signal(
+    assignment_id = seed_task_signal(store,
         source_type="message", source_ref="message:assign", evidence_text="王明负责美国客户报价",
         dedupe_key="message:assign",
     )
-    store.link_business_task_evidence(task_id=task_id, signal_id=assignment_id, evidence_role="assignment")
-    signal_id = store.create_business_task_signal(source_type="message", source_ref="message:anchor",
+    seed_task_evidence(store, task_id=task_id, signal_id=assignment_id, evidence_role="assignment")
+    signal_id = seed_task_signal(store, source_type="message", source_ref="message:anchor",
                                                   evidence_text="美国客户报价属于美国客户成交",
                                                   dedupe_key="message:anchor")
     cluster_id = resolver.create_cluster(title="美国客户成交", task_ids=[task_id])
@@ -791,7 +793,7 @@ def test_semantic_context_includes_registry_clusters_and_anchor_links(tmp_path):
                                          title="美国客户成交")
     project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source="portfolio")
     resolver.propose_anchor_match(task_id=task_id, anchor_id=anchor_id, evidence_signal_id=signal_id)
-    related_id = store.create_business_task(title="签约准备", stage="formal",
+    related_id = seed_task(store, title="签约准备", stage="formal",
                                             formal_basis="explicit_assignment", commitment_status="assigned_unaccepted")
     resolver.add_relation(from_task_id=task_id, to_task_id=related_id,
                           relation_type="supports", evidence_signal_id=signal_id)
@@ -808,15 +810,15 @@ def test_semantic_context_includes_registry_clusters_and_anchor_links(tmp_path):
 def test_semantic_context_can_find_existing_formal_task_from_source_conversation(tmp_path):
     store = AutoReplyStore(tmp_path / "semantic-conversation.sqlite3")
     source_reader = _FixtureSourceReader()
-    task_id = store.create_business_task(title="客户交付方案", stage="formal",
+    task_id = seed_task(store, title="客户交付方案", stage="formal",
                                          formal_basis="explicit_assignment", commitment_status="assigned_unaccepted",
                                          owner_name="王明", owner_evidence_json=json.dumps({
                                              "source_ref": "message:old", "excerpt": "王明负责客户交付方案",
                                          }, ensure_ascii=False))
-    signal_id = store.create_business_task_signal(source_type="message", source_ref="message:old",
+    signal_id = seed_task_signal(store, source_type="message", source_ref="message:old",
                                                   conversation_id="cid-1", evidence_text="王明负责客户交付方案",
                                                   dedupe_key="message:old")
-    store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="assignment")
+    seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="assignment")
     source_reader.add_current(
         store.get_business_task_signal(signal_id), "王明负责客户交付方案",
     )
@@ -838,7 +840,7 @@ def test_semantic_store_read_methods_use_stable_pages(tmp_path):
 
     store = AutoReplyStore(tmp_path / "semantic-pages.sqlite3")
     resolver = BusinessResolutionService(store)
-    task_id = store.create_business_task(title="任务", stage="candidate")
+    task_id = seed_task(store, title="任务", stage="candidate")
     cluster_ids = [resolver.create_cluster(title=f"业务组 {index}", task_ids=[task_id])
                    for index in range(3)]
     anchor_ids = [resolver.register_anchor(anchor_type="customer", anchor_ref=f"cust:{index}",
@@ -918,7 +920,7 @@ def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
         title="TODO B",
         status="open",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_one,
         target_conversation_id="cid-a",
@@ -926,7 +928,7 @@ def test_load_project_task_detail_uses_batch_follow_up_lookup(tmp_path):
         question_text="A?",
         scheduled_at="2026-07-24 10:00:00",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_two,
         target_conversation_id="cid-b",
@@ -983,7 +985,7 @@ def test_history_detail_uses_todo_owner_as_project_display_fallback(tmp_path):
     seed_legacy_todo_link(store, work_todo_id=todo_id, dingtalk_task_id="provider-1",
                           executor_user_id="owner-1", executor_name="Avery",
                           title_snapshot="确认客户验收 ETA", status="active")
-    store.create_follow_up_draft(project_id=project_id, todo_id=todo_id,
+    seed_legacy_follow_up(store, project_id=project_id, todo_id=todo_id,
                                  owner_name="Avery", target_conversation_id="cid-delivery",
                                  target_kind="group", question_text="何时验收？", status="draft")
 
@@ -1019,10 +1021,10 @@ def test_a_source_read_again_sees_its_own_earlier_tasks_however_the_words_rank(t
     store = AutoReplyStore(tmp_path / "same-source.sqlite3")
 
     def candidate(title, source_ref, key):
-        task_id = store.create_business_task(title=title, stage="candidate")
-        signal_id = store.create_business_task_signal(
+        task_id = seed_task(store, title=title, stage="candidate")
+        signal_id = seed_task_signal(store,
             source_type="ai_minutes", source_ref=source_ref, evidence_text=title, dedupe_key=key)
-        store.link_business_task_evidence(task_id=task_id, signal_id=signal_id, evidence_role="discovery")
+        seed_task_evidence(store, task_id=task_id, signal_id=signal_id, evidence_role="discovery")
         return task_id
 
     for index in range(25):
