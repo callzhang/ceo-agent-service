@@ -5329,7 +5329,13 @@ def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
         DwsClient(timeout_seconds=7, transient_retry_delay_seconds=0).run_json(["dws", "probe"])
 
 
-def test_run_json_serializes_dws_processes_across_client_instances(monkeypatch):
+@pytest.mark.parametrize("command", [
+    ["dws", "probe"],
+    ["dws", "chat", "message", "send"],
+    ["dws", "chat", "message", "list-all"],
+    ["dws", "chat", "group", "members-update"],
+])
+def test_run_json_serializes_dws_processes_across_client_instances(monkeypatch, command):
     start = threading.Barrier(2)
     state_lock = threading.Lock()
     active = 0
@@ -5347,7 +5353,7 @@ def test_run_json_serializes_dws_processes_across_client_instances(monkeypatch):
 
     def invoke(client):
         start.wait()
-        return client.run_json(["dws", "probe"])
+        return client.run_json(command)
 
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
@@ -5358,7 +5364,78 @@ def test_run_json_serializes_dws_processes_across_client_instances(monkeypatch):
     assert max_active == 1
 
 
-def test_run_json_paces_dws_process_launches(monkeypatch):
+@pytest.mark.parametrize("path", [
+    ("chat", "group", "members"), ("chat", "message", "list"),
+])
+def test_group_discovery_reads_overlap_across_clients_with_a_fixed_process_bound(monkeypatch, path):
+    rendezvous = threading.Barrier(4, timeout=1)
+    lock = threading.Lock()
+    active = 0
+    peak = 0
+
+    def fake_run(command, **kwargs):
+        nonlocal active, peak
+        with lock:
+            active += 1
+            peak = max(peak, active)
+        try:
+            rendezvous.wait()
+            time.sleep(0.02)
+        except threading.BrokenBarrierError:
+            pass
+        finally:
+            with lock:
+                active -= 1
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    clients = (DwsClient(), DwsClient())
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        futures = [pool.submit(clients[i % 2].run_json, ["dws", *path]) for i in range(8)]
+        assert [future.result() for future in futures] == [{"ok": True}] * 8
+    assert peak == 4
+    assert active == 0
+
+
+def test_other_dws_command_waits_for_concurrent_reads_to_finish(monkeypatch):
+    reads_started = threading.Barrier(3, timeout=2)
+    release_reads = threading.Event()
+    other_requested = threading.Event()
+    other_started = threading.Event()
+
+    def fake_run(command, **kwargs):
+        if tuple(command[1:]) == ("chat", "group", "members"):
+            reads_started.wait()
+            assert release_reads.wait(3)
+        else:
+            other_started.set()
+        return SimpleNamespace(returncode=0, stdout='{"ok":true}', stderr="")
+
+    def invoke_other():
+        other_requested.set()
+        return DwsClient().run_json(["dws", "probe"])
+
+    monkeypatch.setattr(dws_client.subprocess, "run", fake_run)
+    with ThreadPoolExecutor(max_workers=3) as pool:
+        reads = [pool.submit(DwsClient().run_json, ["dws", "chat", "group", "members"]) for _ in range(2)]
+        try:
+            reads_started.wait()
+            other = pool.submit(invoke_other)
+            assert other_requested.wait(1)
+            assert not other_started.wait(0.05)
+        finally:
+            release_reads.set()
+        assert [future.result() for future in reads] == [{"ok": True}] * 2
+        assert other.result() == {"ok": True}
+    assert other_started.is_set()
+
+
+@pytest.mark.parametrize("command", [
+    ["dws", "probe"],
+    ["dws", "chat", "group", "members"],
+    ["dws", "chat", "message", "list"],
+])
+def test_run_json_paces_dws_process_launches(monkeypatch, command):
     clock = {"now": 100.0}
     sleeps: list[float] = []
     commands: list[list[str]] = []
@@ -5381,10 +5458,10 @@ def test_run_json_paces_dws_process_launches(monkeypatch):
 
     client = DwsClient()
 
-    assert client.run_json(["dws", "probe"]) == {"ok": True}
-    assert client.run_json(["dws", "probe"]) == {"ok": True}
+    assert client.run_json(command) == {"ok": True}
+    assert client.run_json(command) == {"ok": True}
 
-    assert commands == [["dws", "probe"], ["dws", "probe"]]
+    assert commands == [command, command]
     assert sleeps == [2.0]
 
 

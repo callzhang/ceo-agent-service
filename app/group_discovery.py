@@ -6,10 +6,12 @@ business target and never sends a message.
 
 from __future__ import annotations
 
+from concurrent.futures import Future, ThreadPoolExecutor
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import StrEnum
-from typing import Any, Mapping, Protocol, Sequence
+from typing import Any, Callable, Iterator, Mapping, Protocol, Sequence, TypeVar
 
 from app.dws_client import DwsError
 
@@ -209,6 +211,28 @@ class RetryableProviderError(RuntimeError):
     """A provider read failed before discovery could reach a conclusion."""
 
 
+_GROUP_READ_WORKERS = 4
+_ReadValue = TypeVar("_ReadValue")
+
+
+@contextmanager
+def _group_read_futures(
+    groups: Sequence[GroupRef], read: Callable[[GroupRef], _ReadValue],
+) -> Iterator[Iterator[Future[_ReadValue]]]:
+    """Bound both in-flight reads and queued work; consume in source order."""
+    pool = ThreadPoolExecutor(max_workers=_GROUP_READ_WORKERS, thread_name_prefix="group-discovery")
+
+    def batches() -> Iterator[Future[_ReadValue]]:
+        for start in range(0, len(groups), _GROUP_READ_WORKERS):
+            batch = groups[start:start + _GROUP_READ_WORKERS]
+            yield from [pool.submit(read, group) for group in batch]
+
+    try:
+        yield batches()
+    finally:
+        pool.shutdown(wait=True, cancel_futures=True)
+
+
 class GroupDiscoveryService:
     def __init__(self, provider: GroupDiscoveryProvider, policy: GroupDiscoveryPolicy):
         if provider.scope.platform != provider.scope.platform.strip():
@@ -263,36 +287,43 @@ class GroupDiscoveryService:
                     candidate_groups = title_selected
 
             staged: list[tuple[GroupRef, GroupEvidence]] = []
-            for group in candidate_groups:
-                precision: MemberPrecisionEvidence | None = None
-                members: tuple[MemberRef, ...] | None = None
-                if self.provider.capabilities.member_lists:
-                    unique_members: dict[tuple[str, str, str], MemberRef] = {}
-                    for member in self.provider.list_group_members(group):
-                        if member.provider_scope != request.provider_scope:
-                            raise ValueError("group member scope does not match request")
-                        unique_members.setdefault(member.scoped_key, member)
-                    members = tuple(unique_members.values())
-                    reads += 1
-                if members is None:
-                    precision = MemberPrecisionEvidence(None, None, "unavailable")
-                else:
-                    precision = self.policy.member_precision(request, members)
-                    if request.audience_is_complete and precision.status == "ineligible":
-                        continue
 
-                title_score = self.policy.title_score(request, group.display_name)
-                sendability: Sendability | None = None
-                if not request.audience_is_complete:
-                    sendability = prechecked_sendability[group.dedup_key]
-                elif self.provider.capabilities.sendability:
-                    sendability = self.provider.get_group_sendability(group)
-                    reads += 1
-                    if sendability.allowed is False:
-                        continue
-                elif self.provider.capabilities.sendability is False:
-                    sendability = Sendability(None, "unavailable")
-                staged.append((group, GroupEvidence(title_score=title_score, member_precision=precision, sendability=sendability, members=members)))
+            def read_members(group: GroupRef) -> tuple[MemberRef, ...]:
+                if not self.provider.capabilities.member_lists:
+                    return ()
+                return tuple(self.provider.list_group_members(group))
+
+            with _group_read_futures(candidate_groups, read_members) as pending:
+                for group, future in zip(candidate_groups, pending):
+                    precision: MemberPrecisionEvidence | None = None
+                    members: tuple[MemberRef, ...] | None = None
+                    if self.provider.capabilities.member_lists:
+                        unique_members: dict[tuple[str, str, str], MemberRef] = {}
+                        for member in future.result():
+                            if member.provider_scope != request.provider_scope:
+                                raise ValueError("group member scope does not match request")
+                            unique_members.setdefault(member.scoped_key, member)
+                        members = tuple(unique_members.values())
+                        reads += 1
+                    if members is None:
+                        precision = MemberPrecisionEvidence(None, None, "unavailable")
+                    else:
+                        precision = self.policy.member_precision(request, members)
+                        if request.audience_is_complete and precision.status == "ineligible":
+                            continue
+
+                    title_score = self.policy.title_score(request, group.display_name)
+                    sendability: Sendability | None = None
+                    if not request.audience_is_complete:
+                        sendability = prechecked_sendability[group.dedup_key]
+                    elif self.provider.capabilities.sendability:
+                        sendability = self.provider.get_group_sendability(group)
+                        reads += 1
+                        if sendability.allowed is False:
+                            continue
+                    elif self.provider.capabilities.sendability is False:
+                        sendability = Sendability(None, "unavailable")
+                    staged.append((group, GroupEvidence(title_score=title_score, member_precision=precision, sendability=sendability, members=members)))
 
             minimum_title_score = self.policy.minimum_title_score(request)
             if any((evidence.title_score or 0) >= minimum_title_score for _, evidence in staged):
@@ -310,34 +341,41 @@ class GroupDiscoveryService:
                 )
 
             candidates: list[GroupCandidate] = []
-            for group, evidence in staged:
-                discussion: DiscussionEvidence | None = None
-                denial: HistoryReadDenial | None = None
+
+            def read_messages(group: GroupRef) -> tuple[GroupMessage, ...]:
                 if not self.provider.capabilities.message_history:
-                    discussion = DiscussionEvidence(0.0, ("unavailable",))
-                else:
-                    reads += 1
-                    try:
-                        messages = tuple(self.provider.read_recent_group_messages(group, limit=30))
-                    except GroupHistoryReadDenied as exc:
-                        if exc.group != group:
-                            raise ValueError("history denial does not match requested group") from exc
-                        denial = HistoryReadDenial(exc.code, exc.reason)
+                    return ()
+                return tuple(self.provider.read_recent_group_messages(group, limit=30))
+
+            with _group_read_futures(tuple(group for group, _ in staged), read_messages) as pending:
+                for (group, evidence), future in zip(staged, pending):
+                    discussion: DiscussionEvidence | None = None
+                    denial: HistoryReadDenial | None = None
+                    if not self.provider.capabilities.message_history:
+                        discussion = DiscussionEvidence(0.0, ("unavailable",))
                     else:
-                        discussion = self.policy.discussion_score(request, messages)
-                candidate = GroupCandidate(
-                    group=group,
-                    evidence=GroupEvidence(
-                        title_score=evidence.title_score,
-                        member_precision=evidence.member_precision,
-                        discussion=discussion,
-                        sendability=Sendability(None, denial.reason) if denial else evidence.sendability,
-                        members=evidence.members,
-                        history_read_denial=denial,
-                    ),
-                )
-                if denial is not None or self.policy.accepts(request, candidate):
-                    candidates.append(candidate)
+                        reads += 1
+                        try:
+                            messages = future.result()
+                        except GroupHistoryReadDenied as exc:
+                            if exc.group != group:
+                                raise ValueError("history denial does not match requested group") from exc
+                            denial = HistoryReadDenial(exc.code, exc.reason)
+                        else:
+                            discussion = self.policy.discussion_score(request, messages)
+                    candidate = GroupCandidate(
+                        group=group,
+                        evidence=GroupEvidence(
+                            title_score=evidence.title_score,
+                            member_precision=evidence.member_precision,
+                            discussion=discussion,
+                            sendability=Sendability(None, denial.reason) if denial else evidence.sendability,
+                            members=evidence.members,
+                            history_read_denial=denial,
+                        ),
+                    )
+                    if denial is not None or self.policy.accepts(request, candidate):
+                        candidates.append(candidate)
 
             candidates.sort(key=self._sort_key, reverse=True)
             ranked = tuple(
