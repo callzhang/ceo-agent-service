@@ -193,14 +193,13 @@ class FakeMeetingRunner:
             }
         )
 
-    def audit(self, *, prompt, run_id, candidate_sha256):
+    def audit(self, *, prompt, run_id):
         from app.meeting_alignment_models import MeetingAlignmentAuditResult
 
         assert run_id > 0
         assert "上线范围" in prompt
         return MeetingAlignmentAuditResult(
             outcome="approve",
-            candidate_sha256=candidate_sha256,
             summary="The meeting candidate matches the reviewed source evidence.",
             feedback=None,
         )

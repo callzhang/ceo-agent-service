@@ -102,7 +102,6 @@ def test_confirmed_receipt_recovery_parses_only_a_bound_audit_envelope(
     from app.meeting_alignment_delivery import MeetingDeliveryResult
     from app.meeting_alignment_models import (
         MeetingAlignmentAuditResult,
-        meeting_alignment_decision_digest,
         persist_audited_meeting_decision,
     )
     from test_meeting_alignment_delivery import send_decision
@@ -114,11 +113,10 @@ def test_confirmed_receipt_recovery_parses_only_a_bound_audit_envelope(
         eligible_at="2026-10-12 00:10:00", status="failed",
     )
     decision = send_decision(target="direct", mention_names=[])
-    digest = meeting_alignment_decision_digest(decision)
     saved_decision = persist_audited_meeting_decision(
         decision,
         MeetingAlignmentAuditResult(
-            outcome="approve", candidate_sha256=digest,
+            outcome="approve",
             summary="The exact prepared message and recipient are supported.",
             feedback=None,
         ),

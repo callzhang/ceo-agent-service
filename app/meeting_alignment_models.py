@@ -556,7 +556,6 @@ class MeetingAlignmentAuditResult(StrictModel):
     """Independent, read-only review of one exact meeting outbound candidate."""
 
     outcome: Literal["approve", "return", "reject"]
-    candidate_sha256: str = Field(pattern=r"^[0-9a-f]{64}$")
     summary: str = Field(min_length=1)
     feedback: MeetingAlignmentAuditFeedback | None
 
@@ -577,6 +576,23 @@ def meeting_alignment_decision_digest(decision: MeetingAlignmentDecision) -> str
     return hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
+def meeting_audit_result_from_record(
+    raw: Any, *, digest: str | None = None,
+) -> MeetingAlignmentAuditResult:
+    """Read a stored Audit result.
+
+    Results stored before the service took over the candidate binding carry the
+    digest the model copied; when `digest` is given such a copy must equal it.
+    """
+    if not isinstance(raw, dict):
+        raise ValueError("stored Meeting Audit result is not an object")
+    fields = dict(raw)
+    legacy = fields.pop("candidate_sha256", None)
+    if legacy is not None and digest is not None and legacy != digest:
+        raise ValueError("stored Meeting Audit result is bound to another candidate")
+    return MeetingAlignmentAuditResult.model_validate(fields)
+
+
 def persist_audited_meeting_decision(
     decision: MeetingAlignmentDecision,
     audit: MeetingAlignmentAuditResult,
@@ -587,8 +603,6 @@ def persist_audited_meeting_decision(
     feedback_cycles: int = 0,
 ) -> str:
     digest = meeting_alignment_decision_digest(decision)
-    if audit.candidate_sha256 != digest:
-        raise ValueError("meeting Audit result is not bound to this candidate")
     payload = decision.model_dump(mode="json")
     payload["_service_audit"] = {
         "version": 1,
@@ -608,7 +622,7 @@ def previous_meeting_audit_feedback(raw: str) -> tuple[MeetingAlignmentAuditFeed
         audit = payload.get("_service_audit") if isinstance(payload, dict) else None
         if not isinstance(audit, dict) or audit.get("version") != 1:
             return None, 0
-        result = MeetingAlignmentAuditResult.model_validate(audit.get("result"))
+        result = meeting_audit_result_from_record(audit.get("result"))
         cycles = int(audit.get("feedback_cycles", 0))
         if cycles < 0:
             return None, 0
@@ -635,13 +649,9 @@ def meeting_decision_audit_is_approved(raw: str) -> bool:
                 elif target_kind == "direct":
                     decision_payload["audience_scope"] = "personal"
         decision = MeetingAlignmentDecision.model_validate(decision_payload)
-        result = MeetingAlignmentAuditResult.model_validate(audit.get("result"))
         digest = meeting_alignment_decision_digest(decision)
-        return (
-            audit.get("candidate_sha256") == digest
-            and result.candidate_sha256 == digest
-            and result.outcome == "approve"
-        )
+        result = meeting_audit_result_from_record(audit.get("result"), digest=digest)
+        return audit.get("candidate_sha256") == digest and result.outcome == "approve"
     except (TypeError, ValueError, json.JSONDecodeError):
         return False
 

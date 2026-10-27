@@ -14116,9 +14116,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Queue one independent Audit of an unchanged failed Meeting candidate."""
         import hmac
         from app.meeting_alignment_models import (
-            MeetingAlignmentAuditResult,
             load_persisted_meeting_alignment_decision,
             meeting_alignment_decision_digest,
+            meeting_audit_result_from_record,
             meeting_decision_audit_is_approved,
         )
 
@@ -14144,7 +14144,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             prior_audit.get("result") if isinstance(prior_audit, dict) else None
         )
         try:
-            parsed_prior_result = MeetingAlignmentAuditResult.model_validate(prior_result)
+            parsed_prior_result = meeting_audit_result_from_record(
+                prior_result, digest=meeting_alignment_decision_digest(decision),
+            )
         except (TypeError, ValueError):
             parsed_prior_result = None
         prior_return = (
@@ -14153,8 +14155,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             and parsed_prior_result is not None
             and parsed_prior_result.outcome == "return"
             and prior_audit.get("candidate_sha256")
-            == meeting_alignment_decision_digest(decision)
-            and parsed_prior_result.candidate_sha256
             == meeting_alignment_decision_digest(decision)
         )
         if prior_return:
