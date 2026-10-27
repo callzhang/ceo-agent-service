@@ -1660,7 +1660,7 @@ DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryRe
 
 正式分析恢复沿用 `rerun_meeting_alignment_jobs` 和原会议业务身份；事务内拒绝部分效果、
 已准备/已有回执的主消息或敏感消息、活跃 dispatcher/投递归属及仍活跃的 meeting/runtime run。
-旧运行保持历史，只在确认未发送且无活跃归属后清空原决策重做实际来源与受众核验。
+旧运行保持历史，只在确认未发送且无活跃归属后清空原决策重做实际来源与受众核验。该入口接受 `failed`、`no_action` 和 `needs_human`（Derek 2026-10-27）：`needs_human` 任务由控制台重跑重新开启，原 Run 与 Audit 反馈全部保留，重跑从 `retry` 重新经 Consumer→独立 Audit。
 当 DWS 逐字稿接口故障而完整 MCP ASR 结果可用时，`import-meeting-asr-transcript` 通过原
 meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，并以单事务重新排入同一个未发送
 任务。入口只接受有完整日历参会人证据的失败任务；ASR 不提供说话人身份或受众判断。已有部分
