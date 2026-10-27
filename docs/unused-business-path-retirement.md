@@ -2,8 +2,10 @@
 
 本轮落实已批准清单，以业务模型与调用链简化为目标，不宣称数据库容量收益。
 应用基线为013af535e；同轮通知开关发布后，生产重新绑定为 Store26.1／Email54。
-代码和定向验收已完成并推送，发布候选为cc90d2e16（包含实现6e7572e3e）。
-标准发布gate已通过，但30分钟安静窗口超时，生产没有切换；上线后读回尚未执行。
+代码、定向验收、标准发布、生产API／页面读回及本轮产物清理均已完成。
+当前运行版本为0f8c47eaaca8aa90dc60d9a71c28691c624cc6ee（包含实现6e7572e3e）。
+此前的排空超时已在Derek明确授权本次中断恢复后，通过现有skip-quiet-wait选项解除；
+没有修改默认等待策略或绕过强制gate。
 
 ## 变更与保留边界
 
@@ -44,7 +46,7 @@ provenance与回执保留。BusinessProject.anchor_type未改动；审查、授�
 部署前还对历史Project975、Todo3327、Update5468、钉钉关联875、跟进2477条记录
 保存了仅含数量与逐值校验摘要的基线，供发布后比较，不保存正文副本。
 
-## 发布阻塞与清理结果
+## 先前发布阻塞与首轮清理（历史，现已解除）
 
 应用共删除26个函数／方法定义和2个固定DTO字段，净减少499行应用代码。
 正常合并后追加编排／session测试18pass和不确定发送跟进1pass。四个单元SPEC、
@@ -68,9 +70,44 @@ healthz、Status、Attention、History均HTTP200；队列pending6、processing2�
 没有删除源代码或原生trajectory。本轮发布在备份步骤前退出，新增部署备份为0；
 其他任务产物和先前工作流备份未动。这不是数据库容量缩减。
 
-尚未完成：等待真实在途工作结束后重新执行标准exact-target发布，再核对新版本／PID、
-健康、队列、Attention、History、Project HTML／JSON、Attempt／Run及历史回执，
-验证并清理该次发布新产生的备份。不能把原生产页面或本地测试冒充上线后页面验证。
+当时尚未完成标准发布、上线后读回与该次备份清理；这些项随后按下节的实际证据完成。
+原生产页面或本地测试未被用作上线后验收替代。
 
 精确删除清单、分组测试、发布回执边界及清理路径见
 [验收记录](validation/2026-10-26-unused-business-path-retirement.json)。
+
+## 最终上线与生产验收 — 2026-10-27 UTC（本地10月26日）
+
+Derek明确授权“本次跳过等待，允许中断后恢复”后，执行现有标准命令：
+
+```sh
+python -m app.deploy --target-commit 0f8c47eaaca8aa90dc60d9a71c28691c624cc6ee --skip-quiet-wait
+```
+
+目标提交的强制gate通过，2GB／300秒限制未改，随后正常停服、备份、切换、
+tsc／Vite构建、重启及健康检查通过。回执deploy-4a90af6a-759b-420d-bec9-5af33c9d3502
+确认安装目标0f8c47eaa，生产新PID83958。七个受影响应用文件与已验收代码逐字一致，
+退休函数定义均不存在，Email计划写入签名为persist_email_plan(db,values,*,ignore=False)。
+
+生产只读核对完成：healthz／Status／Attention／History均HTTP200；476项schema与当前
+声明逐值相同、前后摘要相同，FK异常仍为空；五类历史记录的数量及逐值摘要与原基线
+完全一致。00:16 UTC汇总pending6、processing3、failed24、运行时Attention0；failed未增加。
+系统健康仅剩一项既有未解决反馈，原在途Reply超租约提示已消失。此处不宣称系统无遗留反馈。
+
+重启恢复已实际发生：原Consumer Run399751和RuntimeAttempt399516记录中断失败，
+新Consumer399754／RuntimeAttempt399519已运行，保留generation scheduled-run-410282，
+并以session_mode=resume续接相同Codex session。证明恢复执行，不等同于周报业务结果完成；
+该报告当时仍在运行，其最终结果由原任务流程验收。
+
+浏览器实际操作覆盖：当前Tasks需关注／正式列表和Task862详情；历史Project1的owner、
+事实、来源、Todo及跟进回执；History钉钉类型筛选和第二页（6381条、21—40）；
+Task417569→Attempt16137→Consumer／Audit详情；36条原生轨迹读取与展开；
+Action125048／Receipt20527已有provider回执；Project140#todo-3206的钉钉关联634及同步回执、
+历史Update展开；Attention12的来源及3个关联任务。Project JSON、sent-todos、History分页与
+Attempt API同步读回。未点击发送、撤回、重跑或保存反馈，未创建生产测试任务，验收标签已关闭。
+
+部署备份在服务启动后由同工作流00:11:37创建的日备份替换；该最新备份再次完整
+integrity_check=ok、完成标记CEOB核验通过。验收后持目录锁并核对mtime／大小未变，
+按已获授权删除该514969600字节备份。原部署备份已由工作流轮换删除，gate clone与
+pytest-4554在验收时已不存在；本轮ceo-retirement-release.64Zlft临时目录也已删除并确认路径消失。
+生产数据库、原生trajectory及提交的简洁证据保留。本轮没有DDL或数据迁移，不宣称数据库容量缩减。

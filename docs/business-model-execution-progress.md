@@ -7,13 +7,17 @@ callerless Store queries, test-only Run readers, old Project text rendering and
 constant scoring, viewed/schema entrypoints and the Reviewed plan writer leave
 current business code. Current History/native readers and Email-only plan writes
 retain their existing contracts. The476-object declaration is unchanged against
-the rebound Store26.1／Email54 baseline. Source is pushed in cc90d2e16 (includes
-implementation6e7572e3e). Its standard gate passed, but the30-minute quiet wait
-refused to switch while real Reply Task417568 remained in flight. Production is
-still013af535e/PID33729, schema/facts unchanged. Three owned temporary directories
-were deleted; no new deployment backup was created. Deployment and post-deploy
-UI/API acceptance remain blocked on real work finishing, rather than on code or
-review. See [scoped acceptance](unused-business-path-retirement.md).
+the rebound Store26.1／Email54 baseline. It is now deployed as0f8c47eaa/PID83958,
+including implementation6e7572e3e. After Derek explicitly authorized interruption,
+the existing skip-quiet option was used; mandatory target gate, verified backup,
+build, restart and health checks passed. Actual Tasks/History/Project/Attempt,
+Consumer/Audit/native and Todo receipt/Attention readbacks pass; schema476/FK0
+and five historical fact digests are unchanged. Report417568 resumes the same
+Codex session via newRun399754; its business outcome remains in progress.
+Latest verified workflow backup and owned temporary artifacts are removed.
+One pre-existing unresolved-feedback health finding remains; runtime healthz isok.
+No default deploy-policy change, production test task or test send was made.
+See [scoped acceptance](unused-business-path-retirement.md).
 
 Unmarked-test follow-up is test/documentation only: current Consumer session
 fixtures and exact route-contract assertions, two current copy-lifecycle owner
