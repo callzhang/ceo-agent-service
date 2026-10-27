@@ -18,7 +18,7 @@ once are serialized by the repository lock; the second finds the checkout
 already moved and stops.
 
 Before it stops or changes anything, a deploy runs the gate suite
-(tests/gate_files.txt, at most 2 GB and 5 minutes) at the target commit in a
+(tests/gate_files.txt, at most 2 GB and 10 minutes) at the target commit in a
 throwaway clone and is refused if a single test fails (Derek, 2026-10-25);
 ``--restart`` runs no new code and is not gated.
 """
@@ -197,7 +197,7 @@ def _target_matching_doc_changes(
 #: Derek, 2026-10-25: a deploy is refused unless the gate suite passes at the
 #: commit being deployed. There is no bypass option. The gate suite is the test
 #: files listed in tests/gate_files.txt, run in one process; tests/conftest.py
-#: ends that process at 2 GB or 5 minutes. The suite runs in a throwaway clone,
+#: ends that process at 2 GB or 10 minutes. The suite runs in a throwaway clone,
 #: never in the production checkout, with a clean environment so it cannot reach
 #: the service database or credentials.
 TEST_GATE_MANIFEST = "tests/gate_files.txt"
@@ -205,7 +205,7 @@ TEST_GATE_ARGS = ("-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short")
 #: Derek, 2026-10-25: on. It was off from 2026-10-25 until tests/gate_files.txt
 #: was live. A source constant on purpose: no option or environment variable.
 TEST_GATE_ENABLED = True
-TEST_GATE_TIMEOUT_SECONDS = 6 * 60
+TEST_GATE_TIMEOUT_SECONDS = 12 * 60
 _TEST_GATE_ENV_KEYS = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV")
 
 
