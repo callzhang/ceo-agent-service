@@ -81,7 +81,7 @@ def test_partial_create_receipt_keeps_identity_without_post_write_listing(
             return {
                 "status": "success",
                 "complete": True,
-                "documents": [],
+                "nodes": [],
                 "hasMore": False,
                 "failures": [],
             }
@@ -112,21 +112,21 @@ def test_partial_create_receipt_keeps_identity_without_post_write_listing(
         {
             "status": "success",
             "complete": True,
-            "documents": [],
+            "nodes": [],
             "hasMore": True,
             "failures": [],
         },
         {
             "status": "success",
             "complete": True,
-            "documents": [{"name": "Different", "nodeId": "created-doc"}],
+            "nodes": [{"name": "Different", "nodeId": "created-doc"}],
             "hasMore": False,
             "failures": [],
         },
         {
             "status": "success",
             "complete": True,
-            "documents": [
+            "nodes": [
                 {"name": "Report", "nodeId": "created-doc"},
                 {"name": "Report", "nodeId": "duplicate-doc"},
             ],
@@ -156,7 +156,7 @@ def test_created_identity_survives_failed_target_listing(
                 return {
                     "status": "success",
                     "complete": True,
-                    "documents": [],
+                    "nodes": [],
                     "hasMore": False,
                     "failures": [],
                 }
@@ -221,7 +221,7 @@ def test_successful_write_does_not_read_or_verify_content(tmp_path, monkeypatch,
             return {
                 "status": "success",
                 "complete": True,
-                "documents": (
+                "nodes": (
                     [{"name": "Report", "nodeId": "doc-1"}]
                     if self.written else []
                 ),

@@ -2987,7 +2987,7 @@ OKR 本机 SSO 在点击当前账号后先检查指定组织是否已可见；�
 
 定时任务固定 Agent 案例在独立离线原生 CLI 中运行。评测 Consumer、Audit 和修订共享同一传输字段、标签与身份投影定义；业务规则仍来自各自精确 Skill 快照。冻结案例和评分函数，不改标历史失败；首轮、一次审核修订、实际正文/动作草稿与外部发布分别记录。参见 [Agent 验收记录](scheduled-task-generic-agent-validation.md)。评测协议不改变生产 Consumer/Audit 契约。
 
-`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存，创建前核对同名目标。通过 DWS 原生 `doc create/update` 提交，返回 `ok=true/status=success`、provider 写入回执、文档身份和提交正文 SHA；不自动读回正文、不生成 readback 产物，也不进行内容或格式比对。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
+`consumer_document_write` 接受正文产物、标题和显式目标；更新使用 node_id，创建使用 parent_id 与 workspace_id。JSONML 由原生解析器检查，更新保留 revision 校验与版本保存。创建前后都会读取父目录完整清单（DWS `doc.list.v1` 的 `nodes`）；清单不完整、有失败或存在分页时停止，创建前拒绝同名目标，创建后要求目标名称与文档身份唯一。通过 DWS 原生 `doc create/update` 提交，返回 `ok=true/status=success`、provider 写入回执、文档身份和提交正文 SHA；不自动读回正文、不生成 readback 产物，也不进行内容或格式比对。消息继续通过既有已审核投递通道发送，普通文档工作与受控消息动作沿用原角色契约。
 
 日报窗口由 `ceo-daily-report/scripts/window.py` 按上次真实完成的历史事实计算，漏发并入下一份，同日重跑沿用原起点。日报位置与通知内容归该 Skill。Consumer 先读取服务事实和群消息；仅当会议管理细节仍缺失时，才读取本任务冻结的 `dingtalk-minutes` Skill 并查询听记摘要。管理周报的周一窗口、目标/上期文档、空白模板策略和三处内容更新归 `ceo-weekly-report` 的材料/渲染脚本；渲染器只检查实际读取字段与 JSONML，固定指标、材料覆盖与章节等业务要求由 Skill 和 Audit 判断。三处写入仍为 CEO 判断、公司指标和新增跟踪行。目标周会文档若是只有议程的新模板、没有「重点问题及待办跟踪」「CEO本周判断」「公司级重点指标」三个编号区块，渲染器在文档顶部按这个顺序补上缺的区块（跟踪表用标准表头），原有内容全部保留在其后；已有的区块不动，重复的仍然拒绝渲染（2026-10-25，周报运行 417414 曾因此首轮失败，由 Agent 临时补结构）。管理周报缺 CRM、财务、遥测或业务线材料时写「无数据」并披露覆盖缺口，照常发布；只有已声明的读取或文档写入本身失败才报 `failed`，不能因证据不全报 `operation_unavailable`（2026-10-24 周报任务 417411 曾这样自行终止，没有经过 Audit）。CRM 实际用 Consumer shell 里的 `sharecrm` 只读命令读取，其钥匙串登录需按 Consumer 权限模型请求提权；财务暂无可读来源。
 

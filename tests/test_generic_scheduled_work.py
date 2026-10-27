@@ -176,7 +176,7 @@ class FakeDws:
         return {
             "status": "success",
             "complete": True,
-            "documents": self.nodes,
+            "nodes": self.nodes,
             "hasMore": False,
             "failures": [],
         }

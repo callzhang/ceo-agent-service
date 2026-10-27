@@ -180,7 +180,7 @@ class DocumentProvider:
             return {
                 "status": "success",
                 "complete": True,
-                "documents": documents,
+                "nodes": documents,
                 "hasMore": False,
                 "failures": [],
             }
