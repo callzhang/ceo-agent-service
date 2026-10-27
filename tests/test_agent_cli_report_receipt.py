@@ -173,7 +173,7 @@ def test_skill_destination_preserves_exact_provider_folder_and_generic_write_rec
                 return {
                     "status": "success",
                     "complete": True,
-                    "documents": [document] if document_exists or writes else [],
+                    "nodes": [document] if document_exists or writes else [],
                     "hasMore": False,
                     "failures": [],
                 }

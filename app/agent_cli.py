@@ -1937,10 +1937,10 @@ def _write_document_artifact(
                     or payload.get("complete") is not True
                     or payload.get("hasMore") is not False
                     or payload.get("failures") != []
-                    or not isinstance(payload.get("documents"), list)
+                    or not isinstance(payload.get("nodes"), list)
                 ):
                     raise ValueError("document parent listing is incomplete")
-                return [item for item in payload["documents"] if item.get("name") == title]
+                return [item for item in payload["nodes"] if item.get("name") == title]
 
             if matching_nodes():
                 raise ValueError("document target appeared before creation; reread target")
