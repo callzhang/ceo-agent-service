@@ -1,4 +1,4 @@
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -229,6 +229,56 @@ describe("HistoryPage", () => {
     render(<MemoryRouter initialEntries={["/history?status=failed"]}><HistoryPage /></MemoryRouter>);
 
     expect(await screen.findByText("共 0 条")).toBeInTheDocument();
+  });
+
+  it("lets a slow History response finish instead of aborting it every refresh interval", async () => {
+    vi.useFakeTimers();
+    const response = await listHistory();
+    listHistory.mockClear();
+    let resolve!: (value: typeof response) => void;
+    listHistory.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    render(<MemoryRouter initialEntries={["/history?object_type=dingtalk&page=2"]}><HistoryPage embedded /></MemoryRouter>);
+    await act(async () => {});
+    const signal = listHistory.mock.calls[0][1] as AbortSignal;
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+
+    expect(signal.aborted).toBe(false);
+    expect(listHistory).toHaveBeenCalledTimes(1);
+    await act(async () => { resolve(response); });
+    expect(screen.getByRole("link", { name: /客户项目/ })).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(listHistory).toHaveBeenCalledTimes(2);
+  });
+
+  it("still aborts an obsolete filter request and ignores its late response", async () => {
+    const response = await listHistory();
+    listHistory.mockClear();
+    let resolve!: (value: typeof response) => void;
+    listHistory.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const { unmount } = render(<MemoryRouter><HistoryPage embedded /></MemoryRouter>);
+    await act(async () => {});
+    const signal = listHistory.mock.calls[0][1] as AbortSignal;
+    fireEvent.change(screen.getByLabelText("搜索历史"), { target: { value: "new query" } });
+    await act(async () => {});
+    expect(signal.aborted).toBe(true);
+    expect(listHistory).toHaveBeenLastCalledWith(expect.objectContaining({ q: "new query" }), expect.anything());
+    await act(async () => { resolve({ ...response, items: [{ ...response.items[0], title: "过时结果" }] }); });
+    expect(screen.queryByRole("link", { name: /过时结果/ })).not.toBeInTheDocument();
+    const currentSignal = listHistory.mock.calls.at(-1)?.[1] as AbortSignal;
+    unmount();
+    expect(currentSignal.aborted).toBe(true);
+  });
+
+  it("continues polling after a failed History request settles", async () => {
+    vi.useFakeTimers();
+    listHistory.mockRejectedValueOnce(new Error("History unavailable"));
+    render(<MemoryRouter><HistoryPage embedded /></MemoryRouter>);
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("History unavailable");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(listHistory).toHaveBeenCalledTimes(2);
+    expect(screen.getByRole("link", { name: /客户项目/ })).toBeInTheDocument();
   });
 
   it("refreshes visible queue history so completed work does not remain processing", async () => {

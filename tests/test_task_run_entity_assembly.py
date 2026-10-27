@@ -92,6 +92,9 @@ def test_frozen_predecessor_matches_the_confirmed_production_catalog():
     db = sqlite3.connect(":memory:")
     create_store_2026_10_21_1_schema(db)
     create_current_email_migration_ledger(db)
+    assert "notify_on_completion" not in {
+        row[1] for row in db.execute("PRAGMA table_info(schedules)")
+    }
     catalog = schema_objects(db)
     assert len(catalog) == 505
     assert hashlib.sha256(repr(catalog).encode()).hexdigest() == (
