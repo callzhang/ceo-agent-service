@@ -3891,6 +3891,8 @@ Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meetin
 
 独立 Meeting Audit 的结果解析器对 `MeetingAlignmentAuditResult` 的结构错误和 `candidate_sha256` 与提交候选不一致都抛 `RoutedResultValidationError`，因此路由器对同一 Audit 会话执行唯一一次修正轮（`attempt_purpose=result_validation_correction`，提示要求保留精确 digest）。digest 比较本身不放宽；修正轮仍不一致或结构仍错，则该次尝试终止为 `runtime_result_validation_failed`，Meeting Task 失败。此前解析器抛普通 `ValueError`，一次模型抄错 digest 就直接记为 `runtime_result_invalid` 而不走修正轮（Task 417472，2026-10-26）。
 
+Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `needs_human`（`meeting_audit_unapproved`，未发送任何消息）。History 对它与 `failed`/`quarantined` 一样给出 `needs_manager` 注意项（人工处理、技术详情），不再显示为没有待办。`needs_human` 的 Meeting 仍不属于 `rerun_meeting_alignment_jobs` 的可重跑状态（仅 `failed`/`no_action`）；是否放开由 Derek 决定。
+
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。检查使用 Phase 2 TaskBusinessKey 中保存的原生公开投递键，并同时检查主键、`:sensitive` 键和 `:target:` 派生键；准备好的 Action 即使没有 provider 回执也阻止重放。不得从 native Task ID 重建 source key。prepared outbound 仍由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
 ## Meeting Audience Recovery

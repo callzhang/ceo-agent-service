@@ -204,7 +204,7 @@ def meeting_history_attention(
             retry_at=job.available_at,
             actions=(HistoryAction("details", "技术详情"),),
         )
-    if job.status in {"failed", "quarantined"}:
+    if job.status in {"failed", "quarantined", "needs_human"}:
         return HistoryAttention(
             kind="needs_manager",
             reason=reason,
