@@ -263,6 +263,7 @@ tests/test_claude_runtime_adapter.py
 tests/test_meeting_alignment_models.py
 tests/test_oa_append_approver.py
 tests/test_database_backup.py
+tests/test_agent_cli_artifacts.py
 tests/test_task_artifact_cleanup.py
 tests/test_task_decision_identity_contract.py
 tests/test_codex_history.py

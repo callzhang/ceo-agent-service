@@ -1,5 +1,6 @@
 """Task-bound ordinary files for Consumer, with read-only Audit access."""
 
+import hashlib
 import sqlite3
 
 import pytest
@@ -114,6 +115,41 @@ def test_consumer_writes_and_reads_back_only_its_task_generation(tmp_path, monke
     assert new_write("new.md", "current")["content"] == "current"
     assert (task_artifact_root / "7/second/new.md").read_text() == "current"
     assert not (task_artifact_root / "7/second/analysis.py").exists()
+
+
+def test_scheduled_consumer_retry_carries_prior_generation_artifacts(
+    tmp_path, monkeypatch
+):
+    db = tmp_path / "service.sqlite3"
+    _task_db(db)
+    with sqlite3.connect(db) as connection:
+        connection.execute(
+            "update task_inputs set channel='scheduled', conversation_id=? where task_id=7",
+            ("scheduled-task-run:411947",),
+        )
+    monkeypatch.setattr("app.config.workspace_path", lambda: tmp_path / "workspace")
+    task_artifact_root = _patch_artifact_root(tmp_path, monkeypatch)
+
+    first = build_role_server("consumer", task_id=7, db_path=db)
+    first._tool_manager.get_tool("consumer_artifact_write").fn(
+        "analysis.json", '{"source":"verified"}'
+    )
+    with sqlite3.connect(db) as connection:
+        _set_generation(connection, "second")
+
+    second = build_role_server("consumer", task_id=7, db_path=db)
+    files = second._tool_manager.get_tool("list_task_artifacts").fn()["files"]
+    assert files == [{
+        "name": "analysis.json",
+        "sha256": hashlib.sha256(b'{"source":"verified"}').hexdigest(),
+    }]
+    assert second._tool_manager.get_tool("read_task_artifact").fn(
+        "analysis.json"
+    )["content"] == '{"source":"verified"}'
+    assert (task_artifact_root / "7/first/analysis.json").exists()
+    assert (task_artifact_root / "7/second/analysis.json").read_text() == (
+        '{"source":"verified"}'
+    )
 
 
 def test_legacy_task_artifacts_move_to_tmp_before_role_read(tmp_path, monkeypatch):

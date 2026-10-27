@@ -1637,8 +1637,10 @@ Consumer 的普通工具工作不因写入而自动进入系统动作审核。�
 `consumer_artifact_write` 写入 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<execution_generation>`，
 Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取当前代材料；Audit 没有写工具。
 清单只列文件名并流式计算 SHA-256，单个文件超过正文读取上限仍可列出；正文读取继续受原有大小上限约束。
-任务处于 `pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human`
-或 `skipped` 后，服务清理该任务全部代次的工件目录。Consumer 与 Audit 运行指令均要求把 memory
+任务处于 `pending` 或 `processing` 时保留文件供恢复和审核。定时任务失败后保留其 task-bound 工件；
+同一 Task 经正式重跑并切换执行代次时，Consumer 将旧代文件复制到当前代，当前代仍有独立写入围栏，
+已有同名当前代文件优先，源代文件不移动。任务进入 `done`、`needs_human` 或 `skipped` 后清理所有代次；
+非定时任务的失败清理保持不变。Consumer 与 Audit 运行指令均要求把 memory
 作为耐久参考区、禁止把临时代码、测试、数据库、日志、下载、截图、缓存、草稿、中间结果或单次运行
 工件存入 memory，临时文件只使用 task-bound `/tmp` 工作区；有价值的最终材料仅在已有授权目的地按主题
 归档。部署前遗留的 workspace 工件会在任务下次读写时迁入 `/tmp`，终态清理也会清除尚未访问的旧位置。

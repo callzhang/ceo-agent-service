@@ -5,7 +5,7 @@ import pytest
 from app.worker import DingTalkAutoReplyWorker
 
 
-@pytest.mark.parametrize("status", ["done", "failed", "needs_human", "skipped"])
+@pytest.mark.parametrize("status", ["done", "needs_human", "skipped"])
 def test_terminal_task_removes_all_task_generation_artifacts(tmp_path, monkeypatch, status):
     from app import task_artifacts
 
@@ -33,6 +33,36 @@ def test_terminal_task_removes_all_task_generation_artifacts(tmp_path, monkeypat
 
     assert not task_root.exists()
     assert not legacy_task_root.exists()
+
+
+def test_failed_task_keeps_artifacts_for_a_formal_retry(tmp_path, monkeypatch):
+    from app import task_artifacts
+
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
+    workspace = tmp_path / "workspace"
+    monkeypatch.setattr("app.config.workspace_path", lambda: workspace)
+    task_root = task_artifacts.TASK_ARTIFACT_ROOT / "7" / "first"
+    task_root.mkdir(parents=True)
+    artifact = task_root / "analysis.json"
+    artifact.write_text('{"source":"verified"}')
+    legacy_artifact = workspace / "consumer-artifacts/7/old-generation/roster.json"
+    legacy_artifact.parent.mkdir(parents=True)
+    legacy_artifact.write_text('{"roster":[]}')
+
+    worker = object.__new__(DingTalkAutoReplyWorker)
+    task = SimpleNamespace(
+        id=7, status="failed", channel="scheduled", execution_generation="first"
+    )
+    worker.store = SimpleNamespace(get_reply_task=lambda task_id: task)
+    worker._agent_orchestrator = lambda: SimpleNamespace(
+        persisted_terminal_result=lambda current: object()
+    )
+    worker._apply_orchestration_result = lambda current, result: True
+
+    worker._process_queued_task(None, task)
+
+    assert artifact.read_text() == '{"source":"verified"}'
+    assert legacy_artifact.read_text() == '{"roster":[]}'
 
 
 @pytest.mark.parametrize("status", ["pending", "processing"])

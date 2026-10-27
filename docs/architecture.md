@@ -2222,8 +2222,10 @@ Consumer 可以直接使用普通工作工具，写入并读回本任务本代�
 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<generation>`，`read_task_artifact` 与
 `list_task_artifacts` 为两角色提供当前代的只读材料；Audit 没有对应写入工具。
 清单只列文件名并流式计算 SHA-256；单个文件超过正文读取上限不影响清单，正文读取仍受原有上限约束。
-任务在 `pending` 或 `processing` 时保留文件供恢复和审核；进入 `done`、`failed`、`needs_human` 或
-`skipped` 后，服务清理该任务的全部代次目录。部署前遗留的 workspace 工件会在任务下次读写时迁入
+任务在 `pending` 或 `processing` 时保留文件供恢复和审核。定时任务进入可重试的 `failed` 后保留
+全部代次工件；同一 Task 通过正式入口重跑时，Consumer 将前代文件复制到新执行代，当前代写入围栏不变，
+同名新材料优先且旧代原件保留。任务进入 `done`、`needs_human` 或 `skipped` 后，服务清理该任务的全部代次目录。
+其他渠道的 `failed` 仍按原规则清理。部署前遗留的 workspace 工件会在任务下次读写时迁入
 `/tmp`，终态清理也会清除尚未访问的旧位置。Consumer 与 Audit 的运行指令同时明确 memory 是耐久
 参考区、临时工件只能使用 task-bound `/tmp` 工作区。系统已注册且需要审核的
 动作仍必须完整提案 → Audit → SystemExecutor → 真实回执。Consumer 解析器不扫描整个候选的

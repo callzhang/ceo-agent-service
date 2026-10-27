@@ -100,6 +100,37 @@ def task_artifact_directory(
     return generation_root
 
 
+def carry_forward_task_artifacts(task_id: int, generation: str) -> None:
+    """Copy prior task generations into the current generation without moving them."""
+    current = task_artifact_directory(task_id, generation, create=True)
+    task_root = current.parent
+    prior_generations = []
+    for path in task_root.iterdir():
+        if path.name == generation:
+            continue
+        if path.is_symlink() or not path.is_dir() or not _valid_component(path.name):
+            raise ValueError("task file generation is invalid")
+        prior_generations.append(path)
+    prior_generations = sorted(
+        prior_generations,
+        key=lambda path: (path.stat().st_mtime_ns, path.name),
+        reverse=True,
+    )
+    for prior in prior_generations:
+        for source in prior.iterdir():
+            if source.name.startswith(".task-artifact-"):
+                continue
+            if source.is_symlink() or not source.is_file() or not _valid_component(source.name):
+                raise ValueError("task file is invalid")
+            destination = current / source.name
+            if destination.is_symlink():
+                raise ValueError("task file is linked")
+            if destination.exists():
+                continue
+            shutil.copyfile(source, destination)
+            destination.chmod(0o600)
+
+
 def cleanup_task_artifacts(task_id: int) -> None:
     if type(task_id) is not int or task_id <= 0:
         raise ValueError("task file binding is invalid")
@@ -124,6 +155,8 @@ def cleanup_task_artifacts(task_id: int) -> None:
 def cleanup_terminal_task_artifacts(store, task_id: int) -> None:
     task = store.get_reply_task(task_id)
     if task is None or task.status not in TERMINAL_TASK_STATUSES:
+        return
+    if task.status == "failed" and getattr(task, "channel", None) == "scheduled":
         return
     try:
         cleanup_task_artifacts(task_id)

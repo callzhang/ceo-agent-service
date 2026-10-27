@@ -1563,6 +1563,26 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
+def _current_task_channel(db_path: Path | None, task_id: int | None) -> str:
+    """Read the channel bound to the current Task input without Store migration."""
+    if db_path is None or type(task_id) is not int or task_id <= 0:
+        raise ValueError("task file binding is missing")
+    database = Path(db_path).resolve()
+    try:
+        with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
+            row = connection.execute(
+                """select input.channel from tasks task
+                   join task_inputs input on input.id=task.current_input_id
+                   where task.id=? and task.kind='reply'""",
+                (task_id,),
+            ).fetchone()
+    except sqlite3.Error as exc:
+        raise ValueError("task file binding is unavailable") from exc
+    if row is None or not isinstance(row[0], str) or not row[0]:
+        raise ValueError("task file channel is unavailable")
+    return row[0]
+
+
 def _bound_wechat_conversation(
     db_path: Path | None, task_id: int | None, generation: str | None,
 ) -> tuple[str, str]:
@@ -1989,6 +2009,19 @@ def build_role_server(
     )
     if execution_generation is not None and artifact_generation != execution_generation:
         raise ValueError("task file generation changed")
+    if (
+        role == "consumer"
+        and task_id is not None
+        and db_path is not None
+        and _current_task_channel(db_path, task_id) == "scheduled"
+    ):
+        from app.task_artifacts import (
+            carry_forward_task_artifacts,
+            migrate_legacy_task_artifacts,
+        )
+
+        migrate_legacy_task_artifacts(task_id)
+        carry_forward_task_artifacts(task_id, artifact_generation)
     bound = FastMCP(
         "agent_cli",
         instructions="Task-bound Agent reads, artifacts and explicit documents",
