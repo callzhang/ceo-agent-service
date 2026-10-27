@@ -59,6 +59,7 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "never invent intermediate values such as 30, 50 or 70" in skill
     assert "state each coverage boundary once" in skill
     assert "On a retry of the same scheduled execution, read only missing/failed member receipts" in skill
+    assert "A prior successful read whose receipt artifact is missing may be re-read once" in skill
     assert "Never repeat a successful member read within the same scheduled execution" in skill
     assert "call `list_task_artifacts`" in skill
     assert "reuse listed roster and member receipt artifacts" in skill

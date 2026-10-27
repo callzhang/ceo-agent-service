@@ -74,9 +74,11 @@ Before calling a source reader, read the latest Audit feedback and call
 `list_task_artifacts` for this execution generation. If this is a retry or
 resumed turn for the same `scheduled_run_id`, check whether the roster and
 member receipt artifacts are already present. Reuse all existing receipts;
-do not call source readers for them. If collection was interrupted, read the
-roster only when its artifact is missing, then read only members whose receipt
-artifact is missing or whose prior receipt explicitly failed.
+do not call source readers for receipts that are present. If collection was
+interrupted, read the roster only when its artifact is missing, then read only
+members whose receipt artifact is missing or whose prior receipt explicitly
+failed. A prior successful read whose receipt artifact is missing may be
+re-read once; the earlier success is not usable without its receipt artifact.
 `read_okr_member` is the source freshness check for a new scheduled execution;
 there is no separate digest-only source endpoint. Save any missing receipts,
 then run `prepare`, which verifies saved identity, period, outcome and digest
@@ -86,7 +88,9 @@ validates.
 Reuse each complete prior analysis when its user ID, period, outcome and source
 digest still match the current scheduled execution; reanalyze only members
 whose source digest changed or whose analysis is incomplete. Never repeat a
-successful member read within the same scheduled execution. After `prepare`,
+successful member read within the same scheduled execution when its receipt
+artifact is present. Re-read only a missing or explicitly failed receipt.
+After `prepare`,
 continue analysis immediately; do not spend the retry recollecting data
 already refreshed for this scheduled execution.
 
@@ -135,7 +139,8 @@ through the correction and verify their digests before finishing.
    for scheduled reports and the explicitly requested date for backfills.
    Call `list_task_artifacts` before deciding whether collection is needed. On
    a retry of the same `scheduled_run_id`, reuse listed roster and member
-   receipt artifacts; do not repeat successful source reads.
+   receipt artifacts; do not repeat successful reads whose artifacts are
+   present. Re-read a prior success only when its receipt artifact is missing.
 2. For a new `scheduled_run_id`, call `read_okr_roster` with
    `group_name=CEO-2 管理群`. Derive the quarter label (YYYY Q1..Q4) from the
    report date unless explicitly requested. The result supplies
@@ -151,9 +156,10 @@ through the correction and verify their digests before finishing.
    a bounded operation and expose real completed collection progress. On a
    retry of the same scheduled execution, read only missing/failed member
    receipts; preserve successful receipts already saved for that execution.
-   Do not reread successful receipts from this execution; `prepare` validates
+   Do not reread successful receipts that are present; `prepare` validates
    their userId, period, outcome and source digest. Refresh only a missing or
-   explicitly failed receipt.
+   explicitly failed receipt, including one whose earlier success has no
+   remaining artifact to validate.
    Before preparing or publishing, inspect each `source_failed` receipt. A
    `scope: member` label or a diagnostic containing “member-bound” is not proof
    that the failure is isolated to that person. Treat it as member-specific
