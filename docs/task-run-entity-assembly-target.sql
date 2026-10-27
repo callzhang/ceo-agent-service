@@ -267,6 +267,7 @@ CREATE TABLE schedules (
  runtime_options_json text not null default '{}',
  working_directory text not null default '',
  enabled integer not null check(enabled in (0,1)),
+ notify_on_completion integer not null default 1 check(notify_on_completion in (0,1)),
  version integer not null default 1 check(version>0),
  created_at text not null default current_timestamp,
  updated_at text not null default current_timestamp,

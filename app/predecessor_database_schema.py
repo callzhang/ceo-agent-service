@@ -7,7 +7,8 @@ from app.business_legacy_fields import current_business_declaration
 from app.current_action_schema import create_source_current_action_schema
 from app.business_schema_helpers import _create_auxiliary
 from app.configs_storage import create_configs_schema
-from app.schedules_storage import create_schedules_schema
+from app.scheduled_task_notification_schema_source import PREVIOUS_SCHEDULES_DDL
+from app.schedules_definitions import SCHEDULE_INDEXES
 from app.provider_state_storage import create_provider_state_schema
 from app.state_storage import create_state_schema
 from app.task_lifecycle_current_schema import create_current_task20_schema, install_current_task_child_guards
@@ -32,7 +33,10 @@ PREDECESSOR_ACTION_OPTIONS = dict(
 
 def create_store_2026_10_21_1_schema(db):
     """Create the exact Task20/Run11 source used before native Phase 2."""
-    create_schedules_schema(db)
+    # The explicit Store21.1 source predates schedule completion notifications.
+    db.execute(PREVIOUS_SCHEDULES_DDL)
+    for sql in SCHEDULE_INDEXES:
+        db.execute(sql)
     create_configs_schema(db)
     create_state_schema(db)
     create_provider_state_schema(db)

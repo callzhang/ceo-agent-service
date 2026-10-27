@@ -85,6 +85,8 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
   // the filter offers only 全部 rather than a stale copy.
   const [typeOptions, setTypeOptions] = useState<HistoryTypeOption[]>([]);
   const requestGeneration = useRef(0);
+  // Automatic polling must let a slow response finish; navigation still aborts it.
+  const historyRequestPending = useRef(false);
   const query = searchParams.get("q") || "";
   const status = searchParams.get("status") || searchParams.get("type") || "";
   const objectType = searchParams.get("object_type") || "";
@@ -96,9 +98,10 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
   useEffect(() => {
     const controller = new AbortController();
     const generation = ++requestGeneration.current;
+    historyRequestPending.current = true;
     setState("loading");
     setError("");
-    listHistory({ q: query, status, object_type: objectType, page, page_size: pageSize, include_chart: 0 }, controller.signal).then((result) => { if (generation !== requestGeneration.current) return; setRows(result.items); setTotalCount(result.meta.total || 0); setSnapshot(result.meta.snapshot_at); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); });
+    listHistory({ q: query, status, object_type: objectType, page, page_size: pageSize, include_chart: 0 }, controller.signal).then((result) => { if (generation !== requestGeneration.current) return; setRows(result.items); setTotalCount(result.meta.total || 0); setSnapshot(result.meta.snapshot_at); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); }).finally(() => { if (generation === requestGeneration.current) historyRequestPending.current = false; });
     return () => controller.abort();
   }, [query, status, objectType, page, pageSize, refreshEpoch]);
 
@@ -110,7 +113,7 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
 
   useEffect(() => {
     const refreshTimer = window.setInterval(() => {
-      if (document.visibilityState === "visible") {
+      if (document.visibilityState === "visible" && !historyRequestPending.current) {
         setRefreshEpoch((value) => value + 1);
       }
     }, HISTORY_REFRESH_INTERVAL_MS);
