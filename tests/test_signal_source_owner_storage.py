@@ -196,10 +196,10 @@ def test_frozen_signal_source_actions_declaration_is_exact_25_2_digest():
     )
 
 
-def test_current_target_manifest_has_exact_25_3_count_and_digest():
-    from app.current_schema_manifest import current_objects
+def test_frozen_25_3_target_manifest_has_exact_count_and_digest():
+    from app.signal_source_owner_schema_release import target_objects
 
-    objects = current_objects(email_ledger=True)
+    objects = target_objects()
     encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
     assert len(objects) == 476
     assert hashlib.sha256(encoded).hexdigest() == (
