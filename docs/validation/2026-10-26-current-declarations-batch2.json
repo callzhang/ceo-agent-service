@@ -127,7 +127,7 @@
     }
   },
   "deployment": {
-    "state": "exact-target gate passed; standard deployment waiting for quiet; production unchanged",
+    "state": "succeeded; exact target installed and read back; History UI acceptance remains open",
     "first_target": "0f52e72fe2c895e0ac59033e32b222b36050479b",
     "first_gate": {
       "result": "fixed300s limit at84%;129 observed failures",
@@ -159,16 +159,37 @@
       "pid": 35175,
       "in_flight_at_check": 5,
       "production_at_check": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
-      "skip_wait_permission": "requested for this release; no approval yet"
+      "skip_wait_permission": "explicitly granted for this release; SIGINT35175 verified cancelled",
+      "cancel_exit_code": 130
     },
     "peer_test_merge": {
       "commit": "11bf99107a29a687ae5c6451656ab6c9df003f73",
       "scope": "test-only identical exhausted WeChat fixture copied per case",
       "affected_passed": 12
+    },
+    "gate_rerun_with_skip_quiet_wait": "pass",
+    "shared_lock_blocker": {
+      "pid": 45300,
+      "owner_thread": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
+      "owner_title": "定时修复 CEO agent",
+      "source_worktree": "/Users/derek/.codex/worktrees/scheduled-retry-api/ceo-agent-service",
+      "phase_evidence": "sampling shows time_sleep, no flock wait; production unchanged",
+      "coordination_message_sent": true,
+      "permission_to_cancel_other_process": "received after owner had already canceled; not used",
+      "our_waiting_deploy_pid": 65336,
+      "state": "resolved: owner canceled its waiting deploy normally; root did not signal45300"
+    },
+    "operation": {
+      "operation_id": "deploy-2ce1930c-918d-4a43-9ffe-d0dd12af8c29",
+      "status": "succeeded",
+      "target_commit": "3212e477debe00ff82139cd666a10055a3b1b3f3",
+      "installed_commit": "3212e477debe00ff82139cd666a10055a3b1b3f3",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-2ce1930c-918d-4a43-9ffe-d0dd12af8c29.sqlite3",
+      "updated_at": "2026-10-27T05:01:28.724093+00:00"
     }
   },
   "cleanup": {
-    "state": "pending until production readback",
+    "state": "complete: own verified backup,3failed gate clones,2failed pytest roots,1818verified-empty historical test caches and final task root removed; production DB/native trajectories preserved",
     "failed_gate_roots": [
       {
         "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.pnqrfpqv",
@@ -188,7 +209,58 @@
         "bytes": 205058873,
         "absent": true
       }
-    ]
+    ],
+    "verified_empty_test_templates": {
+      "verified_empty": 1818,
+      "eligible": 1818,
+      "bytes": 6018211840,
+      "active_pytest_pids": [
+        65401
+      ],
+      "birth_cutoff": 1793075982.324445,
+      "rule": "verified CEO empty test caches, older than every active pytest, unchanged files, no open file",
+      "state": "deleted; exact selected paths absent"
+    },
+    "backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-26.sqlite3",
+      "bytes": 514969600,
+      "mtime_ns": 1793077414878054949,
+      "integrity_check": [
+        [
+          "ok"
+        ]
+      ],
+      "application_id": 1128615746,
+      "schema_count": 476,
+      "schema_sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+      "state": "deleted after full integrity/marker/schema verification and production data/receipt readback",
+      "absent": true
+    },
+    "failed_pytest_roots": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4563",
+        "creator_gate_pid": "91711",
+        "files": 419,
+        "bytes": 17131010,
+        "absent": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4560",
+        "creator_gate_pid": "68869",
+        "files": 704,
+        "bytes": 24668593,
+        "absent": true
+      }
+    ],
+    "task_root": {
+      "path": "/private/tmp/ceo-current-schema.p605TK",
+      "files": 2602,
+      "bytes": 188872666,
+      "symlinks_not_followed": 3067,
+      "no_open_files": true,
+      "production_db_preserved": true,
+      "absent": true
+    }
   },
   "lint": {
     "changed_python_files": 22,
@@ -293,5 +365,188 @@
     ],
     "role_and_caller_mutation_isolation": "pass",
     "reviews": "SPEC/QUALITY pass"
-  }
+  },
+  "production_after": {
+    "at": "2026-10-27T05:02:38.146501+00:00",
+    "commit": "3212e477debe00ff82139cd666a10055a3b1b3f3",
+    "schema": {
+      "count": 476,
+      "sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754"
+    },
+    "foreign_keys": [],
+    "facts": {
+      "work_project": {
+        "count": 975,
+        "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+      },
+      "work_todo": {
+        "count": 3327,
+        "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+      },
+      "todo_evidence_candidate": {
+        "count": 3,
+        "sha256": "03b6c90ba133e317f8abc2a4be69cbc0bdb08acc0294a3798f920b63be2152db"
+      },
+      "work_updates": {
+        "count": 5468,
+        "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+      },
+      "follow_up_drafts": {
+        "count": 2477,
+        "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+      },
+      "follow_up_send_attempts": {
+        "count": 65,
+        "sha256": "bb0506c291c372b0cd420a86e6851df483484904a94736a2eede8de82aa7e38b"
+      },
+      "task_todo_sync_outbox": {
+        "count": 242,
+        "sha256": "fab7ff4ef836e0665007df0effa0eddeedba5fbc39c6b0329028eda590dde1d4"
+      },
+      "work_todo_dingtalk_links": {
+        "count": 875,
+        "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+      }
+    },
+    "http": {
+      "/healthz": 200,
+      "/api/console/status": 200,
+      "/api/console/attention": 200,
+      "/api/console/history?page=1&page_size=5": 200
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "96980",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 7,
+      "processing": 3,
+      "failed": 25,
+      "retryable": 0,
+      "attention": 1
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "reply task exceeded the worker recovery lease Native delivery results readable: 392; unavailable: 0.",
+      "checked_at": "2026-10-27T05:02:18.878281+00:00",
+      "violations": 5,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 392,
+        "unavailable": 0
+      }
+    }
+  },
+  "final_observation": {
+    "at": "2026-10-27T05:44:03.702749+00:00",
+    "commit": "3212e477debe00ff82139cd666a10055a3b1b3f3",
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "96980",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 7,
+      "processing": 1,
+      "failed": 27,
+      "retryable": 0,
+      "attention": 1
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "email classification reached a non-retryable failure Native delivery results readable: 393; unavailable: 0.",
+      "checked_at": "2026-10-27T05:32:52.373747+00:00",
+      "violations": 2,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 393,
+        "unavailable": 0
+      }
+    }
+  },
+  "production_markers": {
+    "store": "2026-10-26.1",
+    "email": 54
+  },
+  "production_integrity_comparison": {
+    "catalog_all_476_tuples_exact": true,
+    "foreign_keys": [],
+    "eight_historical_fact_groups_exact": true,
+    "owned_runtime_files_matching_release": 15
+  },
+  "production_readback": {
+    "passed": [
+      "healthz and status",
+      "Attention API and tasks UI",
+      "Project6 HTML/JSON:13Todos/24Updates; owner, facts and sources",
+      "historical DingTalk link712 provider receipt",
+      "Attempt16137 Consumer399752/Audit399753 and native ranges",
+      "Action125048/Receipt20529; source available",
+      "History default API and initial paginated API request"
+    ],
+    "open": [
+      "actual History dingtalk page2 include_chart=0 request times out at20-30s; UI stays loading"
+    ],
+    "external_test_sends": 0,
+    "verification_tabs_closed": [
+      4,
+      5
+    ]
+  },
+  "open_findings": {
+    "history_timeout": {
+      "state": "open",
+      "scope": "actual UI request latency; not proven caused by this batch",
+      "evidence": "same History read code as previous production; bounded readonly keys/count probe2.294-5.389s, hydration0.079-0.219s; no correlated in-flight server trace",
+      "next": "trace real request thread acquisition, query phases and response before choosing a repair"
+    },
+    "report417576": {
+      "state": "failed after successful same-session resume",
+      "interrupted_run": 399768,
+      "resumed_consumer": 399776,
+      "runtime_attempt": 399547,
+      "audit_run": 399778,
+      "session": "01a17b41-4742-7b33-84d8-0d9b19361b3b",
+      "subsequent_failed_revisions": [
+        399779,
+        399781,
+        399788,
+        399789
+      ],
+      "reported_failure": "consumer_document_write: document parent listing is incomplete",
+      "publication_receipt_observed": false,
+      "business_success_claimed": false,
+      "next": "owner task to inspect document publication trajectory; no production replay by this task"
+    },
+    "historical_artifact_tests": [
+      "test_frozen_predecessor_matches_the_confirmed_production_catalog",
+      "test_complete_assembly_sql_artifact_is_deterministic",
+      "test_committed_assembly_sql_artifact_executes_and_matches_complete_catalog"
+    ]
+  },
+  "handoff": {
+    "thread_title": "定时修复 CEO agent",
+    "thread_id": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
+    "explicit_payload_authorization_received": true,
+    "summary_sent": true,
+    "raw_trajectory_mail_or_credentials_sent": false
+  },
+  "completion_boundary": "implementation, exact-schema acceptance and deployment complete; History UI and report business outcome not green; baseline artifact tests remain open"
 }

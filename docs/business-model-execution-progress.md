@@ -2,14 +2,25 @@
 
 ## Authoritative completion — 2026-10-26
 
-Current-declaration batch2 implementation, SPEC/QUALITY and root21case integration
-are complete. The exact-target gate for3212e477d has passed; standard deployment
-is waiting for5in-flight items, production still1e6db7a87. Production/cleanup
-readback remain pending; no interruption without scoped authorization.
-Current 475/476 catalogs and ordered layouts are exact against the pre-edit
-baseline; live Email writers also use fixed layouts. There is no DDL or data
-migration. Three baseline-reproduced historical artifact tests remain separately
-recorded, not relabeled green. See [batch2 acceptance](current-declaration-batch2-validation.md).
+Current-declaration batch2 is implemented and deployed as3212e477d through the
+mandatory exact-target gate (passed twice), explicit skip-quiet authorization,
+standard backup/restart/health path. Dated production readback: PID96980,
+Store26.1/Email54,476exact schema tuples, FK[], eight historical fact groups
+unchanged. Current startup/writers use positive fixed declarations, not old
+field subtraction or historical flag composition; no DDL/data/policy change.
+SPEC/QUALITY/final reviews, focused tests and actual Tasks/Project/Attempt/native/
+receipt readbacks pass. No database capacity reduction is claimed.
+
+**Acceptance still open:** actual History UI page2 request times out; report417576
+resumed the same session but later failed document publication with no publication
+receipt; three baseline-reproduced historical SQL-artifact tests remain non-green.
+Final05:44Z observation: pending7/processing1/failed27/Attention1, business health
+degraded with2cached findings. Do not interpret deployed code or successful
+resume as all business outcomes passing. Authorized bounded summaries were sent
+to「定时修复 CEO agent」. Verified workflow backup,3failed gate clones,
+2failed pytest roots and1818empty test caches were removed; final task-root
+cleanup is recorded in [batch2 acceptance](current-declaration-batch2-validation.md)
+and its linked evidence. Production DB/native trajectories are preserved.
 
 The following batch1 checkpoint describes its completed release:
 
