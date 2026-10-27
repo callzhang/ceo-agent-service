@@ -2691,6 +2691,8 @@ CEO_NOT_SEND_MESSAGE=1 "$HOME/miniforge3/bin/ceo-agent" run-once --not-send-mess
 launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
 ```
 
+Hourly Quality 对 `processing` Reply 的停滞判断同时读取 Task 与当前执行代的 Agent Run/RuntimeAttempt：Task 时间戳超出恢复阈值，但同代 Consumer/Audit Run 或其活动 RuntimeAttempt 仍有近期更新时，任务仍在推进，不报 `processing_stale`。没有近期更新的活动同代 Run/RuntimeAttempt、缺少活动执行记录，或只有旧执行代/终态 Run 时，仍报告停滞。此检查只读，不刷新租约或改写任务状态。
+
 安装和配置细节见 [agent-installation-runbook.md](agent-installation-runbook.md)，任务恢复细节见
 [reply-worker-reliability.md](reply-worker-reliability.md)。
 

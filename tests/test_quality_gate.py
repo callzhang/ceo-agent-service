@@ -538,6 +538,72 @@ def test_quality_gate_detects_failed_queues_and_stale_processing(tmp_path):
     }
 
 
+def test_reply_processing_stale_gate_uses_current_run_and_runtime_progress(tmp_path):
+    store = AutoReplyStore(tmp_path / "reply-progress.sqlite3")
+    EmailStore(store.path)
+    stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")
+    recent = (NOW - timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+    lease_until = (NOW + timedelta(minutes=5)).strftime("%Y-%m-%d %H:%M:%S")
+
+    with store._connect() as db:
+        task_with_run_progress = _insert_canonical_reply_task(
+            db, status="processing", updated_at=stale,
+            execution_generation="generation-run-progress",
+            trigger_message_id="message-run-progress",
+        ).lastrowid
+        insert_run(db, "agent_runs", {
+            "task_id": task_with_run_progress,
+            "execution_generation": "generation-run-progress",
+            "role": "consumer", "status": "running",
+            "transcript_start": 352, "transcript_end": 477,
+            "started_at": stale, "updated_at": recent,
+        }).lastrowid
+
+        task_with_runtime_progress = _insert_canonical_reply_task(
+            db, status="processing", updated_at=stale,
+            execution_generation="generation-runtime-progress",
+            trigger_message_id="message-runtime-progress",
+        ).lastrowid
+        run_without_recent_progress = insert_run(db, "agent_runs", {
+            "task_id": task_with_runtime_progress,
+            "execution_generation": "generation-runtime-progress",
+            "role": "consumer", "status": "running",
+            "transcript_start": 0, "transcript_end": 0,
+            "started_at": stale, "updated_at": stale,
+        }).lastrowid
+        insert_run(db, "agent_runtime_attempts", {
+            "parent_id": run_without_recent_progress,
+            "workload_kind": "agent_run",
+            "workload_key": str(run_without_recent_progress),
+            "attempt_number": 1,
+            "route_name": "codex", "runtime_kind": "codex_cli",
+            "credential_mode": "native", "model": "test-model",
+            "status": "running", "lease_owner": "worker",
+            "lease_expires_at": lease_until,
+            "started_at": stale, "updated_at": recent,
+        })
+
+        task_with_old_generation_progress = _insert_canonical_reply_task(
+            db, status="processing", updated_at=stale,
+            execution_generation="generation-current",
+            trigger_message_id="message-old-generation-progress",
+        ).lastrowid
+        insert_run(db, "agent_runs", {
+            "task_id": task_with_old_generation_progress,
+            "execution_generation": "generation-old",
+            "role": "consumer", "status": "running",
+            "transcript_start": 0, "transcript_end": 125,
+            "started_at": stale, "updated_at": recent,
+        })
+
+    report = scan_hourly_quality(store.path, now=NOW)
+    stale_issues = [
+        issue for issue in report.violations
+        if issue.source == "reply_tasks" and issue.code == "processing_stale"
+    ]
+    assert [(issue.count, issue.severity) for issue in stale_issues] == [(1, "error")]
+
+
 def test_quality_gate_does_not_count_email_tasks_as_generic_reply_backlog(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     stale = (NOW - timedelta(hours=1)).strftime("%Y-%m-%d %H:%M:%S")

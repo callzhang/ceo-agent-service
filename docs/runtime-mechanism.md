@@ -664,6 +664,16 @@ The manual-feedback rerun check reads reopened-round evidence from the native
 `feedback_processing_rounds` owner; reopened feedback
 continues to count as unattended under the existing quality rule.
 
+For a processing Reply, `processing_stale` requires a stale Task timestamp and
+no recent progress in an active Consumer/Audit Run of that Task's current
+execution generation or one of its active RuntimeAttempts. Appending a native
+transcript event updates the Run timestamp, so an advancing transcript prevents
+a false stale alert even if the Task row itself has not changed. A missing or
+stale active execution record does not suppress the alert; progress from an
+older generation or a terminal Run also does not suppress it. The quality
+check remains read-only: it does not refresh a lease or rewrite a Task/Run
+status.
+
 RuntimeAttempt parent-existence checks resolve against the native `runs` owner, including provenance-backed professional Runs, and still require a matching Run ID. The completed-attempt final-Run check applies to `workload_kind=agent_run`, matching the source invariant that applied to non-NULL `agent_run_id`; it retains the `completed`, `failed`, or `unknown` parent-status set. Other workloads can point to Runs whose status describes a professional phase such as `ready_to_send`, rather than Agent execution completion. The Reply/Audit-only projection is not the owner for these cross-family parent relationships.
 
 Reply Attempt fields are VIRTUAL generated columns over `actions.payload_json`.
