@@ -1739,7 +1739,8 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   或邮件不再处理时，未完成的动作是 `skipped`。所以 History 的失败数不会多出 Attention
   没有的邮件动作；定时命令的失败与 Attention 的 `scheduled-task:<id>` 条目同样一一对应，
   唯一的差别是依赖短暂不可达时，服务要等故障持续 15 分钟才写 Attention，这段时间里
-  最近一次失败只在 History 里。详情链接到 `/email?tab=all&selected=<邮件>`。
+  最近一次失败只在 History 里；同一短暂故障不会逐分钟弹 macOS 失败通知，达到 15 分钟
+  门槛时只通知一次，恢复时仍发送成功通知。详情链接到 `/email?tab=all&selected=<邮件>`。
 - 这两类来源与 `reply_attempts` 一样按 `occurred_at` 排序，时间统一成
   `YYYY-MM-DD HH:MM:SS`（UTC）。History 图表仍只统计回复 attempt、会议和 Task，不含
   定时命令和邮件动作。

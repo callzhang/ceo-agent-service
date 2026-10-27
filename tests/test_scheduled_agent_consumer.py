@@ -693,6 +693,62 @@ def test_a_provider_outage_that_does_not_recover_is_reported_once(tmp_path):
     assert len(error_rows(store)) == 1
 
 
+def test_transient_service_outage_coalesces_macos_failure_notifications(tmp_path):
+    store = AutoReplyStore(tmp_path / "command-outage-notifications.sqlite3")
+    first = command_task_run(store)
+    task_id = first.scheduled_task_id
+    notifications = []
+
+    def unreachable():
+        raise DwsError(
+            "dws command failed with exit code 1; code=NETWORK_ERROR; "
+            "stderr=DNS resolution failed"
+        )
+
+    registry = commands(unreachable)
+    dispatch(
+        store, first, None, registry=registry,
+        notification_sender=lambda **kwargs: notifications.append(kwargs),
+    )
+    assert notifications == []
+
+    def attempt(minutes, command_registry, *, notification_enabled=True):
+        moment = NOW + timedelta(minutes=minutes)
+        run = store.create_scheduled_task_run(
+            task_id, trigger_kind="manual", scheduled_for=moment, now=moment
+        )
+        return dispatch(
+            store, run, None, registry=command_registry, now=moment,
+            notification_sender=(
+                lambda **kwargs: notifications.append(kwargs)
+                if notification_enabled else None
+            ),
+        )
+
+    attempt(5, registry)
+    assert notifications == []
+
+    attempt(20, registry)
+    assert notifications == [{
+        "title": "定时任务失败：Producer",
+        "message": "Producer 执行失败：dws command failed with exit code 1; "
+        "code=NETWORK_ERROR; stderr=DNS resolution failed",
+    }]
+
+    attempt(25, registry)
+    assert len(notifications) == 1
+
+    recovered = attempt(
+        30, commands(lambda: unknown_service_result("produce-once queued=1"))
+    )
+    assert recovered.dispatch_status == "dispatched"
+    assert notifications[-1] == {
+        "title": "定时任务完成：Producer",
+        "message": "produce-once queued=1",
+    }
+    assert len(notifications) == 2
+
+
 def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():
     with pytest.raises(ValueError, match="match the catalog exactly"):
         ServiceCommandRegistry({})

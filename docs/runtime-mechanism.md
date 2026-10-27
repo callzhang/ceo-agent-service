@@ -2881,9 +2881,10 @@ producer 的一次增量读取，与 `app.cli produce-once` 相同），成功�
 命令抛错时 trigger 以 `failed` 和
 `scheduled_task_service_command_failed: <原因>` 收口；除依赖短暂不可达（DNS、网关繁忙、超时）
 以外的原因每次写入 Attention。依赖不可达按持续时间判断：同一任务连续失败不足 15 分钟时只留在
-trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串同样的条目；连续失败超过 15 分钟则写
-一条 Attention（该条未解决期间不再重复写），下一次成功自动标记为已恢复。因此一次两小时的 DNS
-中断是一条记录，而不是零条或一百二十条。命令幂等，claim 丢失后的
+trigger 记录里，一次外部抖动不会在每分钟的命令上刷出成串同样的条目或 macOS 弹窗；连续失败超过
+15 分钟则写一条 Attention（该条未解决期间不再重复写）并只发一次失败桌面通知，下一次成功自动
+标记为已恢复并发送成功通知。因此一次两小时的 DNS 中断是一条 Attention 和一次失败通知，而不是
+零条或一百二十条；恢复通知仍会告知命令再次成功。命令幂等，claim 丢失后的
 重领会直接重跑。命令名不在目录中时 Scheduler 在派发前以
 `scheduled_task_service_command_unavailable` 跳过。服务命令任务不经过 Runtime、Skill、
 Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。

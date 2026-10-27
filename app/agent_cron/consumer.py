@@ -140,10 +140,11 @@ class ScheduledTaskTriggerConsumer:
             # is the opposite failure, so once the dependency has been failing
             # for TRANSIENT_DEPENDENCY_ESCALATION the outage is reported once.
             # Every other failure raises Attention on every trigger.
-            if (
+            report_failure = (
                 not is_transient_dependency_error(exc)
                 or self._transient_outage_is_an_incident(run, failed_at)
-            ):
+            )
+            if report_failure:
                 self._store.record_error(
                     f"scheduled-task:{run.scheduled_task_id}", run.event_id,
                     SERVICE_COMMAND_FAILED,
@@ -151,7 +152,7 @@ class ScheduledTaskTriggerConsumer:
                     f"command {command} failed for event {run.event_id}: {exc}",
                 )
             guard.finish_source(failed_at, status="failed", reason=reason)
-            if run.snapshot.notify_on_completion:
+            if run.snapshot.notify_on_completion and report_failure:
                 self._notification_sender(
                     title=f"定时任务失败：{run.snapshot.name}",
                     message=f"{run.snapshot.name} 执行失败：{exc}",
