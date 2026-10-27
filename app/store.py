@@ -13806,7 +13806,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             changed_ids = []
             for task_id in ids:
                 task = db.execute("select * from tasks where id=? and kind='meeting_alignment'", (task_id,)).fetchone()
-                if task is None or task["status"] not in {"failed", "no_action"} or task["locked_at"] is not None:
+                if task is None or task["status"] not in {"failed", "no_action", "needs_human"} or task["locked_at"] is not None:
                     continue
                 result = db.execute("select * from task_results where task_id=? and result_kind='meeting_alignment'", (task_id,)).fetchone()
                 if result is None or result["send_result_json"] != "{}":
