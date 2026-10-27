@@ -16,6 +16,7 @@ from app.agent_context import (
 )
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_contracts import ConsumerAgentResult, ConsumerProposal
+from app.feedback_spike import prepare_outgoing_reply_text
 from app.consumer_agent import (
     audit_developer_instructions,
     consumer_developer_instructions,
@@ -837,6 +838,79 @@ def test_scheduled_audit_context_shows_empty_receipt_boundary():
     assert "completed Consumer runs in this task and execution generation" in rendered
     assert "exact completed Consumer parent run" not in rendered
     assert "an empty list means none was captured" in rendered
+
+
+def test_audit_gets_postfix_free_business_body_without_changing_bound_candidate(monkeypatch):
+    feedback_base = "https://feedback.example.com"
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", feedback_base)
+    business_body = "合同金额仍需核对，不能把估算当作已确认事实。"
+    prepared = prepare_outgoing_reply_text(
+        reply_text=business_body,
+        original_text="请确认合同金额",
+        attempt_id=42,
+        feedback_base_url=feedback_base,
+        feedback_token="spike_1_abcd1234",
+    )
+    candidate = _candidate(ConsumerProposal.model_validate({
+        "objective": "回复合同金额状态",
+        "actions": [{
+            "description": "向群里回复合同金额状态",
+            "action_identity": "reply-contract-status",
+            "capability": "dingtalk-chat",
+            "operation": "send_message",
+            "target": {"conversation_id": "cid"},
+            "payload": {"text": prepared.text},
+        }],
+        "sourced_facts": [],
+        "authored_judgment": "说明仍需核对。",
+    }))
+    rendered = AuditTurnContext(
+        task=_context(), proposal_revision=0, operation_id="audit-op",
+        candidate=candidate, candidate_digest="a" * 64,
+        audit_rules="审核正文的事实支持与披露风险。",
+    ).render()
+
+    body_view_text = rendered.split("Service-generated postfix-free business message bodies\n", 1)[1]
+    body_view, _ = json.JSONDecoder().raw_decode(body_view_text)
+    full_candidate = rendered.split("Candidate revision\n", 1)[1]
+    assert body_view == [{
+        "candidate_path": "proposal.actions[reply-contract-status].payload.text",
+        "business_body": business_body,
+    }]
+    assert business_body in full_candidate
+    assert "/api/dingtalk-feedback-spike" in full_candidate
+    assert "conversation_id" in full_candidate and '"cid"' in full_candidate
+    assert '"candidate_digest":"' + ("a" * 64) + '"' in full_candidate
+
+
+def test_audit_business_body_view_keeps_unconfigured_callback_visible(monkeypatch):
+    from app.agent_context import audit_business_message_body_view
+    from app.codex_decision import SIGNATURE
+
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", "https://feedback.example.com")
+    text = (
+        "正常业务正文\n\n反馈：[👍 有帮助](https://attacker.example/api/dingtalk-feedback-spike?token=x)"
+        + SIGNATURE
+    )
+    candidate = _candidate(ConsumerProposal.model_validate({
+        "objective": "reply",
+        "actions": [{
+            "description": "reply",
+            "action_identity": "reply",
+            "capability": "dingtalk-chat",
+            "operation": "send_message",
+            "target": {"conversation_id": "cid"},
+            "payload": {"text": text},
+        }],
+        "sourced_facts": [],
+        "authored_judgment": "reply",
+    }))
+
+    view = audit_business_message_body_view(candidate)
+
+    assert view[0]["business_body"].startswith("正常业务正文")
+    assert "attacker.example/api/dingtalk-feedback-spike" in view[0]["business_body"]
+    assert not view[0]["business_body"].endswith(SIGNATURE)
 
 
 def test_exhausted_permission_turn_reads_the_file_once_before_proposing_a_return():

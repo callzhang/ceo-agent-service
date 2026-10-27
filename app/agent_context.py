@@ -7,6 +7,7 @@ from zoneinfo import ZoneInfo
 from app.agent_contracts import AuditAgentResult, AuditFeedback, ConsumerAgentResult, json_value_type
 from app.email_classifier_contracts import EmailAttachmentMetadata
 from app.agent_result import AgentError
+from app.codex_decision import SIGNATURE
 
 CRITICAL_INFO_UNAVAILABLE_CODE = "critical_info_unavailable"
 CRITICAL_INFO_UNAVAILABLE_SUMMARY = "关键信息暂时无法读取，未作出业务判断。"
@@ -447,6 +448,10 @@ class AuditTurnContext:
                 "but do not treat the configured service callback pair itself as an authored credential leak. "
                 "This does not exempt other links, credentials or factual/content problems. "
                 "A field assertion must still quote the exact complete candidate value.",
+                "Service-generated message postfix content review view\n"
+                "For each DingTalk message action, this view contains the business body after removing only the exact terminal service signature and a configured, validated feedback callback pair. Review the body in this view for factual support, privacy and suitability. Ignore the removed suffix as service-generated content, not as business authorship. The complete unmodified candidate, target and digest remain below and remain authoritative for field assertions and execution. Continue reviewing every other part of the body and all target/audience facts.",
+                "Service-generated postfix-free business message bodies\n"
+                + _json(audit_business_message_body_view(self.candidate)),
                 "## Candidate Field Facts\n" + _json(candidate_action_field_facts(self.candidate)),
                 "Current candidate scalar field evidence, computed from exact non-source candidate fields\n"
                 + render_candidate_field_evidence({
@@ -487,6 +492,59 @@ class AuditTurnContext:
             )
         )
         return f"## Audit Rules\n{self.audit_rules}\n\n## Context Facts\n{context_facts}"
+
+
+def audit_business_message_body_view(
+    candidate: ConsumerAgentResult,
+) -> list[dict[str, str]]:
+    """Render message bodies without only their exact service-generated postfix.
+
+    The stored candidate itself is deliberately left untouched: this separate
+    view is solely for judging business prose without mistaking the service's
+    appended signature or validated feedback callback pair for Consumer-authored
+    facts. All other body text remains visible for Audit.
+    """
+    from app.config import feedback_spike_vercel_base_url
+    from app.feedback_spike import sanitize_configured_feedback_links
+
+    candidate_json = candidate.model_dump(mode="json")
+    plans = [("proposal", candidate_json.get("proposal"))]
+    plans.extend(
+        (f"decision_options[{index}].plan", option.get("plan"))
+        for index, option in enumerate(candidate_json.get("decision_options", []))
+    )
+    result: list[dict[str, str]] = []
+    for plan_name, plan in plans:
+        if not isinstance(plan, dict):
+            continue
+        for action in plan.get("actions", []):
+            if not isinstance(action, dict) or action.get("capability") != "dingtalk-chat":
+                continue
+            payload = action.get("payload")
+            if not isinstance(payload, dict) or not isinstance(payload.get("text"), str):
+                continue
+            text = payload["text"]
+            try:
+                inspected = sanitize_configured_feedback_links(
+                    text,
+                    vercel_base_url=feedback_spike_vercel_base_url(),
+                )
+            except ValueError:
+                # Malformed or unconfigured callbacks stay visible to Audit;
+                # this view never treats an unproven suffix as service-owned.
+                inspected = text
+            if not isinstance(inspected, str):
+                inspected = text
+            marker = "\n\n[service-generated feedback callbacks]"
+            if inspected.endswith(marker):
+                inspected = inspected.removesuffix(marker)
+            if SIGNATURE and inspected.endswith(SIGNATURE):
+                inspected = inspected[:-len(SIGNATURE)].rstrip()
+            result.append({
+                "candidate_path": f"{plan_name}.actions[{action.get('action_identity', '')}].payload.text",
+                "business_body": inspected,
+            })
+    return result
 
 
 def candidate_action_field_facts(candidate: ConsumerAgentResult) -> list[dict[str, object]]:
