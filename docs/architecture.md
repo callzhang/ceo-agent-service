@@ -1076,6 +1076,7 @@ DingTalk 消息、DingTalk 近期消息恢复、微信消息、会议、OA、工
 Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判断空间：确定性的发现或同步工作属于
 服务命令，需要 Skill 判断的才是 Agent 任务。AI 听记同步的分页读取、归档和内容游标都由
 `app/minutes_sync.py` 确定性完成，因此它也是服务命令。
+摘要接口对没有有效转写文本的听记会返回终态 `textGenerationInfo=SKIPPED/NO_VALID_TEXT` 和上游跳过的视觉摘要；同步器把它作为无摘要处理，仍归档可用逐字稿。其他未知摘要形状继续按单项失败处理，不把状态信息写进摘要正文。
 “工作来源”扫描还会只读发现管理周报、项目管理部周报和部门产研周报，按文档 ID、链接、统计周期和内容 digest
 建立 Task-first `work_summary` 输入；同一文档版本重复扫描保持幂等，报告内容仍由 Task Agent 提取 Project 和 Task。
 Scheduled Agent 执行按 trigger 冻结托管 Skill 的精确 revision 和正文。重试继续使用该冻结版本；即使该 revision 不在当前进程启动时加载的 Skill snapshot 中，运行时仍按精确 Skill ID、revision ID 和名称从不可变 revision store 读取它。缺失、跨 Skill 或显式禁用的 revision 仍拒绝执行；系统不替换为最新版。

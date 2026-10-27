@@ -143,6 +143,19 @@ def summary_markdown(summary: object) -> str:
         text = summary.get("fullSummary")
         if isinstance(text, str):
             return _rendered_summary_document(text)
+        text_generation = summary.get("textGenerationInfo")
+        visual_generation = summary.get("visualGenerationInfo")
+        if (
+            isinstance(text_generation, dict)
+            and text_generation.get("state") == "SKIPPED"
+            and text_generation.get("reason") == "NO_VALID_TEXT"
+            and text_generation.get("terminal") is True
+            and isinstance(visual_generation, dict)
+            and visual_generation.get("state") == "SKIPPED"
+            and visual_generation.get("reason") == "UPSTREAM_SKIPPED"
+            and visual_generation.get("terminal") is True
+        ):
+            return ""
     raise MinutesSummaryShapeUnknown(
         f"unreadable minutes summary payload: {sorted(summary)}"
         if isinstance(summary, dict)

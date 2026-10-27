@@ -289,6 +289,21 @@ def test_render_archive_accepts_a_minute_without_a_summary_yet() -> None:
     assert "# AI Summary\n\n\n\n# Transcript" in text
 
 
+def test_minutes_summary_with_terminal_no_valid_text_is_an_absent_summary() -> None:
+    payload = {
+        "currentTemplate": {"summaryTemplateId": "default", "summaryTemplateType": "0"},
+        "generatingStatus": "NOT_STARTED",
+        "textGenerationInfo": {
+            "reason": "NO_VALID_TEXT", "state": "SKIPPED", "terminal": True,
+        },
+        "visualGenerationInfo": {
+            "reason": "UPSTREAM_SKIPPED", "state": "SKIPPED", "terminal": True,
+        },
+    }
+
+    assert summary_markdown(payload) == ""
+
+
 def test_an_unreadable_summary_shape_fails_the_item_instead_of_archiving_it(
     tmp_path: Path,
 ) -> None:
@@ -310,6 +325,37 @@ def test_an_unreadable_summary_shape_fails_the_item_instead_of_archiving_it(
     assert result.failures[0][0] == "u1"
     assert result.failures[0][1].startswith("summary_shape_unknown:")
     assert "sections" in result.failures[0][1]
+
+
+def test_minutes_without_generated_summary_archive_the_available_transcript(
+    tmp_path: Path,
+) -> None:
+    store = _store(tmp_path)
+    no_valid_text = {
+        "currentTemplate": {"summaryTemplateId": "default", "summaryTemplateType": "0"},
+        "generatingStatus": "NOT_STARTED",
+        "textGenerationInfo": {
+            "reason": "NO_VALID_TEXT", "state": "SKIPPED", "terminal": True,
+        },
+        "visualGenerationInfo": {
+            "reason": "UPSTREAM_SKIPPED", "state": "SKIPPED", "terminal": True,
+        },
+    }
+    dws = FakeDws(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "会", "startTime": 1_700_000_000_000}},
+        summary={"u1": no_valid_text},
+        paragraphs={"u1": [{"startTime": 0, "paragraph": "逐字稿内容"}]},
+    )
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+
+    assert result.synced == 1 and result.failed == 0
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    text = written.read_text(encoding="utf-8")
+    assert "# AI Summary\n\n\n\n# Transcript" in text
+    assert "逐字稿内容" in text
+    assert _cursor(store)["archived_ids"] == ["u1"]
 
 
 def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) -> None:

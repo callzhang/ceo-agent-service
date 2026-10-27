@@ -85,6 +85,7 @@ tests/test_message_split.py
 tests/test_minutes_console_browser.py
 tests/test_minutes_login_handoff.py
 tests/test_minutes_todo_context.py
+tests/test_minutes_sync.py
 tests/test_native_action_entity_lifecycle.py
 tests/test_native_consumer_output.py
 tests/test_native_integer_binding.py

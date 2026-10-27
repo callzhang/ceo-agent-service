@@ -2942,6 +2942,7 @@ AgentRun 的终态重复完成先在写事务外读取准确原生引用。独�
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
 会议直接跳过。成功运行的归档命令单行结果摘要会持久化到 scheduled run，并显示在定时任务运行记录中，包含
 `discovered`、`synced`、`skipped`、`permission_requested`、`permission_pending`、`failed` 计数及可操作的跳过明细。
+DingTalk 对无有效转写文本的摘要返回终态 `textGenerationInfo=SKIPPED/NO_VALID_TEXT` 与上游跳过的视觉摘要；同步器将其识别为空摘要，继续归档已有逐字稿。未知或不完整响应仍保留为单项失败。
 History 也显示定时触发（Derek 2026-09-25，类型「定时命令」/「定时任务」，规则见 `docs/architecture.md` 的
 「History 语义」）：任何定时任务的失败触发（之后同一任务成功过一次即为 `recovered`）、Agent 形式任务因不可用
 被跳过的触发，以及结果不交给 Agent 的服务命令（听记同步、听记权限申请、OKR 周报）的每次成功运行；把结果交给
