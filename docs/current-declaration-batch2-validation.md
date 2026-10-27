@@ -53,7 +53,7 @@ and duplicate idempotence. It also pins both current catalog digests and three
 ordered metadata digests. SPEC caught the shared Email writer's remaining old
 builder call; that call was removed before SPEC approval.
 
-Focused groups pass: independent regressions 6, current/Signal/Action group 29,
+Focused groups pass: independent regressions 7, current/Signal/Action group 29,
 explicit Action inverse 14, source/field-map group 26, shared/specialized lifecycle
 14. These groups overlap and are not a distinct or full-suite total. Field-map
 checks retain 287 Task rows, 632 Run rows, 43 adoption rows and the historical
@@ -87,16 +87,90 @@ cold-open behavior without the same-path cache. It passes with zero old-builder
 calls. Business source/owner checks pass 435 cases; the complete current and
 historical catalogs remain exact.
 
-## Publication
+Subsequent standard gates at `fd394a4bf` produced no observed failures but
+reached the same 300-second budget at 19% and 89%. Exact cut-off nodes pass alone;
+the same clone/clean environment passes the first 185 cases in 11.89 seconds.
+These attempts remain failed gates, not release approval.
 
-Implementation, SPEC and QUALITY verification are complete. Root integration
-passes 21 cases in 2.95 seconds; Ruff checks all changed Python files and the
-diff check passes. The mandatory exact-target deployment gate, production
-readback and cleanup must finish before
-this checkpoint can be called deployed. The pre-change production snapshot has
-476 exact objects, no FK findings and unchanged eight retained historical fact
-groups. Pre-existing failed tasks and Email Attention are recorded separately;
-this batch does not replay them.
+Repeated construction of the fixed declaration was separately measured at
+0.12–0.16 seconds per call. The assembly now caches only immutable name/SQL
+pairs for the two current ledger roles and returns a fresh dictionary to every
+caller. Repeated calls take approximately 20–120 microseconds. No real database
+catalog, marker, schema-damage check or business state is trusted from this
+cache. A regression mutates both returned dictionaries and proves that other
+callers/roles retain the exact complete declarations; SPEC/QUALITY approve.
 
-See the [machine-readable evidence](validation/2026-10-26-current-declarations-batch2.json)
-for the final publication and cleanup state.
+## Publication and production readback
+
+Implementation, SPEC, QUALITY and final reviews are complete. Root integration
+passes21cases; final independent regression file passes7. The22owned Python
+files and merged WeChat fixture pass Ruff; diff checks pass. Mainline test-only
+fixture optimization11bf99107 is normally merged and its12cases pass.
+
+Exact target `3212e477debe00ff82139cd666a10055a3b1b3f3` passed the mandatory
+standard gate twice, without raising2GiB/300s or removing existing gate files.
+The first waiting deploy was canceled under explicit authorization. The second
+used the explicitly approved `--skip-quiet-wait`; the other task canceled its
+own old waiting deploy normally, releasing the mutex. Root did not signal45300.
+Standard deploy operation `deploy-2ce1930c-918d-4a43-9ffe-d0dd12af8c29` succeeded
+at2026-10-27T05:01:28Z. Installed target3212e477d, mainPID96980 and Store26.1 /
+Email54 were read back. These are dated observations, not a claim about future
+production releases. Later mainline PR330 is not part of this installed target.
+
+All476production catalog tuples remain byte-exact; FK findings remain empty.
+Eight retained historical fact groups match their pre-deploy counts and digests;
+15owned runtime files match the released commit. No data migration, schema marker
+change or production database capacity reduction is claimed.
+
+Passed actual readback: healthz/status/Attention, current Tasks UI, Project6
+HTML/JSON (13Todos,24Updates), owner/facts/source expansion, DingTalk link712
+receipt, Attempt16137, Consumer399752/Audit399753 native ranges, Action125048 and
+Receipt20529. History default API and an initial paginated API read returned200.
+All test providers were substitutes. No production test Task, send, recall or
+replay was performed. Both owned verification tabs were closed.
+
+### Open acceptance findings
+
+- **History UI is not accepted as green.** Its actual dingtalk page2 request
+  with `include_chart=0` timed out after20–30seconds and the page stayed loading.
+  The History route/Store/frontend/annotation implementation is unchanged from
+  previous production. Read-only probes measured key/count work2.294–5.389s,
+  hydration0.079–0.219s and annotation about0.001s; these do not establish the
+  actual request's timeout cause. A later native stack sample was not correlated
+  to an in-flight request and cannot prove deadlock. Next: trace the actual
+  request thread acquisition, SQL phases and response before choosing a repair.
+- **Report417576 recovered execution, then failed business publication.** The
+  interrupted Run399768 is preserved; Consumer399776 / Runtime399547 resumed
+  the same Codex session and completed, followed by Audit399778. Later revisions
+  failed; the reported failure is `consumer_document_write: document parent
+  listing is incomplete`. No report publication/group-send receipt was observed.
+  Recovery is not a successful report. No Audit/auth/retry policy was changed or
+  production replay attempted. Its owner task received the bounded summary.
+- **Three historical artifact tests remain open**, as baseline-reproduced above.
+  They were not skipped or made green by changing expected digests.
+
+The final dated status observation at05:44:03Z had pending7, processing1,
+failed27 and Attention1; business health remained degraded with2cached findings
+(checked05:32:52Z), versus failed25 before release. This does not establish that
+all failures were caused by the declaration change, and it does not justify an
+all-business-green claim. The explicitly authorized deployment/failure/History
+summary was successfully sent to「定时修复 CEO agent」; no raw trajectory,
+mail body or credentials were transmitted.
+
+### Cleanup
+
+Three failed gate clones and two exactly attributed failed-gate pytest roots
+were checked for open files and removed. Both successful gate clones were
+removed by standard deploy.1818old CEO test-template caches were verified empty
+of business/Task/Run/mail/provenance/receipt facts, unchanged, older than active
+pytest processes and unopened; exact selected paths are absent (about5.6GiB
+of disposable caches, not production database savings).
+
+The workflow backup (514969600bytes) passed full integrity, application ID and
+exact476-object schema verification, then was deleted under the backup directory
+lock after production fact/receipt readback, as authorized. Production database
+and native trajectories are preserved. Final task root `/private/tmp/ceo-current-schema.p605TK` was also checked for
+open files, deleted without following its symlinks, and verified absent. Counts
+and bytes are recorded in the machine-readable evidence below.
+
+See [machine-readable evidence](validation/2026-10-26-current-declarations-batch2.json).

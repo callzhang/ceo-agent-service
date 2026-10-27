@@ -143,3 +143,30 @@ print(json.dumps(hits))
         result = subprocess.run([sys.executable, '-c', program, str(tmp_path / 'store.sqlite3')],
                                 check=True, capture_output=True, text=True, timeout=30)
         assert json.loads(result.stdout.splitlines()[-1]) == []
+
+
+def test_current_assembly_cache_is_isolated_by_role_and_caller(monkeypatch):
+    from app import task_run_entity_assembly as assembly
+
+    assembly._cached_assembly_objects.cache_clear()
+    original = assembly._unique_declared_objects
+    calls = []
+
+    def count(families):
+        calls.append(1)
+        return original(families)
+
+    monkeypatch.setattr(assembly, '_unique_declared_objects', count)
+    bare = assembly.task_run_entity_assembly_objects()
+    paired = assembly.task_run_entity_assembly_objects(email_ledger=True)
+    original_bare, original_paired = dict(bare), dict(paired)
+    bare['actions'] = 'mutated'
+    paired.pop('email_schema_migrations')
+    bare_again = assembly.task_run_entity_assembly_objects()
+    paired_again = assembly.task_run_entity_assembly_objects(email_ledger=True)
+    assert bare_again == original_bare
+    assert paired_again == original_paired
+    assert 'email_schema_migrations' not in bare_again
+    assert 'email_schema_migrations' in paired_again
+    assert len(bare_again) == 475 and len(paired_again) == 476
+    assert len(calls) == 2

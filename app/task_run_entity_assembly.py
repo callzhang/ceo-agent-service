@@ -1,6 +1,8 @@
 """Assemble the current Task, Run, Action and retained-owner declarations."""
 from __future__ import annotations
 
+from functools import lru_cache
+
 from app.run_adoption_definitions import (
     INDEXES as ADOPTION_INDEXES,
     TABLES as ADOPTION_TABLES,
@@ -44,6 +46,12 @@ def _action_objects():
 
 
 def task_run_entity_assembly_objects(*, email_ledger=False):
+    """Return a fresh mapping of current declarations for the selected role."""
+    return dict(_cached_assembly_objects(bool(email_ledger)))
+
+
+@lru_cache(maxsize=2)
+def _cached_assembly_objects(email_ledger):
     """Return target DDL plus actual retained-owner declarations.
 
     The scratch schema uses only target Task/Run declarations and the native
@@ -98,9 +106,8 @@ def task_run_entity_assembly_objects(*, email_ledger=False):
     rows = db.execute(
         "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*' ORDER BY type,name"
     ).fetchall()
-    result = {name: sql for name, sql in rows}
     db.close()
-    return result
+    return tuple(rows)
 
 
 def validate_assembled_object_names(db):
