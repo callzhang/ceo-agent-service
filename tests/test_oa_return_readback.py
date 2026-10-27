@@ -35,6 +35,7 @@ class Source:
     def __init__(self):
         self.clock = None
         self.calls = []
+        self.read_calls = 0
         self.returned = False
         self.records = [{"operation_type": "REDIRECT_PROCESS", "userid": "principal",
             "date": "2026-10-13 18:06:28", "remark": "Need exact handover facts"}]
@@ -46,6 +47,7 @@ class Source:
         return "principal"
 
     def read_oa_approval_detail(self, process_id):
+        self.read_calls += 1
         return {"success": True, "result": {"processInstanceId": process_id,
             "businessId": "business", "tasks": [{"taskId": "original",
                 "userId": "retired-owner" if self.returned else "principal",
@@ -59,12 +61,14 @@ class Source:
         return {"success": True, "dingOpenErrcode": 0, "result": True}
 
     def read_oa_process_instance_openapi(self, process_id):
+        self.read_calls += 1
         assert process_id == "process"
         return {"errcode": 0, "process_instance": {"business_id": self.business_id,
             "tasks": [{"taskid": "original", "task_status": "CANCELED"}, self.destination],
             "operation_records": self.records}}
 
     def read_oa_approval_records(self, process_id):
+        self.read_calls += 1
         assert process_id == "process"
         native_records = []
         for record in self.records:
@@ -149,6 +153,13 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
     from app.action_storage import update_action
     with store._immediate_write_transaction() as db:
         update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
+        from app.task_entity_storage import update_task_cas
+        failed = update_task_cas(
+            db, task_id=task.id,
+            expected={"status": "processing", "execution_generation": task.execution_generation},
+            changes={"status": "failed", "error": "external_action_uncertain", "locked_at": None},
+        )
+        assert failed is not None
 
     reopened = AutoReplyStore(store.path)
     from app.oa_reconciliation import reconcile_oa_return_attempt
@@ -162,6 +173,29 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
     assert after["status"] == "verified"
     assert after["created_at"] == original["created_at"]
     assert after["external_action_key"] == original["external_action_key"]
+    assert reopened.get_reply_task(task.id).status == "done"
+    assert reopened.get_reply_attempt(attempt_id).send_status == "uncertain"
+    assert len(source.calls) == 1
+
+    # If the process stops after receipt persistence but before the task CAS,
+    # rerunning the read-only endpoint settles from that exact receipt alone.
+    with reopened._immediate_write_transaction() as db:
+        from app.task_entity_storage import update_task_cas
+        interrupted = update_task_cas(
+            db, task_id=task.id,
+            expected={"status": "done", "execution_generation": task.execution_generation},
+            changes={"status": "failed", "error": "external_action_uncertain"},
+        )
+        assert interrupted is not None
+    read_calls_before = source.read_calls
+    recovered_again = reconcile_oa_return_attempt(
+        reopened, source, attempt_id=attempt_id,
+        candidate_id=selected["id"], review_id=review["id"],
+    )
+    assert recovered_again.outcome == "executed"
+    assert reopened.get_reply_task(task.id).status == "done"
+    assert reopened.get_reply_attempt(attempt_id).send_status == "uncertain"
+    assert source.read_calls == read_calls_before
     assert len(source.calls) == 1
     assert reopened.get_candidate_external_action(original["external_action_key"]) is not None
 
