@@ -389,6 +389,29 @@ def test_retrying_meeting_uses_persisted_retry_plan():
     assert [action.key for action in state.actions] == ["details"]
 
 
+def test_meeting_needs_human_is_shown_as_needing_the_manager():
+    """An Audit that stays unapproved after the bounded feedback cycles ends needs_human.
+
+    That is a state only the manager can resolve, so History has to list it like a failed Meeting
+    instead of showing it with no attention at all (jobs 417472, 417547, 417562).
+    """
+    job = MeetingAlignmentJob.model_construct(
+        status="needs_human",
+        attempts=4,
+        error='{"kind": "meeting_audit_unapproved", "message": "Meeting Audit return"}',
+    )
+    run = MeetingAlignmentRun.model_construct(
+        audit_summary="", error=job.error,
+    )
+
+    state = meeting_history_attention(run, job)
+
+    assert state is not None
+    assert state.kind == "needs_manager"
+    assert state.external_effect == "未确认发送会议对齐消息"
+    assert [action.key for action in state.actions] == ["manual", "details"]
+
+
 def test_failed_follow_up_requires_manager_without_synthetic_retry():
     item = HistoryItem(
         kind="task",
