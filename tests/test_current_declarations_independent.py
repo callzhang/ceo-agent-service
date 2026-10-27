@@ -111,3 +111,35 @@ def test_shared_email_writer_uses_frozen_layouts_without_historical_builder(monk
                          + email_projection('email_action_plans') + ')').fetchone()
         assert row == ('plan', 11, '["archive"]')
         assert lifecycle.persist_email_plan(db, values).rowcount == 0
+
+
+def test_cold_store_import_create_and_open_do_not_run_historical_builders(tmp_path):
+    import json
+    import subprocess
+    import sys
+
+    program = '''
+import json, sys
+from pathlib import Path
+hits = []
+def profile(frame, event, arg):
+    if event == "call":
+        path = frame.f_code.co_filename.replace("\\\\", "/")
+        name = frame.f_code.co_name
+        if ((path.endswith("/app/action_storage.py") and name in
+             {"_action_definitions", "_build_action_payloads", "action_payloads"}) or
+            (path.endswith("/app/business_definitions.py") and name == "_definitions")):
+            hits.append((Path(path).name, name))
+sys.setprofile(profile)
+from app.store import AutoReplyStore
+AutoReplyStore(Path(sys.argv[1]))
+AutoReplyStore(Path(sys.argv[1]))
+sys.setprofile(None)
+print(json.dumps(hits))
+'''
+    # The second fresh process exercises an existing database without the
+    # per-process same-path initialization cache hiding its cold-open path.
+    for _ in range(2):
+        result = subprocess.run([sys.executable, '-c', program, str(tmp_path / 'store.sqlite3')],
+                                check=True, capture_output=True, text=True, timeout=30)
+        assert json.loads(result.stdout.splitlines()[-1]) == []

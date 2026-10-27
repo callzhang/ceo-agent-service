@@ -18,7 +18,9 @@ Source baseline: `59a3f773042a41521f45b2bd7cd571ad57a9863a`.
   historical-option selection runs to obtain these current layouts.
 - Current construction, schema validation, default Action writes, eager Action
   projections and shared Email plan/claim/receipt writes use these declarations.
-  They do not invoke the historical schema/payload builders.
+  They do not invoke the historical schema/payload builders, including during
+  module import. Unused eager Action DDL constants are removed; historical
+  Business DDL is generated only when an explicit source helper is called.
 - Historical options and Signal source assembly are explicit source-tool
   declarations. The inverse transfer supplies its source layout explicitly.
   The old pre-Run target helper is an explicit migration contract, not the
@@ -51,7 +53,7 @@ and duplicate idempotence. It also pins both current catalog digests and three
 ordered metadata digests. SPEC caught the shared Email writer's remaining old
 builder call; that call was removed before SPEC approval.
 
-Focused groups pass: independent regressions 5, current/Signal/Action group 29,
+Focused groups pass: independent regressions 6, current/Signal/Action group 29,
 explicit Action inverse 14, source/field-map group 26, shared/specialized lifecycle
 14. These groups overlap and are not a distinct or full-suite total. Field-map
 checks retain 287 Task rows, 632 Run rows, 43 adoption rows and the historical
@@ -66,10 +68,29 @@ does not rewrite those historical artifacts, change their expected hashes, skip
 their tests or claim them green. The current declaration and field-map checks are
 independent of these stale artifact comparisons.
 
+## Gate follow-up and cold-start verification
+
+The first exact-target gate at `0f52e72fe` refused deployment. All 129 observed
+failures mapped to the historical TEXT test adapter missing the new explicit
+`layout` keyword. Representative failures were reproduced in the untouched gate
+checkout; after correcting only that test adapter, the first five gate files
+pass 185 cases and Sent delivery passes 27. That run also reached the fixed
+300-second budget at 84%; it is not a successful gate. No limit was raised and
+no existing gate file was removed.
+
+An independent cold-process profile exposed four import-time historical builder
+calls that post-import monkeypatches could not detect. Unused Action constants
+are removed and explicit Business source helpers defer their existing declaration
+factory calls until invoked. The regression profiles before importing Store,
+creates the database, then repeats in a second fresh process to verify real
+cold-open behavior without the same-path cache. It passes with zero old-builder
+calls. Business source/owner checks pass 435 cases; the complete current and
+historical catalogs remain exact.
+
 ## Publication
 
 Implementation, SPEC and QUALITY verification are complete. Root integration
-passes 21 cases in 2.95 seconds; Ruff checks all 18 changed Python files and the
+passes 21 cases in 2.95 seconds; Ruff checks all changed Python files and the
 diff check passes. The mandatory exact-target deployment gate, production
 readback and cleanup must finish before
 this checkpoint can be called deployed. The pre-change production snapshot has

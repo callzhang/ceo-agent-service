@@ -19,7 +19,7 @@
     "all_equal": true
   },
   "tests": {
-    "independent": 5,
+    "independent": 6,
     "current_signal_action": 29,
     "explicit_action_inverse": 14,
     "source_fieldmap": 26,
@@ -30,6 +30,11 @@
     "root_integration": {
       "passed": 21,
       "seconds": 2.95
+    },
+    "business_source_owner": 435,
+    "root_cold": {
+      "passed": 6,
+      "seconds": 6.49
     }
   },
   "preexisting_historical_test_failures": [
@@ -38,8 +43,8 @@
     "test_committed_assembly_sql_artifact_executes_and_matches_complete_catalog"
   ],
   "reviews": {
-    "spec": "pass after current shared Email layout fix",
-    "quality": "pass"
+    "spec": "pass including cold-import and historical test adapter follow-up",
+    "quality": "pass including cold-import and historical test adapter follow-up"
   },
   "production_before": {
     "at": "2026-10-27T03:29:02.575939+00:00",
@@ -122,14 +127,111 @@
     }
   },
   "deployment": {
-    "state": "not yet run"
+    "state": "first target refused before production changes; fixture correction in progress",
+    "first_target": "0f52e72fe2c895e0ac59033e32b222b36050479b",
+    "first_gate": {
+      "result": "fixed300s limit at84%;129 observed failures",
+      "cause": "historical TEXT test adapter missing explicit layout keyword; both failing groups reproduced on untouched gate checkout",
+      "focused_fix": {
+        "first_five_gate_files": 185,
+        "sent_delivery_action": 27
+      },
+      "limits_changed": false,
+      "existing_gate_files_removed": false
+    }
   },
   "cleanup": {
     "state": "pending until production readback"
   },
   "lint": {
-    "changed_python_files": 18,
+    "changed_python_files": 22,
     "ruff": "pass",
     "diff_check": "pass"
+  },
+  "cold_start": {
+    "old_builder_calls_before": 4,
+    "after": 0,
+    "fresh_processes": 2,
+    "current_store_create_and_cold_open": true
+  },
+  "production_ready": {
+    "at": "2026-10-27T03:40:20.193366+00:00",
+    "commit": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+    "schema": {
+      "count": 476,
+      "sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754"
+    },
+    "foreign_keys": [],
+    "facts": {
+      "work_project": {
+        "count": 975,
+        "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+      },
+      "work_todo": {
+        "count": 3327,
+        "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+      },
+      "todo_evidence_candidate": {
+        "count": 3,
+        "sha256": "03b6c90ba133e317f8abc2a4be69cbc0bdb08acc0294a3798f920b63be2152db"
+      },
+      "work_updates": {
+        "count": 5468,
+        "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+      },
+      "follow_up_drafts": {
+        "count": 2477,
+        "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+      },
+      "follow_up_send_attempts": {
+        "count": 65,
+        "sha256": "bb0506c291c372b0cd420a86e6851df483484904a94736a2eede8de82aa7e38b"
+      },
+      "task_todo_sync_outbox": {
+        "count": 242,
+        "sha256": "fab7ff4ef836e0665007df0effa0eddeedba5fbc39c6b0329028eda590dde1d4"
+      },
+      "work_todo_dingtalk_links": {
+        "count": 875,
+        "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+      }
+    },
+    "http": {
+      "/healthz": 200,
+      "/api/console/status": 200,
+      "/api/console/attention": 200,
+      "/api/console/history?page=1&page_size=5": 200
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "34587",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 8,
+      "processing": 3,
+      "failed": 25,
+      "retryable": 1,
+      "attention": 1
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "reply task exceeded the worker recovery lease Native delivery results readable: 394; unavailable: 0.",
+      "checked_at": "2026-10-27T03:39:08.095140+00:00",
+      "violations": 3,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 394,
+        "unavailable": 0
+      }
+    }
   }
 }

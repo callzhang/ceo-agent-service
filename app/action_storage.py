@@ -863,11 +863,6 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
     return table, indexes, triggers
 
 
-ACTION_TABLE_DDL, ACTION_INDEX_DDL, ACTION_TRIGGER_DDL = _action_definitions()
-RECEIPT_ACTION_TABLE_DDL, RECEIPT_ACTION_INDEX_DDL, RECEIPT_ACTION_TRIGGER_DDL = _action_definitions(True)
-POSTFIX_ACTION_TABLE_DDL, POSTFIX_ACTION_INDEX_DDL, POSTFIX_ACTION_TRIGGER_DDL = _action_definitions(True, True)
-
-
 def _projection(kind, *, payloads=None, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False):
     if kind in REPLY_ACTION_TYPES:
         raise ValueError("reply projection requires global schema variant")
