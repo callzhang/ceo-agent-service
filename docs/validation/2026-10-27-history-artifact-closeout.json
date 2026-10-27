@@ -1,0 +1,95 @@
+{
+  "date": "2026-10-27",
+  "baseline": "48d171838",
+  "implementation": "eeeb5b5e474d76a135255cf7a4b086b20f192762",
+  "scope": "History pending polling and exact explicit-source/current SQL artifact contracts; no DDL/data/policy change",
+  "coordination": {
+    "thread_id": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
+    "title": "定时修复 CEO agent",
+    "progress_checked": true,
+    "scope_messages_sent": true,
+    "peer_report_deploy_files_modified": false,
+    "no_other_deploy_process_at_start": true,
+    "peer_confirmed_no_parallel_deploy": true
+  },
+  "regression": {
+    "history_old": "slow pending signal aborted after30s:1failed19passed",
+    "history_new": "20passed2.29s; pending completion/filter/unmount/stale response/error/normal polling",
+    "artifact_old": "3failed2.86s",
+    "artifact_new": "17passed2.61s; original505/920b hash retained, current artifact exactly1line added",
+    "source_current_related": "28passed46.28s",
+    "final_frozen_source": "1passed0.79s",
+    "typescript": "pass",
+    "ruff": "pass",
+    "diff_check": "pass",
+    "independent_review": "no blocking findings; ineffective monkeypatch removed",
+    "review_minor_followup": "removed non-intercepting monkeypatch; original exact505/920b digest and explicit no-notification-column assertion retained"
+  },
+  "history_previous_production_probe": {
+    "status": 200,
+    "items": 20,
+    "meta": {
+      "snapshot_at": "2026-10-27T08:59:06.047058Z",
+      "page": 2,
+      "page_size": 20,
+      "total": 6414,
+      "next_cursor": "3",
+      "has_more": true
+    },
+    "seconds": 1.2116288750548847,
+    "web_pid": 98033,
+    "sample_exit": 0
+  },
+  "history_previous_ui": {
+    "page": 2,
+    "visible_range": "21-40",
+    "observed_total": 6416,
+    "loaded": true,
+    "verification_tab_closed": true
+  },
+  "production_schema_before": {
+    "count": 476,
+    "schema_sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+    "current_declaration_exact": true,
+    "foreign_keys": []
+  },
+  "deployment": {
+    "status": "blocked by standard gate time limit; production unchanged",
+    "attempt_target": "eeeb5b5e474d76a135255cf7a4b086b20f192762",
+    "gate": "300s97percent; no observed assertion failure",
+    "last_test": "tests/test_scheduled_agent_consumer.py::test_scheduled_audit_receives_exact_consumer_document_return",
+    "policy_conflict": {
+      "upstream_commit": "850f451c32bccef120bfc541090f9643654627e2",
+      "change": "test budget5to10min; deploy backstop6to12min;2GiB unchanged",
+      "adopted": false,
+      "explicit_user_decision_requested": true,
+      "explicit_user_decision": "approved this release using independent10min budget commit,2GiB and every existing test retained"
+    },
+    "peer_system_skill_publication": "not in this task scope; peer retains explicit publish/recovery responsibility",
+    "failed_gate_log_sha256": "df3ab1d5342a0a10352956b77219c83262af7cbab531b887b9f91a0b63ed6a91",
+    "failed_gate_tail": "................................................................... [ 95%]\n........................................................................ [ 96%]\n........................................................................ [ 97%]\n.....................................................\nTIME LIMIT EXCEEDED: this test process has run 300 s (limit 300 s) and was running tests/test_scheduled_agent_consumer.py::test_scheduled_audit_receives_exact_consumer_document_return.\nThe limit is fixed and must not be raised. Make the tests faster, or run fewer of them, so the run finishes inside the limit.\n"
+  },
+  "cleanup": {
+    "temporary_root": "/private/tmp/ceo-history-closeout.iqw5Li",
+    "status": "pending final readback",
+    "failed_gate_clone": {
+      "path": "/private/tmp/ceo-history-closeout.iqw5Li/deploy-test-gate.keh9mmyg",
+      "files": 4221,
+      "bytes": 205219835,
+      "no_open_files": true,
+      "absent": true
+    }
+  },
+  "test_external_sends": 0,
+  "artifacts": {
+    "docs/task-run-entity-assembly-target.sql": {
+      "sha256": "b8189f3bdb1609def8735ff94545193e8187fb8d6f728546f91d54acce8aa928"
+    },
+    "docs/task-run-entity-assembly-field-map.json": {
+      "sha256": "c7ab301a77eee05a87f26fe1f5793e91bffa83765dfc0fd57b7a92d8f078c4a8"
+    },
+    "docs/task-run-entity-assembly-retirement.sql": {
+      "sha256": "718fc0b88bca3f87a2ca345d7310c6808f7d918e4ce21dc83669c583223621e0"
+    }
+  }
+}
