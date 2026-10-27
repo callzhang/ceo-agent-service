@@ -11054,14 +11054,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         *,
         reason: str,
         recovery_code: str = "",
+        reset_runtime_sessions: bool = False,
     ) -> ReplyTask:
         """Reopen a failed Consumer or Audit turn in a new runtime generation.
 
         The generation isolates immutable run history; it is not a new
         conversation.  A repaired turn resumes a still-accessible route
         session with its already verified facts and receives the current Skill
-        revision in its prompt.  Only a runtime-confirmed invalid session is
-        cleared by the route-specific failure path.
+        revision in its prompt. A source-unavailable retry may explicitly
+        clear the conversation sessions so the next turn performs fresh reads.
         """
         reason = reason.strip()
         if not reason:
@@ -11078,6 +11079,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     or int(row["id"]) != run_id or row["status"] != "failed" \
                     or row["role"] not in {AgentRole.CONSUMER.value, AgentRole.AUDIT.value}:
                 raise ValueError("failed reply task is not retryable")
+            if reset_runtime_sessions:
+                input_id = task["claimed_input_id"] or task["current_input_id"]
+                input_row = db.execute(
+                    "select conversation_id from task_inputs where id=? and task_id=?",
+                    (input_id, task_id),
+                ).fetchone()
+                if input_row is None:
+                    raise ValueError("failed reply task input is unavailable")
+                conversation_id = str(input_row["conversation_id"])
+                db.execute(
+                    "delete from state where record_type='conversation_runtime_sessions' and conversation_id=?",
+                    (conversation_id,),
+                )
+                update_state_rows(
+                    db,
+                    "conversations",
+                    {"codex_session_id": None, "codex_session_contract_hash": ""},
+                    where_sql="conversation_id=? and codex_session_id is not null",
+                    parameters=(conversation_id,),
+                )
             next_generation = uuid4().hex
             parameters = dict(task["parameters"])
             parameters.update(force_new_decision=1, recovery_code=recovery_code.strip())

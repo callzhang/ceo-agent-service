@@ -212,7 +212,8 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
         except (TypeError, json.JSONDecodeError):
             error = {}
         code = str(error.get("code") or "").strip() if isinstance(error, dict) else ""
-        if not code or error.get("retryable") is not True:
+        fresh_source_retry = code == "dependency_read_unavailable"
+        if not code or (error.get("retryable") is not True and not fresh_source_retry):
             return JSONResponse(
                 {
                     "ok": False,
@@ -245,6 +246,7 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
                 latest.id,
                 reason=f"task_retry:{code}",
                 recovery_code=code,
+                reset_runtime_sessions=fresh_source_retry,
             )
         except ValueError as exc:
             return JSONResponse(

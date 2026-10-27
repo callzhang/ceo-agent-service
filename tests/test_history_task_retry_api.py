@@ -82,7 +82,9 @@ def test_failed_retryable_reply_task_retries_through_task_api(tmp_path: Path):
 
 def test_task_retry_api_keeps_nonretryable_failure_failed(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task, _failed_run_id = _failed_retryable_task(store, retryable=False)
+    task, _failed_run_id = _failed_retryable_task(
+        store, code="business_rule_gap", retryable=False
+    )
 
     response = _client(store).post(f"/api/console/history/tasks/{task.id}/retry")
 
@@ -92,6 +94,30 @@ def test_task_retry_api_keeps_nonretryable_failure_failed(tmp_path: Path):
     assert current is not None
     assert current.status == "failed"
     assert current.execution_generation == task.execution_generation
+
+
+def test_dependency_read_failure_retries_with_fresh_route_session(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task, _failed_run_id = _failed_retryable_task(
+        store, code="dependency_read_unavailable", retryable=False
+    )
+    store.upsert_conversation_runtime_session(
+        task.conversation_id,
+        "codex_oauth",
+        "old-context-session",
+        "service-contract",
+    )
+
+    response = _client(store).post(f"/api/console/history/tasks/{task.id}/retry")
+
+    assert response.status_code == 200, response.text
+    current = store.get_reply_task(task.id)
+    assert current is not None
+    assert current.status == "pending"
+    assert current.execution_generation != task.execution_generation
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "codex_oauth"
+    ) is None
 
 
 def test_task_retry_api_rejects_provider_risk_rejection(tmp_path: Path):

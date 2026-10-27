@@ -835,7 +835,7 @@ Attempt History 仅对当前 `needs_human` 规则候选显示“需要你处理/
 人工重跑内部 OA 待办使用持久化任务中的 `oa-pending:` 合成触发 ID；按触发 ID 定位当前任务并恢复其实际 `oa_pending_scan:<process>` 会话。该类 ID 不是钉钉消息 ID，不调用钉钉会话读取或按 ID 读取；若当前任务已不存在，按未找到任务失败。
 同一来源 Attempt 和完全相同的审核反馈/修正文案修订，最多允许 3 次人工重跑（即原执行之外 3 次重试）。服务按已追加的不可变 TaskInput 修订记录计数；仍在排队的相同提交按幂等键复用，不增加次数。第 4 次在创建新执行代之前冲突退出，原任务代次和输入不变。来源 Attempt 或审核反馈/修正文案改变即为新的审核修订，独立使用 3 次预算。此计数与任务内自动重试分别管理；权限恢复后的延迟重读仍按每 12 小时一次、最长 72 小时及最多 3 次的既有专用预算执行。
 
-`POST /api/console/history/tasks/{task_id}/retry` 是 Task 级技术恢复入口。它只读取当前失败代的最新 Consumer/Audit run，要求结构化错误明确为 `retryable=true`，并经 `retry_failed_reply_task` 对 Task 代次、失败 run 和无效果来源记录作原子校验；provider 风险拒绝、已留有 run provenance、活动/旧代或不可重试失败不入队。成功时沿用稳定 Task 与原输入，创建新执行代，保留旧 run/Attempt 历史；它不写终态、不绕过 Audit，也不直接调用 provider。
+`POST /api/console/history/tasks/{task_id}/retry` 是 Task 级技术恢复入口。它只读取当前失败代的最新 Consumer/Audit run，要求结构化错误明确为 `retryable=true`；唯一额外可重试的技术错误是 `dependency_read_unavailable`，此时在同一事务内清除 Conversation runtime sessions，避免在旧会话上下文中重复相同的来源失败。`retry_failed_reply_task` 原子校验 Task 代次、失败 run 和无效果来源记录；provider 风险拒绝、已留有 run provenance、活动/旧代或其他不可重试失败不入队。成功时沿用稳定 Task 与原输入，创建新执行代，保留旧 run/Attempt 历史；它不写终态、不绕过 Audit，也不直接调用 provider。
 History 只允许对尚未解决、没有 OA 外部效果且身份匹配的跳过审批，根据新的明确反馈开启复审。Attempt 已同时保存 `resolved_at` 与 `resolution` 时，代表该历史审阅已被解决；即使本地任务状态仍是 `done` 或 `skipped`，详情页也不提供重跑，POST 重跑路由同样拒绝。钉钉终态读回和后续任务取代的闭合证据因此不会被旧本地任务状态重新打开；仍待处理的审批可由新证据或 Skill 版本变化触发新的扫描轮次。
 压缩后的输入从任务所绑定的 OA URL/业务键核对 process 与 task 身份，并通过保存的定时扫描 run 恢复 OA Consumer 上下文后重新冻结当前所选 Skill。无法精确核对身份或找回 run/Skill 时拒绝排队；不会尝试把内部触发 ID 当作钉钉消息读取。
 待办扫描的复审指纹包括当前选择的 Skill 正文摘要。Skill 规则更新时，即使外部审批流水未改变，也为仍在本人待办中的流程排入一轮新 Consumer/Audit；相同 Skill 正文继续去重。新一轮仍冻结实际选中的完整 Skill 正文，并使用原有审批身份、Audit、System Executor 和外部回执门禁。

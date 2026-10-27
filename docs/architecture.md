@@ -792,7 +792,7 @@ Consumer 收到 Audit 的 return/reject 后，只有原候选、审核、任务�
 输入已压缩时，按任务保存的审批 URL、业务身份和定时扫描 run ID 恢复当前 OA 触发及其最新选中 Skill；身份或运行快照无法对应时拒绝排队，不把合成 ID 交给钉钉消息读取。
 同一来源 Attempt 和完全相同的审核反馈/修正文案修订，最多允许 3 次人工重跑（即原执行之外 3 次重试）。服务按已追加的不可变 TaskInput 修订记录计数；仍在排队的相同提交按幂等键复用，不增加次数。第 4 次在创建新执行代之前冲突退出，原任务代次和输入不变。来源 Attempt 或审核反馈/修正文案改变即为新的审核修订，独立使用 3 次预算。此计数与任务内自动重试分别管理；权限恢复后的延迟重读仍按每 12 小时一次、最长 72 小时及最多 3 次的既有专用预算执行。
 
-Task 级技术重试使用 `POST /api/console/history/tasks/{task_id}/retry`，无需把内部故障转换成对话回复或 `needs_human`。入口只接受当前 `failed` Reply Task 的最新 Consumer/Audit run 明确标记 `retryable=true` 的失败，并调用现有新执行代恢复方法；有持久化运行效果证据、provider 风险拒绝、活动/旧代或未标记可重试的失败都拒绝。重试保留原输入和失败历史，生成新的 `execution_generation`；API 只重新排队，不能写入成功或直接执行外部动作，后续仍由正常 Agent/Audit/效果回执流程决定终态。
+Task 级技术重试使用 `POST /api/console/history/tasks/{task_id}/retry`，无需把内部故障转换成对话回复或 `needs_human`。入口只接受当前 `failed` Reply Task 的最新 Consumer/Audit run 明确标记 `retryable=true` 的失败；`dependency_read_unavailable` 也可显式重试，并在同一事务内清除该会话的旧 runtime sessions，以便新执行代重新读取缺失来源。存在持久化运行效果证据、provider 风险拒绝、活动/旧代或其他未标记可重试的失败都拒绝。重试保留原输入和失败历史，生成新的 `execution_generation`；API 只重新排队，不能写入成功或直接执行外部动作，后续仍由正常 Agent/Audit/效果回执流程决定终态。
 
 Consumer 和 Audit 的只读工具目录提供钉钉邮件邮箱列表、完整会话、单封原文与发送状态读取：
 `list_dingtalk_mailboxes`、`read_dingtalk_mail_thread`、`read_dingtalk_mail_message`、
