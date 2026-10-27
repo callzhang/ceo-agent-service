@@ -151,7 +151,10 @@ def seed_case(store, case, *, prepared_sources=None):
             from dataclasses import asdict
             ids = []
             for source in project.get("evidence", []):
-                signal_id = store.create_business_task_signal(**asdict(SourceSignal(**source)))
+                with store.business_task_transaction() as db:
+                    signal_id = store.create_business_task_signal_in_transaction(
+                        **asdict(SourceSignal(**source)), _db=db
+                    )
                 ids.append(signal_id)
                 fact = store.get_business_task_signal(signal_id)
                 prepared_sources.add_current(fact, source["evidence_text"])

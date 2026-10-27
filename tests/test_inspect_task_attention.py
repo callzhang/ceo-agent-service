@@ -10,6 +10,7 @@ from app.run_entity_storage import create_runtime_attempt, set_run_projection
 from app.store import AutoReplyStore, NATIVE_TASK_RUN_SQL, WORK_SUMMARY_INPUT_SQL
 
 from tests.support.task_native import read_task_fixture_decision
+from tests.support.business_task_seed import seed_task_signal
 
 
 SCRIPT = Path(__file__).resolve().parents[1] / "scripts" / "inspect_task_attention.py"
@@ -202,7 +203,7 @@ def test_inspector_reads_actual_zero_task_project_revision_without_rewriting_old
     resolver = BusinessResolutionService(store)
     anchor_id = resolver.register_anchor(anchor_type="project", anchor_ref="project:inspect", title="交付项目")
     project_id = resolver.register_official_project(anchor_id=anchor_id, registry_source="meeting:inspect")
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="message", source_ref="m:inspect", evidence_text="李四总负责交付项目。", dedupe_key="inspect:source"
     )
     prepared_sources = PreparedSources(store.business_source_reader())

@@ -1,0 +1,188 @@
+{
+  "date": "2026-10-26",
+  "source_baseline": "442a5951c95076a0402a1a9e8c2063912d5a6269",
+  "scope": "approved first no-DDL cleanup only",
+  "retired_store_methods": [
+    "_business_source_document_id",
+    "_projection_failure_code",
+    "get_todo_evidence_candidate_by_work_summary_input",
+    "create_follow_up_draft",
+    "update_follow_up_draft",
+    "get_follow_up_draft",
+    "list_recent_follow_up_candidates",
+    "count_sent_follow_ups_for_owner_since",
+    "count_sent_follow_ups_for_conversation_since",
+    "upsert_todo_evidence_candidate",
+    "get_todo_evidence_candidate",
+    "mark_todo_evidence_candidate_enqueued",
+    "mark_todo_evidence_candidate",
+    "list_task_todo_sync_outbox",
+    "get_task_todo_sync_outbox",
+    "create_business_task_signal",
+    "list_business_task_signals",
+    "create_business_task",
+    "link_business_task_evidence",
+    "get_business_project_candidate"
+  ],
+  "retired_dto": {
+    "name": "RecentFollowUpCandidate",
+    "fields": 22
+  },
+  "retired_exclusive_helpers": [
+    "_follow_up_dedupe_key",
+    "_todo_evidence_candidate_transaction",
+    "_todo_evidence_candidate_dedupe_key"
+  ],
+  "retired_exclusive_import": "Store source_document_key",
+  "current_script_caller_switched": "scripts/replay_task_attention.py: existing current transactional Signal owner",
+  "historical_literal_exception": "tests/test_task_suggestions.py retains3calls inside frozen predecessor subprocess, never current runtime",
+  "schema_code": {
+    "schema_objects": 476,
+    "before_after_exact": true,
+    "sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+    "retired_methods": 20,
+    "retired_dto": "RecentFollowUpCandidate",
+    "remaining_retired_definitions": []
+  },
+  "production_before": {
+    "captured_at": "2026-10-27T00:42:26.183852+00:00",
+    "schema_count": 476,
+    "schema_sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+    "schema_current": true,
+    "fk": [],
+    "historical_facts": {
+      "work_project": {
+        "count": 975,
+        "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+      },
+      "work_todo": {
+        "count": 3327,
+        "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+      },
+      "todo_evidence_candidate": {
+        "count": 3,
+        "sha256": "03b6c90ba133e317f8abc2a4be69cbc0bdb08acc0294a3798f920b63be2152db"
+      },
+      "work_updates": {
+        "count": 5468,
+        "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+      },
+      "follow_up_drafts": {
+        "count": 2477,
+        "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+      },
+      "follow_up_send_attempts": {
+        "count": 65,
+        "sha256": "bb0506c291c372b0cd420a86e6851df483484904a94736a2eede8de82aa7e38b"
+      },
+      "task_todo_sync_outbox": {
+        "count": 242,
+        "sha256": "fab7ff4ef836e0665007df0effa0eddeedba5fbc39c6b0329028eda590dde1d4"
+      },
+      "work_todo_dingtalk_links": {
+        "count": 875,
+        "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+      }
+    },
+    "production_commit": "0f8c47eaaca8aa90dc60d9a71c28691c624cc6ee",
+    "in_flight": 3,
+    "status": {
+      "service": {
+        "label": "com.ceo-agent-service.main",
+        "target": "gui/501/com.ceo-agent-service.main",
+        "ok": true,
+        "state": "running",
+        "detail": "running",
+        "pid": "83958",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0
+      },
+      "summary": {
+        "queue_count": 11,
+        "pending": 8,
+        "processing": 1,
+        "failed": 25,
+        "retryable": 0,
+        "attention": 1
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "email classification reached a non-retryable failure Native delivery results readable: 411; unavailable: 0.",
+        "checked_at": "2026-10-27T00:40:07.370255+00:00",
+        "violations": 2,
+        "components": [],
+        "native_delivery_coverage": {
+          "checked": 411,
+          "unavailable": 0
+        }
+      }
+    }
+  },
+  "test_scope": {
+    "baseline": {
+      "Store": 471,
+      "Attempt": 53
+    },
+    "Store_after": {
+      "core": 500,
+      "selected_node_batches": [
+        54,
+        46,
+        37,
+        31,
+        24
+      ],
+      "candidate_read_files": 16,
+      "restored_current_history": 1,
+      "exact_affected_history": 14
+    },
+    "counts_overlap": true,
+    "broad_history_run": "hit fixed300s at unrelated email manual training node; not green;14exact affected nodes rerun passed",
+    "removed_only_tests": [
+      "test_create_follow_up_draft_dedupes_skipped_terminal_draft",
+      "test_list_recent_follow_up_candidates_includes_scheduled_actionable_statuses",
+      "test_list_recent_follow_up_candidates_prefers_conversation_then_owner",
+      "test_list_recent_follow_up_candidates_requires_conversation_or_owner",
+      "test_list_recent_follow_up_candidates_respects_non_positive_limit",
+      "test_list_recent_follow_up_candidates_returns_linked_context",
+      "test_todo_evidence_candidate_dedupes_and_marks_decision"
+    ],
+    "restored_mixed_test_reader": "test_operation_logs_preserve_accepted_historical_todo_evidence",
+    "Attempt_after": 53,
+    "Attempt_after_seconds": 41.66,
+    "root_integration": {
+      "passed": 19,
+      "seconds": 8.48
+    }
+  },
+  "reviews": {
+    "Store_SPEC": "approved after missing current History assertion restored",
+    "Store_QUALITY": "approved",
+    "Attempt_SPEC": "approved",
+    "Attempt_QUALITY": "approved",
+    "final_integration": "approved"
+  },
+  "schema_migration": false,
+  "external_test_sends": 0,
+  "production_test_tasks": 0,
+  "publication": "source ready; standard deployment and production readback pending",
+  "cleanup": "pending production readback",
+  "attempt_changes": {
+    "retired_helper": "_transcript_owner",
+    "removed_empty_placeholder_fields": [
+      "audit_tool_events_json",
+      "codex_transcript_start_line",
+      "codex_transcript_end_line"
+    ],
+    "current_owner": "Run codex_session_id; legitimate Attempt own session retained",
+    "runtime_lookup": "required list_agent_runtime_attempts_for_runs; per-run fallback removed",
+    "genuine_missing_run_task_lookup": "unchanged"
+  },
+  "lint": {
+    "changed_python_files": 50,
+    "ruff": "passed",
+    "diff_check": "passed"
+  }
+}

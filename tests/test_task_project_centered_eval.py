@@ -24,6 +24,8 @@ from app.task_models import TaskAgentDecision, WorkItem
 from app.task_agent import TaskAgentRunner
 from tests.support.task_native import record_task_fixture_run
 from tests.support.task_native import task_native_records  # noqa: F401
+from tests.support.business_task_seed import seed_task_signal
+from tests.support.business_task_seed import signal_snapshot
 
 
 def _tool():
@@ -167,7 +169,7 @@ def seeded_domain(tmp_path):
                 anchor_id=second_anchor, registry_source="meeting:project-start",
             )
         duty_text = "甲客户一期交付由张三总负责交付验收，王五负责商务回款。"
-        duty_id = store.create_business_task_signal(
+        duty_id = seed_task_signal(store,
             source_type="meeting", source_ref="meeting:project-start",
             evidence_text=duty_text, dedupe_key="eval:duty",
         )
@@ -176,7 +178,7 @@ def seeded_domain(tmp_path):
             source_type="message", source_ref="chat:cash-risk",
             evidence_text=risk_text, dedupe_key="eval:risk",
         )
-        risk_id = store.create_business_task_signal(**risk.__dict__)
+        risk_id = seed_task_signal(store, **risk.__dict__)
         prepared_sources = PreparedSources(store.business_source_reader())
         prepared_sources.add_current(store.get_business_task_signal(duty_id), duty_text)
         prepared_sources.add_current(store.get_business_task_signal(risk_id), risk_text)
@@ -503,7 +505,7 @@ def test_readback_accepts_only_applied_or_existing_card_receipts(
     store, _ = seeded_domain(attention=True, suggestion=False)
     [card] = store.list_business_attention_items()
     signal = next(
-        signal for signal in store.list_business_task_signals()
+        signal for signal in signal_snapshot(store)
         if signal.source_ref == "chat:cash-risk"
     )
     current = WorkItem.model_validate({
@@ -625,19 +627,19 @@ def test_oracle_rejects_wrong_project_peer_with_same_member_count(seeded_domain)
 def test_oracle_counts_distinct_signal_versions_for_same_ref(seeded_domain):
     store, _ = seeded_domain()
     expected = EXPECTED | {"minimum_signal_versions_for_ref": {"chat:cash-risk": 2}}
-    store.create_business_task_signal(
+    seed_task_signal(store,
         source_type="message", source_ref="chat:cash-risk",
         evidence_text="甲客户一期交付付款日期未确定，影响本期现金安排。",
         dedupe_key="eval:risk:second-signal-same-document",
     )
-    signals = [signal for signal in store.list_business_task_signals()
+    signals = [signal for signal in signal_snapshot(store)
                if signal.source_ref == "chat:cash-risk"]
     assert len(signals) == 2
     assert len({signal.source.identity_key for signal in signals}) == 1
     assert "signal_version_count_mismatch" in evaluate_persisted_case(
         store, expected, before=domain_snapshot(store)
     )
-    store.create_business_task_signal(
+    seed_task_signal(store,
         source_type="message", source_ref="chat:cash-risk",
         source_time="2026-10-03T09:00:00Z",
         evidence_text="甲客户一期交付付款日期仍未确定。", dedupe_key="eval:risk:version2",
@@ -650,7 +652,7 @@ def test_oracle_counts_distinct_signal_versions_for_same_ref(seeded_domain):
 def test_repeat_oracle_includes_new_source_signal_in_domain_snapshot(seeded_domain):
     store, _ = seeded_domain()
     before = domain_snapshot(store)
-    store.create_business_task_signal(
+    seed_task_signal(store,
         source_type="message", source_ref="chat:unexpected-new-version",
         evidence_text="一次重复处理却新增了 Signal。", dedupe_key="eval:unexpected-signal",
     )

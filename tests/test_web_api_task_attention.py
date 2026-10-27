@@ -13,6 +13,7 @@ from app.task_semantic_models import AttentionCategory, BusinessTaskStatus
 from app.task_semantic_service import SourceSignal, TaskSemanticService, UpdateBusinessTask
 from app.web_api.tasks import business_attention_list_response
 from tests.test_console_web_api import _client
+from tests.support.business_task_seed import seed_task
 
 
 def _attention(store, category, title, now):
@@ -43,7 +44,7 @@ def test_attention_order_and_filter_before_pagination(tmp_path):
 def test_semantic_routes_do_not_return_legacy_projects(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     legacy_id = seed_legacy_work_project(store, title="Legacy", category="dev", status="active")
-    task_id = store.create_business_task(title="Real task", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
+    task_id = seed_task(store, title="Real task", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
     with _client(tmp_path) as client:
         all_response = client.get("/api/console/tasks/all")
         assert all_response.status_code == 200
@@ -56,8 +57,8 @@ def test_semantic_routes_do_not_return_legacy_projects(tmp_path):
 
 def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_id = store.create_business_task(title="Launch", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
-    closed_id = store.create_business_task(title="Closed project task", stage="candidate", status="done", business_relevance="relevant")
+    task_id = seed_task(store, title="Launch", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
+    closed_id = seed_task(store, title="Closed project task", stage="candidate", status="done", business_relevance="relevant")
     with store._immediate_write_transaction() as db:
         signal_id = store.create_business_task_signal_in_transaction(
             source_type="meeting", source_ref="minutes-1", evidence_text="Derek assigned Launch",
@@ -126,7 +127,7 @@ def test_attention_detail_returns_saved_assessment_and_all_referenced_signals(tm
 
 def test_attention_detail_removes_completed_member_without_resolving_or_mutating_tasks(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    task_ids = tuple(store.create_business_task(title=title, stage="candidate", business_relevance="relevant") for title in ("Delivery", "Open sibling"))
+    task_ids = tuple(seed_task(store, title=title, stage="candidate", business_relevance="relevant") for title in ("Delivery", "Open sibling"))
     with store.business_task_transaction() as db:
         signal_id = store.create_business_task_signal_in_transaction(source_type="meeting", source_ref="delivery-risk", evidence_text="Delivery remains at risk", dedupe_key="delivery-risk", _db=db)
         anchor_id = store.create_business_anchor_in_transaction(anchor_type="project", anchor_ref="delivery-project", title="Delivery project", _db=db)
@@ -182,8 +183,8 @@ def test_project_candidates_are_labeled_provisional_and_not_official(tmp_path):
 
 def test_task_list_filters_by_owner_and_sorts_by_creation_or_update(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    owned = store.create_business_task(title="有人负责", stage="candidate", owner_name="王明")
-    bare = store.create_business_task(title="无人负责", stage="candidate")
+    owned = seed_task(store, title="有人负责", stage="candidate", owner_name="王明")
+    bare = seed_task(store, title="无人负责", stage="candidate")
     with store._immediate_write_transaction() as db:
         update_business(db, "task", owned, {
             "created_at": "2026-09-01 00:00:00", "updated_at": "2026-09-03 00:00:00",

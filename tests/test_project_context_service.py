@@ -12,6 +12,7 @@ from app.business_source_reader import PreparedSources
 from app.store import AutoReplyStore
 from app.task_business_resolution import BusinessResolutionService
 from app.task_semantic_models import BusinessAnchorType, ProjectContext, TaskSuggestion
+from tests.support.business_task_seed import seed_task_signal
 
 
 
@@ -62,12 +63,12 @@ def project_store(tmp_path):
     project_id = resolver.register_official_project(
         anchor_id=anchor_id, registry_source="portfolio-registry"
     )
-    first_signal = store.create_business_task_signal(
+    first_signal = seed_task_signal(store,
         source_type="meeting", source_ref="meeting:project-1",
         evidence_text=_FIRST_BODY,
         dedupe_key="project-context:1",
     )
-    second_signal = store.create_business_task_signal(
+    second_signal = seed_task_signal(store,
         source_type="meeting", source_ref="meeting:project-1",
         evidence_text=_SECOND_BODY,
         dedupe_key="project-context:2",
@@ -177,7 +178,7 @@ def test_context_none_only_links_proof_and_explicit_empty_snapshot_clears_roles(
 
 def test_context_service_accepts_quote_in_one_decoded_structured_source_string(project_store):
     store, project_id, _, _ = project_store
-    signal_id = store.create_business_task_signal(
+    signal_id = seed_task_signal(store,
         source_type="report", source_ref="report:structured",
         evidence_text=_STRUCTURED_BODY,
         dedupe_key="project-context:structured",
@@ -221,7 +222,7 @@ def test_context_service_rejection_leaves_no_partial_writes_inside_caller_transa
 @pytest.mark.parametrize("source_type", ["memory_provenance", "session_provenance"])
 def test_project_context_evidence_requires_observed_original_source(project_store, source_type):
     store, project_id, _, _ = project_store
-    signal_id = store.create_business_task_signal(source_type=source_type, source_ref="quoted:project",
+    signal_id = seed_task_signal(store, source_type=source_type, source_ref="quoted:project",
         evidence_text="张三负责交付。", dedupe_key=f"{source_type}:project")
     with store.business_task_transaction() as db:
         with pytest.raises(ValueError, match="observed"):

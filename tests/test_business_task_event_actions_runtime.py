@@ -4,12 +4,13 @@ from app.task_semantic_service import (
     TaskMutationResult,
     TaskSemanticService,
 )
+from tests.support.business_task_seed import seed_task, seed_task_signal
 
 
 def test_business_task_event_store_reads_and_writes_typed_actions(tmp_path):
     store = AutoReplyStore(tmp_path / "task-events.sqlite3")
-    task_id = store.create_business_task(title="Task", stage="candidate")
-    signal_id = store.create_business_task_signal(
+    task_id = seed_task(store, title="Task", stage="candidate")
+    signal_id = seed_task_signal(store,
         source_type="test",
         source_ref="test:7",
         evidence_text="evidence",

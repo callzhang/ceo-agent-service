@@ -5,6 +5,7 @@ from app.run_entity_storage import create_run
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL, update_action, update_sync_action
 from app.history import HistoryItem, safe_observability_error
 from app.store import AutoReplyStore
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
 
 
 def test_observability_keeps_long_opaque_dingtalk_identifier():
@@ -182,7 +183,7 @@ def test_history_includes_task_updates_and_follow_ups(tmp_path):
         summary="更新 TODO：补充 Avery 反馈事项描述",
         changes_json='{"action":"update_project"}',
     )
-    follow_up_id = store.create_follow_up_draft(
+    follow_up_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="user-mina",

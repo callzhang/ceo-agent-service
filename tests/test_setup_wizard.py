@@ -35,6 +35,7 @@ from app.setup_wizard_models import (
     SetupWizardStatus,
 )
 from app.store import AutoReplyStore
+from tests.support.legacy_todo_facts import seed_legacy_follow_up
 
 
 @pytest.fixture(autouse=True)
@@ -635,7 +636,7 @@ def test_check_dry_run_ignores_legacy_follow_up_drafts(tmp_path: Path):
         category="sales",
         status="active",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         owner_name="Casey Huang",
         target_kind="direct",

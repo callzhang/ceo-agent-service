@@ -15,6 +15,7 @@ from app.task_models import TaskAgentDecision, TaskIdentityProposal, WorkItem
 from app.task_semantic_rules import FormalityEvidence
 from app.task_semantic_service import RecordFormalTask, SourceSignal, TaskSemanticService
 from app.task_semantic_models import BusinessActorKind, BusinessEvidenceRole, FormalTaskBasis
+from tests.support.business_task_seed import seed_task_evidence, seed_task_signal
 
 
 REPORT_ITEM = "subway 数据中台商务立项@Claire Huang(Claire)"
@@ -116,7 +117,7 @@ def _record_formal_task(
             },
             ensure_ascii=False,
         )
-        owner_signal_id = store.create_business_task_signal(
+        owner_signal_id = seed_task_signal(store,
             source_type=source_type,
             source_ref=owner_ref,
             evidence_text=owner_persisted_body,
@@ -125,7 +126,7 @@ def _record_formal_task(
         )
         if originals is not None:
             originals[owner_signal_id] = owner_persisted_body
-        store.link_business_task_evidence(
+        seed_task_evidence(store,
             task_id=result.task_id,
             signal_id=owner_signal_id,
             evidence_role=BusinessEvidenceRole.CORRECTION,

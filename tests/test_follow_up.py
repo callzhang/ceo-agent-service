@@ -6,6 +6,7 @@ from app.dws_client import DwsUserProfile
 from app.follow_up import FollowUpNotSendable, send_business_task_follow_up
 from app.store import AutoReplyStore
 from app.store import WORK_SUMMARY_INPUT_SQL
+from tests.support.business_task_seed import seed_task
 
 
 class FakeDws:
@@ -48,7 +49,7 @@ class FakeDws:
 
 
 def _business_follow_up(store: AutoReplyStore, *, title: str, source_ref: str) -> tuple[int, int]:
-    task_id = store.create_business_task(
+    task_id = seed_task(store,
         title=title, stage="formal", formal_basis="explicit_assignment",
         owner_user_id="owner-1", owner_name="Alex",
     )

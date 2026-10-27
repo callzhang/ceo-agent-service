@@ -52,6 +52,8 @@ from app.task_semantic_models import (
     FormalTaskBasis,
 )
 from app.task_agent_session import TaskAgentSessionLeaseLost
+from tests.support.business_task_seed import seed_task_evidence, seed_task_signal
+from tests.support.business_task_seed import signal_snapshot
 
 
 def _independent_project_work_item():
@@ -142,7 +144,7 @@ def _prepared_task_sources(store, *original_items, original_bodies=None):
     prepared = PreparedSources(store.business_source_reader())
     bodies_by_ref = dict(original_bodies or {})
     bodies_by_ref.update({item.source.ref: item.summary for item in original_items})
-    for signal in store.list_business_task_signals():
+    for signal in signal_snapshot(store):
         prepared.add(signal)
         body = bodies_by_ref.get(signal.source_ref)
         if body is not None and signal.source.matches_body(body):
@@ -3137,7 +3139,7 @@ def test_process_work_item_repairs_current_project_quote_before_atomic_apply(
         def decide(self, **kwargs):
             if self.calls:
                 assert not store.list_business_projects()
-                assert not store.list_business_task_signals()
+                assert not signal_snapshot(store)
                 self.payload = good
             return super().decide(**kwargs)
 
@@ -3176,7 +3178,7 @@ def test_current_project_quote_repair_exhaustion_preserves_atomic_rejection(
 
     assert len(codex.calls) == TASK_DECISION_REPAIR_ROUNDS + 1
     assert not store.list_business_projects()
-    assert not store.list_business_task_signals()
+    assert not signal_snapshot(store)
     assert store.get_work_summary_input(input_id).status.value == "failed"
 
 
@@ -3211,7 +3213,7 @@ def test_current_project_quote_repair_reports_all_distinct_rejected_quotes(
     class RepairingCodex(FakeCodex):
         def decide(self, **kwargs):
             assert not store.list_business_projects()
-            assert not store.list_business_task_signals()
+            assert not signal_snapshot(store)
             assert not store.list_business_tasks()
             assert not store.list_business_attention_items()
             if self.calls:
@@ -3240,7 +3242,7 @@ def test_current_project_quote_repair_reports_all_distinct_rejected_quotes(
             assert str(raised.value).count(repr(quote)) == 1
         assert len(codex.calls) == TASK_DECISION_REPAIR_ROUNDS + 1
         assert not store.list_business_projects()
-        assert not store.list_business_task_signals()
+        assert not signal_snapshot(store)
         assert not store.list_business_tasks()
         assert not store.list_business_attention_items()
         assert store.get_work_summary_input(input_id).status.value == "failed"
@@ -3823,7 +3825,7 @@ def test_multi_decision_batch_records_each_source_grounded_item(tmp_path):
         "candidate",
         "formal",
     ]
-    assert len(store.list_business_task_signals()) == 2
+    assert len(signal_snapshot(store)) == 2
 
 
 def test_explicit_meeting_project_proposal_registers_project_and_links_task(tmp_path):
@@ -4620,7 +4622,7 @@ def test_update_dedupe_identity_preserves_a_real_status_transition(tmp_path):
         )
 
     assert store.get_business_task(task.task_id).status.value == "done"
-    assert len(store.list_business_task_signals()) == 3
+    assert len(signal_snapshot(store)) == 3
 
 
 @pytest.mark.parametrize("change", ["owner", "status", "unchanged", "promotion"])
@@ -4694,7 +4696,7 @@ def test_existing_task_update_can_omit_title(tmp_path, change):
         assert task.formal_basis is FormalTaskBasis.EXPLICIT_ASSIGNMENT
     else:
         assert result.skipped_reasons
-        assert len(store.list_business_task_signals()) == 1
+        assert len(signal_snapshot(store)) == 1
 
 
 @pytest.mark.parametrize("action", ["record_candidate", "create_task"])
@@ -4735,7 +4737,7 @@ def test_update_whitespace_title_rejected_in_shape_before_domain_write(tmp_path)
         )
     )
     original = store.get_business_task(seed.task_id)
-    signals = store.list_business_task_signals()
+    signals = signal_snapshot(store)
     payload = {
         "action": "update_task",
         "transition": "update_fields",
@@ -4755,7 +4757,7 @@ def test_update_whitespace_title_rejected_in_shape_before_domain_write(tmp_path)
             }
         )
     assert store.get_business_task(seed.task_id) == original
-    assert store.list_business_task_signals() == signals
+    assert signal_snapshot(store) == signals
 
 
 @pytest.mark.parametrize("title", [None, "", "核对报价"])
@@ -5271,7 +5273,7 @@ def test_batch_rolls_back_task_signal_and_all_proposals_on_later_invalid_evidenc
     assert store.get_business_task(source_id) == original
     assert store.list_business_task_relations(task_id=source_id) == ()
     assert store.list_business_task_anchor_links(task_id=source_id) == ()
-    assert len(store.list_business_task_signals()) == 2
+    assert len(signal_snapshot(store)) == 2
     assert len(store.list_business_work_cluster_tasks(cluster_id=cluster_id)) == 2
     with store._connect() as db:
         assert (
@@ -5341,7 +5343,7 @@ def test_decision_relative_relation_binds_actual_applied_task_and_replays(
         else (seeds[1].task_id, current_id)
     )
     assert relation.status.value == "proposed"
-    assert relation.supporting_signal_id == store.list_business_task_signals()[-1].id
+    assert relation.supporting_signal_id == signal_snapshot(store)[-1].id
     tasks = store.list_business_tasks()
     apply_task_agent_decision(
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False
@@ -5381,7 +5383,7 @@ def test_new_action_relation_rejects_missing_or_deduped_actual_self_target_atomi
         target_id = seed.task_ids[0]
     else:
         target_id = 999
-    tasks, signals = store.list_business_tasks(), store.list_business_task_signals()
+    tasks, signals = store.list_business_tasks(), signal_snapshot(store)
     payload["relation_proposals"] = [
         {
             "related_task_id": target_id,
@@ -5405,7 +5407,7 @@ def test_new_action_relation_rejects_missing_or_deduped_actual_self_target_atomi
             record_run=False,
         )
     assert store.list_business_tasks() == tasks
-    assert store.list_business_task_signals() == signals
+    assert signal_snapshot(store) == signals
 
 
 @pytest.mark.parametrize("action", ["record_candidate", "update_task"])
@@ -6038,7 +6040,7 @@ def test_no_change_known_project_support_keeps_verified_decision_task_id(tmp_pat
             ],
         }
     )
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
 
     result = apply_task_agent_decision(
         store,
@@ -6056,7 +6058,7 @@ def test_no_change_known_project_support_keeps_verified_decision_task_id(tmp_pat
     assert readback.task_ids == [seed.task_id]
     assert readback.attention_id is not None
     assert readback.evidence[0].signal_id == result.current_signal_id
-    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(signal_snapshot(store)) == len(signals_before) + 1
 
 
 @pytest.mark.parametrize(
@@ -7611,7 +7613,7 @@ def test_earlier_or_remembered_evidence_can_refine_a_task_and_is_kept_as_its_own
 
     updated = store.get_business_task(task.task_id)
     assert updated.owner_name == "Zoey"
-    signals = {signal.id: signal for signal in store.list_business_task_signals()}
+    signals = {signal.id: signal for signal in signal_snapshot(store)}
     cited = [
         signals[row.signal_id]
         for row in store.list_business_task_evidence(task.task_id)
@@ -7741,7 +7743,7 @@ def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excer
         record_run=False,
     )
 
-    [signal] = store.list_business_task_signals()
+    [signal] = signal_snapshot(store)
     assert (
         json.loads(signal.context_json)["source_link"]
         == "https://shanji.example/transcribes/1"
@@ -7778,7 +7780,7 @@ def test_the_current_sources_link_or_group_and_person_are_recorded_and_the_excer
 
     signal = next(
         row
-        for row in store.list_business_task_signals()
+        for row in signal_snapshot(store)
         if row.source_ref == "message:9"
     )
     assert (signal.conversation_title, signal.author_name) == ("报价群", "王明")
@@ -7935,7 +7937,7 @@ def test_identity_merge_target_confirmed_project_requires_assessment_before_writ
         item,
         include_assessment=False,
     )
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
 
     with pytest.raises(
         ValueError, match=f"current Task {target.task_id} confirmed Project"
@@ -7949,7 +7951,7 @@ def test_identity_merge_target_confirmed_project_requires_assessment_before_writ
         )
 
     assert store.get_business_task(source.task_id).status.value != "merged"
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
 
 
 def test_identity_merge_target_confirmed_project_accepts_explicit_target_assessment(
@@ -8046,7 +8048,7 @@ def test_stored_assessment_requires_current_known_project_link_coverage(tmp_path
             record_run=False,
         )
 
-    assert len(store.list_business_task_signals()) == 1
+    assert len(signal_snapshot(store)) == 1
 
 
 @pytest.mark.parametrize(
@@ -8086,7 +8088,7 @@ def test_stored_assessment_rejects_wrong_current_citation_atomically(
             record_run=False,
         )
 
-    assert len(store.list_business_task_signals()) == 1
+    assert len(signal_snapshot(store)) == 1
 
 
 @pytest.mark.parametrize(
@@ -8146,7 +8148,7 @@ def test_stored_assessment_rejects_false_historical_provenance(
         }
     )
     tasks_before = store.list_business_tasks()
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     projects_before = store.list_business_projects()
     attention_before = store.list_business_attention_items()
 
@@ -8162,7 +8164,7 @@ def test_stored_assessment_rejects_false_historical_provenance(
             ),
         )
     assert store.list_business_tasks() == tasks_before
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
     assert store.list_business_projects() == projects_before
     assert store.list_business_attention_items() == attention_before
 
@@ -8269,7 +8271,7 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(
             ],
         }
     )
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     events_before = store.list_business_attention_events(attention_id)
 
     result = apply_task_agent_decision(
@@ -8295,7 +8297,7 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(
         result.current_signal_id,
         seed.signal_id,
     ]
-    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(signal_snapshot(store)) == len(signals_before) + 1
     assert store.list_business_attention_events(attention_id) == events_before
 
     replay = apply_task_agent_decision(
@@ -8314,7 +8316,7 @@ def test_existing_attention_repeat_with_no_task_field_change_has_no_new_effect(
         replay.projection_receipt.project_assessments
         == result.projection_receipt.project_assessments
     )
-    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(signal_snapshot(store)) == len(signals_before) + 1
     assert store.list_business_attention_events(attention_id) == events_before
 
 
@@ -8898,7 +8900,7 @@ def test_unknown_current_project_clue_saves_source_without_fake_business_objects
         "source_link": "",
     }
     assert store.list_business_tasks() == ()
-    assert len(store.list_business_task_signals()) == 1
+    assert len(signal_snapshot(store)) == 1
     from app.business_source_reader import AvailableSource
     signal = store.get_business_task_signal(result.current_signal_id)
     reader = store.business_source_reader()
@@ -9011,7 +9013,7 @@ def test_project_and_attention_apply_without_task_lifecycle_changes(
             ],
         }
     )
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     task_before = store.get_business_task(seed.task_id)
     events_before = store.list_business_task_events(seed.task_id)
     result = apply_task_agent_decision(
@@ -9025,7 +9027,7 @@ def test_project_and_attention_apply_without_task_lifecycle_changes(
     assert readback.anchor_id == result.applied_projects[0].anchor_id
     assert readback.task_ids == [seed.task_id]
     assert readback.attention_id is not None
-    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(signal_snapshot(store)) == len(signals_before) + 1
     assert len(store.list_business_projects()) == 1
     assert len(store.list_business_task_anchor_links(task_id=seed.task_id)) == 1
     task_after = store.get_business_task(seed.task_id)
@@ -9138,7 +9140,7 @@ def test_evidence_only_exact_title_proposal_reuses_existing_project_and_task_ids
             ],
         }
     )
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     result = apply_task_agent_decision(
         store, summary_input_id=1, work_item=item, decision=decision, record_run=False
     )
@@ -9150,7 +9152,7 @@ def test_evidence_only_exact_title_proposal_reuses_existing_project_and_task_ids
     assert readback.task_ids == [seed.task_id]
     assert readback.attention_id is not None
     assert readback.evidence[0].signal_id == result.applied_decisions[0].signal_id
-    assert len(store.list_business_task_signals()) == len(signals_before) + 1
+    assert len(signal_snapshot(store)) == len(signals_before) + 1
     assert len(store.list_business_projects()) == 1
     assert store.list_business_attention_items()[0].id == readback.attention_id
     card_evidence = json.loads(
@@ -9308,7 +9310,7 @@ def test_stored_assessment_rejects_project_identity_contradicting_canonical_titl
     payload["project_decisions"][0].update(registration=None, anchor_id=second_anchor)
     decision = TaskAgentDecision.model_validate(payload)
     tasks_before = store.list_business_tasks()
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     with pytest.raises(
         ValueError, match="project_title must match the canonical stored Project title"
     ):
@@ -9321,7 +9323,7 @@ def test_stored_assessment_rejects_project_identity_contradicting_canonical_titl
         )
     assert first_anchor != second_anchor
     assert store.list_business_tasks() == tasks_before
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
 
 
 def test_stored_assessment_accepts_project_proposal_and_attention_on_same_canonical_project(
@@ -9509,7 +9511,7 @@ def test_new_project_assessment_rejects_task_from_different_registered_project_b
     payload["project_assessments"][0]["task_ids"] = [_other.task_id]
     decision = TaskAgentDecision.model_validate(payload)
     tasks_before = store.list_business_tasks()
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     projects_before = store.list_business_projects()
     with pytest.raises(
         ValueError, match="supporting Task is not confirmed to the assessed Project"
@@ -9522,7 +9524,7 @@ def test_new_project_assessment_rejects_task_from_different_registered_project_b
             record_run=False,
         )
     assert store.list_business_tasks() == tasks_before
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
     assert store.list_business_projects() == projects_before
 
 
@@ -9625,7 +9627,7 @@ def test_new_project_attention_rejects_guessed_future_anchor_and_accepts_null_re
         registration=None, anchor_id=guessed_future_anchor
     )
     tasks_before = store.list_business_tasks()
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     with pytest.raises(ValueError, match="registered active official Project"):
         apply_task_agent_decision(
             store,
@@ -9635,7 +9637,7 @@ def test_new_project_attention_rejects_guessed_future_anchor_and_accepts_null_re
             record_run=False,
         )
     assert store.list_business_tasks() == tasks_before
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
     payload["project_decisions"][0].update(registration=registration, anchor_id=None)
     result = apply_task_agent_decision(
         store,
@@ -9663,13 +9665,13 @@ def test_existing_attention_requires_assessment_to_cite_that_cards_original_proo
     store = AutoReplyStore(tmp_path / "assessment-card-proof-binding.sqlite3")
     seed, anchor_id = _stored_project_task(store)
     attention_id = _stored_attention_card(store, seed=seed, anchor_id=anchor_id)
-    other_signal_id = store.create_business_task_signal(
+    other_signal_id = seed_task_signal(store,
         source_type="seed",
         source_ref="seed:other-proof",
         evidence_text="另一条真实历史事实",
         dedupe_key="seed:other-proof",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=seed.task_id,
         signal_id=other_signal_id,
         evidence_role="discovery",
@@ -9864,7 +9866,7 @@ def test_stored_project_validation_does_not_repair_operational_or_atomic_apply_e
     assert len(codex.calls) == 1
     assert len(calls) == (1 if failure_stage == "prevalidation" else 2)
     assert not store.list_business_projects()
-    assert not store.list_business_task_signals()
+    assert not signal_snapshot(store)
     assert not store.list_business_tasks()
     assert not store.list_business_attention_items()
     assert store.get_work_summary_input(input_id).status.value == "failed"
@@ -9927,13 +9929,13 @@ def test_stored_assessment_membership_checks_do_not_materialize_full_task_eviden
 ):
     store = AutoReplyStore(tmp_path / "assessment-bounded-evidence-membership.sqlite3")
     seed, anchor_id = _stored_project_task(store)
-    second_signal_id = store.create_business_task_signal(
+    second_signal_id = seed_task_signal(store,
         source_type="seed",
         source_ref="seed:second-card-proof",
         evidence_text="第二条历史交付事实",
         dedupe_key="seed:second-card-proof",
     )
-    store.link_business_task_evidence(
+    seed_task_evidence(store,
         task_id=seed.task_id,
         signal_id=second_signal_id,
         evidence_role="discovery",
@@ -10065,7 +10067,7 @@ def test_existing_attention_same_ref_quote_with_different_source_identity_requir
     }
     original_signal = store.get_business_task_signal(seed.signal_id)
     assert original_signal.source_type != item.source.type.value
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     with pytest.raises(
         ValueError, match="must cite this card's stored original evidence"
     ):
@@ -10079,7 +10081,7 @@ def test_existing_attention_same_ref_quote_with_different_source_identity_requir
                 store, seed, item, seed_original_body="售前知识库历史交付风险"
             ),
         )
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
     assert store.list_business_attention_events(attention_id) == events_before
     # Exact old Signal identity, not matching text/ref alone, verifies the old card.
     assessment["assessment_basis"] = "historical_comparison"
@@ -10383,7 +10385,7 @@ def test_new_project_rejects_indexed_existing_task_without_matching_project_sele
         }
     )
     tasks_before = store.list_business_tasks()
-    signals_before = store.list_business_task_signals()
+    signals_before = signal_snapshot(store)
     with pytest.raises(
         ValueError, match="supporting Task is not confirmed to the assessed Project"
     ):
@@ -10395,7 +10397,7 @@ def test_new_project_rejects_indexed_existing_task_without_matching_project_sele
             record_run=False,
         )
     assert store.list_business_tasks() == tasks_before
-    assert store.list_business_task_signals() == signals_before
+    assert signal_snapshot(store) == signals_before
 
 
 def test_new_project_accepts_existing_task_only_when_matching_current_decision_links_it(

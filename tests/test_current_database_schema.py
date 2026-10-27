@@ -8,6 +8,7 @@ from app.store import AutoReplyStore
 from app.email_store import EmailStore
 from app.current_schema_manifest import schema_is_current
 from tests.support.current_inventory import CURRENT_TABLES
+from tests.support.business_task_seed import seed_task_signal
 
 
 @pytest.mark.parametrize("first", ("store", "email"))
@@ -21,7 +22,7 @@ def test_blank_and_cold_constructors_select_final_graph(tmp_path, first):
         assert schema_is_current(db)
         assert {row[0] for row in db.execute("select name from sqlite_schema where type='table' and name not glob 'sqlite_*'")} == CURRENT_TABLES
         before = db.execute("select count(*) from configs").fetchone()[0]
-    signal_id = store.create_business_task_signal(source_type="message", source_ref="original:one",
+    signal_id = seed_task_signal(store, source_type="message", source_ref="original:one",
         evidence_text="A transient observed source", dedupe_key="one")
     assert store.get_business_task_signal(signal_id).source.body_utf8_bytes == len("A transient observed source".encode())
     from app import store as module

@@ -29,6 +29,8 @@ from app.task_semantic_service import (
     UpdateBusinessTask,
 )
 from app.task_semantic_rules import FormalityEvidence, IdentityEvidence
+from tests.support.business_task_seed import seed_task_evidence, seed_task_signal
+from tests.support.business_task_seed import signal_snapshot
 
 
 @pytest.fixture
@@ -117,7 +119,7 @@ def record_assignment(service: TaskSemanticService, *, dedupe_key: str = "messag
 def semantic_state(service: TaskSemanticService):
     tasks = service.store.list_business_tasks()
     return (
-        service.store.list_business_task_signals(),
+        signal_snapshot(service.store),
         tasks,
         {task.id: service.store.list_business_task_evidence(task.id) for task in tasks},
         {task.id: service.store.list_business_task_date_evidence(task.id) for task in tasks},
@@ -342,7 +344,7 @@ def test_acceptance_rejects_source_link_shared_by_two_open_tasks(service):
             owner_evidence_json='{"source_ref":"message:second","excerpt":"王明"}',
         )
     )
-    service.store.link_business_task_evidence(
+    seed_task_evidence(service.store,
         task_id=second.task_id, signal_id=first.signal_id, evidence_role="assignment"
     )
     state_before = semantic_state(service)
@@ -603,7 +605,7 @@ def test_duplicate_signal_is_idempotent_and_does_not_duplicate_downstream_histor
     assert duplicate == first.__class__(
         task_id=first.task_id, signal_id=first.signal_id, created=False
     )
-    assert len(service.store.list_business_task_signals()) == 1
+    assert len(signal_snapshot(service.store)) == 1
     assert len(service.store.list_business_tasks()) == 1
     assert len(service.store.list_business_task_evidence(first.task_id)) == 1
     assert [row.event_type.value for row in service.events(first.task_id)] == ["created"]
@@ -612,7 +614,7 @@ def test_duplicate_signal_is_idempotent_and_does_not_duplicate_downstream_histor
 @pytest.mark.parametrize("record_kind", ["candidate", "formal"])
 def test_record_task_reuses_independently_persisted_signal_and_replays(service, record_kind):
     signal = assignment_signal()
-    signal_id = service.store.create_business_task_signal(**asdict(signal))
+    signal_id = seed_task_signal(service.store, **asdict(signal))
     original_signal = service.store.get_business_task_signal(signal_id)
     if record_kind == "candidate":
         command = RecordCandidate(title="提交报价", signal=signal)
@@ -634,7 +636,7 @@ def test_record_task_reuses_independently_persisted_signal_and_replays(service, 
     assert first.signal_id == replay.signal_id == signal_id
     assert replay.task_id == first.task_id
     assert replay.created is False
-    assert service.store.list_business_task_signals() == (original_signal,)
+    assert signal_snapshot(service.store) == (original_signal,)
     assert len(service.store.list_business_tasks()) == 1
     assert len(service.store.list_business_task_evidence(first.task_id)) == 1
     assert [event.event_type.value for event in service.events(first.task_id)] == ["created"]
@@ -656,7 +658,7 @@ def test_transition_reuses_independently_persisted_signal_and_replays(service, o
             dedupe_key="message:transition", phrase="2026-09-25T17:00:00Z"
         )
     )
-    signal_id = service.store.create_business_task_signal(**asdict(signal))
+    signal_id = seed_task_signal(service.store, **asdict(signal))
     original_signal = service.store.get_business_task_signal(signal_id)
     if operation == "promote":
         command = PromoteCandidate(
@@ -991,7 +993,7 @@ def test_promotion_replay_preserves_original_result_state_and_history(service):
 
     assert replay == first
     assert semantic_state(service) == state_before
-    assert len(service.store.list_business_task_signals()) == 2
+    assert len(signal_snapshot(service.store)) == 2
     assert len(service.store.list_business_tasks()) == 1
     assert len(service.store.list_business_task_evidence(first.task_id)) == 2
     assert [event.event_type.value for event in service.events(first.task_id)] == [
@@ -1015,7 +1017,7 @@ def test_merge_replay_preserves_original_result_state_and_history(service):
 
     assert replay == first
     assert semantic_state(service) == state_before
-    assert len(service.store.list_business_task_signals()) == 3
+    assert len(signal_snapshot(service.store)) == 3
     assert len(service.store.list_business_tasks()) == 2
     assert len(service.store.list_business_task_evidence(source.task_id)) == 2
     assert len(service.store.list_business_task_evidence(target.task_id)) == 3
@@ -1204,7 +1206,7 @@ def test_service_rejects_rule_insufficient_assignment_before_persisting(service)
             )
         )
 
-    assert service.store.list_business_task_signals() == ()
+    assert signal_snapshot(service.store) == ()
     assert service.store.list_business_tasks() == ()
 
 
@@ -1270,7 +1272,7 @@ def test_direct_formal_creation_rejects_unauthorized_assignment_before_persistin
             )
         )
 
-    assert service.store.list_business_task_signals() == ()
+    assert signal_snapshot(service.store) == ()
     assert service.store.list_business_tasks() == ()
 
 
@@ -1476,7 +1478,7 @@ def test_promotion_keeps_unchanged_owner_and_existing_evidence(service):
 
 def test_reused_dedupe_key_cannot_change_persisted_source_identity(service):
     source = assignment_signal(dedupe_key="message:canonical")
-    service.store.create_business_task_signal(**asdict(source))
+    seed_task_signal(service.store, **asdict(source))
     forged = SourceSignal(
         source_type=source.source_type, source_ref=source.source_ref,
         evidence_text="王明承诺提交报价。", dedupe_key=source.dedupe_key,
@@ -1579,7 +1581,7 @@ def test_generic_owner_update_requires_new_source_evidence(service):
 
 def test_preexisting_unknown_signal_cannot_be_recast_as_owner_acceptance(service):
     task = record_assignment(service)
-    service.store.create_business_task_signal(
+    seed_task_signal(service.store,
         source_type="dingtalk_message", source_ref="reply:unknown",
         evidence_text="我接受提交报价。", dedupe_key="reply:unknown",
         author_kind=BusinessActorKind.UNKNOWN,

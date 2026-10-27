@@ -2,6 +2,14 @@
 
 ## Authoritative completion — 2026-10-26
 
+First no-DDL batch is implemented:20 Store entrypoints, the duplicate22-field
+RecentFollowUpCandidate and Attempt adapter/per-call fallback are removed. The
+actual replay-script caller uses the current Signal transaction owner; current
+feature tests use existing owners and frozen history seeds. Both units passed
+independent SPEC then QUALITY reviews, schema476 is exact, focused Store/Attempt
+checks and root19case integration pass, and final review approves. Deployment/
+readback and this batch cleanup remain pending; see [batch1 acceptance](business-entrypoint-batch1-cleanup.md).
+
 Unused-business-path retirement is implemented and scoped reviews pass:
 callerless Store queries, test-only Run readers, old Project text rendering and
 constant scoring, viewed/schema entrypoints and the Reviewed plan writer leave

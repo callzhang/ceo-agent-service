@@ -12,6 +12,8 @@ from app.state_storage import update_state_rows
 from app.store import TASK_LOGICAL_RUN_SQL, REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
 from app.store import AgentRole, AutoReplyStore
 from app.task_models import WorkItem
+from tests.support.business_task_seed import seed_task
+from tests.support.legacy_todo_facts import seed_legacy_evidence_candidate, seed_legacy_follow_up
 
 
 def _store(tmp_path: Path) -> AutoReplyStore:
@@ -46,7 +48,7 @@ def test_current_task_execution_schema_has_no_legacy_auxiliary_tables(tmp_path):
 
 def test_business_task_dingtalk_links_list_filters_status_and_paginates(tmp_path):
     store = _store(tmp_path)
-    task_ids = [store.create_business_task(title=f"Task {index}", stage="candidate") for index in range(3)]
+    task_ids = [seed_task(store, title=f"Task {index}", stage="candidate") for index in range(3)]
     for index, task_id in enumerate(task_ids):
         store.create_business_task_dingtalk_link(
             business_task_id=task_id,
@@ -336,66 +338,41 @@ def test_duplicate_work_summary_input_does_not_reopen_terminal_status(
     )
 
 
-def test_todo_evidence_candidate_dedupes_and_marks_decision(tmp_path: Path):
+
+
+def test_operation_logs_preserve_accepted_historical_todo_evidence(tmp_path: Path):
     store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户验收",
-        category="projects",
-        status="active",
+    project_id = seed_legacy_work_project(
+        store, title="客户验收", category="projects", status="active"
     )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认客户验收完成",
-        status="open",
+    todo_id = seed_legacy_work_todo(
+        store, project_id=project_id, title="确认客户验收完成", status="open"
     )
-
-    first = store.upsert_todo_evidence_candidate(
-        project_id=project_id,
-        todo_id=todo_id,
-        source_type="dws_message",
-        source_ref="msg-1",
-        source_created_at="2026-06-28 10:00:00",
-        evidence_text="客户已经回复验收完成。",
-        reason="消息提到验收完成。",
-        confidence=0.8,
-    )
-    duplicate = store.upsert_todo_evidence_candidate(
-        project_id=project_id,
-        todo_id=todo_id,
-        source_type="dws_message",
-        source_ref="msg-1",
-        source_created_at="2026-06-28 10:00:00",
-        evidence_text="客户已经回复验收完成。",
-        reason="同一消息重复扫描。",
-        confidence=0.9,
-    )
-
-    assert duplicate.id == first.id
-    assert store.list_todo_evidence_candidates(todo_id=todo_id)[0].status == "candidate"
-
     input_id = store.enqueue_work_summary_input(
-        "todo_completion_evidence_candidate",
-        f"todo-evidence:{first.id}",
-        "{}",
+        "todo_completion_evidence_candidate", "todo-evidence:fixture", "{}"
     )
-    store.mark_todo_evidence_candidate_enqueued(first.id, input_id)
-    store.mark_todo_evidence_candidate(
-        first.id,
-        status="accepted",
-        decision_json=json.dumps({"todo_changes": [{"todo_id": todo_id, "action": "close"}]}),
+    decision = {"todo_changes": [{"todo_id": todo_id, "action": "close"}]}
+    candidate_id = seed_legacy_evidence_candidate(
+        store, project_id=project_id, todo_id=todo_id,
+        source_type="dws_message", source_ref="msg-1",
+        source_created_at="2026-06-28 10:00:00",
+        evidence_text="客户已经回复验收完成。", reason="消息提到验收完成。",
+        confidence=0.8, status="accepted", work_summary_input_id=input_id,
+        decision_json=json.dumps(decision),
     )
 
-    candidate = store.get_todo_evidence_candidate(first.id)
-    assert candidate is not None
-    assert candidate.status == "accepted"
+    [candidate] = store.list_todo_evidence_candidates(todo_id=todo_id)
+    assert candidate.id == candidate_id
+    assert candidate.source_ref == "msg-1"
     assert candidate.work_summary_input_id == input_id
-    assert json.loads(candidate.decision_json)["todo_changes"][0]["todo_id"] == todo_id
-
-    logs = store.list_operation_logs(query="客户已经回复验收完成")
-    assert len(logs) == 1
-    assert logs[0].category == "TODO completion evidence"
-    assert logs[0].status == "accepted"
-    assert logs[0].context == "确认客户验收完成"
+    assert json.loads(candidate.decision_json) == decision
+    [log] = store.list_operation_logs(query="客户已经回复验收完成")
+    assert log.source_id == candidate_id
+    assert log.source_table == "todo_evidence_candidates"
+    assert log.project_id == project_id and log.todo_id == todo_id
+    assert log.category == "TODO completion evidence"
+    assert log.status == "accepted"
+    assert log.context == "确认客户验收完成"
 
 
 def test_claim_work_summary_input_uses_lock_retrying_transaction(
@@ -564,7 +541,7 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
     assert [update.id for update in updates] == [update_id]
     assert updates[0].summary == "新增 P1 跟进项"
 
-    draft_id = store.create_follow_up_draft(
+    draft_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-1",
@@ -578,10 +555,10 @@ def test_historical_project_todo_facts_and_follow_up_readers(tmp_path: Path):
     drafts = store.list_follow_up_drafts(statuses=("draft",))
     assert [draft.id for draft in drafts] == [draft_id]
     assert drafts[0].question_text == "售前材料来源链接现在补齐到哪一步了？"
-    fetched_draft = store.get_follow_up_draft(draft_id)
+    fetched_draft = next((draft for draft in store.list_follow_up_drafts(limit=10000) if draft.id == draft_id), None)
     assert fetched_draft is not None
     assert fetched_draft.id == draft_id
-    assert store.get_follow_up_draft(999) is None
+    assert next((draft for draft in store.list_follow_up_drafts(limit=10000) if draft.id == 999), None) is None
 
 
 def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
@@ -591,7 +568,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
         category="sales",
         status="active",
     )
-    due_id = store.create_follow_up_draft(
+    due_id = seed_legacy_follow_up(store,
         project_id=project_id,
         owner_name="Casey Huang",
         target_kind="direct",
@@ -599,7 +576,7 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
         scheduled_at="2026-07-22T10:00:00+08:00",
         status="draft",
     )
-    future_id = store.create_follow_up_draft(
+    future_id = seed_legacy_follow_up(store,
         project_id=project_id,
         owner_name="Casey Huang",
         target_kind="direct",
@@ -625,328 +602,16 @@ def test_list_follow_up_drafts_due_before_handles_iso_timezone(tmp_path: Path):
     assert "memory_recall_used" not in columns
 
 
-def test_create_follow_up_draft_dedupes_skipped_terminal_draft(tmp_path: Path):
-    store = _store(tmp_path)
-
-    project_id = seed_legacy_work_project(store,
-        title="售前知识库建设",
-        category="sales",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="补齐售前材料来源链接",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-    )
-    skipped_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="售前材料来源链接现在补齐到哪一步了？",
-        status="skipped",
-        scheduled_at="2026-06-10 09:00:00",
-    )
-
-    duplicate_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-1",
-        target_kind="group",
-        question_text="售前材料来源链接现在补齐到哪一步了？",
-        status="draft",
-        scheduled_at="2026-06-11 09:00:00",
-    )
-
-    assert duplicate_id == skipped_id
-    assert store.list_follow_up_drafts(statuses=("draft",)) == []
 
 
-def test_list_recent_follow_up_candidates_returns_linked_context(tmp_path: Path):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="海外数据合规与中美开发隔离闭环",
-        category="strategy",
-        status="active",
-        owner_user_id="owner-project",
-        owner_name="Ming Hu",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认中美开发隔离方案执行状态",
-        owner_user_id="owner-1",
-        owner_name="Ming Hu",
-        status="open",
-        deadline_at="2026-06-29 18:00:00",
-        follow_up_question="隔离方案今天能闭环吗？",
-    )
-    draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Ming Hu",
-        target_conversation_id="cid-data",
-        target_kind="group",
-        question_text="隔离方案今天能闭环吗？",
-        status="sent",
-        sent_at="2026-06-29 09:30:00",
-        scheduled_at="2026-06-29 09:00:00",
-        reaction_status="",
-        reaction_summary="",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Ming Hu",
-        target_conversation_id="cid-data",
-        target_kind="group",
-        question_text="旧跟进不应该作为候选",
-        status="sent",
-        sent_at="2026-06-20 09:30:00",
-        scheduled_at="2026-06-20 09:00:00",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-2",
-        owner_name="Riley",
-        target_conversation_id="cid-other",
-        target_kind="direct",
-        question_text="无关会话不应该作为候选",
-        status="sent",
-        sent_at="2026-06-29 10:00:00",
-        scheduled_at="2026-06-29 09:50:00",
-    )
-
-    candidates = store.list_recent_follow_up_candidates(
-        conversation_id="cid-data",
-        owner_user_id="owner-1",
-        since="2026-06-28 00:00:00",
-        limit=10,
-    )
-
-    assert [candidate.follow_up_id for candidate in candidates] == [draft_id]
-    candidate = candidates[0]
-    assert candidate.project_id == project_id
-    assert candidate.project_title == "海外数据合规与中美开发隔离闭环"
-    assert candidate.project_status == "active"
-    assert candidate.todo_id == todo_id
-    assert candidate.todo_title == "确认中美开发隔离方案执行状态"
-    assert candidate.todo_status == "open"
-    assert candidate.owner_user_id == "owner-1"
-    assert candidate.owner_name == "Ming Hu"
-    assert candidate.target_conversation_id == "cid-data"
-    assert candidate.target_kind == "group"
-    assert candidate.question_text == "隔离方案今天能闭环吗？"
-    assert candidate.scheduled_at == "2026-06-29 09:00:00"
-    assert candidate.sent_at == "2026-06-29 09:30:00"
-    assert candidate.status == "sent"
-    assert candidate.reaction_status == ""
-    assert candidate.reaction_summary == ""
 
 
-def test_list_recent_follow_up_candidates_prefers_conversation_then_owner(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户验收",
-        category="projects",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认客户验收 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-    )
-    owner_match_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-other",
-        target_kind="direct",
-        question_text="owner 近期跟进",
-        status="sent",
-        sent_at="2026-06-29 10:00:00",
-        scheduled_at="2026-06-29 09:50:00",
-    )
-    conversation_match_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-2",
-        owner_name="Avery",
-        target_conversation_id="cid-target",
-        target_kind="group",
-        question_text="同群较早跟进",
-        status="sent",
-        sent_at="2026-06-29 09:00:00",
-        scheduled_at="2026-06-29 08:50:00",
-    )
-
-    candidates = store.list_recent_follow_up_candidates(
-        conversation_id="cid-target",
-        owner_user_id="owner-1",
-        since="2026-06-28 00:00:00",
-        limit=10,
-    )
-
-    assert [candidate.follow_up_id for candidate in candidates] == [
-        conversation_match_id,
-        owner_match_id,
-    ]
 
 
-def test_list_recent_follow_up_candidates_includes_scheduled_actionable_statuses(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户验收",
-        category="projects",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认客户验收 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-    )
-    draft_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-target",
-        target_kind="group",
-        question_text="draft 候选应该按 scheduled_at 命中",
-        status="draft",
-        scheduled_at="2026-06-29 10:00:00",
-    )
-    approved_id = store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-2",
-        owner_name="Avery",
-        target_conversation_id="cid-target",
-        target_kind="group",
-        question_text="approved 候选也应该按 scheduled_at 命中",
-        status="approved",
-        scheduled_at="2026-06-29 11:00:00",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-target",
-        target_kind="group",
-        question_text="旧 draft 不应该命中",
-        status="draft",
-        scheduled_at="2026-06-20 10:00:00",
-    )
-
-    candidates = store.list_recent_follow_up_candidates(
-        conversation_id="cid-target",
-        owner_user_id="",
-        since="2026-06-28 00:00:00",
-        limit=10,
-    )
-
-    assert [candidate.follow_up_id for candidate in candidates] == [
-        approved_id,
-        draft_id,
-    ]
-    assert [candidate.status for candidate in candidates] == ["approved", "draft"]
 
 
-def test_list_recent_follow_up_candidates_requires_conversation_or_owner(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户验收",
-        category="projects",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认客户验收 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-target",
-        target_kind="group",
-        question_text="验收 ETA 有更新吗？",
-        status="sent",
-        sent_at="2026-06-29 10:00:00",
-        scheduled_at="2026-06-29 09:50:00",
-    )
-
-    assert (
-        store.list_recent_follow_up_candidates(
-            conversation_id=" ",
-            owner_user_id="",
-            since="2026-06-28 00:00:00",
-            limit=10,
-        )
-        == []
-    )
 
 
-def test_list_recent_follow_up_candidates_respects_non_positive_limit(
-    tmp_path: Path,
-):
-    store = _store(tmp_path)
-    project_id = seed_legacy_work_project(store,
-        title="客户验收",
-        category="projects",
-        status="active",
-    )
-    todo_id = seed_legacy_work_todo(store,
-        project_id=project_id,
-        title="确认客户验收 ETA",
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        status="open",
-    )
-    store.create_follow_up_draft(
-        project_id=project_id,
-        todo_id=todo_id,
-        owner_user_id="owner-1",
-        owner_name="Alex",
-        target_conversation_id="cid-target",
-        target_kind="group",
-        question_text="验收 ETA 有更新吗？",
-        status="sent",
-        sent_at="2026-06-29 10:00:00",
-        scheduled_at="2026-06-29 09:50:00",
-    )
-
-    assert (
-        store.list_recent_follow_up_candidates(
-            conversation_id="cid-target",
-            owner_user_id="owner-1",
-            since="2026-06-28 00:00:00",
-            limit=0,
-        )
-        == []
-    )
 
 
 def test_historical_dingtalk_todo_link_batch_retains_recorded_facts(tmp_path: Path):
@@ -1068,7 +733,7 @@ def test_list_sent_todo_records_combines_dingtalk_todos_and_followups(
         title_snapshot="失败前未拿到 task id",
         status="failed",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=todo_id,
         owner_user_id="owner-1",
@@ -1261,7 +926,7 @@ def test_list_follow_up_drafts_for_todos_groups_by_todo(
         title="第三项",
         status="open",
     )
-    first_draft_id = store.create_follow_up_draft(
+    first_draft_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=first_todo_id,
         owner_name="Alex",
@@ -1270,7 +935,7 @@ def test_list_follow_up_drafts_for_todos_groups_by_todo(
         scheduled_at="2026-08-29 09:00:00",
         status="sent",
     )
-    second_draft_id = store.create_follow_up_draft(
+    second_draft_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=second_todo_id,
         owner_name="Avery",
@@ -1279,7 +944,7 @@ def test_list_follow_up_drafts_for_todos_groups_by_todo(
         scheduled_at="2026-08-29 10:00:00",
         status="completed",
     )
-    store.create_follow_up_draft(
+    seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=other_todo_id,
         owner_name="ET",
@@ -1303,7 +968,7 @@ def test_operation_logs_sort_follow_up_by_operation_time_not_schedule(tmp_path: 
         category="sales",
         status="active",
     )
-    draft_id = store.create_follow_up_draft(
+    draft_id = seed_legacy_follow_up(store,
         project_id=project_id,
         todo_id=1,
         owner_name="Alex",

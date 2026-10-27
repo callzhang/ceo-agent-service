@@ -6,6 +6,7 @@ from app.minutes_owner_backfill import WORK_SUMMARY_INPUT_SQL, backfill_minutes_
 from app.store import AutoReplyStore
 from app.task_semantic_service import RecordCandidate, SourceSignal, TaskSemanticService, UpdateBusinessTask
 from app.task_semantic_models import BusinessTaskStatus
+from tests.support.business_task_seed import signal_snapshot
 
 MEETING = {"taskUuid": "minutes-1", "title": "每周内容同步", "createdAt": "2026-09-24T11:29:20+08:00"}
 TODOS = {"result": {"actions": ['{"value":"整理访谈问题清单"}'], "dingtalkTodoList": [
@@ -148,7 +149,7 @@ def test_two_ownerless_tasks_retain_the_same_source_version(tmp_path):
     first = _candidate(store, title="整理访谈问题清单")
     second = _candidate(store, title="确定访谈时间")
     assert ownerless_candidate_meetings(store) == [("minutes-1", [first, second])]
-    signals = store.list_business_task_signals()
+    signals = signal_snapshot(store)
     assert len(signals) == 2
     assert signals[0].source == signals[1].source
     assert signals[0].source.body_utf8_bytes > 0
