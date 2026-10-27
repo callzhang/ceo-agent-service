@@ -196,10 +196,10 @@ def test_frozen_signal_source_actions_declaration_is_exact_25_2_digest():
     )
 
 
-def test_current_target_manifest_has_exact_25_3_count_and_digest():
-    from app.current_schema_manifest import current_objects
+def test_frozen_target_manifest_has_exact_25_3_count_and_digest():
+    from app.signal_source_owner_schema_release import target_objects
 
-    objects = current_objects(email_ledger=True)
+    objects = target_objects()
     encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
     assert len(objects) == 476
     assert hashlib.sha256(encoded).hexdigest() == (
@@ -208,6 +208,17 @@ def test_current_target_manifest_has_exact_25_3_count_and_digest():
     assert "trg_actions_email_retry_immutable_insert" in {
         name for object_type, name, *_ in objects if object_type == "trigger"
     }
+
+
+def test_current_manifest_preserves_476_object_digest():
+    from app.current_schema_manifest import current_objects
+
+    objects = current_objects(email_ledger=True)
+    encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
+    assert len(objects) == 476
+    assert hashlib.sha256(encoded).hexdigest() == (
+        "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f"
+    )
 
 
 def test_current_actions_have_no_inline_signal_source_columns_or_promotion_trigger(current_db):
@@ -224,8 +235,9 @@ def test_current_actions_have_no_inline_signal_source_columns_or_promotion_trigg
 
 
 def test_assembled_source_actions_keep_inline_shape_while_current_selects_references():
-    source = assembled_action_objects(False)
-    current = assembled_action_objects(True)
+    from app.signal_source_action_declarations import source_action_objects
+    source = source_action_objects()
+    current = assembled_action_objects()
     assert "ba_task_signals_identity_key" in source["actions"]
     assert "idx_actions_signal_inline_key" in source
     assert "ba_task_signals_identity_key" not in current["actions"]

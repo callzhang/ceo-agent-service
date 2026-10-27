@@ -18,8 +18,8 @@ RESULT_KINDS = {'email_reply': 'email_reply_receipts', 'email_unsubscribe': 'ema
 
 
 def _layout(kind):
-    return storage.action_payloads('actual_no_memory_fk', selection_references=True,
-        execution_owner=True, shared_lifecycle=True, specialized_claims=True).layouts[kind]
+    from app.current_action_schema import current_action_payloads
+    return current_action_payloads().layouts[kind]
 
 
 def _fetch(db, sql, parameters=()):

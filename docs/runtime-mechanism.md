@@ -28,6 +28,16 @@ RuntimeAttempt读取只使用现有批量接口。仍保留历史Attempt自身�
 本批不改DDL、历史行、审查／授权／重试／发送政策；不退休Project或领取字段。
 发布状态、测试范围和清理见[本批验收](business-entrypoint-batch1-cleanup.md)。
 
+### 第二批：固定当前结构声明（2026-10-26）
+
+当前 Actions／Business SQL、Business／Sync 字段和 Action payload 槽位由明确的
+当前声明持有。空库构造、当前结构校验、Action 默认写入／投影及 Email 计划、claim、
+receipt 写入不再组合历史开关，也不从旧字段全集减去退休项。其余当前 owner 继续
+使用原有声明；全部 SQL、字段顺序、索引、触发器和外键保持原样。
+历史来源工厂及逆迁布局只服务显式转换工具，不参与运行时旧结构兼容。
+Store26.1／Email54 版本及业务、审查、重试和回执合同不变；发布状态与准确证据见
+[第二批验收](current-declaration-batch2-validation.md)。
+
 ## 数据库结构与迁移合同
 
 当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本迁移和仅 Email 变化的迁移。当前 Signal 发布的上一版是 Store `2026-10-25.2`／Email54；更早的 Store `2026-10-19.12`／Email53 Action Entity 路径已退出自动发布分派。不能把旧 marker 当成可直接迁移的证据；不匹配的 schema 在任何写入前失败关闭。下方更早的阶段记录描述的是当时的候选与已完成工作，不代表当前可自动升级范围。

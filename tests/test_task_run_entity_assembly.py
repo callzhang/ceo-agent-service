@@ -1,3 +1,4 @@
+from app.action_entity_transfer import _source_execution_layout as source_execution_layout
 import sqlite3
 import json
 import hashlib
@@ -212,7 +213,8 @@ def test_retained_action_parent_guards_execute_against_new_owner_columns():
         values = action_storage.DEFAULTS["agent_execution_receipts"] | source_values("agent_execution_receipts", token=token)
         values.update(created_at="now", agent_run_id=run_id)
         payload_values = {key: value for key, value in values.items() if key != "agent_run_id"}
-        payload = action_storage._action_payload(db, "agent_execution_receipts", payload_values, execution_owner=True)
+        payload = action_storage._action_payload(db, "agent_execution_receipts", payload_values,
+                                               layout=source_execution_layout("agent_execution_receipts"))
         db.execute("insert into actions(_kind,legacy_key,payload_json,agent_run_id) values(?,?,?,?)",
                    (action_storage.EXECUTION_ACTION_RECORD_TYPES.code("agent_execution_receipts"), token, payload, run_id))
     insert_execution_receipt(agent, "1")

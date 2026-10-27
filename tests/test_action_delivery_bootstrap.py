@@ -3,7 +3,7 @@ import sqlite3
 
 
 from app.action_storage import action_schema_is_current, create_action_schema
-from app.current_database_schema import FINAL_ACTION_OPTIONS
+from app.historical_action_options import FINAL_ACTION_OPTIONS
 from app.current_schema_manifest import schema_is_current
 from app.state_definitions import state_projection
 from app.store import AutoReplyStore, STORE_SCHEMA_VERSION

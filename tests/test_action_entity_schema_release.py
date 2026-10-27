@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from app.action_entity_transfer import _source_execution_layout
+
 from contextlib import closing
 import json
 import sqlite3
@@ -7,6 +9,16 @@ import sqlite3
 import pytest
 
 from app import action_entity_schema_release as release
+
+
+def _source_selection_layout(kind):
+    from app import action_storage
+    from app.business_legacy_fields import retained_action_payloads
+    return retained_action_payloads(action_storage._build_action_payloads(
+        action_storage._REPLY_FIELDS["reply_attempts"],
+        tuple(field for field in action_storage._REPLY_FIELDS["memory_write_events"] if field != "attempt_id"),
+        physical_provenance=True, selection_references=True,
+    )).layouts[kind]
 
 
 SOURCE_VERSION = "2026-10-19.12"
@@ -141,7 +153,7 @@ def test_populated_external_result_is_transferred_to_common_action(tmp_path, mon
                               '"operation":"send_group_message",'
                               '"target":{"conversation_id":"conversation-5"}}]}}',
             "created_at": "candidate-clock",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
         insert_action(db, "candidate_reviews", {
             "id": 202, "candidate_id": 201, "audit_run_id": 901,
             "decision": "approve", "candidate_digest": "candidate-digest",
@@ -153,7 +165,7 @@ def test_populated_external_result_is_transferred_to_common_action(tmp_path, mon
             "id": 203, "execution_id": execution_id, "action_index": 0,
             "external_action_key": "provider-effect-17", "status": "verified",
             "result_json": None, "created_at": "attempt-clock", "updated_at": "attempt-updated",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("candidate_action_attempts"))
         db.commit()
 
     contract = _prepare(path)
@@ -257,7 +269,7 @@ def _orphan_candidate_source(path, monkeypatch, targets):
                 "consumer_run_id": run_id, "stage_index": 0, "proposal_revision": 0,
                 "candidate_digest": f"candidate-{offset}", "candidate_json": candidate_json,
                 "created_at": f"candidate-clock-{offset}",
-            }, execution_owner=True)
+            }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
             insert_action(db, "candidate_reviews", {
                 "id": 301 + offset, "candidate_id": candidate_id,
                 "audit_run_id": run_id, "decision": "approve",
@@ -273,7 +285,7 @@ def _orphan_candidate_source(path, monkeypatch, targets):
                 "external_action_key": "orphan-effect-key", "status": "uncertain",
                 "result_json": '{"reason":"provider_result_unknown"}',
                 "created_at": f"attempt-clock-{offset}", "updated_at": f"attempt-updated-{offset}",
-            }, execution_owner=True)
+            }, execution_owner=True, layout=_source_execution_layout("candidate_action_attempts"))
         db.commit()
         return tuple(row[0] for row in db.execute(
             "select cast(legacy_key as integer) from actions "
@@ -405,7 +417,7 @@ def test_inverse_keeps_colliding_public_ids_in_their_source_families(tmp_path, m
             "consumer_run_id": 901, "stage_index": 0, "proposal_revision": 0,
             "candidate_digest": "collision-candidate-digest", "candidate_json": candidate_json,
             "created_at": "collision-candidate-clock",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
         insert_action(db, "candidate_reviews", {
             "id": 202, "candidate_id": 201, "audit_run_id": 901,
             "decision": "approve", "candidate_digest": "collision-candidate-digest",
@@ -417,12 +429,12 @@ def test_inverse_keeps_colliding_public_ids_in_their_source_families(tmp_path, m
             "id": 203, "execution_id": execution_id, "action_index": 0,
             "external_action_key": "effect-owner-a", "status": "verified",
             "result_json": None, "created_at": "attempt-a-clock", "updated_at": "attempt-a-updated",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("candidate_action_attempts"))
         insert_action(db, "candidate_action_attempts", {
             "id": 204, "execution_id": execution_id, "action_index": 1,
             "external_action_key": "effect-owner-b", "status": "verified",
             "result_json": None, "created_at": "attempt-b-clock", "updated_at": "attempt-b-updated",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("candidate_action_attempts"))
         insert_action(db, "sent_replies", {
             "id": 203, "conversation_id": "collision-conversation-b",
             "trigger_message_id": "collision-trigger-b", "reply_text": "Sent owner B",
@@ -526,7 +538,7 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
             "candidate_json": '{"proposal":{"actions":[{"action_identity":"notify",'
                               '"operation":"send_message","target":{"channel":"group"}}]}}',
             "created_at": "candidate-sent-clock",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
         insert_action(db, "candidate_reviews", {
             "id": 212, "candidate_id": 211, "audit_run_id": 911,
             "decision": "approve", "candidate_digest": "candidate-sent-digest",
@@ -540,7 +552,7 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
             "external_action_key": "canonical-sent-effect", "status": "verified",
             "result_json": None, "created_at": "candidate-attempt-clock",
             "updated_at": "candidate-attempt-updated",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("candidate_action_attempts"))
         # Only an actual execution bound to its matching approved review may
         # supply candidate identity to a prepared delivery owner.
         unselected_delivery_key = agent_message_delivery_key(
@@ -579,7 +591,7 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
                 "execution_generation": generation, "consumer_run_id": run_id,
                 "stage_index": 0, "proposal_revision": 0, "candidate_digest": digest,
                 "candidate_json": candidate_json, "created_at": f"candidate-{candidate_id}-clock",
-            }, execution_owner=True)
+            }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
             review_id = candidate_id + 100
             insert_action(db, "candidate_reviews", {
                 "id": review_id, "candidate_id": candidate_id, "audit_run_id": run_id,
@@ -590,7 +602,7 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
                 selected = insert_action(db, "candidate_selections", {
                     "candidate_id": candidate_id, "review_id": review_id,
                     "option_key": "chosen",
-                }, selection_references=True)
+                }, layout=_source_selection_layout("candidate_selections"))
                 create_plan_execution(db, candidate_id=candidate_id, review_id=review_id,
                                       selection_id=selected.lastrowid, status="running", lease_owner="test",
                                       lease_expires_at="")
@@ -1008,7 +1020,7 @@ def test_conflicting_identity_aborts_without_mutation(tmp_path, monkeypatch):
             "candidate_json": '{"proposal":{"actions":[{"action_identity":"notify",'
                               '"operation":"send_message","target":{"user_id":"different"}}]}}',
             "created_at": "candidate-time",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
         insert_action(db, "candidate_reviews", {
             "id": 72, "candidate_id": 71, "audit_run_id": 902,
             "decision": "approve", "candidate_digest": "candidate-digest",
@@ -1020,7 +1032,7 @@ def test_conflicting_identity_aborts_without_mutation(tmp_path, monkeypatch):
             "id": 91, "execution_id": 1, "action_index": 0,
             "external_action_key": "conflicting-effect", "status": "verified",
             "result_json": None, "created_at": "attempt-time", "updated_at": "attempt-time",
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("candidate_action_attempts"))
         db.commit()
     contract = _prepare(path)
     before = _snapshot(path)

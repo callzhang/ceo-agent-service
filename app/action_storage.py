@@ -14,7 +14,9 @@ import math
 import sqlite3
 from string import ascii_lowercase, ascii_uppercase
 
-from app.storage_payload import ACTION_RECORD_TYPES, SOURCE_ACTION_RECORD_TYPES, EXECUTION_ACTION_RECORD_TYPES
+from app.storage_payload import ACTION_RECORD_TYPES, SOURCE_ACTION_RECORD_TYPES, EXECUTION_ACTION_RECORD_TYPES, PayloadLayout
+from app.action_payload import ActionPayloads
+from app.current_schema_metadata import PROJECTION_PAYLOAD_FIELDS
 from app.execution_owner_definitions import (
     ALIAS as EXECUTION_ALIAS, EXECUTION_FIELDS, EXECUTION_REFERENCES,
     execution_schema_parts, execution_projection,
@@ -906,7 +908,9 @@ def _projection(kind, *, payloads=None, selection_references=False, result_refer
     return f"select {','.join(fields)} from actions a {' '.join(joins)} where a.record_type='{kind}'{numeric_scope}"
 
 
-ACTION_PROJECTIONS = {kind: _projection(kind, payloads=action_payloads("actual_no_memory_fk", physical_provenance=True))
+_PROJECTION_PAYLOADS = ActionPayloads({kind: PayloadLayout(fields)
+                                      for kind, fields in PROJECTION_PAYLOAD_FIELDS.items()})
+ACTION_PROJECTIONS = {kind: _projection(kind, payloads=_PROJECTION_PAYLOADS)
                       for kind in ALL_ACTION_TYPES_WITH_DELIVERY}
 
 
@@ -1424,23 +1428,18 @@ def _native_payload(values):
                       ensure_ascii=False, allow_nan=False, separators=(",", ":"))
 
 
-def _action_layout(kind, *, selection_references=False, execution_owner=False):
-    from app.business_legacy_fields import retained_action_payloads
-    return retained_action_payloads(_build_action_payloads(
-        _REPLY_FIELDS["reply_attempts"],
-        tuple(field for field in _REPLY_FIELDS["memory_write_events"] if field != "attempt_id"),
-        physical_provenance=True, selection_references=selection_references,
-        execution_owner=execution_owner)).layouts[kind]
+def _action_layout(kind):
+    from app.current_schema_metadata import DEFAULT_WRITER_FIELDS
+    return PayloadLayout(DEFAULT_WRITER_FIELDS[kind])
 
 
 def _action_path(kind, field):
     return _action_layout(kind).path(field)
 
 
-def _action_payload(db, kind, values, *, selection_references=False, execution_owner=False, layout=None):
+def _action_payload(db, kind, values, *, layout=None):
     """Bind current JSONB cells using SQLite on the caller's connection."""
-    layout = layout or _action_layout(kind, selection_references=selection_references,
-                                     execution_owner=execution_owner)
+    layout = layout or _action_layout(kind)
     packed = layout.pack(dict.fromkeys(layout.fields) | values,
                          scalar_codec=_encoded_native_sqlite_value)
     return db.execute("select jsonb(?)", (packed,)).fetchone()[0]
@@ -2065,7 +2064,7 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
 
 
 def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False,
-                  selection_references: bool = False, execution_owner: bool = False) -> ActionWriteResult:
+                  execution_owner: bool = False, layout=None) -> ActionWriteResult:
     """Allocate automatic receipt IDs under SQLite's writer lock."""
     _check_fields(record_type, values)
     if record_type in EMAIL_TYPES_ORDER:
@@ -2092,7 +2091,7 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
             # Deferred connections retain their ordinary caller-owned transaction.
             db.execute("update main.sqlite_sequence set seq=seq where 0")
         result = _insert_action(db, record_type, values, ignore=ignore,
-                                selection_references=selection_references, execution_owner=execution_owner)
+                                execution_owner=execution_owner, layout=layout)
     except BaseException:
         if owned and db.in_transaction:
             db.execute("rollback to action_receipt_insert")
@@ -2104,7 +2103,7 @@ def insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ign
 
 
 def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ignore: bool = False,
-                   selection_references: bool = False, execution_owner: bool = False) -> ActionWriteResult:
+                   execution_owner: bool = False, layout=None) -> ActionWriteResult:
     """Insert source-shaped values; return the original per-type public ID."""
     _check_fields(record_type, values)
     if record_type in REPLY_ACTION_TYPES:
@@ -2117,7 +2116,7 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
     payload.update({field: value for field, value in values.items() if field in PAYLOAD_FIELDS[record_type]})
     fields = [field for field in (REFERENCES | DELIVERY_REFERENCES | (EXECUTION_REFERENCES if execution_owner else {})) if field in _kind_references(record_type, execution_owner=execution_owner)]
     arguments = [ACTION_RECORD_TYPES.code(record_type), _action_payload(
-        db, record_type, payload, selection_references=selection_references, execution_owner=execution_owner)]
+        db, record_type, payload, layout=layout)]
     arguments += [(action_physical_id(db, EXECUTION_ALIAS, values.get(field)) if execution_owner and field == 'execution_id' else _parent_id(db, field, values.get(field))) for field in fields]
     public_id = (tuple(values.get(field) for field in POSTFIX_IDENTITY_FIELDS)
                  if record_type in POSTFIX_ACTION_TYPES else

@@ -394,3 +394,4 @@ tests/test_console_scheduled_tasks_api.py
 tests/test_configs_schema_transfer.py
 tests/test_signal_source_owner_schema_release.py
 tests/test_store_signal_source_owner_release.py
+tests/test_current_declarations_independent.py
