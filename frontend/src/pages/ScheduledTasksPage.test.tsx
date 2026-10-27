@@ -681,6 +681,11 @@ describe("ScheduledTasksPage", () => {
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-suggestions\s+button\s*\{[^}]*min-width:\s*0;[^}]*overflow-wrap:\s*anywhere;[^}]*\}/);
     expect(workbenchStyles).toMatch(/@media\s*\(max-width:\s*(?:390|400|420)px\)[\s\S]*?\.scheduled-task-run\s*\{[^}]*display:\s*grid;[^}]*grid-template-columns:\s*minmax\(0,\s*1fr\);[^}]*\}/);
   });
+
+  it("lets the scheduled-task page fill the available desktop width", () => {
+    expect(workbenchStyles).toMatch(/\.scheduled-tasks-page\s*\{[^}]*width:\s*100%;[^}]*max-width:\s*none;/);
+    expect(workbenchStyles).not.toMatch(/\.scheduled-tasks-page\s*\{[^}]*max-width:\s*1480px/);
+  });
 });
 
 describe("service command tasks", () => {

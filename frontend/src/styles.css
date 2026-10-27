@@ -2056,7 +2056,7 @@ h1, h2, h3, p { margin-top: 0; }
 .scheduled-task-notification-toggle { display: flex; align-items: center; gap: 0.55rem; margin: 1rem 0; }
 
 /* Scheduled tasks: clearer scan paths, calmer spacing, and a visible notification control. */
-.scheduled-tasks-page { max-width: 1480px; padding-top: 30px; }
+.scheduled-tasks-page { width: 100%; max-width: none; padding-top: 30px; }
 .scheduled-tasks-page .console-page-header { align-items: flex-end; margin-bottom: 22px; }
 .scheduled-tasks-page .console-page-header > div { display: grid; gap: 5px; }
 .scheduled-tasks-page .console-page-header h1 { margin: 0; color: var(--ink); font-size: clamp(1.65rem, 2vw, 2.1rem); letter-spacing: -.035em; line-height: 1.15; }
