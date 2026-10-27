@@ -1,6 +1,7 @@
 """The native copy harness must not create transport-less MCP server entries."""
 import json
 import io
+import shutil
 import hashlib
 import os
 from pathlib import Path
@@ -66,10 +67,12 @@ def test_scoped_tool_list_overrides_existing_role_tool_list(monkeypatch):
     assert lists[-1] == 'mcp_servers.agent_cli.enabled_tools=["read_task_artifact","read_system_action_contract"]'
 
 
-@pytest.fixture
-def old_email_copy(tmp_path):
+@pytest.fixture(scope="session")
+def _published_old_template(tmp_path_factory):
+    """Build the published-old database once per session; tests copy it."""
+    root = tmp_path_factory.mktemp("published-old-template")
     repo = Path(__file__).resolve().parents[1]
-    old = tmp_path / "published-old"
+    old = root / "published-old"
     old.mkdir()
     archive = subprocess.check_output([
         "git", "-C", str(repo), "archive", "7dadc492c1c62d5b0624f2f97dd0c89f4f358646",
@@ -77,7 +80,7 @@ def old_email_copy(tmp_path):
     ])
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter="data")
-    path = tmp_path / "old.sqlite3"
+    path = root / "old.sqlite3"
     subprocess.run([
         sys.executable, "-c",
         "from pathlib import Path; import sys; from app.store import AutoReplyStore; "
@@ -85,6 +88,15 @@ def old_email_copy(tmp_path):
         str(path),
     ], cwd=old, env={**os.environ, "PYTHONPATH": str(old)},
         capture_output=True, text=True, check=True, timeout=300)
+    return repo, path
+
+
+@pytest.fixture
+def old_email_copy(tmp_path, _published_old_template):
+    repo, template = _published_old_template
+    shutil.copytree(template.parent / "published-old", tmp_path / "published-old")
+    path = tmp_path / "old.sqlite3"
+    shutil.copy2(template, path)
     return repo, path
 
 

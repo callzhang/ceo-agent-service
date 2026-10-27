@@ -5326,7 +5326,7 @@ def test_run_json_raises_dws_error_on_nonzero_exit(monkeypatch):
     monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
 
     with pytest.raises(DwsError, match="exit code 1"):
-        DwsClient(timeout_seconds=7).run_json(["dws", "probe"])
+        DwsClient(timeout_seconds=7, transient_retry_delay_seconds=0).run_json(["dws", "probe"])
 
 
 def test_run_json_serializes_dws_processes_across_client_instances(monkeypatch):
