@@ -1563,11 +1563,13 @@ def _current_task_generation(db_path: Path | None, task_id: int | None) -> str:
     return row[0]
 
 
-def _current_task_channel(db_path: Path | None, task_id: int | None) -> str:
+def _current_task_channel(db_path: Path | None, task_id: int | None) -> str | None:
     """Read the channel bound to the current Task input without Store migration."""
     if db_path is None or type(task_id) is not int or task_id <= 0:
-        raise ValueError("task file binding is missing")
+        return None
     database = Path(db_path).resolve()
+    if not database.is_file():
+        return None
     try:
         with closing(sqlite3.connect(f"file:{quote(str(database))}?mode=ro", uri=True)) as connection:
             row = connection.execute(
@@ -1577,9 +1579,9 @@ def _current_task_channel(db_path: Path | None, task_id: int | None) -> str:
                 (task_id,),
             ).fetchone()
     except sqlite3.Error as exc:
-        raise ValueError("task file binding is unavailable") from exc
+        raise ValueError("task file channel is unavailable") from exc
     if row is None or not isinstance(row[0], str) or not row[0]:
-        raise ValueError("task file channel is unavailable")
+        return None
     return row[0]
 
 
