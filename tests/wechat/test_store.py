@@ -2,12 +2,18 @@ from app.action_storage import (
     REPLY_ATTEMPT_COMMON_SQL, delete_action, update_action,
     task_delivery_projection, task_delivery_set_parts,
 )
+import atexit
+import shutil
+import sqlite3
+import tempfile
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import pytest
 
 from app.external_retry import MAX_AUTOMATIC_RETRIES
-from app.store import AgentRunLeaseLostError, AutoReplyStore
+from app.store import AgentRunLeaseLostError, AutoReplyStore, _close_idle_connections
 from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
 from tests.wechat.support import approve_delivery
@@ -29,7 +35,27 @@ def _store(tmp_path):
     return AutoReplyStore(tmp_path / "worker.sqlite3")
 
 
+_EXHAUSTED_TEMPLATE: dict[str, object] = {}
+
+
 def _seed_exhausted_target_open_failure(tmp_path, *, retry_count=MAX_AUTOMATIC_RETRIES):
+    """Seed an exhausted pre-action failure; the default one is built once and copied."""
+    if retry_count != MAX_AUTOMATIC_RETRIES:
+        return _build_exhausted_target_open_failure(tmp_path, retry_count=retry_count)
+    if not _EXHAUSTED_TEMPLATE:
+        root = Path(tempfile.mkdtemp(prefix="wechat-exhausted-template-"))
+        atexit.register(shutil.rmtree, root, ignore_errors=True)
+        built = _build_exhausted_target_open_failure(root)
+        _close_idle_connections()
+        _EXHAUSTED_TEMPLATE.update(path=root / "worker.sqlite3", ids=built[1:])
+    destination = tmp_path / "worker.sqlite3"
+    with closing(sqlite3.connect(_EXHAUSTED_TEMPLATE["path"])) as source, \
+            closing(sqlite3.connect(destination)) as copy:
+        source.backup(copy)
+    return (_store(tmp_path), *_EXHAUSTED_TEMPLATE["ids"])
+
+
+def _build_exhausted_target_open_failure(tmp_path, *, retry_count=MAX_AUTOMATIC_RETRIES):
     store = _store(tmp_path)
     store.enqueue_reply_task(
         channel="wechat", conversation_id="u1", conversation_title="Alex",
