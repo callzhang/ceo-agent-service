@@ -7,15 +7,18 @@ RecentFollowUpCandidate and Attempt adapter/per-call fallback are removed. The
 actual replay-script caller uses the current Signal transaction owner; current
 feature tests use existing owners and frozen history seeds. Both units passed
 independent SPEC then QUALITY reviews, schema476 is exact, focused Store/Attempt
-checks and root19case integration pass, and final review approves. Deployment/
-readback and this batch cleanup remain pending; see [batch1 acceptance](business-entrypoint-batch1-cleanup.md).
+checks and root19case integration pass, and final review approves. Deployed1e6db7a87
+through the normal gate/quiet window, newPID34587; actual API/UI/native role and
+historical evidence readbacks pass.476schema/FK[] and8historical fact groups are
+exact; verified backup and owned temp artifacts removed. Existingfailed25/Email
+Attention remains unchanged. See [batch1 acceptance](business-entrypoint-batch1-cleanup.md).
 
-Unused-business-path retirement is implemented and scoped reviews pass:
+Previous unused-business-path retirement checkpoint (included in the batch1 release above):
 callerless Store queries, test-only Run readers, old Project text rendering and
 constant scoring, viewed/schema entrypoints and the Reviewed plan writer leave
 current business code. Current History/native readers and Email-only plan writes
 retain their existing contracts. The476-object declaration is unchanged against
-the rebound Store26.1／Email54 baseline. It is now deployed as0f8c47eaa/PID83958,
+the rebound Store26.1／Email54 baseline. It was first deployed as0f8c47eaa/PID83958,
 including implementation6e7572e3e. After Derek explicitly authorized interruption,
 the existing skip-quiet option was used; mandatory target gate, verified backup,
 build, restart and health checks passed. Actual Tasks/History/Project/Attempt,
