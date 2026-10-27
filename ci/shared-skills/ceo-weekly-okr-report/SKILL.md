@@ -3,7 +3,7 @@ name: ceo-weekly-okr-report
 description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
 metadata:
   managed_by: ceo-agent-service
-  version: 19
+  version: 20
 ---
 
 # CEO-2 Manager OKR Progress Report
@@ -96,12 +96,17 @@ at the first missing, changed or Audit-identified analysis. A file containing
 `analysis_failure` is not a complete analysis and must be rewritten. Write each
 completed manager analysis artifact immediately before moving to the next
 manager. Never replace unfinished analyses with `analysis_failure`
-placeholders at the start of a turn. If a turn ends before the report is
-complete, retain all valid source and analysis artifacts and return a retryable
-`analysis_incomplete` result. Do not mark a still-incomplete report as a
-non-retryable terminal failure merely because this turn ended; the next
-Consumer turn must continue from the first incomplete manager. The normal
-bounded retry lifecycle remains in force.
+placeholders at the start of a turn. Do not voluntarily end a Consumer turn
+while analyzable managers remain. After each completed analysis, immediately
+continue with the next missing, changed or Audit-identified manager, then finish
+rendering and review. A missing independent document or a member with no
+progress is not a reason to stop; record the evidence gap and complete that
+manager using the available evidence and existing rubric. Only an actual turn
+interruption may leave analysis incomplete. If that happens, retain all valid
+source and analysis artifacts and return a retryable `analysis_incomplete`
+result so the next Consumer turn continues from the first incomplete manager.
+Never describe partial analysis as a completed report, and keep the normal
+bounded retry lifecycle in force.
 
 Treat `analysis_reusable=true` as a preserve instruction: do not rewrite that
 member's analysis file. A report-level wording, duplication or layout finding

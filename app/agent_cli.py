@@ -2310,8 +2310,6 @@ def build_role_server(
         for path in sorted(root.iterdir()):
             if (path.is_file() and not path.is_symlink()
                     and not path.name.startswith(_TASK_ARTIFACT_TEMP_PREFIX)):
-                if path.stat().st_size > MAX_TASK_FILE_BYTES:
-                    raise ValueError("task file is too large")
                 digest = hashlib.sha256()
                 with path.open("rb") as source:
                     for chunk in iter(lambda: source.read(65536), b""):

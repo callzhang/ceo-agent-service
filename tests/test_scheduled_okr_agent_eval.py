@@ -70,6 +70,8 @@ def test_okr_skill_resumes_saved_inputs_and_does_not_use_failure_for_missing_evi
     assert "It is not a shortcut for unfinished analysis" in skill
     assert "A file containing `analysis_failure` is not a complete analysis" in skill
     assert "return a retryable `analysis_incomplete` result" in skill
+    assert "Do not voluntarily end a Consumer turn while analyzable managers remain" in skill
+    assert "Only an actual turn interruption may leave analysis incomplete" in skill
     assert "Score each dimension independently" in skill
     assert "Do not transfer evidence between dimensions" in skill
     assert "Audit must independently check all seven dimension/evidence/score" in skill
