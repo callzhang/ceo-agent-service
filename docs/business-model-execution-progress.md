@@ -2,6 +2,16 @@
 
 ## Authoritative completion — 2026-10-26
 
+Current-declaration batch2 implementation, SPEC/QUALITY and root21case integration
+are complete; standard exact-target deployment and production/cleanup readback
+remain pending.
+Current 475/476 catalogs and ordered layouts are exact against the pre-edit
+baseline; live Email writers also use fixed layouts. There is no DDL or data
+migration. Three baseline-reproduced historical artifact tests remain separately
+recorded, not relabeled green. See [batch2 acceptance](current-declaration-batch2-validation.md).
+
+The following batch1 checkpoint describes its completed release:
+
 First no-DDL batch is implemented:20 Store entrypoints, the duplicate22-field
 RecentFollowUpCandidate and Attempt adapter/per-call fallback are removed. The
 actual replay-script caller uses the current Signal transaction owner; current

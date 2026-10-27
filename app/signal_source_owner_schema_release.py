@@ -43,12 +43,12 @@ def target_objects():
 
 @lru_cache(maxsize=1)
 def _source_action_objects():
-    from app.task_run_entity_assembly import _action_objects
+    from app.signal_source_action_declarations import source_action_objects
     with closing(sqlite3.connect(':memory:')) as db:
         register_task8_functions(db)
         db.execute('create table _allocator(id integer primary key autoincrement)')
         db.execute('drop table _allocator')
-        declarations = _action_objects(signal_source_references=False)
+        declarations = source_action_objects()
         for sql in declarations.values():
             db.execute(sql)
         return actions._objects(db, 'actions')

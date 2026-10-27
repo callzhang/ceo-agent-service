@@ -9,9 +9,7 @@ from app.action_storage import (
     _source_bound_null,
 )
 from app.business_definitions import (
-    BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_INDEX_DDL,
-    BUSINESS_REFERENCES, BUSINESS_TABLE_DDL,
-    BUSINESS_TRIGGER_DDL,
+    BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_REFERENCES,
     _definitions,
 )
 
@@ -30,8 +28,7 @@ class BusinessWriteResult:
 
 def create_business_schema(db: sqlite3.Connection, *, include_candidates: bool = False):
     """Install declarations only; caller owns BEGIN/commit/rollback."""
-    table, indexes, triggers = (_definitions(include_candidates=True) if include_candidates else
-                                (BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL))
+    table, indexes, triggers = _definitions(include_candidates=include_candidates)
     for sql in (table, *indexes, *triggers):
         db.execute(sql)
 

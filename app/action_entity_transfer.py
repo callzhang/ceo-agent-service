@@ -806,7 +806,8 @@ def _restore_inverse_facts_bound(db, captured):
         storage.insert_action(db, "external_action_results", row)
 
     for row in facts["candidate_action_attempts"]:
-        storage.insert_action(db, "candidate_action_attempts", row, execution_owner=True)
+        storage.insert_action(db, "candidate_action_attempts", row, execution_owner=True,
+                              layout=_source_execution_layout("candidate_action_attempts"))
 
     for row in facts["outbound_postfixes"]:
         receipt_json = row.pop("_receipt_json", None)
@@ -862,7 +863,7 @@ def _restore_inverse_facts_bound(db, captured):
         storage.insert_action(db, "sent_reply_observers", {
             "sent_reply_id": sent_id, "agent_run_id": agent_run_id,
             "reply_task_id": task_id, "created_at": created_at,
-        }, execution_owner=True)
+        }, execution_owner=True, layout=_source_execution_layout("sent_reply_observers"))
 
     # Historical operation arrays carry public direct-Email keys; translate the
     # current physical IDs back while preserving order and JSON string identity.
@@ -899,3 +900,12 @@ def _restore_inverse_facts_bound(db, captured):
     old_retry_guard = next(sql for kind, name, _table, sql in source_objects("fresh_memory_fk")
                            if kind == "trigger" and name == "trg_actions_email_retry_immutable_update")
     db.execute(old_retry_guard)
+
+
+def _source_execution_layout(kind):
+    from app.business_legacy_fields import retained_action_payloads
+    return retained_action_payloads(action_storage._build_action_payloads(
+        action_storage._REPLY_FIELDS["reply_attempts"],
+        tuple(field for field in action_storage._REPLY_FIELDS["memory_write_events"] if field != "attempt_id"),
+        physical_provenance=True, execution_owner=True,
+    )).layouts[kind]

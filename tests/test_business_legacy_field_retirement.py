@@ -91,7 +91,7 @@ s.enqueue_reply_task(conversation_id='fixture',conversation_title='Fixture',sing
 with sqlite3.connect(s.path) as db:
  if sys.argv[2]=='actual_no_memory_fk':
   from app import action_storage as actions
-  from app.current_database_schema import FINAL_ACTION_OPTIONS
+  from app.historical_action_options import FINAL_ACTION_OPTIONS
   db.execute('drop table actions')
   actions.create_action_schema(db,reply_variant='actual_no_memory_fk',**FINAL_ACTION_OPTIONS)
  db.execute('begin')

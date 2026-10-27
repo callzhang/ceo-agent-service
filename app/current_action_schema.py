@@ -22,15 +22,15 @@ RETIRED_ACTION_TYPES = frozenset({
 
 @lru_cache(maxsize=1)
 def current_action_payloads():
-    return retained_action_payloads(actions._build_action_payloads(
-        actions._REPLY_FIELDS["reply_attempts"],
-        tuple(field for field in actions._REPLY_FIELDS["memory_write_events"]
-              if field != "attempt_id"),
-        physical_provenance=True, selection_references=True,
-        execution_owner=True, shared_lifecycle=True,
-        specialized_claims=True, postfix_owner=True, action_entity=True,
-        signal_source_references=True,
-    ))
+    from app.action_entity_definitions import ActionEntityRecordTypes
+    from app.action_payload import ActionPayloads
+    from app.current_schema_metadata import CURRENT_PAYLOAD_FIELDS
+    from app.shared_action_definitions import SPECIALIZED_RECORD_TYPES
+    from app.storage_payload import PayloadLayout
+    return ActionPayloads(
+        {kind: PayloadLayout(fields) for kind, fields in CURRENT_PAYLOAD_FIELDS.items()},
+        ActionEntityRecordTypes(SPECIALIZED_RECORD_TYPES),
+    )
 
 
 @lru_cache(maxsize=1)
@@ -47,7 +47,7 @@ def _signal_source_action_payloads():
 
 @lru_cache(maxsize=1)
 def current_action_objects():
-    from app.current_database_schema import FINAL_ACTION_OPTIONS
+    from app.historical_action_options import FINAL_ACTION_OPTIONS
 
     options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
                if key != "canonical_email"}
@@ -61,7 +61,7 @@ def current_action_objects():
 @lru_cache(maxsize=1)
 def signal_source_action_objects():
     """Frozen Store 2026-10-25.2 current Actions declaration."""
-    from app.current_database_schema import FINAL_ACTION_OPTIONS
+    from app.historical_action_options import FINAL_ACTION_OPTIONS
 
     options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
                if key != "canonical_email"}
@@ -75,7 +75,7 @@ def signal_source_action_objects():
 @lru_cache(maxsize=1)
 def source_current_action_objects():
     """Explicit pre-entity Actions declaration for migration and inverse tooling."""
-    from app.current_database_schema import FINAL_ACTION_OPTIONS
+    from app.historical_action_options import FINAL_ACTION_OPTIONS
 
     options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
                if key not in {"canonical_email", "action_entity"}}

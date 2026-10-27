@@ -410,9 +410,6 @@ def _definitions(*, include_candidates=False, include_business_actions=False, fi
     return table, indexes, triggers
 
 
-BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL = _definitions()
-
-
 def _projection(kind, fields, *, index=None):
     relation = "business" + (f" indexed by {index}" if index else "")
     return ("select "

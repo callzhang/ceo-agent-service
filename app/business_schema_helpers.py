@@ -3,10 +3,7 @@
 from __future__ import annotations
 import sqlite3
 from app.action_email_storage import _quote
-from app.business_definitions import (
-    BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL,
-    _definitions,
-)
+from app.business_definitions import _definitions
 
 
 def _snapshot(db: sqlite3.Connection, name: str, *, hidden_rowid: bool = False) -> dict:
@@ -80,9 +77,9 @@ def business_schema_parent_is_current(db: sqlite3.Connection, *, include_candida
     table = db.execute(
         "select sql from main.sqlite_schema where type='table' and name='business'"
     ).fetchone()
-    expected_table, expected_indexes, expected_triggers = (
-        _definitions(include_candidates=True, include_business_actions=include_business_actions) if include_candidates else
-        (BUSINESS_TABLE_DDL, BUSINESS_INDEX_DDL, BUSINESS_TRIGGER_DDL)
+    expected_table, expected_indexes, expected_triggers = _definitions(
+        include_candidates=include_candidates,
+        include_business_actions=include_business_actions if include_candidates else False,
     )
     if inline_legacy_owner:
         from app.business_legacy_owner_storage import _business_declaration
