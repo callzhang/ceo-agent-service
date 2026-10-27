@@ -32,9 +32,22 @@ def _update_delivery(db, delivery_id, values):
 
 
 def _store(tmp_path):
-    return AutoReplyStore(tmp_path / "worker.sqlite3")
+    destination = tmp_path / "worker.sqlite3"
+    if not destination.exists():
+        if not _EMPTY_STORE_TEMPLATE:
+            root = Path(tempfile.mkdtemp(prefix="wechat-empty-store-template-"))
+            atexit.register(shutil.rmtree, root, ignore_errors=True)
+            path = root / "worker.sqlite3"
+            AutoReplyStore(path)
+            _close_idle_connections()
+            _EMPTY_STORE_TEMPLATE["path"] = path
+        with closing(sqlite3.connect(_EMPTY_STORE_TEMPLATE["path"])) as source, \
+                closing(sqlite3.connect(destination)) as copy:
+            source.backup(copy)
+    return AutoReplyStore(destination)
 
 
+_EMPTY_STORE_TEMPLATE: dict[str, object] = {}
 _EXHAUSTED_TEMPLATE: dict[str, object] = {}
 
 
