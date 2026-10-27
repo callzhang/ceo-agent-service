@@ -42,9 +42,9 @@
     {
       "source": "ci/shared-skills/ceo-daily-report/SKILL.md",
       "target": "skills/ceo-daily-report/SKILL.md",
-      "old_sha256": "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa",
+      "old_sha256": "3446c387e6023f95eabc6dbf096777c878ff0e5de2b102b7586a9514992fcebe",
       "new_sha256": "3446c387e6023f95eabc6dbf096777c878ff0e5de2b102b7586a9514992fcebe",
-      "old_managed_sha256": "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa"
+      "old_managed_sha256": "3446c387e6023f95eabc6dbf096777c878ff0e5de2b102b7586a9514992fcebe"
     },
     {
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",

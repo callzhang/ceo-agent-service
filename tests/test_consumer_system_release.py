@@ -70,7 +70,7 @@ def test_repository_consumer_release_manifest_tracks_installed_daily_report_base
 
     skill = entries[skill_source]
     assert skill["new_sha256"] == _digest((root / skill_source).read_bytes())
-    assert skill["old_sha256"] == "f2b3582b57db980156fa97cc15b336f425017f6e5cc73cf3155537867c5ca2aa"
+    assert skill["old_sha256"] == "3446c387e6023f95eabc6dbf096777c878ff0e5de2b102b7586a9514992fcebe"
     assert skill["old_managed_sha256"] == skill["old_sha256"]
 
     script = entries[script_source]
