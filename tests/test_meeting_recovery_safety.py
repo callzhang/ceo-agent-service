@@ -142,3 +142,15 @@ def test_asr_transcript_rerun_preserves_existing_delivery_guards(tmp_path):
 
     assert store.attach_asr_transcript_and_rerun_meeting_job(job_id, evidence) is None
     assert store.get_meeting_alignment_job(job_id) == before
+
+
+def test_analysis_rerun_reopens_needs_human_without_touching_its_runs(tmp_path):
+    store = AutoReplyStore(tmp_path / "store.sqlite3")
+    job_id = seed_failed_job(store)
+    run_id = store.create_professional_run(job_id, status="failed", session_id="s", error="audit")
+    with store._immediate_write_transaction() as db:
+        update_task_cas(db, task_id=job_id, expected={"status": "failed"},
+                        changes={"status": "needs_human"})
+    assert store.rerun_meeting_alignment_jobs([job_id]) == [job_id]
+    assert store.get_meeting_alignment_job(job_id).status == "retry"
+    assert store.get_meeting_alignment_run(run_id).status == "failed"
