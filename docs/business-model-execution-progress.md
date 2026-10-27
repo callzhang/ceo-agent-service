@@ -17,7 +17,7 @@ finding remain; the separate report/system-Skill follow-up is not closed here.
 Latest verified workflow backup/failed clone are removed; final owned temporary
 cleanup is in [closeout evidence](history-artifact-closeout-20261027.md).
 
-## Authoritative completion — 2026-10-26
+## Historical completion checkpoint — 2026-10-26
 
 Current-declaration batch2 is implemented and deployed as3212e477d through the
 mandatory exact-target gate (passed twice), explicit skip-quiet authorization,

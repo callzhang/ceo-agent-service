@@ -1,5 +1,12 @@
 # Fixed current declarations — no-DDL batch 2
 
+Follow-up2026-10-27: the History polling starvation and all three SQL artifact
+failures recorded below are closed by the [scoped follow-up](history-artifact-closeout-20261027.md),
+with focused regressions, standard gate and actual850f451c3 production readback.
+The open-finding sections below preserve the earlier release evidence; they do
+not describe those two items as still open. Report/system-Skill recovery remains
+separately owned and is not closed by this follow-up.
+
 Scope approved on 2026-10-26: declare the current structure directly, without
 deriving it by subtracting retired fields or combining historical schema flags.
 This changes source ownership, not the database schema or business model values.
