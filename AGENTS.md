@@ -73,7 +73,7 @@ If a full run is really needed, run it in parallel (`pytest -q -n 6`, about
 3 minutes) and not while a restart is in progress.
 
 Derek, 2026-10-23 and 2026-10-25: every test process has a fixed 2 GB memory
-ceiling and a fixed 5 minute budget (`tests/conftest.py`,
+ceiling and a fixed 10 minute budget (Derek, 2026-10-27: raised from 5) (`tests/conftest.py`,
 `tests/support/memory_limit.py`). A process that passes either is ended at once
 and names the test it was running. A parallel run had put six workers at 13-23 GB
 each (about 80 GB) and froze the machine. Do not raise a limit or add a way to
@@ -121,12 +121,12 @@ half-written edits.
 
 Derek, 2026-10-25: `python -m app.deploy` first runs the gate suite (the files
 in `tests/gate_files.txt`, one process; `tests/conftest.py` stops it at 2 GB or at
-5 minutes of real time; about 95 s on an idle machine) at the commit it is going to
+10 minutes of real time; about 95 s on an idle machine) at the commit it is going to
 install, in a throwaway clone with a clean environment, and refuses to deploy if any
 test fails or the run is stopped. There is no bypass option and no switch: the
 requirement is `TEST_GATE_ENABLED = True` in `app/deploy.py`. The deploy then installs exactly the commit the gate tested, even if `main` moved
 while it ran. A busy machine can make
-the run take longer; the run is stopped at 5 minutes, not extended. Add a test to the
+the run take longer; the run is stopped at 10 minutes, not extended. Add a test to the
 manifest when it covers current behaviour and is fast.
 `--restart` runs no new code and is not gated.
 

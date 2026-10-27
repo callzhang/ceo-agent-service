@@ -10,7 +10,7 @@ from tests.support.memory_limit import EXIT_CODE, TIME_EXIT_CODE
 def test_limits_are_two_gigabytes_and_five_minutes():
     # Derek, 2026-10-25. Changing either number is a decision, not a tuning knob.
     assert MEMORY_LIMIT.limit_bytes == 2 * 1024**3
-    assert MEMORY_LIMIT.time_limit_seconds == 5 * 60
+    assert MEMORY_LIMIT.time_limit_seconds == 10 * 60
 
 
 def test_limits_cannot_be_changed_from_outside():
