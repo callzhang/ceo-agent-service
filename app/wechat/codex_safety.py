@@ -103,7 +103,7 @@ AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
 # Exact tools from the service's reviewed MCP effect registry. New provider
 # operations stay unavailable until their effect is reviewed and named here.
 ROLE_MCP_READ_TOOLS = {
-    "ai_services": ("ocr_document",),
+    "ai_services": ("ocr_document", "transcribe_audio"),
     "memory_connector": (
         "user_get", "memory_recall", "memory_get", "timeline_get",
     ),

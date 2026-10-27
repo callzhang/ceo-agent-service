@@ -99,7 +99,7 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert f"mcp_servers.{name}.enabled=false" not in consumer
         assert f'mcp_servers.{name}.default_tools_approval_mode="approve"' in consumer
     assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in audit
-    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in audit
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document", "transcribe_audio"]' in audit
     assert any(o.startswith("mcp_servers.xiaoqing_interview.enabled_tools=") for o in audit)
     assert not any(".enabled_tools=" in o and not o.startswith("mcp_servers.agent_cli.")
                    for o in consumer)
@@ -192,7 +192,7 @@ def test_oa_audit_composes_only_declared_read_and_ocr_mcp_tools(tmp_path, monkey
     assert 'features.code_mode.direct_only_tool_namespaces=["mcp__memory_connector", "mcp__xiaoqing_interview"]' in oa
     assert 'features.code_mode.excluded_tool_namespaces=["functions", "image_gen", "multi_agent_v1", "web"]' in oa
     assert 'sandbox_mode="read-only"' in oa
-    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document"]' in oa
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document", "transcribe_audio"]' in oa
     assert next(option for option in ordinary if option.startswith("mcp_servers.agent_cli.enabled_tools=")) == next(
         option for option in oa if option.startswith("mcp_servers.agent_cli.enabled_tools=")
     )
