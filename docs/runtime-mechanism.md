@@ -2863,6 +2863,7 @@ Consumer 或 Audit，也不产生 reply task、agent run 或 reply_attempt。
 定时服务命令结果保存并完成 trigger 后，成功或失败都会发送桌面通知；Agent 形式任务在
 Reply task 的 `done` 或 `failed` 终态保存后发送通知。标题包含任务名，正文包含命令结果摘要、
 Agent 结果摘要或失败原因。等待重试、跳过、仍在执行及单纯派发不通知；通知不改变持久化状态。
+终态保存后，通知以尽力投递处理：所有桌面通知后端均不可用时记录错误，不反向改变 Task 或 run 终态。
 
 DingTalk 的分钟级 `produce-once` / `calendar-invites-once` 与 `recover-recent-messages`
 共用锁，避免同一 producer 并发读取。若恢复扫描正在进行，分钟级命令不等待锁，而是返回
@@ -5428,9 +5429,13 @@ claiming also close previously exhausted pending records, including ones with a
 future available_at, without incrementing their old count or calling the mail
 provider or Agent. Their source input, stable identity and original error remain
 available. Active unexpired claims and done tasks are not closed by this sweep.
-The existing explicit selected-task repair resets attempts and keeps task
-identity; discovery does not automatically reopen failed records. See
-`docs/email-classification-retry-budget-validation.md` for evidence.
+The Console retry endpoint accepts only a failed task with no saved result,
+requeues that selected task through its stable message identity, and confirms
+the original input was retained. It cannot reopen a pending, running or done
+task; discovery does not automatically reopen failed records. See
+`docs/email-classification-retry-budget-validation.md` for automatic budget
+evidence and `docs/email-classification-retry-api-validation.md` for the Console
+retry contract.
 
 For current classification readback, the saved UID is tried first. If it no
 longer returns the source, the worker may locate it only by the task's exact

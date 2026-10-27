@@ -253,7 +253,9 @@ def test_streaming_decrypt_matches_a_whole_file_decrypt(tmp_path):
 
     mac_key = cipher._mac_key(key, salt)
     encrypted = bytearray()
-    import hashlib, hmac, struct
+    import hashlib
+    import hmac
+    import struct
     for index, plain in enumerate(plain_pages):
         iv = bytes([index + 1]) * 16
         enc = Cipher(algorithms.AES(key), modes.CBC(iv)).encryptor()

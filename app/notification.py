@@ -1,4 +1,5 @@
 import json
+import logging
 from pathlib import Path
 import shlex
 import shutil
@@ -10,6 +11,7 @@ from app.config import notification_bridge_base_url
 
 
 DEFAULT_NOTIFICATION_ICON_PATH = Path(__file__).resolve().parent / "logo.png"
+logger = logging.getLogger(__name__)
 
 
 def dingtalk_conversation_notification_url(
@@ -106,7 +108,13 @@ def send_macos_notification(title: str, message: str, url: str | None = None) ->
         return
 
     script = f"display notification {_applescript_string(message)} with title {_applescript_string(title)}"
-    subprocess.run(["osascript", "-e", script], check=False)
+    try:
+        subprocess.run(["osascript", "-e", script], check=False)
+    except OSError as exc:
+        logger.warning(
+            "macos_notification_delivery_unavailable",
+            extra={"error_type": type(exc).__name__},
+        )
 
 
 def send_browser_notification(
@@ -166,7 +174,10 @@ def _send_terminal_notifier_notification(
                 f"/usr/bin/curl -fsS -X POST {shlex.quote(url)} >/dev/null 2>&1",
             ]
         )
-    completed = subprocess.run(command, check=False)
+    try:
+        completed = subprocess.run(command, check=False)
+    except OSError:
+        return False
     return completed.returncode == 0
 
 
