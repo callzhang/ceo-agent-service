@@ -201,7 +201,6 @@ def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_
     from app.meeting_alignment_models import (
         MeetingAlignmentAuditResult,
         MeetingAlignmentDecision,
-        meeting_alignment_decision_digest,
         persist_audited_meeting_decision,
     )
     from tests.test_meeting_alignment_delivery import send_decision
@@ -218,7 +217,7 @@ def test_failed_delivery_requeue_uses_native_saved_key_and_preserves_review(tmp_
     saved_decision = persist_audited_meeting_decision(
         decision,
         MeetingAlignmentAuditResult(
-            outcome="approve", candidate_sha256=meeting_alignment_decision_digest(decision),
+            outcome="approve",
             summary="exact candidate approved for the native Task test", feedback=None,
         ),
     )
@@ -336,7 +335,7 @@ def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_pa
     class Executor:
         def __call__(self, _command, **_kwargs):
             response = json.dumps({
-                "outcome": "approve", "candidate_sha256": digest, "summary": "supported",
+                "outcome": "approve", "summary": "supported",
                 "feedback": None,
             })
             return ProcessRunResult(0, response, "")
@@ -373,12 +372,10 @@ def test_meeting_audit_runner_claims_native_attempt_with_exact_run_parent(tmp_pa
         session_line_counter=lambda _session_id: 3,
         now=lambda: datetime(2026, 10, 23, tzinfo=UTC),
     )
-    candidate_sha256 = "a" * 64
-    digest = candidate_sha256
     audit = MeetingAlignmentCodexRunner(routed_execution=routed).audit(
-        prompt="Review exact candidate", run_id=run_id, candidate_sha256=candidate_sha256,
+        prompt="Review exact candidate", run_id=run_id,
     )
-    assert audit.candidate_sha256 == candidate_sha256
+    assert audit.outcome == "approve"
     attempts = store.list_runtime_operation_attempts("meeting_audit", str(run_id))
     assert len(attempts) == 1
     attempt = attempts[0]

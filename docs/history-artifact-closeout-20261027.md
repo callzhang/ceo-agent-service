@@ -64,7 +64,13 @@ and model calls are not used by these cases; no production sends or test jobs.
 Independent code review found no blocking issues. A non-intercepting test
 monkeypatch was removed; the unchanged exact catalog digest and explicit absence
 of the later column remain the source regression assertions. Standard exact-target
-gate/deployment, production API/UI
-readback and authorized own-artifact/verified-backup cleanup remain pending.
+gate at eeeb5b5e ran to97% with no observed assertion failure, then stopped at
+300seconds on `test_scheduled_audit_receives_exact_consumer_document_return`.
+Production was not changed. Upstream850f451c3 separately raises the budget to
+10minutes; it has not been adopted by this task because the supplied rules
+require5minutes and explicit authorization has not yet been verified. Derek subsequently explicitly approved adopting the separate10-minute gate
+change for this release, retaining2GiB and all tests. The failed5-minute attempt
+remains recorded and is not relabeled as passed. Production API/UI readback and
+authorized own-artifact cleanup remain pending; no deployment backup was created.
 Implementation/test success is not a live-release claim. The prior report's
 business-publication failure remains the other task's responsibility.

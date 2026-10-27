@@ -45,9 +45,10 @@ os.environ["CEO_FORBIDDEN_PATH_PREFIXES"] = "/Users/principal/,/home/principal/"
 os.environ["FAST_PATH_UNREAD_BACKOFF"] = "0s"
 
 
-# Derek, 2026-10-23 and 2026-10-25: 2 GB and 5 minutes, fixed on purpose, no environment
-# variable or option.
-MEMORY_LIMIT = MemoryLimit(2 * 1024**3, time_limit_seconds=5 * 60)
+# Derek, 2026-10-23 and 2026-10-25: 2 GB, fixed on purpose, no environment variable or
+# option. Derek, 2026-10-27: the time budget is 10 minutes (it was 5; the gate suite
+# grew past what a loaded machine finishes in 5).
+MEMORY_LIMIT = MemoryLimit(2 * 1024**3, time_limit_seconds=10 * 60)
 
 
 def pytest_configure(config):
