@@ -1,0 +1,142 @@
+{
+  "checked_at_utc": "2026-10-27T19:52:34.696287+00:00",
+  "boundary": "Read-only release acceptance; no runtime/API/DDL/data mutation or business replay.",
+  "production": {
+    "installed_commit": "758083c100ef57ddf07f1718f756ba2d6e825241",
+    "pid": 90678,
+    "health_http": 200,
+    "health_ok": true,
+    "frontend_needs_build": false,
+    "attention_items": 1,
+    "history_page2_items": 20,
+    "history_page2_seconds": 1.158,
+    "business_health": "degraded: one unresolved feedback finding",
+    "readback_at_utc": "2026-10-27T19:49:33.279959+00:00"
+  },
+  "checked_at": "2026-10-27T19:51:06.636684+00:00",
+  "schema_count": 476,
+  "schema_exact_current": true,
+  "schema_sha256": "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f",
+  "foreign_keys": [],
+  "store": "2026-10-26.1",
+  "email": 54,
+  "deployment": {
+    "operation_id": "deploy-e960a790-be37-41f3-a314-cf5e197f0fd4",
+    "status": "succeeded",
+    "original_commit": "e83a684e029ff721b1f702dc28a85b0641374ef7",
+    "target_commit": "758083c100ef57ddf07f1718f756ba2d6e825241",
+    "installed_commit": "758083c100ef57ddf07f1718f756ba2d6e825241",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-e960a790-be37-41f3-a314-cf5e197f0fd4.sqlite3",
+    "updated_at": "2026-10-27T19:27:49.761508+00:00",
+    "error": ""
+  },
+  "report_tasks": [
+    [
+      417576,
+      "failed",
+      "agent_reported_failure",
+      "2026-10-27 05:27:11"
+    ],
+    [
+      417594,
+      "failed",
+      "agent_reported_failure",
+      "2026-10-27 07:41:40"
+    ],
+    [
+      417637,
+      "failed",
+      "agent_reported_failure",
+      "2026-10-27 15:26:11"
+    ],
+    [
+      417666,
+      "processing",
+      "",
+      "2026-10-27 19:30:41"
+    ]
+  ],
+  "frontend_needs_build": false,
+  "skills": {
+    "checked_at": "2026-10-27T19:52:34.696287+00:00",
+    "selected_active_config": [
+      400,
+      "active"
+    ],
+    "weekly_okr_bindings": [
+      [
+        "ceo-weekly-okr-report",
+        279,
+        "75d246f20d87a9b13e147715cb36f2737759664501130fa30db5465ee2fe2a44",
+        1
+      ]
+    ],
+    "installed_weekly_skill_sha256": "75d246f20d87a9b13e147715cb36f2737759664501130fa30db5465ee2fe2a44",
+    "managed_matches_installed": true,
+    "manifest_targets": 26,
+    "installed_targets_matching_candidate": 26,
+    "target_resolution": "~/.agents/skills for Skill targets; production data/prompts/audit_rules.md for audit_rules"
+  },
+  "schema_baseline_comparison": {
+    "count": 476,
+    "sha256_default_json": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+    "matches_prior_accepted_release": true,
+    "exact_current_declaration": true,
+    "foreign_keys": []
+  },
+  "ui": {
+    "history_total_observed": 38894,
+    "page2_distinct_rows": true,
+    "failed_filter_total": 67,
+    "filter_reset_to_page1": true,
+    "report_task417594": "failed, Attempt16175, four failed Consumer turns, analysis_incomplete",
+    "receipt_detail": {
+      "attempt_id": 16137,
+      "action_id": 125048,
+      "receipt_id": 20527,
+      "status": "done"
+    },
+    "no_mutating_business_controls_clicked": true,
+    "owned_verification_tab_closed": true
+  },
+  "a5": {
+    "evidence": "2026-10-25-a5-original-selection-revalidation.json",
+    "original_case_passed": true,
+    "historical_failure_preserved": true
+  },
+  "cleanup": {
+    "history_owned_root": "/private/tmp/ceo-history-closeout.iqw5Li",
+    "history_owned_root_absent": true,
+    "current_daily_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-27.sqlite3",
+      "size": 514969600,
+      "mtime_local": "2026-10-27 12:21:53 PDT",
+      "quick_check": "ok",
+      "application_id": 1128615746,
+      "schema_count": 476,
+      "open_files_observed": 0,
+      "state": "retained: owner/generation confirmation pending; may be replaced by subsequent workflow"
+    },
+    "current_task_created_disposable_files": false
+  },
+  "pending": [
+    "Newer9ed55b9c7 standard deployment completion and exact gate summary",
+    "Report417666 final business result/publication receipt",
+    "Peer backup and temporary-file ownership/cleanup confirmation"
+  ],
+  "completion": "production readback and A5 documentation verified; report outcome and peer cleanup remain pending",
+  "owner_reconciliation": {
+    "installed_commit_confirmed": "758083c100ef57ddf07f1718f756ba2d6e825241",
+    "newer_target": "9ed55b9c7",
+    "newer_standard_deploy": "waiting quiet",
+    "report_task": 417666,
+    "report_run": 400024,
+    "last_progress_at_utc": "2026-10-27T19:53:35Z",
+    "focused_tests_owner_reported": 96,
+    "attention_task": 417641,
+    "attention_attempt": 16198,
+    "attention_class": "external_action_uncertain",
+    "reply_queue_failed": 16
+  },
+  "schema_sha256_serialization": "UTF-8 JSON array of (type,name,tbl_name,sql), ordered by type,name; ensure_ascii=False; compact separators=comma/colon"
+}

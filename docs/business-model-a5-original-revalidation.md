@@ -58,7 +58,15 @@ before asserting the pre-selection contract. The concise result is in
 Native CLI session IDs and transcript coordinates are in that file; native
 trajectory bodies are not copied into the database or retained in this report.
 
-Scoped formatting, exact candidate assertion and semantic API checks passed in the
-96-test combined selection. The read-model release is deployed and read back;
-artifact cleanup remains blocked by platform approval. See the
+Historical checkpoint — 2026-10-25: scoped formatting, exact candidate assertion
+and semantic API checks passed in the 96-test combined selection. The read-model
+release was deployed and read back; artifact cleanup remained blocked by platform
+approval at that checkpoint. See the
 [overall read-model closeout](business-model-history-read-unification.md).
+
+Later cleanup evidence is recorded in the
+[2026-10-27 History closeout](history-artifact-closeout-20261027.md#cleanup) and
+[current release closeout](release-acceptance-closeout-20261027.md). Those records
+identify their own verified targets; they do not establish that every older A5
+or historical validation root has been removed. The original-case native
+revalidation above passed independently of that cleanup status.

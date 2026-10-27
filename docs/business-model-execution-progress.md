@@ -1,5 +1,21 @@
 # Business model simplification: current completion and closeout
 
+## Current status — 2026-10-27, 12:52 America/Los_Angeles
+
+| Scope | Verified status | Remaining boundary |
+| --- | --- | --- |
+| Code and frontend installed | Production758083c10; persisted standard deployment succeeded; PID90678, health200 and frontend stamp match. | Owner confirms this installation; newer9ed55b9c7 standard deployment is waiting for quiet while417666 progresses. |
+| Production feature readback | Attention1; History page2 returns20different rows, failed filter completes and resets page1; Attempt16137 shows Action125048/receipt20527. | Business health retains one unresolved-feedback finding. Historical failed results remain historical. |
+| Schema | Store26.1/Email54;476exact current SQL tuples, unchanged prior accepted digest, FK[]. | No API/DDL/runtime change in this closeout; no global optimality or zero-compatibility claim. |
+| Report and system Skill |26installed contract targets match manifest; active config400/weekly OKR revision279 matches installed hash. | Report417666 is processing;417576/417594/417637 remain failed. Final report/publication receipt and the newer deployment remain pending. |
+| Cleanup | Prior owned `/private/tmp/ceo-history-closeout.iqw5Li` is absent. Observed daily backup passed quick_check/appid/schema checks and had no open files. | Current backup generation ownership and peer-owned temporary cleanup await confirmation; retained. |
+| A5 exact original case |2026-10-25 real GPT-6 Luna CLI Consumer/Audit replay passed with one substitute provider call, verification and receipt after selection. | Historical failure is preserved; acceptance covers the original case. |
+
+See [release acceptance closeout](release-acceptance-closeout-20261027.md) and its
+[structured readback](validation/2026-10-27-release-acceptance-closeout.json).
+Dated checkpoints below retain their original scope. This batch is not marked
+fully complete while the report outcome and peer cleanup remain unverified.
+
 ## Current follow-up — 2026-10-27: accepted
 
 History slow-request polling and the3SQL artifact failures are repaired and live

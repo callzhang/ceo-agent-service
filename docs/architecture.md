@@ -515,7 +515,7 @@ receipt ID 且正文完全相等时建立引用，并在同一事务清空重复
 读取通过引用投影得到同一结果；receipt 退休会检查该引用。来源 Store `2026-10-23.1`／
 Email54 到目标的显式迁移只处理唯一精确匹配，逆迁先把引用正文还原到 Attempt 再删除
 关系并恢复原 schema marker。该存储归属不改变 Audit、审批、授权、重试或外部动作策略。
-A5 原生验收冲突仍是单独问题，不由这项存储变更关闭。
+A5 原始输入已于2026-10-25通过真实 GPT-6 Luna Codex CLI Consumer／Audit 和替代 provider 的精确审查选项重验，见[A5 原始用例重验](business-model-a5-original-revalidation.md)。这项后续验收不改写2026-10-19失败，也不表示所有 A5 用例或模型输出均通过；不是由上述存储归属变更直接关闭。
 
 最终紧凑 Tasks／Actions 的既有触发器在生成 schema 时把类型判别和类型不可改写的 UPDATE OF 事件绑定到实际 `_kind`；公开 `record_type` 仍是只读名称。这样避免 SQLite 在仅更新其他列的 BEFORE UPDATE 中遗漏虚拟 NEW 类型值。历史 TEXT 来源工厂不改写。Tasks 声明为数值 legacy_key 的来源身份直接投影其整数表达式（NULL 保持 NULL），来源投影显式包含现有 numeric identity 部分索引的准确谓词。父任务和 canonical 输入均使用现有身份索引定位，避免审查链路扫描无关输入；不新增索引或字段。
 
