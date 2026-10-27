@@ -5402,9 +5402,13 @@ claiming also close previously exhausted pending records, including ones with a
 future available_at, without incrementing their old count or calling the mail
 provider or Agent. Their source input, stable identity and original error remain
 available. Active unexpired claims and done tasks are not closed by this sweep.
-The existing explicit selected-task repair resets attempts and keeps task
-identity; discovery does not automatically reopen failed records. See
-`docs/email-classification-retry-budget-validation.md` for evidence.
+The Console retry endpoint accepts only a failed task with no saved result,
+requeues that selected task through its stable message identity, and confirms
+the original input was retained. It cannot reopen a pending, running or done
+task; discovery does not automatically reopen failed records. See
+`docs/email-classification-retry-budget-validation.md` for automatic budget
+evidence and `docs/email-classification-retry-api-validation.md` for the Console
+retry contract.
 
 For current classification readback, the saved UID is tried first. If it no
 longer returns the source, the worker may locate it only by the task's exact
