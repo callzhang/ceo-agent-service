@@ -53,7 +53,7 @@ and duplicate idempotence. It also pins both current catalog digests and three
 ordered metadata digests. SPEC caught the shared Email writer's remaining old
 builder call; that call was removed before SPEC approval.
 
-Focused groups pass: independent regressions 6, current/Signal/Action group 29,
+Focused groups pass: independent regressions 7, current/Signal/Action group 29,
 explicit Action inverse 14, source/field-map group 26, shared/specialized lifecycle
 14. These groups overlap and are not a distinct or full-suite total. Field-map
 checks retain 287 Task rows, 632 Run rows, 43 adoption rows and the historical
@@ -86,6 +86,19 @@ creates the database, then repeats in a second fresh process to verify real
 cold-open behavior without the same-path cache. It passes with zero old-builder
 calls. Business source/owner checks pass 435 cases; the complete current and
 historical catalogs remain exact.
+
+Subsequent standard gates at `fd394a4bf` produced no observed failures but
+reached the same 300-second budget at 19% and 89%. Exact cut-off nodes pass alone;
+the same clone/clean environment passes the first 185 cases in 11.89 seconds.
+These attempts remain failed gates, not release approval.
+
+Repeated construction of the fixed declaration was separately measured at
+0.12–0.16 seconds per call. The assembly now caches only immutable name/SQL
+pairs for the two current ledger roles and returns a fresh dictionary to every
+caller. Repeated calls take approximately 20–120 microseconds. No real database
+catalog, marker, schema-damage check or business state is trusted from this
+cache. A regression mutates both returned dictionaries and proves that other
+callers/roles retain the exact complete declarations; SPEC/QUALITY approve.
 
 ## Publication
 

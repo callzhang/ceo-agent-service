@@ -19,7 +19,7 @@
     "all_equal": true
   },
   "tests": {
-    "independent": 6,
+    "independent": 7,
     "current_signal_action": 29,
     "explicit_action_inverse": 14,
     "source_fieldmap": 26,
@@ -127,7 +127,7 @@
     }
   },
   "deployment": {
-    "state": "first target refused before production changes; fixture correction in progress",
+    "state": "standard gate pending after declaration assembly optimization",
     "first_target": "0f52e72fe2c895e0ac59033e32b222b36050479b",
     "first_gate": {
       "result": "fixed300s limit at84%;129 observed failures",
@@ -138,7 +138,21 @@
       },
       "limits_changed": false,
       "existing_gate_files_removed": false
-    }
+    },
+    "subsequent_attempts": [
+      {
+        "target": "fd394a4bff0832e93084525760a897428cfb1f99",
+        "gate": "fixed300s timeout",
+        "progress_percent": 19,
+        "observed_failures": 0
+      },
+      {
+        "target": "fd394a4bff0832e93084525760a897428cfb1f99",
+        "gate": "fixed300s timeout",
+        "progress_percent": 89,
+        "observed_failures": 0
+      }
+    ]
   },
   "cleanup": {
     "state": "pending until production readback"
@@ -233,5 +247,18 @@
         "unavailable": 0
       }
     }
+  },
+  "declaration_cache": {
+    "scope": "immutable fixed declarations only; no actual DB validation cache",
+    "cold_seconds_per_call": [
+      0.12,
+      0.16
+    ],
+    "warm_seconds_per_call": [
+      2e-05,
+      0.00012
+    ],
+    "role_and_caller_mutation_isolation": "pass",
+    "reviews": "SPEC/QUALITY pass"
   }
 }
