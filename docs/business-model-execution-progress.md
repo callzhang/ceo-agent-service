@@ -7,8 +7,13 @@ callerless Store queries, test-only Run readers, old Project text rendering and
 constant scoring, viewed/schema entrypoints and the Reviewed plan writer leave
 current business code. Current History/native readers and Email-only plan writes
 retain their existing contracts. The476-object declaration is unchanged against
-the rebound Store26.1／Email54 baseline. Standard deployment/readback and owned
-artifact cleanup are pending; see [scoped acceptance](unused-business-path-retirement.md).
+the rebound Store26.1／Email54 baseline. Source is pushed in cc90d2e16 (includes
+implementation6e7572e3e). Its standard gate passed, but the30-minute quiet wait
+refused to switch while real Reply Task417568 remained in flight. Production is
+still013af535e/PID33729, schema/facts unchanged. Three owned temporary directories
+were deleted; no new deployment backup was created. Deployment and post-deploy
+UI/API acceptance remain blocked on real work finishing, rather than on code or
+review. See [scoped acceptance](unused-business-path-retirement.md).
 
 Unmarked-test follow-up is test/documentation only: current Consumer session
 fixtures and exact route-contract assertions, two current copy-lifecycle owner

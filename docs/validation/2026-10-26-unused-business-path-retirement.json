@@ -43,6 +43,9 @@
     "WriterArguments": [
       "origin",
       "plan_step_conflict"
+    ],
+    "exclusive_helpers": [
+      "Store._normalize_dingtalk_todo_link_status"
     ]
   },
   "new_internal_writer": "persist_email_plan(db, values, *, ignore=False)",
@@ -159,6 +162,22 @@
       "passed": 4,
       "seconds": 4.43,
       "note": "Empty physical-reference scaffolding removed; same three SQL columns and parameters"
+    },
+    {
+      "unit": "Post-merge orchestration and session cases",
+      "passed": 18,
+      "seconds": 24.95
+    },
+    {
+      "unit": "Post-merge uncertain delivery follow-up",
+      "passed": 1,
+      "seconds": 3.2
+    },
+    {
+      "unit": "Gate timeout ending-node isolation",
+      "passed": 1,
+      "seconds": 0.79,
+      "call_seconds": 0.65
     }
   ],
   "review": {
@@ -183,12 +202,74 @@
   "external_test_sends": 0,
   "production_test_tasks": 0,
   "schema_migration": false,
-  "publication": "pending standard exact-target deployment and readback",
-  "cleanup": "pending acceptance; explicit task-owned temp root only",
+  "publication": {
+    "own_attempt": {
+      "target": "7cf710d188f1d9105207224adc152c9ef8b38c21",
+      "gate": "fixed 300s process time limit at about95%; no assertion failure logged",
+      "ending_node": "tests/test_agent_metadata_lock_boundary.py::test_agent_metadata_hydration_releases_writer_and_preserves_snapshot[expire]",
+      "production_mutation": false
+    },
+    "coordination": "Do not start another parallel gate; scheduled-notification task already gates descendant cc90d2e16 containing this change",
+    "state": "blocked by unchanged standard quiet-window prerequisite; not deployed",
+    "shared_attempt": {
+      "target": "cc90d2e164e96939802a82484b525ed94dcf1041",
+      "publisher_thread": "01a179e6-f24d-71b3-95e0-fedace600411",
+      "gate": "passed on serial retry",
+      "quiet_window": "30 minute timeout; 3 in-flight owner records remained",
+      "production_mutation": false,
+      "new_database_backup": false
+    },
+    "blocking_business_task": {
+      "task_id": 417568,
+      "consumer_run_id": 399751,
+      "status": "running",
+      "started_at": "2026-10-26 22:56:26 UTC",
+      "last_observed_heartbeat": "2026-10-26 23:57:47",
+      "interrupted_for_deploy": false
+    },
+    "next_required_step": "After real in-flight work finishes, rerun the unmodified exact-target standard deploy, then perform post-deploy UI and API readbacks. Do not bypass gate or quiet wait."
+  },
+  "cleanup": {
+    "task_owned_targets": [
+      {
+        "path": "/private/tmp/ceo-retire-business-paths.M3K2vo",
+        "regular_files": 3087,
+        "logical_bytes": 153521161,
+        "symlinks_not_followed": 26,
+        "open_files_check": "lsof +D found none",
+        "state": "deleted; exact path absence verified"
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.oi62hrhz",
+        "regular_files": 4200,
+        "logical_bytes": 202553658,
+        "symlinks_not_followed": 0,
+        "open_files_check": "lsof +D found none",
+        "state": "deleted; exact path absence verified"
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-4545",
+        "regular_files": 57,
+        "logical_bytes": 3834693,
+        "symlinks_not_followed": 3260,
+        "open_files_check": "lsof +D found none",
+        "state": "deleted; exact path absence verified"
+      }
+    ],
+    "new_deployment_backups_created": 0,
+    "production_database_and_native_trajectories": "preserved",
+    "peer_artifacts_and_previous_workflow_backup": "out of own scope; preserved",
+    "verified_at": "2026-10-27T00:00:21.472430+00:00",
+    "logical_bytes_removed": 359909512,
+    "not_a_database_size_claim": true
+  },
   "limitations": [
     "No full local suite; fixed 2GB and 5minute limits retained",
     "Focused run counts overlap; no combined full-suite-green claim",
-    "First production probe overlapped scheduled-notification deployment; ready baseline rebound after that deployment to 013af535 / Store26.1 / Email54"
+    "First production probe overlapped scheduled-notification deployment; ready baseline rebound after that deployment to 013af535 / Store26.1 / Email54",
+    "Published source is not installed runtime: current production stays 013af535ee36f9f951e69293c3689d9b73f2be1d/PID33729",
+    "Post-deploy UI verification has not run because deployment did not switch production",
+    "At 23:59 UTC healthz is ok but system_health has 2 findings, including the already-running Reply exceeding recovery lease; source cleanup is not live"
   ],
   "source_fixture_equivalence": {
     "catalog_entries": 362,
@@ -212,5 +293,89 @@
       "tests/wechat/test_backend.py:256 E401"
     ],
     "unrelated_findings_modified": false
+  },
+  "implementation_commit": "6e7572e3e",
+  "main_release_candidate": "cc90d2e164e96939802a82484b525ed94dcf1041",
+  "retirement_totals": {
+    "function_or_method_definitions": 26,
+    "dto_fields": 2,
+    "app_lines_added": 22,
+    "app_lines_deleted": 521,
+    "app_net_lines_removed": 499
+  },
+  "production_after_aborted_publication": {
+    "captured_at": "2026-10-26T23:59:04.721430+00:00",
+    "production_commit": "013af535ee36f9f951e69293c3689d9b73f2be1d",
+    "schema_objects": 476,
+    "schema_exact": true,
+    "foreign_key_findings": [],
+    "historical_facts": {
+      "work_project": {
+        "count": 975,
+        "sha256": "c7284fd7f955e379ee27cddb23b0b8b95bd9b3bdd94a7b6064c03fc599a6e59f"
+      },
+      "work_todo": {
+        "count": 3327,
+        "sha256": "44172ca1c1d52779311581a97e9fe9100003c5d1cef8b7c825434fe3e0fcfa96"
+      },
+      "work_updates": {
+        "count": 5468,
+        "sha256": "b2727453924e75489f532b71845646daa544f1847c96bb4e3d3fffc0b7649a55"
+      },
+      "work_todo_dingtalk_links": {
+        "count": 875,
+        "sha256": "e5d3c7474dc2a0f4ca2514c29846750a846b44519f8b5909e596cb2f909d3143"
+      },
+      "follow_up_drafts": {
+        "count": 2477,
+        "sha256": "707480637cbe780fe075770b3c7ef79cdc7f188494b4c54655b904e99859980b"
+      }
+    },
+    "historical_facts_exact": true,
+    "readback": {
+      "/healthz": {
+        "http": 200
+      },
+      "service": {
+        "label": "com.ceo-agent-service.main",
+        "target": "gui/501/com.ceo-agent-service.main",
+        "ok": true,
+        "state": "running",
+        "detail": "running",
+        "pid": "33729",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0
+      },
+      "summary": {
+        "queue_count": 11,
+        "pending": 6,
+        "processing": 2,
+        "failed": 24,
+        "retryable": 0,
+        "attention": 0
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "reply task exceeded the worker recovery lease Native delivery results readable: 411; unavailable: 0.",
+        "checked_at": "2026-10-26T23:58:12.780235+00:00",
+        "violations": 2,
+        "components": [],
+        "native_delivery_coverage": {
+          "checked": 411,
+          "unavailable": 0
+        }
+      },
+      "/api/console/status": {
+        "http": 200
+      },
+      "/api/console/attention": {
+        "http": 200
+      },
+      "/api/console/history?page=1&page_size=5": {
+        "http": 200
+      }
+    }
   }
 }
