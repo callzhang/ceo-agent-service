@@ -3,8 +3,9 @@
 ## Authoritative completion — 2026-10-26
 
 Current-declaration batch2 implementation, SPEC/QUALITY and root21case integration
-are complete; standard exact-target deployment and production/cleanup readback
-remain pending.
+are complete. The exact-target gate for3212e477d has passed; standard deployment
+is waiting for5in-flight items, production still1e6db7a87. Production/cleanup
+readback remain pending; no interruption without scoped authorization.
 Current 475/476 catalogs and ordered layouts are exact against the pre-edit
 baseline; live Email writers also use fixed layouts. There is no DDL or data
 migration. Three baseline-reproduced historical artifact tests remain separately

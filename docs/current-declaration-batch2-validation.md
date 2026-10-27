@@ -102,14 +102,23 @@ callers/roles retain the exact complete declarations; SPEC/QUALITY approve.
 
 ## Publication
 
-Implementation, SPEC and QUALITY verification are complete. Root integration
-passes 21 cases in 2.95 seconds; Ruff checks all changed Python files and the
-diff check passes. The mandatory exact-target deployment gate, production
-readback and cleanup must finish before
-this checkpoint can be called deployed. The pre-change production snapshot has
-476 exact objects, no FK findings and unchanged eight retained historical fact
-groups. Pre-existing failed tasks and Email Attention are recorded separately;
-this batch does not replay them.
+Implementation, SPEC, QUALITY and final reviews are complete. Root integration
+passes 21 cases, cold-process verification passes 6, and the final independent
+file passes 7 cases. The 22 owned Python files and the merged WeChat fixture pass
+Ruff; the diff check passes. The mainline test-only fixture optimization
+`11bf99107` is normally merged; its 12 affected cases pass.
+
+The standard exact-target gate for `3212e477d` passed without removing existing
+test files or raising the 2 GiB / 300-second limit. Its successful clone was
+automatically removed. The deployment is still waiting for the normal quiet
+window: the observed in-flight count is 5, and production remains `1e6db7a87`.
+This is **not yet a deployed batch2 release**. A scoped request to allow
+interruption for this release is pending; the previous release's one-time
+permission has not been reused. Production readback and final verified-backup /
+remaining task-temp cleanup remain pending. Three completed failed gate clones
+have been checked for open files and removed; concise failure evidence is kept
+until closeout. The pre-change production snapshot has 476 exact objects, no FK
+findings and unchanged eight retained historical fact groups.
 
 See the [machine-readable evidence](validation/2026-10-26-current-declarations-batch2.json)
 for the final publication and cleanup state.

@@ -127,7 +127,7 @@
     }
   },
   "deployment": {
-    "state": "standard gate pending after declaration assembly optimization",
+    "state": "exact-target gate passed; standard deployment waiting for quiet; production unchanged",
     "first_target": "0f52e72fe2c895e0ac59033e32b222b36050479b",
     "first_gate": {
       "result": "fixed300s limit at84%;129 observed failures",
@@ -152,10 +152,43 @@
         "progress_percent": 89,
         "observed_failures": 0
       }
-    ]
+    ],
+    "verified_target": "3212e477debe00ff82139cd666a10055a3b1b3f3",
+    "gate_passed": true,
+    "quiet_wait": {
+      "pid": 35175,
+      "in_flight_at_check": 5,
+      "production_at_check": "1e6db7a871e02a1dc8c6de1b501957e265b6dc09",
+      "skip_wait_permission": "requested for this release; no approval yet"
+    },
+    "peer_test_merge": {
+      "commit": "11bf99107a29a687ae5c6451656ab6c9df003f73",
+      "scope": "test-only identical exhausted WeChat fixture copied per case",
+      "affected_passed": 12
+    }
   },
   "cleanup": {
-    "state": "pending until production readback"
+    "state": "pending until production readback",
+    "failed_gate_roots": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.pnqrfpqv",
+        "files": 4208,
+        "bytes": 204879265,
+        "absent": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.7fj9nip6",
+        "files": 4184,
+        "bytes": 204434698,
+        "absent": true
+      },
+      {
+        "path": "/private/tmp/ceo-current-schema.p605TK/gate-tmp/deploy-test-gate.1ul_o2xq",
+        "files": 4212,
+        "bytes": 205058873,
+        "absent": true
+      }
+    ]
   },
   "lint": {
     "changed_python_files": 22,
