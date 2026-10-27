@@ -820,12 +820,11 @@ class FakeMeetingRunner:
         self.compact_prompts.append(compact_prompt)
         return self.decision
 
-    def audit(self, *, prompt: str, run_id: int, candidate_sha256: str):
+    def audit(self, *, prompt: str, run_id: int):
         self.audit_prompt = prompt
         self.audit_run_id = run_id
         return MeetingAlignmentAuditResult(
             outcome="approve",
-            candidate_sha256=candidate_sha256,
             summary="exact candidate and recipient supported by the supplied evidence",
             feedback=None,
         )
@@ -913,7 +912,6 @@ def audited_decision_json(decision: MeetingAlignmentDecision) -> str:
         decision,
         MeetingAlignmentAuditResult(
             outcome="approve",
-            candidate_sha256=meeting_alignment_decision_digest(decision),
             summary="exact candidate approved for this test fixture",
             feedback=None,
         ),
@@ -1571,11 +1569,10 @@ def test_meeting_audit_return_blocks_delivery_and_persists_exact_candidate(tmp_p
     job_id = seed_consumer_job(store, dws)
 
     class ReturningAuditRunner(FakeMeetingRunner):
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             self.audit_prompt = prompt
             return MeetingAlignmentAuditResult(
                 outcome="return",
-                candidate_sha256=candidate_sha256,
                 summary="recipient disclosure evidence is insufficient",
                 feedback=MeetingAlignmentAuditFeedback(
                     rule="recipient evidence must establish disclosure permission",
@@ -1607,7 +1604,7 @@ def test_meeting_audit_dependency_outage_uses_existing_meeting_retry(tmp_path):
     job_id = seed_consumer_job(store, dws)
 
     class UnavailableAuditRunner(FakeMeetingRunner):
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             raise ExternalDependencyError(
                 "meeting audit", RuntimeError("provider temporarily unavailable"),
                 dependency="codex",
@@ -2776,12 +2773,11 @@ def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
             self.decisions += 1
             return first if self.decisions == 1 else revised
 
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             self.audits += 1
             if self.audits == 1:
                 return MeetingAlignmentAuditResult(
                     outcome="return",
-                    candidate_sha256=candidate_sha256,
                     summary="recipient evidence needs correction",
                     feedback=MeetingAlignmentAuditFeedback(
                         rule="recipient disclosure authorization",
@@ -2790,7 +2786,7 @@ def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
                     ),
                 )
             return MeetingAlignmentAuditResult(
-                outcome="approve", candidate_sha256=candidate_sha256,
+                outcome="approve",
                 summary="revised candidate is supported", feedback=None,
             )
 
@@ -2817,10 +2813,9 @@ def test_meeting_audit_feedback_exhaustion_escalates_after_three_revisions(tmp_p
     job_id = seed_consumer_job(store, dws)
 
     class NeverApprovedRunner(FakeMeetingRunner):
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             return MeetingAlignmentAuditResult(
                 outcome="return",
-                candidate_sha256=candidate_sha256,
                 summary="the candidate remains unsupported",
                 feedback=MeetingAlignmentAuditFeedback(
                     rule="evidence must support the exact recipient",
@@ -3173,10 +3168,10 @@ def test_failed_frozen_meeting_audit_return_stays_failed(tmp_path):
     ) is not None
 
     class ReturningAuditRunner(FakeMeetingRunner):
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             self.audit_prompt = prompt
             return MeetingAlignmentAuditResult(
-                outcome="return", candidate_sha256=candidate_sha256,
+                outcome="return",
                 summary="recipient evidence is insufficient",
                 feedback=MeetingAlignmentAuditFeedback(
                     rule="recipient evidence", observation="missing proof",
@@ -3202,7 +3197,6 @@ def test_returned_frozen_candidate_can_be_explicitly_reaudited_without_changes(t
         decision,
         MeetingAlignmentAuditResult(
             outcome="return",
-            candidate_sha256=digest,
             summary="Current-duty evidence is missing.",
             feedback=MeetingAlignmentAuditFeedback(
                 rule="Recipient evidence",
@@ -3239,10 +3233,9 @@ def test_returned_frozen_candidate_can_be_explicitly_reaudited_without_changes(t
     assert json.loads(requested.error)["kind"] == "meeting_audit_recovery_requested"
 
     class ReturningAuditRunner(FakeMeetingRunner):
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             return MeetingAlignmentAuditResult(
                 outcome="return",
-                candidate_sha256=candidate_sha256,
                 summary="The follow-up is not supported by the source.",
                 feedback=MeetingAlignmentAuditFeedback(
                     rule="Source evidence",
@@ -3271,7 +3264,6 @@ def test_rejected_frozen_candidate_cannot_be_reaudited_as_a_return(tmp_path):
         decision,
         MeetingAlignmentAuditResult(
             outcome="reject",
-            candidate_sha256=digest,
             summary="The recipient is not appropriate for this content.",
             feedback=None,
         ),

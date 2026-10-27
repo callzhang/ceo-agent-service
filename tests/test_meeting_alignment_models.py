@@ -1079,7 +1079,7 @@ def test_meeting_audit_persistence_is_bound_to_the_exact_candidate():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
     digest = meeting_alignment_decision_digest(decision)
     audit = MeetingAlignmentAuditResult(
-        outcome="approve", candidate_sha256=digest, summary="approved", feedback=None
+        outcome="approve", summary="approved", feedback=None
     )
     raw = persist_audited_meeting_decision(
         decision,
@@ -1102,3 +1102,14 @@ def test_meeting_audit_persistence_is_bound_to_the_exact_candidate():
 
     legacy = decision.model_dump_json()
     assert not meeting_decision_audit_is_approved(legacy)
+
+    assert json.loads(canonical)["_service_audit"]["candidate_sha256"] == digest
+    assert "candidate_sha256" not in json.loads(canonical)["_service_audit"]["result"]
+
+    # An approval stored before the service took over the binding carries the
+    # model-copied digest: it still reads when it matches, and not when it does not.
+    stored = json.loads(canonical)
+    stored["_service_audit"]["result"]["candidate_sha256"] = digest
+    assert meeting_decision_audit_is_approved(json.dumps(stored))
+    stored["_service_audit"]["result"]["candidate_sha256"] = "0" * 64
+    assert not meeting_decision_audit_is_approved(json.dumps(stored))

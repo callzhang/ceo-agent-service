@@ -2,10 +2,6 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "additionalProperties": false,
   "properties": {
-    "candidate_sha256": {
-      "pattern": "^[0-9a-f]{64}$",
-      "type": "string"
-    },
     "feedback": {
       "anyOf": [
         {
@@ -30,6 +26,6 @@
       "type": "string"
     }
   },
-  "required": ["outcome", "candidate_sha256", "summary", "feedback"],
+  "required": ["outcome", "summary", "feedback"],
   "type": "object"
 }

@@ -343,11 +343,35 @@ def _check_reply_tasks(
            where {reply_channels}
              and lower(status)='failed' and trim(coalesce(error, ''))=''""",
     ), severity="error", detail="reply task has no concrete terminal failure")
+    stale_cutoff = _cutoff(now, REPLY_PROCESSING_STALE_SECONDS)
     _add(violations, source="reply_tasks", code="processing_stale", count=_count(
         db,
-        f"select count(*) from ({REPLY_TASK_SQL}) where {reply_channels} and lower(status)='processing' and datetime(updated_at) < datetime(?)",
-        (_cutoff(now, REPLY_PROCESSING_STALE_SECONDS),),
-    ), severity="error", detail="reply task exceeded the worker recovery lease")
+        f"""select count(*) from ({REPLY_TASK_SQL}) as reply_tasks
+            where {reply_channels}
+              and lower(status)='processing'
+              and datetime(updated_at) < datetime(?)
+              and not exists (
+                  select 1 from runs current_run
+                  where current_run.task_id=reply_tasks.id
+                    and current_run.execution_generation=reply_tasks.execution_generation
+                    and current_run.role in ('consumer','audit')
+                    and lower(current_run.status) in ('pending','running')
+                    and not exists (
+                        select 1 from run_provenance provenance
+                        where provenance.run_id=current_run.id
+                    )
+                    and (
+                        datetime(current_run.updated_at) >= datetime(?)
+                        or exists (
+                            select 1 from runtime_attempts active_attempt
+                            where active_attempt.parent_id=current_run.id
+                              and lower(active_attempt.status) in ('starting','running')
+                              and datetime(active_attempt.updated_at) >= datetime(?)
+                        )
+                    )
+              )""",
+        (stale_cutoff, stale_cutoff, stale_cutoff),
+    ), severity="error", detail="reply task and its current agent execution exceeded the worker recovery lease")
     pending_overdue = _count(
         db,
         f"""select count(*) from ({REPLY_TASK_SQL})

@@ -183,11 +183,8 @@ def test_meeting_runner_routes_compact_prompt_only_to_codex():
 
 
 def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
-    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
-    digest = meeting_alignment_decision_digest(decision)
     audit_result = json.dumps({
         "outcome": "approve",
-        "candidate_sha256": digest,
         "summary": "candidate is supported",
         "feedback": None,
     })
@@ -205,10 +202,10 @@ def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
     )))
     runner = MeetingAlignmentCodexRunner(routed_execution=routed)
 
-    result = runner.audit(prompt="Review exact candidate", run_id=9, candidate_sha256=digest)
+    result = runner.audit(prompt="Review exact candidate", run_id=9)
 
     assert result == MeetingAlignmentAuditResult(
-        outcome="approve", candidate_sha256=digest,
+        outcome="approve",
         summary="candidate is supported", feedback=None,
     )
     call = routed.calls[0]
@@ -222,41 +219,31 @@ def test_meeting_audit_uses_separate_read_only_bound_runtime_call():
     assert "independent, read-only Audit role" in call["command_factory"].developer_instructions
 
 
-def _audit_result_json(digest: str) -> str:
+def _audit_result_json() -> str:
     return json.dumps({
         "outcome": "approve",
-        "candidate_sha256": digest,
         "summary": "candidate is supported",
         "feedback": None,
     })
 
 
-def test_audit_parser_marks_digest_mismatch_and_schema_failure_as_validation_failures():
+def test_audit_parser_marks_schema_failure_as_validation_failure():
     """A typed failure is what lets the router run its one correction turn."""
     from app.agent_runtime_router import RoutedResultValidationError
     from app.meeting_alignment_agent import _encode_meeting_alignment_audit_result
 
-    digest = "a" * 64
-    one_char_off = "a" * 63 + "b"
-
-    with pytest.raises(RoutedResultValidationError) as raised:
-        _encode_meeting_alignment_audit_result(
-            _audit_result_json(one_char_off), expected_candidate_sha256=digest,
-        )
-    assert "candidate digest does not match input" in str(raised.value)
-    assert one_char_off not in str(raised.value)
-
-    for raw in ("not json", json.dumps({"outcome": "approve"})):
+    stale_digest_field = json.dumps({**json.loads(_audit_result_json()), "candidate_sha256": "a" * 64})
+    for raw in ("not json", json.dumps({"outcome": "approve"}), stale_digest_field):
         with pytest.raises(RoutedResultValidationError) as raised:
-            _encode_meeting_alignment_audit_result(raw, expected_candidate_sha256=digest)
+            _encode_meeting_alignment_audit_result(raw)
         assert raised.value.raw_output == raw
 
-    assert json.loads(_encode_meeting_alignment_audit_result(
-        _audit_result_json(digest), expected_candidate_sha256=digest,
-    ))["candidate_sha256"] == digest
+    assert json.loads(_encode_meeting_alignment_audit_result(_audit_result_json())) == {
+        "outcome": "approve", "summary": "candidate is supported", "feedback": None,
+    }
 
 
-def _run_audit_with_replies(tmp_path, replies, digest):
+def _run_audit_with_replies(tmp_path, replies):
     """Drive MeetingAlignmentCodexRunner.audit through the real router; return (result|error, attempts)."""
     from app.agent_runtime_config import load_runtime_config
     from app.agent_runtime_contracts import RuntimeCapabilitySnapshot
@@ -319,7 +306,7 @@ def _run_audit_with_replies(tmp_path, replies, digest):
         )
     )
     try:
-        outcome = runner.audit(prompt="Review exact candidate", run_id=run_id, candidate_sha256=digest)
+        outcome = runner.audit(prompt="Review exact candidate", run_id=run_id)
     except RoutedCodexExecutionError as exc:
         outcome = exc
     attempts = store.list_runtime_operation_attempts("meeting_audit", str(run_id))
@@ -337,28 +324,39 @@ def agent_message_jsonl_text(text: str) -> str:
     })
 
 
-def test_audit_digest_mismatch_gets_one_correction_turn_that_can_pass(tmp_path):
-    digest = "a" * 64
+def test_audit_schema_failure_gets_one_correction_turn_that_can_pass(tmp_path):
     outcome, attempts, prompts = _run_audit_with_replies(
-        tmp_path, [_audit_result_json("a" * 63 + "b"), _audit_result_json(digest)], digest,
+        tmp_path, [json.dumps({"outcome": "approve"}), _audit_result_json()],
     )
 
-    assert outcome.candidate_sha256 == digest
-    assert "preserve the exact candidate_sha256" in prompts[1]
+    assert outcome.outcome == "approve"
+    assert "candidate_sha256" not in prompts[1]
     assert [a.attempt_purpose for a in attempts] == ["normal", "result_validation_correction"]
     assert [a.status for a in attempts] == ["superseded", "completed"]
     assert attempts[0].failure_code == "runtime_result_validation_failed"
 
 
-def test_audit_second_digest_mismatch_still_fails_terminally(tmp_path):
-    digest = "a" * 64
-    wrong = _audit_result_json("a" * 63 + "b")
-    outcome, attempts, prompts = _run_audit_with_replies(tmp_path, [wrong, wrong], digest)
+def test_audit_second_schema_failure_still_fails_terminally(tmp_path):
+    wrong = json.dumps({"outcome": "approve"})
+    outcome, attempts, prompts = _run_audit_with_replies(tmp_path, [wrong, wrong])
 
     assert getattr(outcome, "failure_code", None) == "runtime_result_validation_failed"
     assert len(prompts) == 2
     assert [a.attempt_purpose for a in attempts] == ["normal", "result_validation_correction"]
     assert attempts[-1].status == "failed"
+
+
+def test_audit_prompt_carries_no_digest_for_the_model_to_copy():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
+
+    MeetingAlignmentAgent(MeetingAlignmentCodexRunner(routed_execution=routed)).audit(
+        source(), decision, run_id=9,
+    )
+
+    prompt = routed.calls[0]["prompt"]
+    assert "candidate_sha256" not in prompt
+    assert meeting_alignment_decision_digest(decision) not in prompt
 
 
 def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evidence():
@@ -373,11 +371,10 @@ def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evid
     class AuditCodex:
         prompt = ""
 
-        def audit(self, *, prompt, run_id, candidate_sha256):
+        def audit(self, *, prompt, run_id):
             self.prompt = prompt
             return MeetingAlignmentAuditResult(
                 outcome="approve",
-                candidate_sha256=candidate_sha256,
                 summary="The assigned recipient may receive the limited follow-up.",
                 feedback=None,
             )
@@ -686,11 +683,7 @@ def test_prompt_always_splits_personnel_sensitive_content_from_business_group():
 
 def test_meeting_audit_prompt_overrides_shared_sensitive_group_rule():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
-    digest = meeting_alignment_decision_digest(decision)
-    routed = FakeRoutedMeetingExecution(json.dumps({
-        "outcome": "approve", "candidate_sha256": digest,
-        "summary": "candidate is supported", "feedback": None,
-    }))
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
     runner = MeetingAlignmentCodexRunner(routed_execution=routed)
 
     MeetingAlignmentAgent(runner).audit(source(), decision, run_id=9)

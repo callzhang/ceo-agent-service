@@ -677,6 +677,16 @@ The manual-feedback rerun check reads reopened-round evidence from the native
 `feedback_processing_rounds` owner; reopened feedback
 continues to count as unattended under the existing quality rule.
 
+For a processing Reply, `processing_stale` requires a stale Task timestamp and
+no recent progress in an active Consumer/Audit Run of that Task's current
+execution generation or one of its active RuntimeAttempts. Appending a native
+transcript event updates the Run timestamp, so an advancing transcript prevents
+a false stale alert even if the Task row itself has not changed. A missing or
+stale active execution record does not suppress the alert; progress from an
+older generation or a terminal Run also does not suppress it. The quality
+check remains read-only: it does not refresh a lease or rewrite a Task/Run
+status.
+
 RuntimeAttempt parent-existence checks resolve against the native `runs` owner, including provenance-backed professional Runs, and still require a matching Run ID. The completed-attempt final-Run check applies to `workload_kind=agent_run`, matching the source invariant that applied to non-NULL `agent_run_id`; it retains the `completed`, `failed`, or `unknown` parent-status set. Other workloads can point to Runs whose status describes a professional phase such as `ready_to_send`, rather than Agent execution completion. The Reply/Audit-only projection is not the owner for these cross-family parent relationships.
 
 Reply Attempt fields are VIRTUAL generated columns over `actions.payload_json`.
@@ -3902,7 +3912,7 @@ Meeting planner 的 `audit_summary` 不是审核回执。分析成功后，服�
 
 Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meeting Run 的十进制 ID；独立 Audit 使用 `workload_kind='meeting_audit'` 和同一准确 Run 的十进制 ID。两者在 native `runtime_attempts.parent_id` 上都指向经 `meeting_alignment_runs` provenance 核实的那个 Run；Task ID 或无关 Run 不能代替该 owner。显式 source/native 转换分别保留新 source 的 `meeting_audit` 数字键，同时继续仅在转换器中处理历史 source `meeting` 键加 `:audit` 的记录。失败、启动恢复和回放检查同时覆盖两种 workload。
 
-独立 Meeting Audit 的结果解析器对 `MeetingAlignmentAuditResult` 的结构错误和 `candidate_sha256` 与提交候选不一致都抛 `RoutedResultValidationError`，因此路由器对同一 Audit 会话执行唯一一次修正轮（`attempt_purpose=result_validation_correction`，提示要求保留精确 digest）。digest 比较本身不放宽；修正轮仍不一致或结构仍错，则该次尝试终止为 `runtime_result_validation_failed`，Meeting Task 失败。此前解析器抛普通 `ValueError`，一次模型抄错 digest 就直接记为 `runtime_result_invalid` 而不走修正轮（Task 417472，2026-10-26）。
+独立 Meeting Audit 的结果（`MeetingAlignmentAuditResult`）不含 digest：模型只返回 outcome、summary、feedback，Audit 提示词里也不放 digest，没有让模型抄写的字段。Audit 与候选的绑定由服务计算：`persist_audited_meeting_decision` 用被审核候选的 SHA-256 写入 `_service_audit.candidate_sha256`，读取时（`meeting_decision_audit_is_approved`、audit-only 恢复）重新计算并要求相等且结果为 `approve`；候选被改动则绑定失效。绑定保证不变，只是不再依赖模型转录。解析器对结构错误抛 `RoutedResultValidationError`，路由器对同一 Audit 会话执行唯一一次修正轮（`attempt_purpose=result_validation_correction`）；仍错则该次尝试终止为 `runtime_result_validation_failed`，Meeting Task 失败。此前模型抄错一个字符的 digest 就使 Task 417472 失败（2026-10-26），该字段现已移除。已存储的旧 Audit 结果若仍带模型抄写的 `candidate_sha256`，读取时必须等于候选 digest，否则按未批准处理。
 
 Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `needs_human`（`meeting_audit_unapproved`，未发送任何消息）。History 对它与 `failed`/`quarantined` 一样给出 `needs_manager` 注意项（人工处理、技术详情），不再显示为没有待办。`needs_human` 的 Meeting 仍不属于 `rerun_meeting_alignment_jobs` 的可重跑状态（仅 `failed`/`no_action`）；是否放开由 Derek 决定。
 
