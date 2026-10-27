@@ -583,3 +583,61 @@ def test_audit_command_is_unchanged_by_the_consumer_tool_surface(
     for feature in ("apps", "plugins", "remote_plugin", "multi_agent", "computer_use"):
         assert f"features.{feature}=false" in audit
     assert 'mcp_servers.memory_connector.enabled_tools=["user_get", "memory_recall", "memory_get", "timeline_get"]' in audit
+
+
+def test_wechat_voice_turns_hand_tool_results_over_inside_code_mode(tmp_path, monkeypatch) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    ordinary_audit, voice_audit = _codex_command(), _codex_command()
+    make_audit_agent_command(ordinary_audit)
+    make_audit_agent_command(voice_audit, code_mode_handoff=True)
+    oa_audit = _codex_command()
+    make_audit_agent_command(oa_audit, purpose_name="oa")
+
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in ordinary_audit
+    handoff_options = {
+        option for option in voice_audit if option.startswith("features.code_mode.")
+    }
+    assert handoff_options == {
+        option for option in oa_audit if option.startswith("features.code_mode.")
+    }
+    assert 'mcp_servers.ai_services.enabled_tools=["ocr_document", "transcribe_audio"]' in voice_audit
+
+    ordinary_consumer, voice_consumer = _codex_command(), _codex_command()
+    make_consumer_agent_command(ordinary_consumer, task_workspace=str(tmp_path))
+    make_consumer_agent_command(voice_consumer, task_workspace=str(tmp_path), code_mode_handoff=True)
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in ordinary_consumer
+    assert "features.code_mode.direct_only_tool_namespaces=[]" in voice_consumer
+
+
+def test_wechat_voice_instructions_chain_the_two_tools_in_one_cell() -> None:
+    consumer = " ".join(
+        " ".join(section.text.split())
+        for section in consumer_developer_sections(code_mode_handoff=True)
+    ).replace("`", "").lower()
+    audit = " ".join(
+        " ".join(section.text.split())
+        for section in audit_developer_sections("rules", code_mode_handoff=True)
+    ).replace("`", "").lower()
+    for text in (consumer, audit):
+        assert "mcp__agent_cli__read_wechat_voice" in text
+        assert "mcp__ai_services__transcribe_audio" in text
+        assert "same js cell" in text
+        assert "never print or retype the base64" in text
+    plain = " ".join(
+        section.text for section in consumer_developer_sections()
+    ).lower()
+    assert "read_wechat_voice" not in plain
+
+
+def test_wechat_voice_session_contract_differs_from_the_plain_contract() -> None:
+    from app.consumer_agent import consumer_task_session_contract_hash
+
+    plain = consumer_task_session_contract_hash("selected-skills:x", purpose_name="general")
+    voice = consumer_task_session_contract_hash(
+        "selected-skills:x", purpose_name="general", code_mode_handoff=True,
+    )
+    assert plain == "selected-skills:x"
+    assert voice != plain and "wechat-voice-handoff" in voice

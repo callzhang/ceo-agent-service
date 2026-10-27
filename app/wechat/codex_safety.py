@@ -257,6 +257,7 @@ def make_role_agent_command(
     *,
     role: str,
     purpose_name: str = "general",
+    code_mode_handoff: bool = False,
     task_workspace: str | None = None,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
@@ -268,7 +269,10 @@ def make_role_agent_command(
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     configured_names = set(configured_transport_server_names(command))
-    oa_audit_ocr = role == "audit" and purpose_name == "oa"
+    # OA turns and WeChat voice turns hand tool results to another tool inside
+    # one CodeMode call, so the bytes never pass through the model.
+    handoff = purpose_name == "oa" or code_mode_handoff
+    oa_audit_ocr = role == "audit" and handoff
     _remove_config_options(
         command,
         prefixes=(
@@ -307,7 +311,7 @@ def make_role_agent_command(
         "-c", "features.code_mode.direct_only_tool_namespaces="
         + json.dumps(
             [f"mcp__{name}" for name in sorted(configured_names - {"agent_cli", "ai_services"})]
-            if oa_audit_ocr else [] if role == "consumer" and purpose_name == "oa"
+            if oa_audit_ocr else [] if role == "consumer" and handoff
             else ["mcp__agent_cli", "mcp__ai_services"]
         ),
         "-c",
@@ -416,9 +420,11 @@ def make_consumer_agent_command(
     *,
     task_workspace: str,
     purpose_name: str = "general",
+    code_mode_handoff: bool = False,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     make_role_agent_command(command, role="consumer", purpose_name=purpose_name,
+                            code_mode_handoff=code_mode_handoff,
                             task_workspace=task_workspace,
                             controlled_cli=controlled_cli)
 
@@ -427,12 +433,14 @@ def make_audit_agent_command(
     command: list[str],
     *,
     purpose_name: str = "general",
+    code_mode_handoff: bool = False,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     make_role_agent_command(
         command,
         role="audit",
         purpose_name=purpose_name,
+        code_mode_handoff=code_mode_handoff,
         controlled_cli=controlled_cli,
     )
 

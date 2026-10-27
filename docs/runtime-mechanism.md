@@ -2213,7 +2213,7 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
 WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
 执行期间 current 指针更新不会改写已领取的会话范围。
-微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，Agent 调原生 `ai_services.transcribe_audio` 转写；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
+微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，微信任务的 Codex 回合与 OA 一样在同一个 CodeMode 调用里把它交给 `mcp__ai_services__transcribe_audio`，base64 不经模型；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
