@@ -67,6 +67,59 @@
       "expect_any": [
         "append_task"
       ]
+    },
+    {
+      "id": "half_day_comp_leave_no_balance_conflict",
+      "trigger": "Review the half-day leave at the current authorized node.",
+      "facts": "Process P-C1, authorized task T-C1 RUNNING. Employee A asks for 0.5 day compensatory leave this morning after insomnia, returning in the afternoon. Form says manager aware. Handover colleague and HRBP AGREEd. No balance or eligibility rule is supplied or referenced by the applicable Skill, and no current evidence shows insufficient balance or disputed eligibility. A prior comment asked for the compensatory leave policy; applicant answered it is time off earned from weekend overtime.",
+      "expect_not": [
+        "comment",
+        "revert_task",
+        "needs_human"
+      ],
+      "expect_any": [
+        "approve"
+      ]
+    },
+    {
+      "id": "half_day_open_incident_covered",
+      "trigger": "Review the half-day leave at the current authorized node.",
+      "facts": "Process P-C2, authorized task T-C2 RUNNING. Employee A is a DevOps engineer asking for half-day compensatory leave this morning for a medical visit, back in the afternoon. A described an unresolved proxy/developer-tool incident, late-night troubleshooting and plans to share current status. A handed over environment maintenance, monitoring, alert response and service operations to colleague B; B is a capable same-team DevOps engineer and AGREEd in the handover node. HRBP AGREEd. A remains reachable for emergency coordination. No evidence shows B unable to cover or a duty assigned outside the agreed operational scope. No balance or eligibility conflict. The morning has not ended.",
+      "expect_not": [
+        "comment",
+        "revert_task",
+        "needs_human"
+      ],
+      "expect_any": [
+        "approve"
+      ]
+    },
+    {
+      "id": "half_day_actual_balance_conflict",
+      "trigger": "Review the half-day leave at the current authorized node.",
+      "facts": "Process P-C3, authorized task T-C3 RUNNING. Employee A asks for half-day compensatory leave, manager aware and handover agreed. Applicable current company rule requires sufficient accrued balance for compensatory leave. Authoritative HR balance readback is zero days and HR explicitly flags the requested half-day as uncovered. A valid return path to the applicant exists.",
+      "expect_not": [
+        "approve"
+      ],
+      "expect_any": [
+        "reject",
+        "return",
+        "revert_task",
+        "comment",
+        "needs_human"
+      ]
+    },
+    {
+      "id": "half_day_actual_uncovered_duty",
+      "trigger": "Review the half-day leave at the current authorized node.",
+      "facts": "Process P-C4, authorized task T-C4 RUNNING. Employee A asks for half-day leave during a scheduled production migration. Colleague B agreed to ordinary monitoring only and explicitly states in the flow that B cannot operate the migration. A is required to conduct it during the leave interval, and no other owner is assigned. No balance conflict. A valid return path to the applicant exists.",
+      "expect_not": [
+        "approve"
+      ],
+      "expect_any": [
+        "return",
+        "revert_task"
+      ]
     }
   ]
 }
