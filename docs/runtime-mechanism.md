@@ -243,7 +243,7 @@ Attempt 详情仅在当前状态要求人工决定，或该候选已有历史选
 
 > （此处与 [architecture.md](architecture.md) 同名小节内容相同，已去重。）
 
-多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，`stage_index`、`predecessor_review_id` 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。Consumer wire 仍携带这两个字段，但解析器用编排器提供的当前阶段绑定覆盖模型回传值。Audit 返回后的同阶段修订保留原阶段和原前置审核；其 immediate parent Audit 审核上一份同阶段候选，候选 lineage 仍关联前一阶段 Audit。只有前一阶段审核通过且动作回执已验证，编排器才允许下一阶段。候选存储按现有契约验证非空的前置 Audit Run ID 是否对应同一任务/代际、前一阶段、批准结论和已完成动作回执；迁移保留的历史候选 JSON 与摘要不改写，关系读取 native adopted result 外键。
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，`stage_index`、`predecessor_review_id` 绑定前一已完成阶段的回执；阶段上限独立于每阶段最多十次内容反馈周期（`MAX_CONTENT_FEEDBACK_CYCLES`）。Consumer wire 仍携带这两个字段，但解析器用编排器提供的当前阶段绑定覆盖模型回传值。Audit 返回后的同阶段修订保留原阶段和原前置审核；其 immediate parent Audit 审核上一份同阶段候选，候选 lineage 仍关联前一阶段 Audit。只有前一阶段审核通过且动作回执已验证，编排器才允许下一阶段。候选存储按现有契约验证非空的前置 Audit Run ID 是否对应同一任务/代际、前一阶段、批准结论和已完成动作回执；迁移保留的历史候选 JSON 与摘要不改写，关系读取 native adopted result 外键。
 
 Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候选。服务从当前编排上下文绑定 `stage_index` 与 `predecessor_review_id`，模型复述错误不会将候选误判为跨阶段或错误前置。返回反馈不会推进阶段；仅当前阶段审核通过且其动作有已验证的完成回执，后续阶段才会开放。候选的阶段、前置审核、代际及执行验证仍由服务严格校验。
 
@@ -439,7 +439,7 @@ Audit Task 在完整候选旁附上服务从同一候选 JSON 确定性生成的
 
 > （此处与 [architecture.md](architecture.md) 同名小节内容相同，已去重。）
 
-多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段三次内容修订预算。
+多动作按声明顺序执行，前置结果验证后才执行依赖动作。每个阶段是一份新完整候选和审核，stage_index、predecessor_review_id 绑定前一已完成阶段的回执；阶段上限独立于每阶段最多十次内容反馈周期（`MAX_CONTENT_FEEDBACK_CYCLES`）。
 
 Audit 返回或拒绝后的修订仍绑定原阶段及原有前置审核 ID；只有审核通过并且当前阶段动作的执行回执已验证完成，编排器才推进下一阶段。返回反馈不授权跨阶段，也不绕过严格的候选血缘校验。
 
