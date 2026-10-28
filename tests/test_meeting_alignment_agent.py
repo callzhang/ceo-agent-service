@@ -359,6 +359,19 @@ def test_audit_prompt_carries_no_digest_for_the_model_to_copy():
     assert meeting_alignment_decision_digest(decision) not in prompt
 
 
+def test_audit_prompt_accepts_same_project_group_and_asks_for_a_better_candidate():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
+
+    MeetingAlignmentAgent(MeetingAlignmentCodexRunner(routed_execution=routed)).audit(
+        source(), decision, run_id=9,
+    )
+
+    prompt = routed.calls[0]["prompt"]
+    assert "need not repeat this meeting's topic" in prompt
+    assert "name the better candidate from the supplied candidates" in prompt
+
+
 def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evidence():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
     meeting_source_payload = source().model_dump(mode="json")
@@ -637,8 +650,8 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     )
 
     assert "我建议全量上线以验证收入" in prompt
-    assert "每场会议均须发送一条总结" in prompt
-    assert "不得返回 no_action" in prompt
+    assert "均须发送一条总结" in prompt
+    assert "不要发一条空话" in prompt
     assert "后来明确对齐也仍然触发发布" in prompt
     assert "沉默不算对齐" in prompt
     assert "明确同意、承诺或复述一致" in prompt
@@ -798,13 +811,14 @@ def test_candidate_audience_instruction_is_shared_once_without_changing_empty_ca
     assert "Before selecting effects, verify live full relevant discussion" not in empty_prompt
 
 
-def test_prompt_requires_a_summary_even_for_candidate_interviews():
+def test_prompt_sends_by_default_and_skips_interviews_and_empty_meetings():
     prompt = build_meeting_alignment_prompt(
         source(participant_count=2), work_profile="", work_profile_source="profile"
     )
 
-    assert "每场会议都必须生成并发送一条会议总结" in prompt
-    assert "action 只能是 send" in prompt
+    assert "会议默认须生成并发送一条会议总结（action=send）" in prompt
+    assert "action=skip_interview" in prompt
+    assert "action=skip_no_content" in prompt
     assert "候选人结论" in prompt
     assert "敏感私聊" in prompt
 
@@ -1856,3 +1870,18 @@ def test_main_prompt_states_every_cross_field_rule():
     for rule in MEETING_ALIGNMENT_CROSS_FIELD_RULES:
         assert rule.message in prompt, rule.message
         assert rule.requirement in prompt, rule.message
+
+
+def test_audit_prompt_explains_how_to_review_a_decision_not_to_send():
+    decision = MeetingAlignmentDecision.model_validate({
+        **valid_send_decision(), "action": "skip_no_content", "trigger_reasons": [],
+        "topics": [], "derek_viewpoint": None, "key_questions": [], "mention_names": [],
+        "target": None, "final_message": "", "sensitive_private_message": None,
+    })
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
+
+    MeetingAlignmentAgent(MeetingAlignmentCodexRunner(routed_execution=routed)).audit(
+        source(), decision, run_id=9,
+    )
+
+    assert "候选是“不发送”的决定" in routed.calls[0]["prompt"]

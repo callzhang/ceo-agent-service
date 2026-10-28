@@ -746,6 +746,10 @@ def cross_field_rule_payloads() -> dict[str, dict]:
     without_triggers["key_questions"] = []
     payloads[models.SEND_TRIGGER_REASONS_RULE.message] = without_triggers
 
+    skip_with_message = valid_send_decision()
+    skip_with_message["action"] = "skip_no_content"
+    payloads[models.NO_SEND_EMPTY_RULE.message] = skip_with_message
+
     without_final_message = valid_send_decision()
     without_final_message["final_message"] = "  "
     payloads[models.SEND_FINAL_MESSAGE_RULE.message] = without_final_message
@@ -859,6 +863,7 @@ def cross_field_rule_satisfying_payloads() -> dict[str, dict]:
     paired_derek_viewpoint["derek_viewpoint"] = valid_derek_viewpoint()
     payloads[models.DEREK_VIEWPOINT_PAIRING_RULE.message] = paired_derek_viewpoint
 
+    payloads[models.NO_SEND_EMPTY_RULE.message] = _skip_payload("skip_interview")
     payloads[models.SEND_TRIGGER_REASONS_RULE.message] = valid_send_decision()
     payloads[models.SEND_FINAL_MESSAGE_RULE.message] = valid_send_decision()
     payloads[models.SEND_TARGET_RULE.message] = valid_send_decision()
@@ -1113,3 +1118,23 @@ def test_meeting_audit_persistence_is_bound_to_the_exact_candidate():
     assert meeting_decision_audit_is_approved(json.dumps(stored))
     stored["_service_audit"]["result"]["candidate_sha256"] = "0" * 64
     assert not meeting_decision_audit_is_approved(json.dumps(stored))
+
+
+def _skip_payload(action, **override):
+    payload = {
+        **valid_send_decision(), "action": action, "trigger_reasons": [], "topics": [],
+        "derek_viewpoint": None, "key_questions": [], "mention_names": [], "target": None,
+        "final_message": "", "sensitive_private_message": None,
+    }
+    return {**payload, **override}
+
+
+@pytest.mark.parametrize("action", ["skip_interview", "skip_no_content"])
+def test_skip_decision_carries_nothing_to_send(action):
+    assert MeetingAlignmentDecision.model_validate(_skip_payload(action)).action == action
+    with pytest.raises(ValueError):
+        MeetingAlignmentDecision.model_validate(_skip_payload(action, final_message="hello"))
+    with pytest.raises(ValueError):
+        MeetingAlignmentDecision.model_validate(
+            _skip_payload(action, target=valid_send_decision()["target"])
+        )
