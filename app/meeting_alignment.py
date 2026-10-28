@@ -1185,6 +1185,61 @@ def _search_meeting_group_candidates(
     return candidates
 
 
+def _carry_forward_same_task_group_candidate(
+    current_candidates: list[dict[str, Any]],
+    prior_runs: list[MeetingAlignmentRun],
+) -> list[dict[str, Any]]:
+    """Keep one previously read group candidate available across same-task revisions.
+
+    A content-only Audit return must not make a later Consumer forget the
+    candidate it already read. The candidate remains ordinary input: the
+    Consumer chooses again and independent Audit still decides whether delivery
+    is approved.
+    """
+    result = [dict(candidate) for candidate in current_candidates]
+    for run in prior_runs:
+        try:
+            payload = json.loads(run.decision_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("action") != "send":
+            continue
+        target = payload.get("target")
+        if not isinstance(target, dict) or target.get("kind") != "group":
+            continue
+        conversation_id = str(target.get("conversation_id") or "").strip()
+        if not conversation_id:
+            continue
+        candidates = target.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        selected = next((
+            candidate for candidate in candidates
+            if isinstance(candidate, dict)
+            and str(candidate.get("conversation_id") or "").strip() == conversation_id
+        ), None)
+        if selected is None:
+            continue
+        evidence = selected.get("evidence")
+        prior_evidence = (
+            [item for item in evidence if isinstance(item, str)]
+            if isinstance(evidence, list) else []
+        )
+        for current in result:
+            if str(current.get("conversation_id") or "").strip() == conversation_id:
+                current["prior_same_task_target"] = True
+                current["prior_same_task_evidence"] = prior_evidence
+                return result
+        result.append({
+            "conversation_id": conversation_id,
+            "title": str(selected.get("title") or target.get("title") or ""),
+            "prior_same_task_target": True,
+            "prior_same_task_evidence": prior_evidence,
+        })
+        return result
+    return result
+
+
 def _meeting_topic_terms(text: str) -> list[str]:
     from app.jieba_loader import jieba_lcut
 
@@ -1311,6 +1366,10 @@ def _analyze_meeting_job(
         )
         return
 
+    group_candidates = _carry_forward_same_task_group_candidate(
+        group_candidates,
+        store.list_meeting_alignment_runs(job.id),
+    )
     similar_sessions = _search_similar_meeting_sessions(
         store,
         source,

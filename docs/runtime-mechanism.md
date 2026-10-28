@@ -5858,6 +5858,7 @@ The gated two-turn regression uses the real Store and substituted native CLI.
 会议日历事件可在标题不同的情况下关联到听记：听记创建者姓名必须与唯一、时间重叠且边界偏差在既有容差内的已确认日历事件中的一位参会人精确匹配。候选事件仍须唯一；创建者或事件关联有歧义时不推断参会人身份。
 
 对这类既有 `needs_human` Meeting，按精确 meeting ID 走 `replay-recent-meetings` 刷新当前听记与日历来源，再进入正常 Consumer 和独立 Audit。该入口保留原 Runs，并在任务锁、活动运行、投递 claim、已准备消息或外部回执存在时拒绝重开。
+在同一 Meeting Task 的 Audit 反馈修订中，如果新候选丢失前一轮已读的群目标，下一轮 Consumer 会继续收到该群目标及其原证据，避免正文修订抹掉目标上下文。它仍只是候选；Consumer 重新选择，独立 Audit 和原投递门禁继续生效。
 
 
 ### Leave review proportionality — 2026-10-28

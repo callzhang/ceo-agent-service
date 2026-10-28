@@ -2618,6 +2618,56 @@ def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_pat
     assert member_reads == ["cid-sales-hiring"]
 
 
+def test_same_task_prior_group_candidate_survives_content_revision():
+    prior_runs = [SimpleNamespace(
+        decision_json=json.dumps({
+            "action": "send",
+            "target": {
+                "kind": "group",
+                "conversation_id": "cid-algorithm",
+                "direct_user_id": "",
+                "title": "算法交流群",
+                "candidates": [{
+                    "conversation_id": "cid-algorithm",
+                    "title": "算法交流群",
+                    "evidence": [
+                        "完整名册：12名成员。",
+                        "当日讨论了HSW方法论、建模和Benchmark。",
+                    ],
+                }],
+            },
+        }),
+    )]
+
+    candidates = meeting_alignment._carry_forward_same_task_group_candidate(
+        [], prior_runs
+    )
+
+    assert candidates == [{
+        "conversation_id": "cid-algorithm",
+        "title": "算法交流群",
+        "prior_same_task_target": True,
+        "prior_same_task_evidence": [
+            "完整名册：12名成员。",
+            "当日讨论了HSW方法论、建模和Benchmark。",
+        ],
+    }]
+
+    current = [{
+        "conversation_id": "cid-algorithm",
+        "title": "算法交流群",
+        "member_roster_complete": True,
+    }]
+    merged = meeting_alignment._carry_forward_same_task_group_candidate(
+        current, prior_runs
+    )
+    assert len(merged) == 1
+    assert merged[0]["member_roster_complete"] is True
+    assert merged[0]["prior_same_task_evidence"] == candidates[0][
+        "prior_same_task_evidence"
+    ]
+
+
 def test_live_group_member_failure_retries_before_meeting_decision(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
