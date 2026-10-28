@@ -504,6 +504,55 @@ def test_retryable_external_browser_failure_allows_only_the_same_bounded_retry(
     assert len(browser.calls) == 2
 
 
+def test_typed_retryable_marker_rebinds_to_new_task_generation_for_same_input(
+    tmp_path: Path,
+) -> None:
+    effect = _effect()
+    operation, task, email_store, browser = _operation(
+        tmp_path,
+        [
+            UnsubscribeBrowserError(
+                UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
+                "provider navigation timed out",
+            ),
+            _terminal(effect, UnsubscribePageState.DONE, "You have unsubscribed."),
+        ],
+    )
+
+    first = operation.execute(task.id)
+    assert first["error"]["retryable"] is True
+    operation.task_store.fail_reply_task(
+        task.id,
+        first["error"]["code"],
+        expected_execution_generation=task.execution_generation,
+    )
+    with sqlite3.connect(email_store.path) as db:
+        marker = json.loads(
+            db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?",
+                (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+            ).fetchone()[0]
+        )
+        assert marker["state"] == "retryable"
+        db.execute(
+            "update tasks set status='processing', execution_generation=?, "
+            "input_version=input_version+1, error='' where id=?",
+            ("generation-direct-2", task.id),
+        )
+
+    current = operation.task_store.get_reply_task(task.id)
+    assert current is not None
+    assert current.execution_generation == "generation-direct-2"
+    assert current.input_version == task.input_version + 1
+
+    second = operation.execute(task.id)
+
+    assert second["status"] == "done"
+    receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    assert receipt is not None and receipt["outcome"] == "done"
+    assert len(browser.calls) == 2
+
+
 def test_unclassified_pending_execution_marker_is_still_fenced(tmp_path: Path) -> None:
     from hashlib import sha256
 

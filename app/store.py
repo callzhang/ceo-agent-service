@@ -10540,8 +10540,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     or previous.get("error_code") not in TRANSIENT_BROWSER_ERROR_CODES
                     or previous.get("task_id") != task_id
                     or previous.get("action_identity") != action_identity
-                    or previous.get("execution_generation") != execution_generation
-                    or previous.get("input_version") != input_version
                     or previous.get("input_digest") != input_digest
                 ):
                     raise UnsubscribeOutcomeUnresolvedError(
