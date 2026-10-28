@@ -1537,8 +1537,10 @@ acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 Consumer→Audit 往返——退订在真实世界本来就是幂等的，那套 exactly-once 支架换不来任何东西，
 却让每一次点击都要花一整轮 agent，而过期的 continuation 会让任务失败在机制上而不是页面上。
 首次外部调用前会持久化执行标记。只有执行返回明确的瞬时浏览器错误码时，标记才转成带错误码和
-重试次数的 retryable 状态；任务按现有指数退避及四次预算恢复同一 ActionPlan、entry、generation
-和输入摘要。终态 receipt 仍是唯一成功／跳过凭证。进程中断、结果未知、错误未分类或重试预算耗尽时，
+重试次数的 retryable 状态；任务按现有指数退避及四次预算恢复同一 ActionPlan、entry 和输入摘要。
+正式重试可产生新的 Task generation/input version；只有任务 ID、稳定 Action identity、完整输入摘要
+相同且标记含已识别的瞬时外部错误时，才把这个 retryable 标记接续到新 generation，并保留原重试计数。
+终态 receipt 仍是唯一成功／跳过凭证。进程中断、结果未知、错误未分类或重试预算耗尽时，
 标记保持不可重试并进入核对／Attention；不能清标记或重放来推定成功。已有不可分类的执行标记会以
 `email_unsubscribe_outcome_unresolved` 记录为外部结果未确认，而非内部 `ValueError`；它仍保持失败并等待
 只读回执核对，不会自动重放。浏览器步骤本身不升级为
