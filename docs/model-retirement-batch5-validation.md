@@ -18,3 +18,16 @@ Runner文件39项、两个确实不调用Codex的Worker节点、非live smoke构
 临时产物：/private/tmp/ceo-runner-retirement.tzwA6t，待最终发布／读回后核实并清理。
 剩余Business/Email/Workbench转换半部、旧声明来源依赖与map生成器仍在继续核对，
 不宣称全仓库零兼容或数据库最优。当前生产发布由第四批独占，不能并行部署本单元。
+
+## 显式前序声明依赖
+
+Store28.2/Email54的463项精确SQL冻结为内容无关的版本目录，规范hash
+8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a。
+当前Feedback发布/inverse/静默读取只引用该直接前代，目标28.3的全部SQL逐字不变；
+普通constructor不得载入历史目录。生产仍保留必要显式当前数据inverse，不保留
+运行时旧结构兼容。复制验证器只提取原生类型／rowid／水位比较与有界复制工具，
+不再为了这些通用操作导入已关闭的旧迁移主程序。
+
+相关source/target/新写入/inverse/reforward和cold guard15项通过。静默窗口中
+一个旧用例仍拿25.2当受支持前代，改为准确28.2；保留运行Run计数及损坏声明
+只读拒绝断言，整份drain测试33项通过。没有恢复旧选择器分支。

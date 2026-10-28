@@ -12,6 +12,10 @@ Store 或已配置的 routed executor。旧 `executor` 注入、直接 subproces
 
 ## Feedback 单一事实归属 Store28.3/Email54（2026-10-28）
 
+显式Feedback发布及inverse直接读取冻结的28.2/54目录；不再通过更早的会话／索引
+迁移包拼出前序SQL。普通constructor仍只使用当前正面声明，不载入历史目录。
+本单元不改变任何schema SQL、版本或业务事实。
+
 Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前证据从准确Round
 （id+feedback_key+batch_id）读取，resolved_at从同一来源反馈Action读取；无Round解决事实
 继续可查。创建/领取/关联/patch/解决/重开不双写镜像。移除同源别名间的重复比较，保留

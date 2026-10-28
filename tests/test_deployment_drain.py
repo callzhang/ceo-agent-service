@@ -549,16 +549,17 @@ def test_quiet_excludes_only_superseded_runtime_without_live_ownership(
     assert in_flight_work(store.path) == expected
 
 
-def test_quiet_reads_current_store_252_source_and_counts_running_reply_run(tmp_path):
+def test_quiet_reads_previous_store_282_source_and_counts_running_reply_run(tmp_path):
     import sqlite3
 
     from app.repository_updater import in_flight_work
     from app.task_entity_storage import append_task_input, bind_current_input, create_task
     from app.run_entity_storage import create_run
-    from tests.test_signal_source_owner_schema_release import source
+    from tests.support.store28_session_source import create_store28_2_source
 
-    path = tmp_path / "store-252.sqlite3"
-    source(path)
+    path = tmp_path / "store-282.sqlite3"
+    with sqlite3.connect(path) as source_db:
+        create_store28_2_source(source_db)
     assert in_flight_work(path) == 0
 
     with sqlite3.connect(path) as db:
@@ -592,20 +593,21 @@ def test_quiet_reads_current_store_252_source_and_counts_running_reply_run(tmp_p
 @pytest.mark.parametrize(
     "damage", ["schema_object", "email_version_53", "empty_email_ledger"]
 )
-def test_quiet_rejects_damaged_store_252_source_without_writes(tmp_path, damage):
+def test_quiet_rejects_damaged_store_282_source_without_writes(tmp_path, damage):
     import sqlite3
 
     from app.repository_updater import in_flight_work
-    from tests.test_signal_source_owner_schema_release import source
+    from tests.support.store28_session_source import create_store28_2_source
 
-    path = tmp_path / "damaged-store-252.sqlite3"
-    source(path)
+    path = tmp_path / "damaged-store-282.sqlite3"
+    with sqlite3.connect(path) as source_db:
+        create_store28_2_source(source_db)
     with sqlite3.connect(path) as db:
         if damage == "schema_object":
-            from app.signal_source_owner_schema_release import source_objects
+            from app.feedback_owner_schema_source import feedback_source_objects
 
             _kind, name, _owner, _sql = next(
-                obj for obj in source_objects() if obj[0] == "index"
+                obj for obj in feedback_source_objects() if obj[0] == "index"
             )
             db.execute(f'drop index "{name}"')
         elif damage == "email_version_53":

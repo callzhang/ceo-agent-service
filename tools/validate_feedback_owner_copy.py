@@ -11,7 +11,7 @@ import subprocess
 import sys
 
 from app.feedback_owner_schema_release import prepare_feedback_owner_release
-from tools import validate_model_retirement_copy as native
+from tools import native_copy_validation as native
 
 
 def fact_digest(path, *, original_ceilings=None):

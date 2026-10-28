@@ -16,10 +16,10 @@ def create_store28_1_source(db):
 
 
 def create_store28_2_source(db):
-    from app.conversation_session_schema_release import session_target_objects
+    from app.feedback_owner_schema_source import feedback_source_objects
     register_task8_functions(db)
     for kind in ('table','index','trigger'):
-        for row in session_target_objects():
+        for row in feedback_source_objects():
             if row[0] == kind:
                 db.execute(row[3])
     db.execute("insert into state(record_type,legacy_key,payload_json) values('service_state','1',?)",

@@ -109,3 +109,44 @@ def test_latest_selector_and_current_constructor_contract(tmp_path):
     AutoReplyStore(path)
     with closing(sqlite3.connect(path)) as db:
         assert _version(db)=='2026-10-28.3'
+
+
+def test_frozen_source_and_target_catalogs_match_exact_published_declarations():
+    import hashlib
+    import json
+    from app.feedback_owner_schema_source import feedback_source_objects
+    from app.feedback_owner_schema_release import feedback_target_objects
+
+    source_objects = feedback_source_objects()
+    assert source_objects == session_target_objects()
+    assert len(source_objects) == len(feedback_target_objects()) == 463
+    for objects, expected in (
+        (source_objects, '8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a'),
+        (feedback_target_objects(), 'ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a'),
+    ):
+        assert hashlib.sha256(json.dumps(objects, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest() == expected
+
+
+def test_release_and_new_writes_do_not_use_previous_builder(tmp_path, monkeypatch):
+    import app.conversation_session_schema_release as old
+    from app.store import AutoReplyStore
+    from tools.validate_feedback_owner_copy import fact_digest
+
+    path = tmp_path / 'source-independent.sqlite3'
+    source(path)
+    def forbidden():
+        raise AssertionError('old builder called')
+    monkeypatch.setattr(old, 'session_target_objects', forbidden)
+    before = fact_digest(path)
+    release = prepare_feedback_owner_release(path)
+    release.publish()
+    assert fact_digest(path) == before
+    store = AutoReplyStore(path)
+    store.upsert_feedback_event(key='new-fact', feedback_token='token', comment='new', original_text='new')
+    after_write = fact_digest(path)
+    release.rollback()
+    assert fact_digest(path) == after_write
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("select count(*) from actions where record_type='feedback_events' and fb_event_key='new-fact'").fetchone() == (1,)
+    prepare_feedback_owner_release(path).publish()
+    assert fact_digest(path) == after_write

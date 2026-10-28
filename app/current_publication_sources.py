@@ -25,10 +25,10 @@ def _version(db, *, release_source_email_version=None):
     if version == TARGET_STORE_VERSION and schema_is_current(db):
         return version
     if version == PREVIOUS_STORE_VERSION:
-        from app.conversation_session_schema_release import session_target_objects
+        from app.feedback_owner_schema_source import feedback_source_objects
         email_ledger = ledger is not None
         if (email_version == TARGET_EMAIL_VERSION
-                and schema_objects(db) == tuple(row for row in session_target_objects()
+                and schema_objects(db) == tuple(row for row in feedback_source_objects()
                                                if email_ledger or row[1] != 'email_schema_migrations')):
             return version
     raise ValueError('unsupported current publication declaration; explicit source migration required')

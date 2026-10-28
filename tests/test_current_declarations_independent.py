@@ -115,11 +115,11 @@ hits = []
 original_read_bytes = Path.read_bytes
 original_read_text = Path.read_text
 def checked_read_bytes(path):
-    if path.name == "store26_1_email54_catalog.json":
+    if path.name in {"store26_1_email54_catalog.json", "store28_2_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_bytes(path)
 def checked_read_text(path, *args, **kwargs):
-    if path.name == "store26_1_email54_catalog.json":
+    if path.name in {"store26_1_email54_catalog.json", "store28_2_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_text(path, *args, **kwargs)
 Path.read_bytes = checked_read_bytes
