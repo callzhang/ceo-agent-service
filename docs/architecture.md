@@ -694,11 +694,13 @@ message keys only within that request. Evidence is in
 `docs/console-query-performance.md`.
 
 An OA process enters Attention only while the authenticated scanner still
-tracks the exact node as Derek-owned and its current reply task has had no
-update for more than one hour. A recent pending node is still visible in its
-normal queue and History views; a pending scanner key without a matched task
-timestamp is excluded because it cannot establish stalled work. This projection
-does not change the OA process, task, or provider receipt.
+tracks the exact node as Derek-owned, its current reply task is still `pending`
+or `processing`, and that task has had no update for more than one hour. A
+completed audited comment or return may leave the OA process pending while the
+applicant or another approver acts; that external wait stays in normal queue and
+History views but is not a stalled service task. A pending scanner key without
+a matched active-task timestamp is excluded because it cannot establish stalled
+work. This projection does not change the OA process, task, or provider receipt.
 
 Current Attention suppresses an older failed OA reply Attempt only after a
 newer attempt for the same process is linked to its current Audit-approved

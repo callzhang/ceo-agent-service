@@ -4423,8 +4423,12 @@ OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current
 principal's node and moved to another approver; unless the provider detail
 identifies the current node owner, the projection must not claim that the
-principal's node is still pending. Keep the process in Attention until a final
-approval or return receipt is read back.
+principal's node is still pending. Keep the process in Attention only while its
+current reply task remains `pending` or `processing` beyond the stall window.
+After an audited comment or return is completed and verified, a still-pending
+external OA process is waiting for the applicant or another approver; preserve
+that real state in the normal queue and History without treating it as stalled
+service work.
 
 ### 日历组织者来源字段
 

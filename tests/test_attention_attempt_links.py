@@ -67,7 +67,10 @@ def test_failed_task_and_pending_oa_link_their_actual_attempt(tmp_path, oa):
         send_status="sent",
     )
     key = "oa:process:node" if oa else "chat"
-    task, attempt_id = reply(store, key, business_key=key if oa else "")
+    task, attempt_id = reply(
+        store, key, status="processing" if oa else "failed",
+        business_key=key if oa else "",
+    )
     reply(store, "unrelated")
     if oa:
         store.set_daily_scan_state(
@@ -92,6 +95,24 @@ def test_failed_task_does_not_link_attempt_from_previous_generation(tmp_path):
     [row] = [r for r in _queue_attention_rows(store) if r["category"] == "Reply task"]
     assert row["id"] == str(task.id)
     assert row.get("detail_url") == ""
+
+
+def test_completed_oa_task_waiting_for_external_process_is_not_attention(tmp_path):
+    store = AutoReplyStore(tmp_path / "links.db")
+    key = "oa:process:already-commented"
+    reply(store, key, status="done", business_key=key)
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-10-01",
+        cursor_json=json.dumps({"pending_business_object_keys": [key]}),
+    )
+
+    rows = _queue_attention_rows(store)
+
+    assert not any(
+        row["id"] == "1" and row["category"] == "OA approval"
+        for row in rows
+    )
 
 
 def test_meeting_links_latest_meeting_attempt_not_job_id(tmp_path):
