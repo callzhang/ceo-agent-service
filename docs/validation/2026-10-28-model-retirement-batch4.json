@@ -1,5 +1,5 @@
 {
-  "phase": "candidate_validated_not_deployed",
+  "phase": "deployed_accepted_cleaned",
   "source_commit": "af24bc48595c0f3eb0edd80d9730f10fb37a45c6",
   "target_schema": {
     "store": "2026-10-28.3",
@@ -263,11 +263,360 @@
     "spec": "PASS after dedicated deleted-script test/gate closure fixed",
     "quality": "PASS; final docs prerequisite updated before release"
   },
-  "production": null,
+  "production": {
+    "checked_at": "2026-10-28T11:31:42.262826+00:00",
+    "installed": "7a6b73ee9486699c51315fd30e08315e329a0c25",
+    "schema": {
+      "objects": 463,
+      "sha256": "ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a",
+      "foreign_keys": []
+    },
+    "feedback_item_fields": [
+      "task_id",
+      "feedback_key",
+      "batch_id",
+      "current_round_id"
+    ],
+    "no_round_resolved": 46,
+    "historical_provider_receipt_20893": [
+      20893,
+      125572,
+      "send_group_message",
+      1
+    ],
+    "operation": {
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-1bce6d7a-8401-4949-b3ca-d32c12494047.sqlite3",
+      "branch_name": "",
+      "commit_message": "",
+      "error": "",
+      "expected_fingerprint": "2aef8e11cc8cfb376f77a7a27e2b131499ff4f5be996c0fab4e57fe12e09ae5b",
+      "installed_commit": "7a6b73ee9486699c51315fd30e08315e329a0c25",
+      "operation_id": "deploy-1bce6d7a-8401-4949-b3ca-d32c12494047",
+      "original_commit": "b3abfe4e2a7782c83dcb1c2dc70e7a5a56176a99",
+      "status": "succeeded",
+      "target_commit": "7a6b73ee9486699c51315fd30e08315e329a0c25",
+      "updated_at": "2026-10-28T11:30:41.993732+00:00"
+    },
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "39304",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 5,
+      "processing": 1,
+      "failed": 26,
+      "retryable": 0,
+      "attention": 0
+    },
+    "system_health": {
+      "state": "degraded",
+      "violations": 1,
+      "native_delivery_coverage": {
+        "checked": 375,
+        "unavailable": 0
+      }
+    },
+    "attention_meta": {
+      "snapshot_at": "2026-10-28T11:31:45.459411Z",
+      "page": null,
+      "page_size": null,
+      "total": 0,
+      "next_cursor": "",
+      "has_more": false
+    },
+    "history": {
+      "page1": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:31:46.579382Z",
+          "page": 1,
+          "page_size": 2,
+          "total": 39135,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "identities": [
+          [
+            "126044",
+            null,
+            "pending"
+          ],
+          [
+            "16288",
+            417749,
+            "skipped"
+          ]
+        ]
+      },
+      "page2": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:31:47.490656Z",
+          "page": 2,
+          "page_size": 2,
+          "total": 39136,
+          "next_cursor": "3",
+          "has_more": true
+        },
+        "identities": [
+          [
+            "16288",
+            417749,
+            "skipped"
+          ],
+          [
+            "16287",
+            417750,
+            "completed"
+          ]
+        ]
+      },
+      "done": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:31:48.273020Z",
+          "page": 1,
+          "page_size": 2,
+          "total": 22908,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "identities": [
+          [
+            "126036",
+            null,
+            "done"
+          ],
+          [
+            "126032",
+            null,
+            "done"
+          ]
+        ]
+      },
+      "failed": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:31:49.113529Z",
+          "page": 1,
+          "page_size": 100,
+          "total": 18,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "identities": [
+          [
+            "16262",
+            405078,
+            "failed"
+          ],
+          [
+            "16195",
+            417637,
+            "failed"
+          ],
+          [
+            "16175",
+            417594,
+            "failed"
+          ],
+          [
+            "16152",
+            417576,
+            "failed"
+          ],
+          [
+            "16010",
+            417411,
+            "failed"
+          ],
+          [
+            "15984",
+            417170,
+            "failed"
+          ],
+          [
+            "15949",
+            417039,
+            "failed"
+          ],
+          [
+            "15921",
+            416922,
+            "failed"
+          ],
+          [
+            "15910",
+            416838,
+            "failed"
+          ],
+          [
+            "15898",
+            416816,
+            "failed"
+          ],
+          [
+            "15871",
+            416701,
+            "failed"
+          ],
+          [
+            "15868",
+            416696,
+            "failed"
+          ],
+          [
+            "15593",
+            405078,
+            "failed"
+          ],
+          [
+            "15592",
+            405076,
+            "failed"
+          ],
+          [
+            "15547",
+            405078,
+            "failed"
+          ],
+          [
+            "15546",
+            405078,
+            "failed"
+          ],
+          [
+            "15545",
+            405076,
+            "failed"
+          ],
+          [
+            "15544",
+            405076,
+            "failed"
+          ]
+        ]
+      }
+    },
+    "historical_attempt_16220": {
+      "ok": true,
+      "item_keys": [
+        "action_pills",
+        "actions",
+        "agent_execution_record",
+        "agent_sessions",
+        "audit_explanation",
+        "audit_summary",
+        "calendar",
+        "consumer_result",
+        "context_only_info",
+        "conversation",
+        "created_at",
+        "decision_options",
+        "delivery",
+        "draft_reply",
+        "email",
+        "failure_reason",
+        "feedback",
+        "generated_reply",
+        "historical_attempt",
+        "human_decision",
+        "id",
+        "metadata",
+        "oa",
+        "quality_warnings",
+        "recovery_state",
+        "references",
+        "revision_count",
+        "runtime_attempts",
+        "status",
+        "system_execution",
+        "title",
+        "tool_uses",
+        "trigger",
+        "type",
+        "updated_at",
+        "what_happened"
+      ]
+    },
+    "feedback_list": {
+      "meta": {
+        "snapshot_at": "2026-10-28T11:31:50.611906Z",
+        "page": 1,
+        "page_size": 2,
+        "total": 54,
+        "next_cursor": "2",
+        "has_more": true
+      },
+      "statuses": [
+        "processing",
+        "processing"
+      ]
+    },
+    "no_round_resolved_detail": {
+      "status": "resolved",
+      "current_round_id": 0,
+      "source_time_exact": true
+    },
+    "frontend_stamp": "52f12e56e1aebbc7834767c5328a8e88cefb9334"
+  },
   "cleanup": {
-    "status": "pending_acceptance",
-    "owned_root": "/private/tmp/ceo-feedback-owner-worktree.2UYXQJ",
-    "raw_git_worktree": "/private/tmp/ceo-feedback-owner-worktree.2UYXQJ/ceo-agent-service",
-    "extra_owned_script": "/private/tmp/closure-edit.py"
+    "backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3",
+      "generation": {
+        "inode": 832638187,
+        "mtime_ns": 1793187077893415481,
+        "bytes": 514969600
+      },
+      "integrity": "ok",
+      "completion_marker": true,
+      "schema_exact": true,
+      "foreign_keys": [],
+      "operation_id": "deploy-1bce6d7a-8401-4949-b3ca-d32c12494047",
+      "no_open_files": true,
+      "absent": true
+    },
+    "temporary_root": {
+      "path": "/private/tmp/ceo-feedback-owner-worktree.2UYXQJ",
+      "files_before": 7234,
+      "bytes_before": 972661524,
+      "no_open_files": true,
+      "worktree_commit_pushed_and_merged": true,
+      "absent": true
+    },
+    "closure_editor": {
+      "path": "/private/tmp/closure-edit.py",
+      "sha256": "df3da0d780072e5de26c4c6ee8dc402c1923ff23b593ef6c63752e72a503ecbe",
+      "bytes": 6615,
+      "no_open_files": true,
+      "absent": true
+    }
+  },
+  "history_failed_baseline": {
+    "before": 18,
+    "after": 18,
+    "identities_exact": true
+  },
+  "ui_readback": {
+    "feedback_total": 54,
+    "processed_filter_total": 48,
+    "feedback_comment_expanded": true,
+    "processing_history_expanded": true,
+    "history_next_page": true,
+    "history_completed_filter": true,
+    "history_completed_total_at_readback": 22908,
+    "attempt_16220_provider_receipt_20893": true,
+    "consumer_execution_steps": true,
+    "audit_execution_steps": true,
+    "outbound_actions_clicked": false
   }
 }

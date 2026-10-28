@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite JSONB/生成列/复合 FK、pytest/Ruff、现有 Store/EmailStore、现有标准 app.deploy 和 console 前端。
 
-**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈第四批标准发布正在安静等待；第五批分单元实现/审查继续，尚未上线；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
+**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈第四批7a6b73ee9标准发布／读回／清理完成；第五批分单元实现／审查／最新副本复验完成并推主线，待标准发布；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
 
 **Audit baseline:** production `d1efdbc28ddbc9ea847036c9f8ba3a597b354e88`，本地 `c866d4fbd051044f1ba86e846ab14b70706ba741`，检查时 main `0ef0a929565248a51ea5a9e8fd43d1abfe575d37`；48 表/476 对象。精确字段、调用方与索引证据见 [审计](../../database-simplification-audit-20261027.md) 和三个 CSV。实施先刷新基线，不硬编码本次 PID 或把本次行数当作未来迁移前置常量。
 
@@ -105,12 +105,12 @@ CREATE INDEX idx_setup_events_id ON setup_wizard_events(id DESC);
 
 **Modify:** app/store.py、app/feedback_processing.py、反馈当前 schema/固定声明/manifest、精确 release/inverse、tests/test_feedback_processing.py、tests/test_feedback_processing_e2e.py、tests/feedback_processing_fixtures.py、tests/test_source_feedback_identity.py。
 
-- [ ] 冻结四层 owner：Task 生命周期；Item 的 task_id/feedback_key/batch_id/current_round_id；Round 的轮次关联与证据；源 feedback event 的当前 resolved_at。不造新 DTO/JSON owner。
-- [ ] 逐行确认 9 个 Round 镜像与准确 current_round_id 的一致性；无指针时只能是既有中性值。单独确认 Item.resolved_at 与同一 feedback_key 的源事件逐值相等；缺失/冲突阻止迁移。不要用 latest Round。
-- [ ] 重构 bind/patch/resolve/reopen 为单一写入 owner；保留已有事务、CAS、receipt 资格和历史不变性。读取从准确指针及源事件组装现有功能所需字段。
-- [ ] 冻结 Item 目标列仅 task_id、feedback_key、batch_id、current_round_id，并保留已有 PK/UNIQUE/FK/合法指针约束；逐项核对被退休 10 列关联的触发器/检查/索引，不能只做文本 DROP。若主线新增实际业务列，先核对后更新合同。
-- [ ] 重点回归：46 个无 Round 但已解决的来源事实不丢；无当前 Round 的 52 个镜像中性值不变；reopen 后旧 Round/receipt 留存但不会再次成为当前证据；新 claim/bind/patch/resolve 正常；source feedback 身份精准匹配。
-- [ ] 副本 forward 后新增一轮、resolve、reopen、再 claim/新轮；inverse 从当前指针重建 9 项镜像、从源事件重建 resolved_at，再由旧代码冷启动完成一次替身轮次并 reforward。逐事实/类型/引用/水位比较，不能只检查“没有异常”。
+- [x] 冻结四层 owner：Task 生命周期；Item 的 task_id/feedback_key/batch_id/current_round_id；Round 的轮次关联与证据；源 feedback event 的当前 resolved_at。不造新 DTO/JSON owner。
+- [x] 逐行确认 9 个 Round 镜像与准确 current_round_id 的一致性；无指针时只能是既有中性值。单独确认 Item.resolved_at 与同一 feedback_key 的源事件逐值相等；缺失/冲突阻止迁移。不要用 latest Round。
+- [x] 重构 bind/patch/resolve/reopen 为单一写入 owner；保留已有事务、CAS、receipt 资格和历史不变性。读取从准确指针及源事件组装现有功能所需字段。
+- [x] 冻结 Item 目标列仅 task_id、feedback_key、batch_id、current_round_id，并保留已有 PK/UNIQUE/FK/合法指针约束；逐项核对被退休 10 列关联的触发器/检查/索引，不能只做文本 DROP。若主线新增实际业务列，先核对后更新合同。
+- [x] 重点回归：46 个无 Round 但已解决的来源事实不丢；无当前Round的镜像中性值不变（旧盘点52并非迁移常量，本次副本46）；reopen 后旧 Round/receipt 留存但不会再次成为当前证据；新 claim/bind/patch/resolve 正常；source feedback 身份精准匹配。
+- [x] 副本 forward 后新增一轮、resolve、reopen、再 claim/新轮；inverse 从当前指针重建 9 项镜像、从源事件重建 resolved_at，再由旧代码冷启动完成一次替身轮次并 reforward。逐事实/类型/引用/水位比较，不能只检查“没有异常”。
 
 ## Task 6 — 移除已关闭历史转换包的闭包
 
