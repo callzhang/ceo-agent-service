@@ -48,6 +48,9 @@ from app.web_api.tasks import (
 )
 from app.web_api.settings import info_payload
 from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
+from app.web_api.skill_installation import register_skill_installation_routes
+from app.skill_discovery import SkillDiscoveryService
+from app.skill_installation import SkillInstallationService
 from app.web_api.email import register_email_routes
 from app.web_api.history_tasks import annotate_task_identity, register_history_task_routes
 from app.web_api.scheduled_tasks import register_scheduled_task_routes
@@ -108,6 +111,8 @@ def register_console_routes(
     email_source_reader_factory: Callable[[], Any] | None = None,
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
+    skill_discovery_factory: Callable[[], Any] | None = None,
+    skill_installation_factory: Callable[[], Any] | None = None,
     dws_factory: Callable[[], Any] | None = None,
     scheduled_task_option_service_factory: Callable[
         [], ScheduledTaskOptionService
@@ -1800,6 +1805,12 @@ def register_console_routes(
         store = store_factory()
         import_repository_managed_skills(store)
         return store
+
+    register_skill_installation_routes(
+        app,
+        discovery_factory=skill_discovery_factory or SkillDiscoveryService,
+        installation_factory=skill_installation_factory or (lambda: SkillInstallationService(store=managed_store())),
+    )
 
     def _managed_revision_payload(store: Any, revision: Any) -> dict[str, Any]:
         receipt = store.latest_managed_skill_export_receipt(revision.id)

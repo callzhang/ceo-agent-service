@@ -19,3 +19,20 @@ export function createRuntimeSkillConfig(expectedParentId: number | null, bindin
 export function listRuntimeSkillLoadReceipts(configId: number, signal?: AbortSignal) { return request<{ items: RuntimeSkillLoadReceipt[] }>(`/api/console/settings/runtime-skill-configs/${configId}/load-receipts`, { signal }); }
 export function getFeedbackIterationCapability(signal?: AbortSignal) { return request<FeedbackIterationCapability>("/api/console/settings/feedback-iteration", { signal }); }
 export function setFeedbackIterationCapability(enabled: boolean) { return request<FeedbackIterationCapability>("/api/console/settings/feedback-iteration", { method: "POST", body: JSON.stringify({ enabled }) }); }
+
+export interface RepositorySkill {
+  repo_url: string; commit: string; skill_path: string; name: string; description: string;
+  author: string; author_kind: "author" | "maintainer" | "unknown"; updated_at: string | null;
+  available: boolean; unavailable_reason: string;
+}
+export interface SkillSearchResult { items: RepositorySkill[]; errors: { source: string; code: string; message: string }[]; }
+export interface SkillInstallResult {
+  name: string; skill_id: number; revision_id: number; sha256: string; package_sha256: string; source: string;
+  install_status: "installed" | "already_installed"; activation_status: "pending_restart" | "active";
+}
+export function searchSkills(query: string, signal?: AbortSignal) {
+  return request<SkillSearchResult>("/api/console/settings/skill-search", { method: "POST", body: JSON.stringify({ query }), signal });
+}
+export function installSkill(candidate: Pick<RepositorySkill, "repo_url" | "commit" | "skill_path">) {
+  return request<SkillInstallResult>("/api/console/settings/skill-installs", { method: "POST", body: JSON.stringify({ repo_url: candidate.repo_url, commit: candidate.commit, skill_path: candidate.skill_path }) });
+}

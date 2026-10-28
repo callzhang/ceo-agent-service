@@ -11,3 +11,23 @@ describe("managed Skills API", () => {
     } finally { globalThis.fetch = originalFetch; }
   });
 });
+
+describe("repository Skill API", () => {
+  it("sends the searched immutable identity rather than the current branch", async () => {
+    const { installSkill, searchSkills } = await import("./skills");
+    const originalFetch = globalThis.fetch;
+    const requests: {path: string; body: unknown}[] = [];
+    globalThis.fetch = async (path, init) => {
+      requests.push({path: String(path), body: JSON.parse(String(init?.body))});
+      return new Response(JSON.stringify({items: [], errors: []}), {headers: {"Content-Type": "application/json"}});
+    };
+    try {
+      await searchSkills("example");
+      await installSkill({repo_url: "https://github.com/example/skills", commit: "a".repeat(40), skill_path: "skills/example"});
+      expect(requests).toEqual([
+        {path: "/api/console/settings/skill-search", body: {query: "example"}},
+        {path: "/api/console/settings/skill-installs", body: {repo_url: "https://github.com/example/skills", commit: "a".repeat(40), skill_path: "skills/example"}},
+      ]);
+    } finally { globalThis.fetch = originalFetch; }
+  });
+});
