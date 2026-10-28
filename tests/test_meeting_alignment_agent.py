@@ -370,6 +370,9 @@ def test_audit_prompt_accepts_same_project_group_and_asks_for_a_better_candidate
     prompt = routed.calls[0]["prompt"]
     assert "need not repeat this meeting's topic" in prompt
     assert "name the better candidate from the supplied candidates" in prompt
+    assert "any source-identified attendee other than the principal" in prompt
+    assert "do not require an explicit owner assignment" in prompt
+    assert "responsible for the relevant decision or follow-up" not in prompt
 
 
 def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evidence():
@@ -583,7 +586,7 @@ def test_business_summary_can_use_relevant_meeting_attendee_when_no_group_fits()
         "kind": "direct", "conversation_id": "", "direct_user_id": "mina",
         "title": "Avery", "candidates": [],
     }
-    payload["audit_summary"] = "No suitable business group was found; Avery is the action owner."
+    payload["audit_summary"] = "No suitable business group was found; Avery attended the meeting."
 
     decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(source())
 
@@ -866,6 +869,15 @@ def test_agent_accepts_business_direct_target_when_no_group_candidates_exist():
     assert decision.target is not None
     assert decision.target.kind == "direct"
     assert len(codex.prompts) == 1
+
+
+def test_prompt_allows_any_source_identified_attendee_when_no_group_fits():
+    prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="profile"
+    )
+    assert "从来源明确的参会人中选择一人" in prompt
+    assert "不要求会议明确指派其负责决定或行动" in prompt
+    assert "最直接承接相关决定或后续行动的参会人" not in prompt
 
 
 def test_agent_does_not_force_recurring_group_over_explicit_verified_recipient():

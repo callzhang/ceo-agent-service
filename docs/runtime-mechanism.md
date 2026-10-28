@@ -5733,3 +5733,7 @@ policy are unchanged. No backfill or old-hash compatibility lookup is added.
 The gated two-turn regression uses the real Store and substituted native CLI.
 
 定时任务的「发送完成通知」默认开启并保存在任务配置中；创建手动或 Cron run 时冻结到不可变 snapshot，编辑偏好只影响后续触发。关闭时 Agent 与服务命令路径都不发送该 run 的终态桌面通知，生命周期状态、Attention 与 History 保持原有行为。历史 snapshot 缺少此字段时按开启处理。
+
+### 会议无合适群时的收件人（2026-10-28）
+
+业务会议总结优先发到合适的业务群。完整搜索后没有合适群时，从来源明确的参会人中选择一人单聊；只有一位非当前用户参会人时发给该人，多人时优先选与讨论最相关者。不要求会议明确指派该人负责某项决定或行动。目标仍须绑定稳定 user_id，且不能是当前用户；敏感内容继续按单独的职责和披露授权规则处理。
