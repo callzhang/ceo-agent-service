@@ -894,6 +894,60 @@ def test_email_attempt_is_not_presented_as_a_dingtalk_conversation(tmp_path: Pat
     assert item["actions"]["dingtalk_url"] == ""
 
 
+def test_failed_direct_unsubscribe_detail_stays_failed_without_attention_or_retry(
+    tmp_path: Path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="email-thread:unsubscribe-fence",
+        conversation_title="Email unsubscribe",
+        single_chat=True,
+        trigger_message_id="unsubscribe-fence-message",
+        trigger_create_time="2026-10-16 00:00:00",
+        trigger_sender="recommendations@example.test",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        execution_generation="initial",
+        channel="email",
+    )
+    task = store.get_reply_task_for_message(
+        "email-thread:unsubscribe-fence", "unsubscribe-fence-message", channel="email"
+    )
+    assert task is not None
+    error = "email_unsubscribe_outcome_unresolved: unsubscribe execution requires reconciliation"
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="direct_unsubscribe",
+        sensitivity_kind="email",
+        send_status="failed",
+        codex_reason=error,
+        audit_summary=error,
+        channel="email",
+    )
+    claimed = store.claim_reply_task(task.id)
+    assert claimed is not None
+    store.fail_reply_task(
+        task.id, error, expected_execution_generation=task.execution_generation
+    )
+
+    status, item = build_attempt_detail(
+        store, attempt_id, email_store_factory=_FakeEmailStore
+    )
+
+    assert status == 200
+    assert item is not None
+    assert item["status"]["raw"] == "failed"
+    assert item["status"]["attention"]["kind"] == ""
+    assert item["status"]["requires_decision"] is False
+    assert item["actions"]["action_label"] == "失败已记录"
+    assert item["actions"]["can_rerun"] is False
+    assert item["what_happened"]["open_for_human"] is False
+    assert "执行结果未确认" in item["status"]["message"]
+
+
 def test_oa_attempt_detail_opens_the_original_approval_link(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     approval_url = (

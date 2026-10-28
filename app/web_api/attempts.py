@@ -512,6 +512,11 @@ def _action_links(
     from app.audit_web import _sent_reply_has_recall_target
 
     status = str(getattr(attempt, "send_status", "") or "").strip().lower()
+    failed_unsubscribe = (
+        status == "failed"
+        and str(getattr(attempt, "action", "") or "").strip().lower()
+        == "direct_unsubscribe"
+    )
     terminal = status in {"done", "sent", "skipped", "completed", "commented", "calendar", "document", "reacted"}
     dingtalk_url = ""
     approval_url = _oa_url(attempt, reply_task)
@@ -560,7 +565,7 @@ def _action_links(
     )
     return {
         "can_rerun": (
-            (status == "failed" and not rerun_block_reason)
+            (status == "failed" and not failed_unsubscribe and not rerun_block_reason)
             or (status == "blocked" and attempt.send_error == "consumer_purpose_retry_exhausted" and not rerun_block_reason)
             or can_reopen_skipped_oa_review(attempt, reply_task)
         ),
@@ -594,7 +599,17 @@ def _action_links(
         "delivery_action_label": delivery_action_label,
         "delivery_action_url": delivery_action_url,
         "terminal": terminal,
-        "action_label": "无需操作" if terminal else "需要处理",
+        "action_label": (
+            (
+                "自动重试中"
+                if reply_task is not None
+                and str(getattr(reply_task, "status", "") or "").strip().lower()
+                in {"pending", "processing"}
+                else "失败已记录"
+            )
+            if failed_unsubscribe
+            else "无需操作" if terminal else "需要处理"
+        ),
     }
 
 def _external_effect_sentence(what_happened: dict[str, Any]) -> str:
@@ -1064,6 +1079,16 @@ def build_attempt_detail(
         historical_attempt.conversation_id, historical_attempt.trigger_message_id,
     ) if historical_attempt.channel == "wechat" else None
     status_message, requires_decision = _status_message(attempt, attention, rerun_block_reason=rerun_block_reason)
+    failed_unsubscribe = (
+        attempt.send_status.strip().lower() == "failed"
+        and attempt.action.strip().lower() == "direct_unsubscribe"
+    )
+    if failed_unsubscribe:
+        if reply_task is not None and reply_task.status in {"pending", "processing"}:
+            status_message = "退订操作失败已记录，系统按原有退避策略自动重试。"
+        else:
+            status_message = "退订失败已保留在历史记录；执行结果未确认，完成对账前不会重试。"
+        requires_decision = False
     # A sent-reply ledger is direct evidence that a DingTalk response reached
     # the provider. Prefer it to the task projection (which can simply be
     # "done") so the person viewing the Attempt is not left guessing whether
@@ -1195,6 +1220,8 @@ def build_attempt_detail(
     if current_generation_changed and not current_agent_runs and attempt.send_status == "failed":
         current_failure_reason = attempt.audit_summary or attempt.send_error
     what_happened = build_what_happened(display_runs, store=store, stop_reason=stop_reason)
+    if failed_unsubscribe:
+        what_happened["open_for_human"] = False
     if current_generation_changed and display_reviewed is not None:
         displayed_candidate = _stored_json(display_reviewed["candidate_json"], {})
         what_happened["deciding_scores"] = {

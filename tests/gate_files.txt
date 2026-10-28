@@ -252,6 +252,7 @@ tests/test_native_source_documents.py
 tests/test_email_action_metadata_repair.py
 tests/test_consumer_purpose_output.py
 tests/test_history_actions.py
+tests/test_console_attempt_detail_api.py
 tests/test_history_task_retry_api.py
 tests/test_message_triage_skill.py
 tests/test_audit_rules.py
