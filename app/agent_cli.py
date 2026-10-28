@@ -88,6 +88,7 @@ SPREADSHEET_MATERIAL_ROOTS = (
 )
 TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
 MAX_TASK_FILE_BYTES = 2 * 1024 * 1024
+MAX_AUDIO_UPLOAD_BYTES = 95 * 1024 * 1024  # ai_services create_audio_upload max_bytes
 _TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
 CONSUMER_SCRIPT_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "ci" / "shared-skills"
 
@@ -1779,6 +1780,25 @@ def _task_file_root(
     return task_artifact_directory(task_id, generation, create=create)
 
 
+class _NoRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        return None
+
+
+def _write_task_file(root: Path, name: str, data: bytes) -> None:
+    path = _task_file_path(root, name)
+    descriptor, temporary = tempfile.mkstemp(prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root)
+    try:
+        with os.fdopen(descriptor, "wb") as output:
+            output.write(data)
+            output.flush()
+            os.fsync(output.fileno())
+        os.replace(temporary, path)
+    finally:
+        if os.path.exists(temporary):
+            os.unlink(temporary)
+
+
 def _task_file_path(root: Path, name: str) -> Path:
     if (
         not _task_file_component(name) or len(name) > 255
@@ -2640,14 +2660,12 @@ def build_role_server(
             ],
         }
 
-    def read_wechat_voice(message_id: str) -> dict[str, object]:
-        """Read the audio of a voice message of this task's WeChat conversation.
+    def save_wechat_voice(message_id: str) -> dict[str, object]:
+        """Save the audio of a voice message of this task's WeChat conversation.
 
-        Pass the message_id of a "[语音…]" message. The result is a WAV as
-        base64: in the same JS cell, pass `filename` and `audio_base64` to
-        mcp__ai_services__transcribe_audio and print only the transcript; never
-        retype the base64. An unreadable voice raises an
-        error; it is neither empty nor answered.
+        Pass the message_id of a "[语音…]" message. The audio is stored as a WAV
+        task file; the result names it, ready for upload_audio_file. An
+        unreadable voice raises an error; it is neither empty nor answered.
         """
         from app.wechat import service
         from app.wechat.models import WechatVoiceUnavailable
@@ -2676,12 +2694,57 @@ def build_role_server(
             if exc.code != "voice_unavailable":
                 raise
             raise ValueError(f"could not read the voice message: {exc}") from exc
+        name = f"wechat-voice-{message_id}.wav"
+        root = _task_file_root(db_path, task_id, artifact_generation, create=True)
+        _write_task_file(root, name, wav)
         return {
             "message_id": message_id,
-            "filename": f"wechat-voice-{message_id}.wav",
+            "name": name,
             "duration_seconds": round(seconds, 1),
-            "audio_base64": base64.b64encode(wav).decode("ascii"),
         }
+
+    def upload_audio_file(name: str, upload_url: str) -> dict[str, object]:
+        """Send one audio task file to a one-time upload URL, without reading it.
+
+        `name` is a task file (for example the one save_wechat_voice returned);
+        `upload_url` is the one-time URL a transcription service handed out for
+        it (ai_services create_audio_upload). The audio travels from the task
+        directory to that URL and never passes through you. The result is the
+        service's answer, normally a job_id to poll.
+        """
+        parsed = urlsplit(upload_url) if isinstance(upload_url, str) else None
+        if parsed is None or parsed.scheme not in ("http", "https") or not parsed.hostname:
+            raise ValueError("upload url is invalid")
+        root = _task_file_root(db_path, task_id, artifact_generation, create=False)
+        path = _task_file_path(root, name)
+        if not path.is_file():
+            raise ValueError("task file is unavailable")
+        if path.stat().st_size > MAX_AUDIO_UPLOAD_BYTES:
+            raise ValueError("audio file is too large to upload")
+        boundary = hashlib.sha256(os.urandom(16)).hexdigest()
+        body = b"".join((
+            f"--{boundary}\r\nContent-Disposition: form-data; name=\"file\"; "
+            f"filename=\"{quote(name)}\"\r\nContent-Type: application/octet-stream"
+            "\r\n\r\n".encode(),
+            path.read_bytes(),
+            f"\r\n--{boundary}--\r\n".encode(),
+        ))
+        request = Request(upload_url, data=body, method="POST", headers={
+            "Content-Type": f"multipart/form-data; boundary={boundary}",
+            "User-Agent": "ceo-agent-service",
+        })
+        try:
+            with build_opener(_NoRedirects()).open(request, timeout=60) as response:
+                answer = response.read(MAX_CLI_OUTPUT_BYTES + 1)
+        except HTTPError as exc:
+            detail = exc.read(300).decode("utf-8", "replace")
+            raise ValueError(f"audio upload failed: HTTP {exc.code} {detail}") from exc
+        if len(answer) > MAX_CLI_OUTPUT_BYTES:
+            raise ValueError("audio upload answer is too large")
+        try:
+            return json.loads(answer)
+        except ValueError as exc:
+            raise ValueError("audio upload answer is not JSON") from exc
 
     def read_dingtalk_messages(
         conversation_id: str, title: str = "", single_chat: bool = False,
@@ -3062,7 +3125,8 @@ def build_role_server(
         ("search_dingtalk_documents", search_dingtalk_documents),
         ("read_dingtalk_messages", read_dingtalk_messages),
         ("read_wechat_messages", read_wechat_messages),
-        ("read_wechat_voice", read_wechat_voice),
+        ("save_wechat_voice", save_wechat_voice),
+        ("upload_audio_file", upload_audio_file),
         ("search_dingtalk_messages", search_dingtalk_messages),
         ("read_dingtalk_thread_replies", read_dingtalk_thread_replies),
         ("search_dingtalk_conversations", search_dingtalk_conversations),
@@ -3088,19 +3152,7 @@ def build_role_server(
             ):
                 raise ValueError("task file content is invalid or too large")
             root = _task_file_root(db_path, task_id, artifact_generation, create=True)
-            path = _task_file_path(root, name)
-            descriptor, temporary = tempfile.mkstemp(
-                prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root
-            )
-            try:
-                with os.fdopen(descriptor, "wb") as output:
-                    output.write(content.encode("utf-8"))
-                    output.flush()
-                    os.fsync(output.fileno())
-                os.replace(temporary, path)
-            finally:
-                if os.path.exists(temporary):
-                    os.unlink(temporary)
+            _write_task_file(root, name, content.encode("utf-8"))
             return _read_task_file(root, name)
 
         bound.add_tool(

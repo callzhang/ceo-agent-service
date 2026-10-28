@@ -68,7 +68,7 @@ def test_voice_is_its_own_kind_with_a_placeholder_that_is_never_empty():
     text = schema.decode_message(VOICE_XML, 0, 34)
     assert schema.kind_for(34, text) == "voice"
     assert text.startswith("[语音27秒")
-    assert "read_wechat_voice" in text
+    assert "save_wechat_voice" in text
 
 
 def test_group_voice_with_sender_prefix_and_missing_length_still_has_a_placeholder():

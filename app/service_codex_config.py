@@ -30,6 +30,8 @@ _AI_SERVICES_TOOL_NAMES = (
     "health",
     "ocr_document",
     "transcribe_audio",
+    "create_audio_upload",
+    "get_audio_transcription",
     "synthesize_speech",
 )
 _AGENT_ROLES_WITH_AI_SERVICES = frozenset({"consumer", "audit", "task"})

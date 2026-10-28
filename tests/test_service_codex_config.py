@@ -93,6 +93,8 @@ def test_ai_services_approval_is_limited_to_consumer_and_audit_tools(
         "health",
         "ocr_document",
         "transcribe_audio",
+        "create_audio_upload",
+        "get_audio_transcription",
         "synthesize_speech",
     }
     assert service_mcp_tool_approval_modes_for_agent_role("other") == {}

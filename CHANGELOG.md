@@ -46,6 +46,10 @@
 - **限制**：Codex 路线的 Consumer 有 `memory_connector` 全部工具；Claude 路线的 Consumer 只连 `agent_cli`，没有 Memory 工具，走该路线的任务不会写长期记忆。会议结论仍由服务写入，未改动。
 - 历史 `task_memory_write_events` 行与索引保留（删除需要数据库迁移）；旧结果里的 `durable_memories` 读回时被丢弃。
 
+## 2026-10-28 — 微信语音转写改走一次性上传地址
+
+- `read_wechat_voice` 换成 `save_wechat_voice`（把 WAV 存为任务文件），新增通用工具 `upload_audio_file(name, upload_url)`：Agent 先调 `ai_services.create_audio_upload` 取一次性地址，服务把音频文件直接 POST 过去，再调 `get_audio_transcription(job_id)` 取文字。音频不经过模型，服务不存任何转写凭据，所有线路用普通工具调用，不再需要 CodeMode。撤回微信的 `code_mode_handoff`（OA 的不动）。
+
 ## 2026-10-26 — 微信语音
 
 - 语音消息不再是空文本：`kind=voice` 加非空占位，直接聊天的入站语音触发回复。新增 Reader IPC `read_voice` 和 Agent 工具 `read_wechat_voice`（SILK→WAV，交给原生 `ai_services.transcribe_audio`）。图片不在本次范围，转写不缓存。新依赖 `pilk==0.2.4`；Reader 需要重建才有 `read_voice`。
