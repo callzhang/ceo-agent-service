@@ -3467,7 +3467,7 @@ def test_unavailable_planned_group_fails_without_organizer_fallback(
     assert dws.send_calls == []
 
 
-def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
+def test_sensitive_part_goes_to_the_verified_person_apart_from_the_group_summary(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     event = dws.calendar_pages[""]["events"][0]
@@ -3498,11 +3498,17 @@ def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
             "key_questions": [],
             "mention_names": [],
             "target": {
-                "kind": "direct",
-                "conversation_id": "",
-                "direct_user_id": "u-mina",
-                "title": "Avery Zou",
-                "candidates": [],
+                "kind": "group",
+                "conversation_id": "cid-first",
+                "direct_user_id": "",
+                "title": "项目群",
+                "candidates": [
+                    {
+                        "conversation_id": "cid-first",
+                        "title": "项目群",
+                        "evidence": ["Same project discussed before and after the meeting."],
+                    }
+                ],
             },
             "final_message": "Please follow up on the agreed meeting actions.",
             "sensitive_private_message": {
@@ -3531,9 +3537,11 @@ def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
     source_json = runner.prompts[0].split("完整会议来源 JSON：\n", 1)[1]
     source = json.JSONDecoder().raw_decode(source_json)[0]
     assert any(participant["user_id"] == "u-mina" for participant in source["participants"])
-    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina"]
+    assert [call.get("user_id") for call in dws.send_calls] == [None, "u-mina"]
     assert decision.final_message in dws.send_calls[0]["text"]
-    assert decision.sensitive_private_message.message in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_message.message not in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_message.message in dws.send_calls[1]["text"]
+    assert decision.final_message not in dws.send_calls[1]["text"]
 
 
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):
