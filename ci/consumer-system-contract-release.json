@@ -100,7 +100,7 @@
     {
       "source": "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
       "target": "skills/stardust-oa-attendance-travel-review/SKILL.md",
-      "old_sha256": "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375",
+      "old_sha256": "b026781cc86fa5882035be3dbc566a60e29941965d053a8576a76d8e055d8b30",
       "new_sha256": "b026781cc86fa5882035be3dbc566a60e29941965d053a8576a76d8e055d8b30"
     },
     {

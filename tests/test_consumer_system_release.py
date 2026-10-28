@@ -229,7 +229,7 @@ def test_repository_consumer_release_manifest_includes_current_attendance_review
     assert entry["new_sha256"] == _digest((root / source).read_bytes())
     # This publication upgrades the independently verified installed baseline.
     assert entry["old_sha256"] == (
-        "12fe5ae6a03b2903ffe92df32c18ea25e0330f20d9e202f23fdbee6ee8ded375"
+        "b026781cc86fa5882035be3dbc566a60e29941965d053a8576a76d8e055d8b30"
     )
 
 
