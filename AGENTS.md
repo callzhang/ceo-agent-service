@@ -130,6 +130,19 @@ the run take longer; the run is stopped at 10 minutes, not extended. Add a test 
 manifest when it covers current behaviour and is fast.
 `--restart` runs no new code and is not gated.
 
+Derek, 2026-10-28: the gate runs inside the same repository mutex as the install.
+On 2026-10-28 Codex and two Claude sessions deployed at the same time, their gate
+suites ran in parallel on one laptop, and seven of nine runs that day hit the
+10 minute limit (two more hit 2 GB). A deploy now waits for the lock, checks that
+nobody installed meanwhile (then it returns "another deploy got there first"
+without gating), and only then runs the suite. A pass is remembered per commit in
+`<service database dir>/deploy-gate-passed/<sha>.json` and reused, so a second
+deploy of the same commit, or a retry after the install step failed, does not run
+the suite again; a refused or stopped run is never remembered. Before deploying,
+still check that no `python -m app.deploy` is running and the load is low: a
+queued deploy waits for the lock, it does not fail, but a gate started while
+tests or a Reader build run on the same machine still risks the time limit.
+
 After a deploy, read back the new PID, healthz, queues, Attention and History
 before reporting completion. Never paste the settings API's secret fields.
 

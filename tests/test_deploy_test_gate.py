@@ -97,7 +97,7 @@ def test_deploy_runs_the_gate_before_anything_can_be_stopped_or_changed(tmp_path
     local, _ = fixture_repo(tmp_path)
     seen = []
 
-    def refusing_gate(root, commit):
+    def refusing_gate(root, commit, **kwargs):
         seen.append(("gate", commit))
         raise SystemExit("the test suite fails; nothing was deployed")
 
@@ -125,7 +125,7 @@ def test_deploy_installs_the_commit_the_gate_tested_even_if_main_moves(tmp_path:
     order = []
     pins = []
 
-    def gate_while_main_moves(root, commit):
+    def gate_while_main_moves(root, commit, **kwargs):
         order.append(("gate", commit))
         (updater_clone / "version.txt").write_text("newer than the tested commit\n", encoding="utf-8")
         git(updater_clone, "add", "version.txt")
@@ -167,7 +167,7 @@ def test_suspended_gate_does_not_run(tmp_path: Path, monkeypatch):
             return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
 
     monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", False)
-    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit: calls.append(commit))
+    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit, **kwargs: calls.append(commit))
     monkeypatch.setattr(deploy_module, "RepositoryUpdater", Recording)
 
     deploy_module.deploy(local, tmp_path / "db.sqlite3")
@@ -192,3 +192,135 @@ def test_the_gate_is_on_and_the_run_stops_by_itself_after_ten_minutes():
     assert deploy_module.TEST_GATE_ENABLED is True
     assert MEMORY_LIMIT.time_limit_seconds == 10 * 60
     assert 10 * 60 < deploy_module.TEST_GATE_TIMEOUT_SECONDS <= 12 * 60
+
+
+def test_a_passed_gate_is_remembered_and_reused_for_the_same_commit(tmp_path: Path):
+    from app.deploy import gate_pass_record
+
+    database_path = tmp_path / "service" / "auto-reply.sqlite3"
+    database_path.parent.mkdir()
+    run, calls = _runner(pytest_output="7 passed in 1.0s\n")
+
+    note = require_green_suite(tmp_path / "root", "a" * 40, run=run, database_path=database_path)
+
+    assert note.startswith("gate passed at aaaaaaaa")
+    record = gate_pass_record(database_path, "a" * 40)
+    assert record.is_file()
+    assert record.parent == database_path.parent / "deploy-gate-passed"
+    pytest_runs = len([call for call in calls if call[0][0] != "git"])
+    assert pytest_runs == 1
+
+    note = require_green_suite(tmp_path / "root", "a" * 40, run=run, database_path=database_path)
+
+    assert "already passed" in note and "not re-run" in note
+    assert len([call for call in calls if call[0][0] != "git"]) == pytest_runs
+    # A different commit is gated on its own.
+    require_green_suite(tmp_path / "root", "b" * 40, run=run, database_path=database_path)
+    assert len([call for call in calls if call[0][0] != "git"]) == pytest_runs + 1
+
+
+def test_a_refused_or_stopped_gate_is_never_remembered(tmp_path: Path):
+    from app.deploy import gate_pass_record
+
+    database_path = tmp_path / "service" / "auto-reply.sqlite3"
+    database_path.parent.mkdir()
+    failing, _ = _runner(pytest_code=1, pytest_output="1 failed in 1.0s\n")
+    with pytest.raises(SystemExit):
+        require_green_suite(tmp_path / "root", "c" * 40, run=failing, database_path=database_path)
+    stopped, _ = _runner(timeout=True)
+    with pytest.raises(SystemExit):
+        require_green_suite(tmp_path / "root", "c" * 40, run=stopped, database_path=database_path)
+    assert not gate_pass_record(database_path, "c" * 40).exists()
+
+    passing, calls = _runner(pytest_output="1 passed in 1.0s\n")
+    require_green_suite(tmp_path / "root", "c" * 40, run=passing, database_path=database_path)
+    assert len([call for call in calls if call[0][0] != "git"]) == 1
+    for log in (tmp_path).glob("deploy-test-gate.*"):
+        shutil.rmtree(log, ignore_errors=True)
+
+
+def test_without_a_database_path_the_gate_runs_every_time(tmp_path: Path):
+    run, calls = _runner(pytest_output="1 passed in 1.0s\n")
+    require_green_suite(tmp_path / "root", "d" * 40, run=run)
+    require_green_suite(tmp_path / "root", "d" * 40, run=run)
+    assert len([call for call in calls if call[0][0] != "git"]) == 2
+
+
+def test_deploy_gates_while_holding_the_repository_mutex(tmp_path: Path, monkeypatch):
+    """Derek, 2026-10-28: several sessions deployed at once and their gates ran in
+    parallel; seven of nine runs that day hit the ten-minute limit. The gate now
+    runs under the same lock as the install, so deploys queue instead of racing."""
+    import fcntl
+    import os
+
+    import app.deploy as deploy_module
+    from app.repository_updater import UpgradeResult
+    from app.repository_upgrade import GitRepository
+
+    local, _ = fixture_repo(tmp_path)
+    lock_path = GitRepository(local).lock_path
+    observed = []
+
+    def gate_checks_lock(root, commit, **kwargs):
+        descriptor = os.open(lock_path, os.O_CREAT | os.O_RDWR, 0o600)
+        try:
+            try:
+                fcntl.flock(descriptor, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                observed.append("gate ran under the mutex")
+            else:
+                fcntl.flock(descriptor, fcntl.LOCK_UN)
+                observed.append("gate ran without the mutex")
+        finally:
+            os.close(descriptor)
+        observed.append(("database_path", kwargs.get("database_path")))
+
+    class Recording:
+        def __init__(self, *args, **kwargs):
+            observed.append("updater built")
+
+        def execute_locked(self, op):
+            return UpgradeResult(op.operation_id, "succeeded", installed_commit=op.target_commit)
+
+    monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", True)
+    monkeypatch.setattr(deploy_module, "require_green_suite", gate_checks_lock)
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", Recording)
+
+    deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    assert observed == [
+        "gate ran under the mutex",
+        ("database_path", tmp_path / "db.sqlite3"),
+        "updater built",
+    ]
+
+
+def test_deploy_does_not_gate_when_another_deploy_landed_while_it_waited_for_the_lock(tmp_path: Path, monkeypatch):
+    from contextlib import contextmanager
+
+    import app.deploy as deploy_module
+    from app.repository_upgrade import GitRepository
+    from tests.test_repository_updater import git
+
+    local, _ = fixture_repo(tmp_path)
+    gated = []
+
+    @contextmanager
+    def mutex_during_which_someone_else_deploys(self):
+        # The other session installed origin/main into production before we got the lock.
+        git(local, "merge", "--ff-only", "origin/main")
+        yield
+
+    class MustNotBuild:
+        def __init__(self, *args, **kwargs):
+            raise AssertionError("no install after another deploy landed")
+
+    monkeypatch.setattr(deploy_module, "TEST_GATE_ENABLED", True)
+    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit, **kwargs: gated.append(commit))
+    monkeypatch.setattr(deploy_module, "RepositoryUpdater", MustNotBuild)
+    monkeypatch.setattr(GitRepository, "mutex", mutex_during_which_someone_else_deploys)
+
+    message = deploy_module.deploy(local, tmp_path / "db.sqlite3")
+
+    assert message.startswith("another deploy got there first")
+    assert gated == []
