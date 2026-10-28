@@ -126,6 +126,10 @@ def test_okr_release_manifest_publishes_the_repository_skill_over_one_baseline()
     source_digest = _digest((root / entry["source"]).read_bytes())
     assert entry["new_sha256"] == source_digest
     assert entry["old_sha256"] == entry["old_managed_sha256"]
+    # Preserve the independently verified installed v21 as a no-op publication.
+    expected = "e786d7a199671ba62b069a402df7e38200f075233839010f343c4a90de1b58f0"
+    assert source_digest == expected
+    assert entry["old_sha256"] == expected
 
 
 def test_people_review_release_file_baseline_matches_installed_candidate():

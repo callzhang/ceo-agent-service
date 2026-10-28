@@ -5766,3 +5766,16 @@ separate incident-by-incident statement or resolution before leave. This changes
 the shared business Skill used by Consumer and Audit, without changing Audit
 mechanics, task lifecycle or action authority. See
 `oa-half-day-review-correction-20261028.md` for evidence and publication status.
+
+
+### Installed OKR notification contract preserved — 2026-10-28
+
+The independently authorized v21 OKR Skill is synchronized verbatim from the
+installed file into its repository source. Management report pages and personal
+scorecard documents retain their existing workflow. The group notification uses
+a separate `company-message.md` containing verified company-level progress,
+without personal names, individual scores/OKRs, HR evaluations or links exposing
+individual materials. Consumer and Audit compare the proposed message with that
+artifact. Installed-file, repository-source and managed release baselines are
+aligned to the exact same digest; this sync preserves the installed contract.
+The half-day leave correction remains a separate change.
