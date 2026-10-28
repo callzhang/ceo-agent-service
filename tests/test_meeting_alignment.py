@@ -2807,6 +2807,55 @@ def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
     assert len(store.list_meeting_alignment_runs(job_id)) == 2
 
 
+def _skip_decision(action):
+    return MeetingAlignmentDecision.model_validate({
+        **summary_decision().model_dump(mode="json"),
+        "action": action, "trigger_reasons": [], "topics": [], "derek_viewpoint": None,
+        "key_questions": [], "mention_names": [], "target": None, "final_message": "",
+        "sensitive_private_message": None,
+        "audit_summary": "No shareable content." if action == "skip_no_content" else "Interview.",
+    })
+
+
+@pytest.mark.parametrize("action,status", [("skip_interview", "skipped"), ("skip_no_content", "no_action")])
+def test_approved_skip_decision_ends_without_sending(tmp_path, action, status):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    runner = FakeMeetingRunner(_skip_decision(action))
+
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+
+    job = store.get_meeting_alignment_job(job_id)
+    assert job.status == status
+    assert dws.send_calls == []
+    assert job.final_message == ""
+    assert meeting_alignment.meeting_decision_audit_is_approved(job.decision_json)
+
+
+def test_returned_skip_decision_goes_back_for_a_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class ReturningRunner(FakeMeetingRunner):
+        def audit(self, *, prompt, run_id):
+            return MeetingAlignmentAuditResult(
+                outcome="return", summary="The meeting has shareable business content.",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="skip needs a supported reason", observation="decisions were made",
+                    requested_revision="send a summary of the decisions",
+                ),
+            )
+
+    consume_meeting_alignment_jobs(
+        store, dws, ReturningRunner(_skip_decision("skip_no_content")), now=NOW, limit=1,
+    )
+
+    assert store.get_meeting_alignment_job(job_id).status == "retry"
+    assert dws.send_calls == []
+
+
 def test_meeting_audit_feedback_exhaustion_escalates_after_three_revisions(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
@@ -3418,7 +3467,7 @@ def test_unavailable_planned_group_fails_without_organizer_fallback(
     assert dws.send_calls == []
 
 
-def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
+def test_sensitive_part_goes_to_the_verified_person_apart_from_the_group_summary(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     event = dws.calendar_pages[""]["events"][0]
@@ -3449,11 +3498,17 @@ def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
             "key_questions": [],
             "mention_names": [],
             "target": {
-                "kind": "direct",
-                "conversation_id": "",
-                "direct_user_id": "u-mina",
-                "title": "Avery Zou",
-                "candidates": [],
+                "kind": "group",
+                "conversation_id": "cid-first",
+                "direct_user_id": "",
+                "title": "项目群",
+                "candidates": [
+                    {
+                        "conversation_id": "cid-first",
+                        "title": "项目群",
+                        "evidence": ["Same project discussed before and after the meeting."],
+                    }
+                ],
             },
             "final_message": "Please follow up on the agreed meeting actions.",
             "sensitive_private_message": {
@@ -3482,9 +3537,11 @@ def test_same_verified_private_audience_receives_one_combined_message(tmp_path):
     source_json = runner.prompts[0].split("完整会议来源 JSON：\n", 1)[1]
     source = json.JSONDecoder().raw_decode(source_json)[0]
     assert any(participant["user_id"] == "u-mina" for participant in source["participants"])
-    assert [call.get("user_id") for call in dws.send_calls] == ["u-mina"]
+    assert [call.get("user_id") for call in dws.send_calls] == [None, "u-mina"]
     assert decision.final_message in dws.send_calls[0]["text"]
-    assert decision.sensitive_private_message.message in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_message.message not in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_message.message in dws.send_calls[1]["text"]
+    assert decision.final_message not in dws.send_calls[1]["text"]
 
 
 def test_consumer_quarantines_corrupt_persisted_send_evidence(tmp_path):

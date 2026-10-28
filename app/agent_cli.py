@@ -2644,8 +2644,9 @@ def build_role_server(
         """Read the audio of a voice message of this task's WeChat conversation.
 
         Pass the message_id of a "[语音…]" message. The result is a WAV as
-        base64: call ai_services.transcribe_audio with `filename` and
-        `audio_base64` to get what was said. An unreadable voice raises an
+        base64: in the same JS cell, pass `filename` and `audio_base64` to
+        mcp__ai_services__transcribe_audio and print only the transcript; never
+        retype the base64. An unreadable voice raises an
         error; it is neither empty nor answered.
         """
         from app.wechat import service

@@ -65,21 +65,103 @@ def reconcile_oa_return_attempt(
             "oa_reconciliation_action_mismatch", "Reviewed action is not this Attempt's OA return"
         )
     execution = store.get_candidate_execution(candidate_id)
-    if execution is None or execution["status"] != "uncertain":
+    if execution is None or execution["status"] not in {"uncertain", "done"}:
         return SystemExecutor._failure(
-            "oa_reconciliation_not_uncertain", "Only an uncertain existing execution can be reconciled"
+            "oa_reconciliation_not_uncertain", "Only an uncertain or already verified existing execution can be reconciled"
         )
     action_attempts = store.list_candidate_action_attempts(execution["id"])
     identity = expected_external_action(
         action, action_index=0, business_object_key=task.business_object_key
     )
     if (len(action_attempts) != 1 or action_attempts[0]["action_index"] != 0
-        or action_attempts[0]["status"] != "uncertain"
+        or action_attempts[0]["status"] != (
+            "uncertain" if execution["status"] == "uncertain" else "verified"
+        )
         or action_attempts[0]["external_action_key"] != identity["external_action_key"]):
         return SystemExecutor._failure(
             "oa_reconciliation_action_attempt_mismatch",
             "Existing uncertain action attempt does not match the reviewed OA action",
         )
-    return SystemExecutor(store=store, dws=dws).execute(
-        task, candidate_id, review_id, reconciliation_only=True
+    if execution["status"] == "uncertain":
+        result = SystemExecutor(store=store, dws=dws).execute(
+            task, candidate_id, review_id, reconciliation_only=True
+        )
+    else:
+        receipt = store.get_candidate_external_action(identity["external_action_key"])
+        if receipt is None:
+            return SystemExecutor._failure(
+                "oa_reconciliation_receipt_missing",
+                "Verified OA action has no persisted external receipt",
+            )
+        result = SystemExecutionResult(
+            outcome="executed",
+            summary=_execution_summary(execution) or "Existing OA receipt is verified",
+            completed_action_keys=(identity["external_action_key"],),
+        )
+
+    if result.outcome != "executed":
+        return result
+
+    settled_execution = store.get_candidate_execution(candidate_id)
+    settled_actions = (
+        store.list_candidate_action_attempts(settled_execution["id"])
+        if settled_execution is not None else []
     )
+    persisted_receipt = store.get_candidate_external_action(identity["external_action_key"])
+    if (
+        settled_execution is None or settled_execution["status"] != "done"
+        or len(settled_actions) != 1
+        or settled_actions[0]["status"] != "verified"
+        or settled_actions[0]["external_action_key"] != identity["external_action_key"]
+        or persisted_receipt is None
+    ):
+        return SystemExecutor._failure(
+            "oa_reconciliation_receipt_incomplete",
+            "OA execution did not persist one exact verified external receipt",
+        )
+
+    # A verified receipt closes the stale Reply Task projection for this exact
+    # generation. The original Attempt remains failed/uncertain in History.
+    if task.status == "failed" and task.error == "external_action_uncertain":
+        from app import task_entity_storage
+
+        with store._immediate_write_transaction() as db:
+            settled = task_entity_storage.update_task_cas(
+                db,
+                task_id=task.id,
+                expected={
+                    "status": "failed",
+                    "error": "external_action_uncertain",
+                    "execution_generation": task.execution_generation,
+                },
+                changes={
+                    "status": "done",
+                    "error": "",
+                    "available_at": "",
+                    "locked_at": None,
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                },
+            )
+            if settled is not None:
+                store._compact_settled_reply_task_input(db, task.id)
+        current_task = store.get_reply_task(task.id)
+        if (
+            current_task is not None
+            and current_task.status == "failed"
+            and current_task.error == "external_action_uncertain"
+        ):
+            return SystemExecutor._failure(
+                "oa_reconciliation_task_settlement_conflict",
+                "Verified OA receipt is saved but the failed Reply Task could not be settled",
+            )
+    return result
+
+
+def _execution_summary(execution: dict[str, Any]) -> str:
+    try:
+        import json
+
+        result = json.loads(str(execution.get("result_json") or "{}"))
+    except (TypeError, json.JSONDecodeError):
+        return ""
+    return str(result.get("summary") or "") if isinstance(result, dict) else ""

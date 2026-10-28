@@ -10,7 +10,7 @@ from app.task_scanners import (
 )
 
 
-def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
+def test_current_oa_pending_node_after_comment_done_is_not_attention(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.ensure_reply_task(
         conversation_id="oa_pending_scan:instance", conversation_title="OA",
@@ -24,13 +24,7 @@ def test_current_oa_pending_node_remains_attention_after_comment_done(tmp_path):
         cursor_json=json.dumps({"pending_business_object_keys": ["oa:instance:node"]}),
         last_error="")
     rows = _queue_attention_rows(store)
-    assert [(r["category"], r["id"]) for r in rows] == [("OA approval", str(task.id))]
-    assert rows[0]["status"] == "pending"
-    assert rows[0]["error"] == (
-        "DingTalk still reports this OA process as pending; the tracked task has had no update for over one hour."
-    )
-    assert "no final approval or return receipt" not in rows[0]["error"]
-    assert "principal OA node is still pending" not in rows[0]["error"]
+    assert not any(r["category"] == "OA approval" and r["id"] == str(task.id) for r in rows)
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T02:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": []}), last_error="")
     assert _queue_attention_rows(store) == []

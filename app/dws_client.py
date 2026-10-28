@@ -39,6 +39,13 @@ DWS_AGENT_CODE_ENV = "DINGTALK_DWS_AGENTCODE"
 BRACKETED_EMOJI_PATTERN = re.compile(r"^\[([^\[\]]*)\]$")
 DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV = "CEO_DWS_PROCESS_MIN_INTERVAL_SECONDS"
 _DWS_PROCESS_GATE = threading.Lock()
+_DWS_PROCESS_START_GATE = threading.Lock()
+_DWS_CONCURRENT_READ_LIMIT = 4
+_DWS_READ_PROCESS_SLOTS = threading.BoundedSemaphore(_DWS_CONCURRENT_READ_LIMIT)
+_DWS_CONCURRENT_READ_PATHS = (
+    ("chat", "group", "members"),
+    ("chat", "message", "list"),
+)
 _DWS_LAST_PROCESS_START_MONOTONIC = 0.0
 
 
@@ -4545,19 +4552,29 @@ class DwsClient:
     ) -> subprocess.CompletedProcess[str]:
         global _DWS_LAST_PROCESS_START_MONOTONIC
         process_options = {"cwd": cwd} if cwd is not None else {}
-        with _DWS_PROCESS_GATE:
-            min_interval_seconds = _dws_process_min_interval_seconds()
-            if min_interval_seconds > 0:
-                now = time.monotonic()
-                wait_seconds = (
-                    _DWS_LAST_PROCESS_START_MONOTONIC
-                    + min_interval_seconds
-                    - now
-                )
-                if wait_seconds > 0:
-                    time.sleep(wait_seconds)
+        concurrent_read = not isolate_process_group and DwsClient._command_path_matches(
+            tuple(command[1:]), _DWS_CONCURRENT_READ_PATHS,
+        )
+        with contextlib.ExitStack() as gates:
+            if not concurrent_read:
+                gates.enter_context(_DWS_PROCESS_GATE)
+            # Other commands retain exclusive execution, including with respect
+            # to in-flight reads. Only these two native read leaves share slots.
+            for _ in range(1 if concurrent_read else _DWS_CONCURRENT_READ_LIMIT):
+                gates.enter_context(_DWS_READ_PROCESS_SLOTS)
+            with _DWS_PROCESS_START_GATE:
+                min_interval_seconds = _dws_process_min_interval_seconds()
+                if min_interval_seconds > 0:
                     now = time.monotonic()
-                _DWS_LAST_PROCESS_START_MONOTONIC = now
+                    wait_seconds = (
+                        _DWS_LAST_PROCESS_START_MONOTONIC
+                        + min_interval_seconds
+                        - now
+                    )
+                    if wait_seconds > 0:
+                        time.sleep(wait_seconds)
+                        now = time.monotonic()
+                    _DWS_LAST_PROCESS_START_MONOTONIC = now
             if not isolate_process_group:
                 return subprocess.run(
                     command,

@@ -71,6 +71,11 @@ DEREK_VIEWPOINT_PAIRING_RULE = CrossFieldRule(
     "trigger_reasons 含 derek_viewpoint 与 derek_viewpoint 为对象必须同时成立；"
     "不含该 trigger 时 derek_viewpoint 必须是 null",
 )
+NO_SEND_EMPTY_RULE = CrossFieldRule(
+    "skip actions carry nothing to send",
+    "action=skip_interview 或 skip_no_content 时，final_message 必须为空串，target 必须是 null，"
+    "mention_names 必须是空数组，sensitive_private_message 必须是 null；原因写入 audit_summary",
+)
 SEND_FINAL_MESSAGE_RULE = CrossFieldRule(
     "send requires final_message",
     "final_message 必须非空",
@@ -122,6 +127,7 @@ MEETING_ALIGNMENT_CROSS_FIELD_RULES: tuple[CrossFieldRule, ...] = (
     UNRESOLVED_TOPIC_NEEDS_TRIGGER_RULE,
     UNRESOLVED_TRIGGER_NEEDS_QUESTIONS_RULE,
     DEREK_VIEWPOINT_PAIRING_RULE,
+    NO_SEND_EMPTY_RULE,
     SEND_TRIGGER_REASONS_RULE,
     SEND_FINAL_MESSAGE_RULE,
     SEND_TARGET_RULE,
@@ -370,10 +376,17 @@ class MeetingAlignmentDecision(StrictModel):
         extra="forbid", json_schema_extra=_decision_schema_extra
     )
 
-    action: Literal["send"]
+    action: Literal["send", "skip_interview", "skip_no_content"] = Field(
+        description=(
+            "send=发送会议总结；skip_interview=面试，由 Derek 单独处理，不发送；"
+            "skip_no_content=没有可共享的信息量，不发送。skip_* 时 final_message 为空串、"
+            "target 为 null、mention_names 为空数组、sensitive_private_message 为 null。"
+        )
+    )
     audience_scope: Literal["business", "personal"] = Field(
         description=(
-            "business=业务承接群总结；personal=整场均为个人事项的完整日历 1:1。"
+            "business=业务承接群总结；没有合适业务群时可发给相关参会人单聊；"
+            "personal=整场均为个人事项的完整日历 1:1。"
             "sensitive_private_message 非 null 时必须是 business。"
         )
     )
@@ -414,7 +427,8 @@ class MeetingAlignmentDecision(StrictModel):
             "必填且不能为 null。group 与 direct 两种形态的字段互斥，但 kind、"
             "conversation_id、direct_user_id、title、candidates 五个键在任何形态下都必须"
             "出现，未使用的一侧要显式写成空值而不是省略："
-            "audience_scope=business 时 target.kind 必须是 group；"
+            "audience_scope=business 时优先 target.kind=group；没有合适业务群时可 target.kind=direct，"
+            "目标必须是来源中稳定匹配的相关参会人，不能是当前用户；"
             "kind=group 时 conversation_id 非空、candidates 非空且 conversation_id 必须等于 candidates[0]."
             "conversation_id、direct_user_id 必须是 \"\"；kind=direct 时 title 非空、"
             "conversation_id 必须是 \"\"、candidates 必须是 []，direct_user_id 写对方"
@@ -487,6 +501,15 @@ class MeetingAlignmentDecision(StrictModel):
 
     @model_validator(mode="after")
     def validate_action_payload(self) -> Self:
+        if self.action != "send":
+            if (
+                self.final_message.strip()
+                or self.target is not None
+                or self.mention_names
+                or self.sensitive_private_message is not None
+            ):
+                raise ValueError(NO_SEND_EMPTY_RULE.message)
+            return self
         trigger_reasons = set(self.trigger_reasons)
         topic_states = {topic.state for topic in self.topics}
         if (

@@ -694,11 +694,13 @@ message keys only within that request. Evidence is in
 `docs/console-query-performance.md`.
 
 An OA process enters Attention only while the authenticated scanner still
-tracks the exact node as Derek-owned and its current reply task has had no
-update for more than one hour. A recent pending node is still visible in its
-normal queue and History views; a pending scanner key without a matched task
-timestamp is excluded because it cannot establish stalled work. This projection
-does not change the OA process, task, or provider receipt.
+tracks the exact node as Derek-owned, its current reply task is still `pending`
+or `processing`, and that task has had no update for more than one hour. A
+completed audited comment or return may leave the OA process pending while the
+applicant or another approver acts; that external wait stays in normal queue and
+History views but is not a stalled service task. A pending scanner key without
+a matched active-task timestamp is excluded because it cannot establish stalled
+work. This projection does not change the OA process, task, or provider receipt.
 
 Current Attention suppresses an older failed OA reply Attempt only after a
 newer attempt for the same process is linked to its current Audit-approved
@@ -706,8 +708,16 @@ candidate and that candidate's `revert_task` execution is `done` with a verified
 DWS `REDIRECT_PROCESS` receipt (including the DingTalk success response and
 matching process identity). The failed Attempt remains failed in History; an
 uncertain, incomplete, mismatched, or non-return receipt leaves it visible.
-This is an Attention projection only and does not change task state, receipts,
-or OA execution.
+Suppressing an older Attempt is only an Attention projection and does not
+change task state, receipts, or OA execution.
+
+For the same-generation OA return, if read-only reconciliation has already
+persisted the exact verified receipt but the Reply Task remains failed as
+`external_action_uncertain`, reconciliation closes that stale Task projection
+to `done` only while the same candidate and Audit approval remain current and
+its sole action remains verified with the matching external receipt. The
+original failed Attempt and its provider response stay in History; the return
+is not dispatched again.
 
 OA return readback determines event uniqueness from matching `REDIRECT_PROCESS`
 records for the exact task, current user, and remark. Unrelated `PROCESS_CC`
@@ -884,7 +894,7 @@ or parsing. Return values retain that written metadata snapshot and the existing
 native event/result projection. File I/O never extends these writer leases.
 
 Consumer 和只读 Audit 可通过精确节点读取 DingTalk Drive 附件。PDF 下载上限为 64 MiB，其他附件为 20 MiB；扫描 PDF 超过 700 KiB 的内联 MCP 输入上限时，工具返回原始一基页码，之后按页渲染为受限 JPEG，由 `ai_services.ocr_document` 读取。源文件仅在当前 MCP 进程临时目录中保留，技术读取或 OCR 失败继续保持真实技术故障。
-Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。普通 Consumer 和非 OA Audit 仍把 `mcp__agent_cli`、`mcp__ai_services` 列为 direct-only 命名空间。OA Consumer 与 OA Audit 将两者交给同一个 CodeMode JS 调用；OA Audit 的其他 MCP 保持 direct-only，内建命名空间不进入该调用：附件读取结果中的 base64 在工具内存中直接传给 OCR，模型只接收 OCR 文本与来源信息。只声明 direct-only 工具并不能避免原生运行时截断超长附件输出；工具审批与业务动作边界不因此改变。
+Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 与 `ai_services.transcribe_audio`（微信语音转写）两项 AI Services 工具；其他 AI Services 工具不随角色注入。普通 Consumer 和非 OA Audit 仍把 `mcp__agent_cli`、`mcp__ai_services` 列为 direct-only 命名空间。OA Consumer 与 OA Audit 将两者交给同一个 CodeMode JS 调用；OA Audit 的其他 MCP 保持 direct-only，内建命名空间不进入该调用：附件读取结果中的 base64 在工具内存中直接传给 OCR，模型只接收 OCR 文本与来源信息。只声明 direct-only 工具并不能避免原生运行时截断超长附件输出；工具审批与业务动作边界不因此改变。
 
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
@@ -1260,7 +1270,7 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   已结算输入不另存从 provenance 可生成的精简 JSON；API 按来源摘要投影原有展示形式。
   微信语音（Derek 2026-10-26）：语音消息的 `kind` 是 `voice`，`text` 是占位 `[语音N秒·未转写，用 read_wechat_voice 取音频再转写]`，因此语音不是空消息，直接聊天里每条入站语音和入站文字一样成为回复触发（群聊仍只认 @）。
   音频不在消息行里：Reader 的 `read_voice` 按 `message_id` 在该会话自己的表里确认它是语音，再按 `server_id` 到 `media_N.db` 的 `VoiceInfo`（最新的分片先查）取 SILK 字节，最大 2 MiB；找不到、过大、不是语音都返回 `voice_unavailable`。
-  `read_wechat_voice(message_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、同样不接收会话参数）在服务环境用 `pilk` 把 SILK 转成 WAV，返回 base64，由 Agent 调用原生 `ai_services.transcribe_audio`；读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
+  `read_wechat_voice(message_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、同样不接收会话参数）在服务环境用 `pilk` 把 SILK 转成 WAV，返回 base64。微信任务（`task.channel == wechat`）的 Codex Consumer/Audit 回合与 OA 回合一样把 `mcp__agent_cli` 与 `mcp__ai_services` 放进同一个 CodeMode 调用，Agent 在同一段 JS 里把 `read_wechat_voice` 的 `filename`/`audio_base64` 交给 `mcp__ai_services__transcribe_audio`，只打印转写文字，base64 不经模型（Derek 2026-10-27：此前 Agent 要把约 116 KB 的 base64 抄进调用而卡住至空闲超时）；会话契约哈希随之区分微信交接。读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
   `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
   `reply_task` 的当前投影和 `input_version`。只有卡片内容变化、日程仍有效且本人仍待响应时
@@ -1371,9 +1381,9 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 
 消息 provider 返回稳定消息 ID，即构成已完成的发送事实；应用层不再要求额外 read-back
 证据才能写入投影。投影按 `action_identity` 精确关联 proposal action，不能从动作数组中猜正文，
-也不能要求发送目标会话等于源任务会话。业务会议跟进必须发送到 Agent 选定并经实时核验的
-业务群；普通业务总结不得选择个人收件人。该群不存在、已解散或不可发送时，本次投递失败并保留
-原目标，不得改发组织者或其他个人。个人事项只允许完整日历 1:1 发给另一位参会人；人员敏感内容仍可
+也不能要求发送目标会话等于源任务会话。业务会议跟进优先发送到 Agent 选定并经实时核验的
+业务群；完整搜索后没有合适群时，普通业务总结可单聊给来源明确的参会人（若只有一位非当前用户参会人则发给该人；多人时优先选与讨论最相关者）。不要求会议原文明确指派此人负责行动。目标不可改发当前用户。该群不存在、已解散或不可发送时，本次投递失败并保留
+原目标，不得改投其他群或个人。个人事项只允许完整日历 1:1 发给另一位参会人；人员敏感内容仍可
 按独立授权拆分为单独私聊。群消息与敏感私聊各自保留稳定投递键，因此重试或新 run 不会重复投递。服务启动后
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
@@ -1381,7 +1391,7 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 会议总结按受众拆分内容。业务会议的普通结论、安排和行动发送到 Agent 根据实时业务承接证据
 选择的群；人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假内容不得进入该群消息，
 而是仅在收件人身份、职责和披露授权均有实时证据时，作为独立私聊消息发送给经核验的
-参会人员。人员敏感详情始终从业务群正文和标题中拆出；即使目标群是 HR 群或参会人匹配度高，也不得放入群消息。无法核验授权时不发送敏感私聊，并记录未解决缺口。普通业务群按群内讨论和参会人与成员的匹配选择，不逐一核验普通群成员对普通业务内容的披露授权。参会名单不完整、无法与群成员匹配时，只要群讨论覆盖同一项目或客户且完整成员名单可读，就可选该群，并把这一缺口记入 audit_summary，不因此拒绝（Derek，2026-10-27）。群消息与敏感私聊使用不同的稳定投递键，任一发送重试都会复用已成功的另一条，
+参会人员。会议默认发送总结；面试（`skip_interview`，由 Derek 单独处理）和没有可共享信息量的会议（`skip_no_content`）是不发送的决定，经同一独立 Audit 后分别终止为 `skipped` 和 `no_action`（Derek，2026-10-28）。人员敏感详情始终从业务群正文和标题中拆出；即使目标群是 HR 群或参会人匹配度高，也不得放入群消息。无法核验授权时不发送敏感私聊，并记录未解决缺口。普通业务群按群内讨论和参会人与成员的匹配选择，不逐一核验普通群成员对普通业务内容的披露授权。参会名单不完整、无法与群成员匹配时，只要群讨论覆盖同一项目或客户且完整成员名单可读，就可选该群，并把这一缺口记入 audit_summary，不因此拒绝（Derek，2026-10-27）。群消息与敏感私聊使用不同的稳定投递键，任一发送重试都会复用已成功的另一条，
 日历描述只写群消息版本。
 
 会议消息已有不可变发送回执时，日历摘要恢复先只读原事件。若描述中已完整包含同一冻结摘要正文，
@@ -1529,8 +1539,10 @@ acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 Consumer→Audit 往返——退订在真实世界本来就是幂等的，那套 exactly-once 支架换不来任何东西，
 却让每一次点击都要花一整轮 agent，而过期的 continuation 会让任务失败在机制上而不是页面上。
 首次外部调用前会持久化执行标记。只有执行返回明确的瞬时浏览器错误码时，标记才转成带错误码和
-重试次数的 retryable 状态；任务按现有指数退避及四次预算恢复同一 ActionPlan、entry、generation
-和输入摘要。终态 receipt 仍是唯一成功／跳过凭证。进程中断、结果未知、错误未分类或重试预算耗尽时，
+重试次数的 retryable 状态；任务按现有指数退避及四次预算恢复同一 ActionPlan、entry 和输入摘要。
+正式重试可产生新的 Task generation/input version；只有任务 ID、稳定 Action identity、完整输入摘要
+相同且标记含已识别的瞬时外部错误时，才把这个 retryable 标记接续到新 generation，并保留原重试计数。
+终态 receipt 仍是唯一成功／跳过凭证。进程中断、结果未知、错误未分类或重试预算耗尽时，
 标记保持不可重试并进入核对／Attention；不能清标记或重放来推定成功。已有不可分类的执行标记会以
 `email_unsubscribe_outcome_unresolved` 记录为外部结果未确认，而非内部 `ValueError`；它仍保持失败并等待
 只读回执核对，不会自动重放。浏览器步骤本身不升级为
@@ -1642,19 +1654,21 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 
 确认既有主消息已送达的状态恢复会保留原准备正文和 provider 回执；当持久化决策含 `_service_audit` 时，先核对 Audit `approve` 与候选 SHA-256 绑定，再由 Meeting 决策读取器解析原候选。无效封套不恢复；未带封套的历史回执继续沿既有核验路径处理。
 
-日历仅用于确认参会名单，不决定业务内容的披露受众。会议跟进使用同一 `MESSAGE_AUDIENCE_CONTRACT`，并覆盖其通用的敏感群消息例外：业务总结发到
-根据相关群讨论和参会人成员匹配选出的群；普通业务内容不逐一核验群成员披露授权。所有人员敏感内容
+日历仅用于确认参会名单，不决定业务内容的披露受众。会议跟进使用同一 `MESSAGE_AUDIENCE_CONTRACT`，并覆盖其通用的敏感群消息例外：业务总结优先发到
+根据相关群讨论和参会人成员匹配选出的群；完整群发现后没有合适群时，发给一位来源明确的参会人单聊，优先选与讨论最相关者，若仅有一位非当前用户参会人则发给该人，不要求会议明确指派其负责决定或行动。目标必须绑定来源中的稳定 user_id 且不能是当前用户。普通业务内容不逐一核验群成员披露授权。所有人员敏感内容
 均从群正文和标题拆出，作为独立私聊发送给身份、当前职责和披露授权均有实时证据的个人；HR 群及
 参会人高匹配度不改变此规则。明确业务私聊的稳定 `user_id` 必须唯一匹配来源参会人
 或日历证明的组织者，身份和受众理由保留在决策中；不可从逐字稿发言人推断组织者。
 群不可发送时保留失败，不能静默换成组织者或本人。私聊入口拒绝本人及已核验别名；
 职务、HR 身份和私聊本身均不构成披露授权，身份检查也不替模型证明业务理由真实。
 群标题相似、部分参会人重合或近期活跃本身不构成业务承接证据。
-裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。会议总结中的人员敏感内容始终不得进入业务群，不逐一审核群成员是否可接收敏感详情；敏感部分只可按具体内容发给经核验且有披露授权的个人，找不到时保留未解决事项。普通业务群只检查群内业务讨论和参会人成员匹配，不逐成员审查普通业务内容的披露授权；群是否可发送由服务投递时核验，不可发送则失败且不改投，不得为发送而选宽泛群。敏感分类和个人授权判断由 Agent 根据证据完成，不增加运行时关键词过滤或比例授权阈值。
+裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。会议总结中的人员敏感内容始终不得进入业务群，不逐一审核群成员是否可接收敏感详情；敏感部分只可按具体内容发给经核验且有披露授权的个人，找不到时保留未解决事项。普通业务群只检查群内业务讨论和参会人成员匹配，不逐成员审查普通业务内容的披露授权；没有合适群时普通业务总结可发给相关参会人单聊，目标使用来源里的稳定身份，群是否可发送由服务投递时核验，不可发送则失败且不改投，不得为发送而选宽泛群。敏感分类和个人授权判断由 Agent 根据证据完成，不增加运行时关键词过滤或比例授权阈值。
 找群先核对会议材料里明确提及的讨论群，再从结论、行动和负责人提炼主题，分别以原文中文
 业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
 候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
 搜索结果按会议标题/摘要与群名筛选并读取完整群成员。成员匹配统一使用准确率 `member_precision = 匹配参会人数 / 完整群成员数`（3/N），不再使用参会人召回率或原有“至少两人且覆盖60%参会人”的过滤条件。业务讨论和主题仍先于成员准确率排序，准确率用于同等业务证据的候选比较，不能覆盖实际业务归属或替代披露权限。候选保留完整成员 IDs、群人数、匹配人数、准确率及参考参会名单是否完整；历史投递只记录次数，不标记为已验证受众。平台中立的发现服务只返回候选及证据，不决定最终目标或发送；近期消息截取和历史送达只是发现线索，Agent 仍需核验完整相关讨论与当前受众，不得按搜索顺序截断候选或仅凭词项匹配判断披露范围。
+
+群发现对保留候选的完整成员读取和近期消息读取分别使用固定最多 4 个并行只读调用，每次最多提交 4 项；按原候选顺序消费结果后再执行原筛选与稳定排序。候选范围、阈值、成员完整性、每项证据、读取计数及错误分类保持原合同。并发完成顺序不改变同分候选顺序或首个失败的归属；失败时不提交后续批次，等待已启动的只读调用结束，不增加重试、缓存或外部写入。 DWS 执行边界仅允许原生 `chat group members` 与 `chat message list` 共享固定 4 个读取槽；其余命令及隔离进程命令仍全局排他，须等待已启动读取结束，所有命令继续使用同一启动间隔和原超时、错误处理。
 
 DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryReadDenied`，保留该群 ID、成员证据、代码及原因，讨论内容/分数保持未知，并继续核验其他候选。全部拒绝仍为明确 `history_read_denied`，不变成无群、空历史、可发送或自动私聊依据。拒绝证据到达 Agent 不解除权限；无法核实受众或内容时仍保留真实失败。临时及未知 provider 故障保持原失败/重试语义。
 多个合理群不是人工选择条件，由 Agent 按本次议题和行动归属排序，不能用宽泛群凑数，也不能把敏感内容送给无授权受众。

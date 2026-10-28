@@ -1707,6 +1707,20 @@ def _analyze_meeting_job(
         )
         return
 
+    if decision.action != "send":
+        store.clear_codex_capacity_pause()
+        _record_agent_run(store, runner, run_id, status="no_action", error="")
+        store.update_meeting_alignment_job(
+            job.id,
+            status="skipped" if decision.action == "skip_interview" else "no_action",
+            decision_json=audited_decision_json,
+            locked_at=None,
+            available_at="",
+            send_result_json="{}",
+            error="",
+        )
+        return
+
     store.clear_codex_capacity_pause()
     decision_json = audited_decision_json
     target = decision.target

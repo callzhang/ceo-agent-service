@@ -150,10 +150,6 @@ def deliver_meeting_alignment(
     target_title = source.title
     if target is None:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
-    if decision.audience_scope == "business" and target.kind != "group":
-        raise MeetingDeliveryError(
-            "business summary requires a verified group target"
-        )
     private_message = decision.sensitive_private_message
     if private_message is not None:
         try:
@@ -171,6 +167,17 @@ def deliver_meeting_alignment(
             raise MeetingDeliveryError(
                 "business delivery requires an explicit verified audience"
             )
+        if target.kind == "direct" and not decision.audit_summary.strip():
+            raise MeetingDeliveryError(
+                "business direct target requires a recipient rationale"
+            )
+        if target.kind == "direct":
+            try:
+                meeting_business_direct_recipient(
+                    source, target, participant_only=True
+                )
+            except ValueError as exc:
+                raise MeetingDeliveryError(str(exc)) from exc
     else:
         if target.kind != "direct":
             raise MeetingDeliveryError("personal delivery requires a direct target")

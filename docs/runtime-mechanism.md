@@ -845,7 +845,7 @@ History 只允许对尚未解决、没有 OA 外部效果且身份匹配的跳�
 拒绝前还须把完整 DWS `REDIRECT_PROCESS` 时间线与本地执行回执及有效轮数逐条对账。已核实的 DWS 退回不能仅因本地缺少执行回执而遗漏；每条不计入的退回都要说明记录和证据理由。总退回数与有效轮数不同时必须解释差异；无法核实完整时间线或差异时，不得声称达到拒绝阈值。
 
 Attention 对最新成功待办扫描仍报告为活动的 OA 流程继续显示 pending；本地 Consumer 已完成评论或退回时，默认详情仅说明扫描仍见流程未终结，不推断“没有退回回执”。具体回执以 History/System Execution 与 DWS 流水读回为准。
-History 可对一条已有 uncertain OA 退回执行专用只读核验：调用方必须提供当前绑定的候选和 Audit review；Attempt 必须关联该 Audit run，Attempt 已保存的 OA 身份字段（若有）也必须与候选匹配；并校验唯一既存 uncertain action journal 及 uncertain execution 后，才进入 `reconciliation_only` 执行模式。此模式只调用已注册 OA handler 的严格 DWS 回读，不调用 dispatch；通过后将匹配回执写入外部动作账本并更新同一执行代际，原始 provider response 继续保留在核验证据中。证据不完整或冲突时维持 uncertain。它不创建 Consumer/Audit 新代际，不改变审批结论，也不重放动作。
+History 可对一条已有 uncertain OA 退回执行专用只读核验：调用方必须提供当前绑定的候选和 Audit review；Attempt 必须关联该 Audit run，Attempt 已保存的 OA 身份字段（若有）也必须与候选匹配；并校验唯一既存 uncertain action journal 及 uncertain execution 后，才进入 `reconciliation_only` 执行模式。此模式只调用已注册 OA handler 的严格 DWS 回读，不调用 dispatch；通过后将匹配回执写入外部动作账本并更新同一执行代际，原始 provider response 继续保留在核验证据中。证据不完整或冲突时维持 uncertain。若精确回执已持久化但同一代 Reply Task 仍因 `external_action_uncertain` 失败，且当前候选仍是该 Audit 批准的唯一动作、执行为 done、回执仍匹配，则同一只读入口将 Task 结清为 done；原 Attempt 的失败记录保留。它不创建 Consumer/Audit 新代际，不改变审批结论，也不重放动作。
 退回读回只用与原任务、当前用户和准确意见匹配的 `REDIRECT_PROCESS` 记录判定唯一性。同秒的 `PROCESS_CC` 抄送不计入该退回的歧义判断；多个匹配退回或缺少目标任务证据仍保持 uncertain。该流程仍只读，不重放退回。
 默认 OA Consumer prompt 只负责选择通用审批与业务 Skill、按实时流程分类及提示执行后读回；审批阈值、可补充事实的问询和人工升级条件由所选 Skill 定义。启动迁移只替换与已知旧版内容完全相同的系统 OA prompt，并保留后续自定义改动。
 
@@ -1929,7 +1929,7 @@ Audit 返回或拒绝后的修订仍绑定原阶段及原有前置审核 ID；�
 
 钉钉引用回复由服务使用 DWS `chat +messages-reply` 投递；该入口核验原消息、发送者与会话一致性，且适用于已确认的单聊会话。投递仍沿原业务对象的幂等键和回执核验，不因引用回复失败自动改发普通消息。
 
-会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务按标题/摘要与群名筛选，读取完整成员，并以 `member_precision=匹配参会人数/完整群成员数`（3/N）代替参会人召回率。移除至少两人且覆盖60%参会人的过滤条件；业务讨论、主题优先排序，准确率只用于同等业务证据的候选比较。候选保留完整成员 IDs、群人数、匹配人数、准确率及参考参会名单完整性，再交给 Agent 核验业务承接与实际披露授权。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。候选排序依次参考讨论片段分数、标题/摘要与群名的主题分数、人员准确率；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。成员准确率仅描述参会人与完整群成员的交集，不证明业务归属或披露权限。每条业务会议总结必须选择一个经核验的业务群，不能改发个人；个人只用于符合条件的个人事项 1:1 或独立核验的敏感内容私聊。历史投递只报告次数，不再赋予 verified_recurring_group 标记，仍须核验当前实际内容和完整受众；此前已发送的总结不会因路由修复自动重发。
+会议总结的业务群候选由正文中的业务词与标题共同检索，排除听记摘要里的时间标签、图片链接等元数据。平台中立的共享群发现服务按标题/摘要与群名筛选，读取完整成员，并以 `member_precision=匹配参会人数/完整群成员数`（3/N）代替参会人召回率。移除至少两人且覆盖60%参会人的过滤条件；业务讨论、主题优先排序，准确率只用于同等业务证据的候选比较。候选保留完整成员 IDs、群人数、匹配人数、准确率及参考参会名单完整性，再交给 Agent 核验业务承接与实际披露授权。当前运行时只有 DingTalk/DWS 适配器，Lark 和 Slack 需要各自 Provider 的认证、读取和外部读回验证后才能启用。发现服务不选择最终目标，也不把 Provider 故障降级成“找不到群”。没有标题命中时仍保留候选做实时名册检查，不能按搜索接口的原始返回顺序截断候选。候选排序依次参考讨论片段分数、标题/摘要与群名的主题分数、人员准确率；词项交集只是检索线索，Agent 必须核对实际讨论、行动负责人和受众。成员准确率仅描述参会人与完整群成员的交集，不证明业务归属或披露权限。业务会议总结优先发到经核验的业务群；完整搜索后没有合适群时，发给最直接承接相关决定或行动的参会人单聊，目标必须绑定来源里的稳定 user_id 且不能是当前用户。个人事项仍只允许符合条件的个人 1:1，人员敏感内容仍使用独立核验的私聊。历史投递只报告次数，不再赋予 verified_recurring_group 标记，仍须核验当前实际内容和完整受众；此前已发送的总结不会因路由修复自动重发。
 
 候选群消息读取明确返回 DWS `code=1001`、业务原因「该群为保密群，无法获取消息记录」，且 `retryable_external_dependency=false` 时，适配器保留原始拒绝，不包装成瞬时错误。会议任务记录 `meeting_group_discovery` 失败并释放执行锁，不继续自动重试；权限或可读取的可信来源恢复后才走正式恢复。该拒绝既不是空消息结果，也不允许跳过该群而改投其他群或组织者。未知读取错误以及 provider 明确标记可重试的故障仍沿原有重试路径处理。
 
@@ -2213,7 +2213,7 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
 WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
 执行期间 current 指针更新不会改写已领取的会话范围。
-微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，Agent 调原生 `ai_services.transcribe_audio` 转写；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
+微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，微信任务的 Codex 回合与 OA 一样在同一个 CodeMode 调用里把它交给 `mcp__ai_services__transcribe_audio`，base64 不经模型；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
@@ -2726,6 +2726,8 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 旧失败任务的 effect-free 自动重入队还要求没有 `email_unsubscribe_execution_pending` 标记；即使没有 claim、receipt、effect、浏览器 step 或 Agent run，这个标记仍表示执行需要对账，恢复筛选必须保留失败状态并禁止自动重放。
 执行标记在退订请求前落库。浏览器返回属于瞬时外部失败清单的明确错误时，服务把当前标记原子更新为 `retryable`，只保留错误码、次数和原任务身份；下一次领取仍按本段的固定次数与指数退避执行同一授权动作。`retry_count` 记录已授予的重试次数；共享上限为首次操作之后最多 3 次重试，所以 count 为 3 时仍可执行第 4 次浏览器操作；之后的下一次本地领取在浏览器运行前以 `email_unsubscribe_outcome_unresolved` 拒绝。没有明确失败结果（例如进程中断）、非瞬时错误或无回执异常仍保留原 pending 标记，阻止自动重放；这与已归类的外部浏览器错误分开处理，不能把未知结果当成可重试失败。
 
+通过正式 Reply Task 重试后，Task 的 generation 或 input version 可能前进。若原标记是已识别的 `retryable` 外部浏览器失败，只有 task ID、稳定 Action identity 和完整 TaskInput 摘要仍与当前任务相同，才允许将标记接续到新 generation/input version；每次重试继续使用原计数和预算。pending、unknown、非瞬时错误或输入摘要变化的标记不接续，仍需只读核对，不清除围栏或重放来推定成功。
+
 `email_unsubscribe_browser_timeout`、`email_unsubscribe_browser_session_unavailable`、兜底码 `email_unsubscribe_browser_failed` 这三个瞬时失败会先退避重试；用完固定次数后写终态 `failed` 错误文本时，只有兜底码把 `task_error` 里已经带的 `: category=<名称>`（或未预期异常的类名与消息）一并写入，其余两个专属码保持裸码——`app/external_failures.py` 只登记了这个精确格式。此前用完次数一律只写裸码，2026-09-25 那 6 次失败因此从未真正匹配过外部原因清单：它们的错误文本是裸的 `email_unsubscribe_browser_failed`，本该在 Attention 之外却一直在里面（Derek 2026-09-28 指出后修复）。控制台看到的失败原因同样有这道口子：一个还没读到任何页面、因而没有回执的退订任务（浏览器在读页面前就报错），观测时间线过去只给状态不给原因，2026-09-28 起把任务自己的错误文本一并投影进 `kind=unsubscribe` 的记录（`list_email_classification_observability` 和 `list_unsubscribe_states` 的 `error` 字段），控制台把已知的码译成人话，未知的码原样显示而不是不显示。钉钉 OKR 登录失效（`okr_headless_session_expired…`、`okr_authorization_required…`）同样是外部原因：只有人能重新登录，也保持 `failed`、不进 Attention；只有标准错误码 `authorization_required` 才能承载「需要人工」的授权决定，OKR 自己的错误码不行，所以它记为失败而不是人工决定。唯一例外是 `email_unsubscribe_receipts.entry_url`：该列按 Derek 的明确要求保存这次实际打开的完整私密 URL（含 query 与 token），用于人工复现同一个退订入口。写入前校验它的 sha256 等于 `entry_reference` 的摘要，因此不能与生命周期认定的身份漂移；它不经过 `assert_no_credentials`，因为被保存的正是那类 token。打开该 URL 会真实执行退订，任何能读这张表或这个页面的人都能替当事人退订。该列只在本次变更之后产生的 receipt 上有值，历史行为空且无法补全。退订浏览器不再对页面发出的网络请求做 origin 白名单、跳转或资源家族限制。
 同一 generation、同一 proposal revision 内，Consumer 或 Audit 每个 worker pass 最多跑 2 次 turn（`MAX_ROLE_ATTEMPTS_PER_PROCESS`）；仍是可重试的通用失败时该 pass 以 `failed_retryable` 结束，并给出 `retry_after_seconds`（共享指数退避，封顶 15 分钟，`external_retry.retry_delay_seconds`）。Consumer 与 Audit 的失败次数分别按持久化同角色 run 计算，首次失败后最多重试 3 次；同一角色 4 次连续失败后，在下一次 provider 调用之前结果为 `failed_terminal`。容量、连接、来源刷新和其他可重试技术失败都计数，另一角色的失败不占用本角色预算，同角色成功 turn 会重置连续失败计数。错误码与 Agent 原文 `source_code` 保留在诊断和结果摘要里，任务结束为 `failed`，不再重新入队。尚未实际执行的活动租约等待不产生失败 turn；授权缺失沿用不可重试终态。该角色预算独立于 worker/task attempt；各自最多 3 次 retry（初始调用之外），不会退款或跨角色共用。定时执行与 Email 延期不再把已失败的 Consumer/Audit turn 退款后无限重跑。内容反馈预算是业务修订循环，不属于技术 retry 预算。
 
@@ -2811,7 +2813,7 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 
 - 一场会议可能被分成几段录制，每段各有自己的 taskUuid。同名且相邻两段间隔不超过两小时算同一场会议（由间隔决定，不按自然日切分，跨零点的会议因此保持完整）。后到的录制并入已有任务：转写与摘要接到第一段之后，会议结束时间顺延到最后一段，任务重开并**对整场会议重新生成总结**，而不是补一段增量。此时标题标注「第二次总结」。只有发送前已保存了另一条旧消息的凭证，才会在新总结发送成功后撤回旧消息；首次发送以及同一条消息的日历备注重试都不撤回自身。provider 拒绝撤回不算会议失败。
 
-- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供来源和收件人身份核验使用，不因此决定业务收件目标。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对相关讨论、业务承接和参会人与完整群成员的匹配，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”并私聊组织者。业务总结发到按相关讨论和参会人成员匹配选出的群；普通业务内容无需逐一核验群成员披露授权。裁员、减员、人员优化及其他人员敏感详情必须从业务群正文和标题中拆出，作为独立私信发送给身份、当前职责和该具体内容披露授权均有实时证据的个人；HR 群或高参会人匹配度不构成合并敏感内容的例外。没有经核验且获授权的个人时，不发送敏感部分并记录未解决事项，不私聊本人兜底。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
+- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供来源和收件人身份核验使用，不因此决定业务收件目标。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对相关讨论、业务承接和参会人与完整群成员的匹配，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”。业务总结优先发到按相关讨论和参会人成员匹配选出的群；完整搜索后没有合适群时，发给最直接承接相关决定或行动的参会人单聊，目标须使用来源中的稳定 user_id 且不能是当前用户。普通业务内容无需逐一核验群成员披露授权。裁员、减员、人员优化及其他人员敏感详情必须从业务群正文和标题中拆出，作为独立私信发送给身份、当前职责和该具体内容披露授权均有实时证据的个人；HR 群或高参会人匹配度不构成合并敏感内容的例外。没有经核验且获授权的个人时，不发送敏感部分并记录未解决事项，不私聊本人兜底。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
 Meeting 群发现提交给 Agent 的候选列表保留每个群的 ID、完整成员、讨论证据与读取状态；
 原来每个候选都重复的同一段受众核验要求，现于非空列表前逐字提交一次。
 无候选时不增加这段文字，受众授权与发送规则本身不变。
@@ -3930,6 +3932,7 @@ Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `need
 独立会议路径复用共享消息受众合同。候选级保密历史拒绝保留为明确未知证据，继续读取其他
 候选；不当作空讨论、无群或发送许可。群成员完整性和真实群人数独立于会议参会人数。
 Agent 依据实际讨论、完整当前名册、稳定身份、当前职责和内容披露范围决定群或明确私聊。
+共享群发现对每阶段保留候选的完整成员和近期消息采用固定最多 4 个并行只读调用、每批最多 4 项，按原输入顺序消费结果后执行原筛选与稳定排序；不缩小候选集或改变阈值、完整性、逐项证据、读取计数及错误分类。并发完成顺序不影响同分候选顺序或首个失败；失败后不提交后续批次，等待已启动读取结束，不额外重试、缓存或发送。 DWS 执行边界仅允许原生 `chat group members` 与 `chat message list` 共享固定 4 个读取槽；其余命令及隔离进程命令仍全局排他，须等待已启动读取结束，所有命令继续使用同一启动间隔和原超时、错误处理。
 仅有转写参会人而无完整日历名册时，群发现先按原发送可用性和标题规则预选，再读取保留群的完整成员；无标题匹配时仍保留原候选范围。完整日历名册仍先检查参会覆盖再筛标题，不能让不符合覆盖的同名群遮蔽合格群。该读取顺序优化不降低所选群的身份、完整名册和讨论证据要求，不缓存受众，也不赋予发送许可。
 业务私聊只接受来源中唯一的稳定参会人身份或日历证明的组织者；拒绝本人和已核验别名。
 个人私聊仍要求完整日历两人名册。正文同一私聊受众合并发送，不凭 HR 职务扩大披露范围。
@@ -4420,8 +4423,12 @@ OA approval Attention reflects an unresolved process-level state from the latest
 verified provider scan. A running OA process may have completed the current
 principal's node and moved to another approver; unless the provider detail
 identifies the current node owner, the projection must not claim that the
-principal's node is still pending. Keep the process in Attention until a final
-approval or return receipt is read back.
+principal's node is still pending. Keep the process in Attention only while its
+current reply task remains `pending` or `processing` beyond the stall window.
+After an audited comment or return is completed and verified, a still-pending
+external OA process is waiting for the applicant or another approver; preserve
+that real state in the normal queue and History without treating it as stalled
+service work.
 
 ### 日历组织者来源字段
 
@@ -4512,7 +4519,7 @@ Attempt detail 的 System Execution 只对当前审核候选，或已有执行�
 
 会议工作人格来源引用（2026-10-14）：Meeting Alignment 每轮只取得一次实际注入的工作人格正文，来源引用为该正文的 `work_profile:sha256:<digest>`；历史来源按该引用回写，完整原生输入可重算摘要。会议结果不再被提示词要求回写本地文件路径。现有 codec 的本地路径和凭据限制不变。
 
-Meeting Alignment 的业务总结固定发到按相关群讨论和参会人成员匹配选出的群。普通业务内容不要求逐一核验群成员的披露授权。参会名单不完整、无法与群成员匹配时，只要群讨论覆盖同一项目或客户且完整成员名单可读，就可选该群，并把这一缺口记入 audit_summary，不因此拒绝（Derek，2026-10-27）。另外，人员评价、绩效、薪酬、晋升、去留、候选人结论、健康、请假及组织层面裁员/减员/人员优化信息必须从群正文和标题拆出，作为独立私聊发送给身份、当前职责和该内容披露授权均有实时证据的个人。HR 群或高参会人匹配度不构成合并敏感内容的例外；没有授权个人时省略敏感详情并记录未解决缺口。Planner 与独立 Audit 均应用此 Meeting 专属规则，覆盖通用受众合同对敏感群消息的条件性许可。
+Meeting 的决定默认是 `send`；面试（`skip_interview`，Derek 另行单独处理）和没有可共享信息量的会议（`skip_no_content`，不发一条空话）是两种不发送的决定（Derek，2026-10-28）：它们同样经独立 Audit，通过后任务分别终止为 `skipped` 和 `no_action`，不产生任何外发动作；Audit 认为会议有可共享内容时退回，走与 `send` 相同的有界反馈修订。Meeting Alignment 的业务总结优先发到按相关群讨论和参会人成员匹配选出的群；完整搜索后没有合适群时，发给最直接承接相关决定或行动的参会人单聊，目标使用来源中的稳定 user_id 且不能是当前用户。普通业务内容不要求逐一核验群成员的披露授权。参会名单不完整、无法与群成员匹配时，只要群讨论覆盖同一项目或客户且完整成员名单可读，就可选该群，并把这一缺口记入 audit_summary，不因此拒绝（Derek，2026-10-27）。群近期讨论的主题不必与本次会议议题重合（同一项目的群即对口）；Audit 退回目标时必须从已给候选中指出更合适的群及理由，不能只说证明不足（Derek，2026-10-28）。另外，人员评价、绩效、薪酬、晋升、去留、候选人结论、健康、请假及组织层面裁员/减员/人员优化信息必须从群正文和标题拆出，作为独立私聊发送给身份、当前职责和该内容披露授权均有实时证据的个人。HR 群或高参会人匹配度不构成合并敏感内容的例外；没有授权个人时省略敏感详情并记录未解决缺口。Planner 与独立 Audit 均应用此 Meeting 专属规则，覆盖通用受众合同对敏感群消息的条件性许可。
 
 Meeting 的 Codex CLI 每轮显式设置 `project_doc_max_bytes=0`，省去 CLI 自动加载的工作区 `AGENTS.md`；服务装配的会议来源、工作人格、冻结托管 Skill、结果 Schema 与受众校验不变。非 Codex 路线不使用这个 CLI 配置。
 
@@ -5726,3 +5733,7 @@ policy are unchanged. No backfill or old-hash compatibility lookup is added.
 The gated two-turn regression uses the real Store and substituted native CLI.
 
 定时任务的「发送完成通知」默认开启并保存在任务配置中；创建手动或 Cron run 时冻结到不可变 snapshot，编辑偏好只影响后续触发。关闭时 Agent 与服务命令路径都不发送该 run 的终态桌面通知，生命周期状态、Attention 与 History 保持原有行为。历史 snapshot 缺少此字段时按开启处理。
+
+### 会议无合适群时的收件人（2026-10-28）
+
+业务会议总结优先发到合适的业务群。完整搜索后没有合适群时，从来源明确的参会人中选择一人单聊；只有一位非当前用户参会人时发给该人，多人时优先选与讨论最相关者。不要求会议明确指派该人负责某项决定或行动。目标仍须绑定稳定 user_id，且不能是当前用户；敏感内容继续按单独的职责和披露授权规则处理。

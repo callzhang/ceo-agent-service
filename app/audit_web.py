@@ -3452,6 +3452,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             ).fetchone()
             if task is None:
                 continue
+            if str(task["status"] or "").lower() not in {"pending", "processing"}:
+                continue
             stalled = db.execute(
                 "select julianday(?) <= julianday('now') - (? / 86400.0)",
                 (task["updated_at"], ATTENTION_STALLED_PENDING_SECONDS),

@@ -792,14 +792,22 @@ def test_two_person_business_group_delivery_is_allowed():
     assert result.target_kind == "group"
 
 
-def test_multi_person_direct_delivery_is_rejected_without_sending():
-    with pytest.raises(
-        MeetingDeliveryError,
-        match="complete calendar-backed two-person roster",
-    ):
-        deliver_meeting_alignment(
-            send_decision(target="direct", mention_names=[]), meeting_source(), FakeDws()
-        )
+def test_business_summary_direct_delivery_to_meeting_attendee():
+    dws = FakeDws()
+    payload = send_decision(target="direct", mention_names=[]).model_dump()
+    payload["audience_scope"] = "business"
+
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws
+    )
+
+    assert result.status == "sent"
+    assert result.target_kind == "direct"
+    assert result.target_id == "u-a"
+    assert len(dws.sent) == 1
+    assert dws.sent[0]["user_id"] == "u-a"
+    assert dws.sent[0]["conversation_id"] is None
+    assert dws.search_queries == []
 
 
 @pytest.mark.parametrize("private", [False, True])
@@ -816,11 +824,12 @@ def test_delivery_rejects_principal_before_any_send(private):
         }
     else:
         payload["target"] = target
+        payload["audience_scope"] = "business"
     source = meeting_source().model_copy(update={"creator": meeting_source().participants[0]})
     dws = FakeDws()
     with pytest.raises(
         MeetingDeliveryError,
-        match="principal" if private else "business summary requires a verified group target",
+        match="principal",
     ):
         deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), source, dws)
     assert dws.sent == []
@@ -932,32 +941,32 @@ def test_delivery_identity_and_evidence_gates_run_before_any_send(private, probl
     assert dws.search_queries == []
 
 
-def test_business_direct_delivery_is_rejected_without_sending_to_individual():
+def test_business_direct_delivery_sends_to_the_explicit_meeting_attendee():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
     payload["target"].update(direct_user_id="u-b", title="B")
     dws = FakeDws()
 
-    with pytest.raises(MeetingDeliveryError, match="business summary requires a verified group target"):
-        deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws,
-        )
-    assert dws.sent == []
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws,
+    )
+    assert result.target_kind == "direct"
+    assert dws.sent[0]["user_id"] == "u-b"
     assert dws.search_queries == []
 
 
-def test_business_direct_delivery_is_not_redirected_to_meeting_organizer():
+def test_business_direct_delivery_uses_the_chosen_attendee_without_redirection():
     payload = send_decision(target="direct", mention_names=[]).model_dump()
     payload["audience_scope"] = "business"
     dws = FakeDws()
 
-    with pytest.raises(MeetingDeliveryError, match="business summary requires a verified group target"):
-        deliver_meeting_alignment(
-            MeetingAlignmentDecision.model_validate(payload),
-            meeting_source(),
-            dws,
-        )
-    assert dws.sent == []
+    result = deliver_meeting_alignment(
+        MeetingAlignmentDecision.model_validate(payload),
+        meeting_source(),
+        dws,
+    )
+    assert result.target_kind == "direct"
+    assert dws.sent[0]["user_id"] == "u-a"
     assert dws.search_queries == []
 
 
@@ -972,7 +981,7 @@ def test_business_direct_delivery_rejects_empty_id_without_profile_search():
     source_payload = meeting_source().model_dump(mode="json")
     source_payload["creator"].update(user_id="", open_dingtalk_id="")
 
-    with pytest.raises(MeetingDeliveryError, match="business summary requires a verified group target"):
+    with pytest.raises(MeetingDeliveryError, match="stable user_id"):
         deliver_meeting_alignment(
             MeetingAlignmentDecision.model_validate(payload),
             MeetingSource.model_validate(source_payload), dws,
