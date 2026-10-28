@@ -250,6 +250,8 @@ class MeetingAlignmentAgent:
             + "If no such person is established, omit the sensitive details and record the unresolved gap in audit_summary; do not merge them into the group message or use the principal as fallback. "
             + "When sensitive details appear in the meeting source but the private message is missing, approve only when the gap is explicitly recorded and those details are absent from the group title and body."
             + "\n\n"
+            "候选 action 为 skip_interview 或 skip_no_content 时，候选是“不发送”的决定：只在会议来源确实支持该原因"
+            "（确为面试；去掉敏感内容后确实没有可共享的实质信息）时 approve；若会议有可共享的业务结论或行动，return 并要求发送。\n\n"
             "## Read-only source and candidate\n"
             + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
         )
@@ -541,7 +543,10 @@ def build_meeting_alignment_prompt(
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
     )
-    target_contract = """每场会议都必须生成并发送一条会议总结，action 只能是 send；不得返回 no_action。
+    target_contract = """会议默认须生成并发送一条会议总结（action=send）。只有两种例外，均不发送，Derek 另行处理或无需处理：
+- 面试（候选人面试、招聘面谈）：action=skip_interview，面试由 Derek 单独处理。
+- 没有可共享的信息量：去掉人员敏感内容后没有实质结论、事项或行动，只剩空泛概述时，action=skip_no_content，不要发一条空话。
+不发送时 final_message 为空串、target 为 null、mention_names 为空数组、sensitive_private_message 为 null，原因写入 audit_summary。
 - 业务内容返回 audience_scope=business，会议总结必须选择经过核验的业务群（target.kind=group）；不得把普通业务总结私发给组织者、参会人或其他个人。使用 DWS 做群发现，以实际内容、业务目的和披露范围选择群；人数和群名称不决定受众。
 - 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
 - 对每个可能的群，核对群内讨论是否涉及同一工作线、行动承接情况，以及参会人与完整群成员的准确匹配。普通业务内容不要求逐一证明群成员的披露授权；普通业务群选群不逐一核实成员披露授权，无需为每个成员单独判断是否适合接收普通业务总结。为每个有效候选写清候选群的来源、业务承接关系、成员匹配和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群。讨论摘录没有时间戳、群是否可发送（服务在投递时核验）都不是选群条件。
@@ -552,7 +557,7 @@ def build_meeting_alignment_prompt(
 - 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示，并放入独立 sensitive_private_message；即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息。敏感信息按具体内容发给职责和披露授权均有实时证据的个人；没有合适且已授权的个人时不发送该部分并记录未解决缺口，缺少披露授权不能用私聊兜底。HR 职务不是自动披露授权，私信不天然安全。
 - sensitive_private_message.target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，禁止 current_user_id 及其已核验别名。recipient_evidence 必须记录实时身份、当前职务职责及实际内容的披露授权。接收人无法核验时记录缺口，不得按姓名猜测，不得私聊本人兜底。
 - 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
-- 没有实质观点分歧时，仍须发送简短的会议结论、已确认事项和下一步；不得因议题平稳而跳过。"""
+- 没有实质观点分歧但有可共享的结论、已确认事项或下一步时，仍须发送简短总结；不得因议题平稳而跳过。"""
 
     similar_sessions_text = _similar_sessions_prompt_block(similar_sessions or [])
     group_candidates_text = json.dumps(
@@ -591,7 +596,7 @@ def build_meeting_alignment_prompt(
 {audit_feedback_block}
 
 触发边界：
-- 每场会议均须发送一条总结。出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原时，重点说明对齐或待决事项；没有分歧时，简洁归纳已确认事项和下一步。
+- 除面试和没有可共享信息量的会议外，均须发送一条总结。出现实质观点分歧，或 {principal_display_name()} 的观点在后续讨论中没有被完整还原时，重点说明对齐或待决事项；没有分歧时，简洁归纳已确认事项和下一步。
 - 只要会议中曾经出现实质观点分歧，后来明确对齐也仍然触发发布；必须总结对齐过程和结论，不能因为最终已对齐而改成 no_action。
 - 措辞不同、补充信息、探索性讨论或已经自然顺畅推进，不算实质分歧。
 - 沉默不算对齐。只有相关各方明确同意、承诺或复述一致，才把议题标为 aligned；主持人单方面宣布结论不够。
@@ -621,7 +626,7 @@ def build_meeting_alignment_prompt(
 
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
-- action 固定为 send；final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同。
+- action=send 时，final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同；skip_interview / skip_no_content 见目标合同。
 - 没有人员敏感内容时 sensitive_private_message 必须为 null；只要存在人员敏感内容，就必须生成已脱敏的 final_message 和独立 sensitive_private_message，不因业务群成员与敏感内容相关而合并。缺少披露授权时不得用私聊兜底。
 
 {render_meeting_alignment_cross_field_rules()}
@@ -846,6 +851,8 @@ def _validate_source_aware_target(
     *,
     group_candidates: list[dict[str, Any]] | None = None,
 ) -> None:
+    if decision.action != "send":
+        return
     target = decision.target
     if target is None:
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")
