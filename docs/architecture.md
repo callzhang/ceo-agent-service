@@ -2452,6 +2452,8 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（传入预备消息）。后台 sender loop 在 `auto` 模式重试已审核的 `ready_to_send` 投递时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须复用同一代次、候选、审核、动作身份和最终正文精确匹配的已持久化预备消息。旧投递可使用 `wechat:{delivery_id}` 键，但不能新建或重构正文；证据不全或正文不匹配时，API 在重新入队前报错，且不调用发送器。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，不从未知状态重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。sender loop 只在 `auto` 且发送开关启用时消费投递；`confirm` 模式保留显式确认流程。
 
+Sender 的被动 readiness 检查只有在 Accessibility 树中找到发送导航实际使用的搜索框或会话列表控件时才返回 `ready`；仅有 WeChat 进程或窗口不代表已登录且可发送。窗口存在但这些控件缺失时返回 `wechat_window_unavailable`，不会尝试登录或发送。
+
 ### 任务长期记忆
 
 Derek 2026-10-24：任务的长期记忆由执行 Agent A 自己在回合内调用 `memory_connector.memory_write`

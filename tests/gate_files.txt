@@ -153,6 +153,7 @@ tests/test_wechat_skill_package.py
 tests/test_work_profile.py
 tests/test_workbench_codex_runtime.py
 tests/test_workbench_runtime.py
+tests/wechat/test_accessibility.py
 tests/wechat/test_article.py
 tests/wechat/test_backend.py
 tests/wechat/test_discovery.py

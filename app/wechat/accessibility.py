@@ -668,7 +668,23 @@ class MacWechatAccessibility:
                 continue
             error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
             if error == 0 and windows:
-                return "ready"
+                def attribute(element, name):
+                    error, value = AXUIElementCopyAttributeValue(
+                        element, name, None,
+                    )
+                    return value if error == 0 else None
+
+                def children(element):
+                    return attribute(element, "AXChildren")
+
+                for element in _walk_accessibility_tree(app, children):
+                    role = attribute(element, "AXRole")
+                    identifier = attribute(element, "AXIdentifier") or ""
+                    title = attribute(element, "AXTitle") or ""
+                    if (
+                        role == "AXTextArea" and "搜索" in title
+                    ) or identifier == "session_list":
+                        return "ready"
             break
         return "wechat_window_unavailable"
 

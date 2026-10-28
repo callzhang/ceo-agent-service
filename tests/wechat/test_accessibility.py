@@ -944,15 +944,27 @@ def test_reactivate_switches_wechat_to_current_space(monkeypatch):
     ]
 
 
-def test_passive_readiness_reports_ready_when_wechat_has_accessibility_window(monkeypatch):
+def test_passive_readiness_reports_ready_when_chat_controls_are_present(monkeypatch):
     app = object()
+    window = object()
+    search = object()
+    attributes = {
+        (app, "AXChildren"): [window],
+        (app, "AXWindows"): [window],
+        (window, "AXChildren"): [search],
+        (search, "AXRole"): "AXTextArea",
+        (search, "AXTitle"): "搜索",
+    }
     monkeypatch.setitem(
         sys.modules,
         "ApplicationServices",
         SimpleNamespace(
             AXIsProcessTrusted=lambda: True,
             AXUIElementCreateApplication=lambda _pid: app,
-            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (0, [object()]),
+            AXUIElementCopyAttributeValue=lambda element, attribute, _unused: (
+                (0, attributes[(element, attribute)])
+                if (element, attribute) in attributes else (1, None)
+            ),
         ),
     )
     monkeypatch.setitem(
@@ -971,6 +983,47 @@ def test_passive_readiness_reports_ready_when_wechat_has_accessibility_window(mo
     monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
 
     assert runner.check_readiness() == "ready"
+
+
+def test_passive_readiness_does_not_treat_non_chat_window_as_ready(monkeypatch):
+    app = object()
+    window = object()
+    window_text = object()
+    attributes = {
+        (app, "AXChildren"): [window],
+        (app, "AXWindows"): [window],
+        (window, "AXChildren"): [window_text],
+        (window_text, "AXRole"): "AXStaticText",
+        (window_text, "AXTitle"): "WeChat window",
+    }
+    monkeypatch.setitem(
+        sys.modules,
+        "ApplicationServices",
+        SimpleNamespace(
+            AXIsProcessTrusted=lambda: True,
+            AXUIElementCreateApplication=lambda _pid: app,
+            AXUIElementCopyAttributeValue=lambda element, attribute, _unused: (
+                (0, attributes[(element, attribute)])
+                if (element, attribute) in attributes else (1, None)
+            ),
+        ),
+    )
+    monkeypatch.setitem(
+        sys.modules,
+        "Quartz",
+        SimpleNamespace(
+            CGSessionCopyCurrentDictionary=lambda: {},
+            CGWindowListCopyWindowInfo=lambda _options, _window_id: [
+                {"kCGWindowOwnerPID": 500}
+            ],
+            kCGWindowListOptionAll=1,
+            kCGNullWindowID=0,
+        ),
+    )
+    runner = MacWechatAccessibility()
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: 500)
+
+    assert runner.check_readiness() == "wechat_window_unavailable"
 
 
 def test_request_accessibility_asks_macos_to_show_prompt(monkeypatch):
