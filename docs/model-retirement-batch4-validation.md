@@ -1,7 +1,7 @@
 # 模型退休第四批：Feedback 唯一事实归属
 
-状态：候选实现、副本演练与独立 SPEC/QUALITY 代码审查通过；标准发布与生产读回待办。
-来源为真实已安装 af24bc485 的 Store28.2/Email54，目标 Store28.3/Email54。
+状态：7a6b73ee9标准部署、独立生产API／UI读回与本轮备份／临时目录清理完成。
+副本验证基线为当时真实已安装af24bc485的Store28.2/Email54，目标Store28.3/Email54；正式发布前实际b3abfe4e的来源声明已再次核对完全相同。
 
 ## 字段与模型
 
@@ -61,7 +61,30 @@ SPEC发现遗漏的旧脚本动态加载专用测试，已随脚本及gate条目
 执行方式并保留现场；验收只引用完整结束的相关运行。2GB/10分钟限制没有提高。
 默认Ruff及差异检查、独立SPEC和QUALITY代码审查通过；最终完整门禁仍必须标准执行。
 
-尚需合并最新主线、标准gate/quiet/备份发布、生产Feedback/History/来源/原生结果/回执
-读回，再按明确归属清理本批备份、副本及临时Git worktree。剩余第五批Business/Email/
-Workbench转换半部与DecisionRunner旧adapter仍待单独完成，不宣称本计划全部结束。
+## 标准发布、独立生产读回与清理
+
+准确7a6b73ee9486699c51315fd30e08315e329a0c25通过完整标准gate、自然quiet、
+备份验证及paired发布；operation deploy-1bce6d7a-8401-4949-b3ca-d32c12494047，
+2026-10-28T11:30:41Z成功，从b3abfe4e切到7a6b73ee9。没有skip-quiet、force或
+生产测试任务／重发。实际PID39304、health200、frontend tree stamp完全一致。
+
+生产463项完整SQL逐字等于目标ec77…129a0a，FK[]，Item准确4列；46条无Round
+但来源已解决事实仍保留，API读取source resolved_at逐值相等。UI实际打开54条反馈
+列表，展开评论与处理历史，筛选已处理48条；History点击下一页、勾选已完成，
+Attempt16220显示receipt20893/All approved actions verified，Consumer／Audit执行
+步骤页可读。所有操作只读，没有点击处理、同步、重开、发送或retry。
+
+History失败18条的完整身份集合与发布前b3完全相等；summary failed26是另一口径，
+没有本轮新增失败。Attention0；原未解决反馈批次造成的degraded1单独保留，native
+回执覆盖375项/不可用0。真实业务后续任务由原worker处理，不把队列变化当测试任务。
+
+最新daily备份514969600字节，精确inode832638187/mtime1793187077893415481，
+在backup目录锁下重验CEOB完成标记、integrity、全schema/FK、本operation及无打开
+引用后删除并确认不存在。之前pre-upgrade文件已由验证后的daily正常退休，未误删
+其他workflow的新代次。临时rawGit worktree确认clean且已推送合并后正常unregister，
+父根7234文件/972661524字节与已验证归属的6615字节编辑脚本一并删除；无打开引用，
+路径不存在。保留生产数据库、原生trajectory和提交的简洁证据。这不是数据库容量收益。
+
+第五批Business／Email／Workbench／Runner及剩余映射闭包已分单元完成并推主线，
+其最终标准发布与读回另见[第五批验收](model-retirement-batch5-validation.md)。
 结构化证据：[第四批JSON](validation/2026-10-28-model-retirement-batch4.json)。
