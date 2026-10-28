@@ -329,6 +329,7 @@ tests/test_business_task_event_actions_runtime.py
 tests/test_error_code_migration.py
 tests/test_oa_notification_routing.py
 tests/test_feedback_events.py
+tests/test_feedback_processing_e2e.py
 tests/test_consumer_access_request_continuation.py
 tests/test_workbench_confirmation_retirement_api.py
 tests/test_email_account_connector.py

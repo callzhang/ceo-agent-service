@@ -1605,6 +1605,7 @@ def register_console_routes(
             "health_evidence",
             "health",
             "associations",
+            "feedback_ids",
         }
         if set(payload) - allowed:
             return JSONResponse(
@@ -1612,6 +1613,23 @@ def register_console_routes(
                     "ok": False,
                     "code": "feedback_resolution_invalid",
                     "message": "unsupported feedback resolution field",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        feedback_ids = payload.get("feedback_ids")
+        if feedback_ids is not None and (
+            not isinstance(feedback_ids, list)
+            or not feedback_ids
+            or any(not isinstance(key, str) or not key.strip() for key in feedback_ids)
+            or len({key.strip() for key in feedback_ids if isinstance(key, str)})
+            != len(feedback_ids)
+        ):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "feedback_resolution_invalid",
+                    "message": "feedback_ids must be a non-empty list of unique feedback keys",
                     "details": {},
                 },
                 status_code=409,
@@ -1630,7 +1648,10 @@ def register_console_routes(
             )
         try:
             evidence = ResolutionEvidence.model_validate(
-                {**payload, "backlog_evidence": backlog_evidence}
+                {
+                    **{key: value for key, value in payload.items() if key != "feedback_ids"},
+                    "backlog_evidence": backlog_evidence,
+                }
             )
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_invalid", "message": str(exc), "details": {}}, status_code=409)
@@ -1665,12 +1686,22 @@ def register_console_routes(
                 batch_id,
                 evidence,
                 commit_is_ancestor=True,
+                feedback_keys=feedback_ids,
             )
         except (ValueError, subprocess.SubprocessError, OSError) as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_incomplete", "message": str(exc), "details": {}}, status_code=409)
         if not resolved:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
-        return command_result(item={"batch_id": batch_id, "status": "resolved"}, message="反馈批次已解决")
+        current_batch = store_factory().get_feedback_processing_batch(batch_id)
+        status = current_batch.status if current_batch is not None else "processing"
+        return command_result(
+            item={"batch_id": batch_id, "status": status},
+            message=(
+                "反馈批次已解决"
+                if status == "resolved"
+                else "已结案所选反馈项，批次仍有未结项"
+            ),
+        )
 
     @app.get("/api/console/feedback/{feedback_id}")
     def console_feedback_detail(feedback_id: str):

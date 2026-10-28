@@ -7,6 +7,7 @@ and references; no model invocation is involved in the import step.
 from app.action_storage import update_action
 from app.action_feedback_storage import insert_feedback_action
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
@@ -197,6 +198,68 @@ def _seed_processing_batch_for_resolution(
         restart_evidence=receipt["restart_evidence"],
         health_evidence=receipt["health_evidence"],
     )
+
+
+def test_feedback_batch_resolve_api_can_resolve_selected_items(
+    tmp_path: Path, monkeypatch
+):
+    receipt = _resolution_receipt(
+        "a" * 40, test_name="itemwise-resolution", before_pid=10, after_pid=11,
+    )
+    client, store = _registered_route_client(
+        tmp_path,
+        feedback_backlog_factory=lambda: {
+            "processing": 0, "failed": 0, "retryable": 0,
+        },
+    )
+    keys = ["feedback-a", "feedback-b"]
+    for key in keys:
+        store.upsert_feedback_event(key=key, feedback_token=key)
+    store.claim_feedback_processing_items("batch-itemwise", keys)
+    for key in keys:
+        store.associate_feedback_processing_turn(
+            key, workbench_task_id=f"task-{key}",
+            workbench_turn_id=f"turn-{key}", attempt_id=1, agent_run_id=2,
+        )
+        store.patch_feedback_processing_item_evidence(
+            key,
+            commit_sha=receipt["commit_sha"],
+            test_evidence=receipt["test_evidence"],
+            restart_evidence=receipt["restart_evidence"],
+            health_evidence=receipt["health_evidence"],
+        )
+    monkeypatch.setattr(app_config, "repo_root", lambda: tmp_path)
+    monkeypatch.setattr(
+        registration_module.subprocess,
+        "run",
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "", ""),
+    )
+
+    with client:
+        partial = client.post(
+            "/api/console/feedback/batches/batch-itemwise/resolve",
+            json={**receipt, "feedback_ids": ["feedback-a"]},
+        )
+        assert partial.status_code == 200, partial.text
+        assert partial.json()["item"] == {
+            "batch_id": "batch-itemwise", "status": "processing",
+        }
+        detail = client.get("/api/console/feedback/batches/batch-itemwise")
+        assert [item["status"] for item in detail.json()["item"]["items"]] == [
+            "resolved", "processing",
+        ]
+        time.sleep(1.05)
+
+        finished = client.post(
+            "/api/console/feedback/batches/batch-itemwise/resolve",
+            json={**receipt, "feedback_ids": ["feedback-b"]},
+        )
+        assert finished.status_code == 200, finished.text
+        assert finished.json()["item"] == {
+            "batch_id": "batch-itemwise", "status": "resolved",
+        }
+
+    assert store.get_feedback_processing_batch("batch-itemwise").status == "resolved"
 
 
 def _main_receipt() -> dict[str, object]:

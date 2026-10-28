@@ -2546,8 +2546,12 @@ feedback-iteration decision scope 校验，而不是对所有修复一律要求 
 `runtime_config` 要求前后 config、目标 receipt、场景验证、health 和零 backlog；`code` 要求
 本地 `main` 祖先 commit、测试、不同 PID 的重启、health 和零 backlog；`mixed` 同时满足相应
 code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项目保持 open。任一适用
-条件不满足时，整个批次保持 `processing`，不部分结案。关联、证据和结果必须通过 Feedback API
-持久化并回读一致。
+条件不满足时，未满足条件的项目保持 `processing`。`POST /api/console/feedback/batches/{id}/resolve`
+可用 `feedback_ids` 结案批内指定项目；没有该字段时仍要求并结案整个批次。指定项目必须通过
+同一套关联、决策范围、证据、提交祖先、测试、重启、health 和零 backlog 校验；未指定项目保持
+原状态。只有所有项目都结案后，批次才变为 `resolved`。后续处理应只选择仍处于 `processing`
+的项目，不重复结案或重放已结案项目的任务或外部动作。所有关联、证据和结果仍须通过
+Feedback API 持久化并回读一致。
 
 Feedback API 的 Git 回归使用独立临时仓库初始化 `main`，并将测试 API 与回执指向同一仓库。
 PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测试不得修改开发/生产检出的

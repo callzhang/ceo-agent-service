@@ -242,6 +242,10 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 类型化明细由各自 owner 表持有。原来源类型及迁移结构不是当前运行时 kind 或
 兼容层。当前字段、约束和类型定义见 `app/task_run_entity_definitions.py`。
 
+Feedback processing 仍按批次领取，但结案可按 `feedback_ids` 指定批内项目。每个选中项目
+必须独立满足原有证据与关联校验；未选项目保持原状态，批次在全部项目结案前仍为
+`processing`。再次处理只选择未结案项目，不重放已结案项目的任务或外部动作。
+
 截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。下方按 Task2D、Task3E
 等阶段记录的“未启用”“仍待后续验收”“候选”等状态，是各阶段当时的历史实现边界，
 不表示当前 constructor、dispatcher 或生产部署仍待启用。当前部署和证据边界见

@@ -2912,11 +2912,13 @@ def test_resolution_requires_explicit_strict_commit_ancestry_signatures():
         "batch_id",
         "evidence",
         "commit_is_ancestor",
+        "feedback_keys",
     ]
     assert (
         store_signature.parameters["commit_is_ancestor"].default
         is inspect.Parameter.empty
     )
+    assert store_signature.parameters["feedback_keys"].default is None
     receipt = _complete_resolution_receipt()
     validate_resolution_evidence(receipt, commit_is_ancestor=True)
     for invalid in (False, None, 1, "true"):
