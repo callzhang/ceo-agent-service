@@ -309,7 +309,7 @@ def test_checked_release_manifest_pins_baseline_and_current_two_defaults():
     expected = {
         'developer_prompt': (
             '74458f269c6cd80af4b901be9b6ab625e96ec1b0291f435a7f3a6e7c2e7c59b3',
-            '8fc99e70f0d4f91ded38d5ff437fe1b5e6f72422b9480829995b082870d6439a',
+            '6b4d546b12e70fbb2e19357a6dee090b0acb328f104b6ae5018b28e66d8d8b17',
         ),
         'user_prompt': (
             '5106c30c0ea2cbf133ec537a600d3250b699659c786892eaa46434cdb6eff398',
