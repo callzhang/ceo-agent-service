@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite JSONB/生成列/复合 FK、pytest/Ruff、现有 Store/EmailStore、现有标准 app.deploy 和 console 前端。
 
-**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈第四批7a6b73ee9标准发布／读回／清理完成；第五批分单元实现／审查／最新副本复验完成并推主线，待标准发布；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
+**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈第四批7a6b73ee9标准发布／读回／清理完成；第五批4022bbe59标准发布／生产读回／明确归属清理完成，后发3f126已包含本批；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
 
 **Audit baseline:** production `d1efdbc28ddbc9ea847036c9f8ba3a597b354e88`，本地 `c866d4fbd051044f1ba86e846ab14b70706ba741`，检查时 main `0ef0a929565248a51ea5a9e8fd43d1abfe575d37`；48 表/476 对象。精确字段、调用方与索引证据见 [审计](../../database-simplification-audit-20261027.md) 和三个 CSV。实施先刷新基线，不硬编码本次 PID 或把本次行数当作未来迁移前置常量。
 
@@ -129,9 +129,9 @@ Email worker 的旧退订 startup 扫描/失败标记/authority inventory gate �
 
 ## 各批发布与清理合同
 
-- [ ] 每批实施完成后确认实际 origin/main 增量、认领范围、精确提交及审查；正常合并、受影响复验并推送。运行时代码按标准 `python -m app.deploy --target-commit <完整已验证SHA>` 发布，不并行抢发布锁，不自行加 skip-quiet-wait。
-- [ ] 完整 gate 保持 10 分钟/2 GB；备份验证、安静窗口与失败回滚不绕过。涉及 DDL 的 forward/inverse/current-data/旧代码冷启动证据必须在部署前完成。
-- [ ] 生产读回实际安装 SHA/PID/health/frontend stamp、队列/Attention/History 翻页筛选详情、Task/Run/原生结果/回执；会话批次额外读 session 页面，反馈批次额外读反馈列表/详情。只读，不触发真实外发。
-- [ ] 对照该批确切 schema SQL/字段/索引/FK 集合和序列。无 DDL 批次必须逐字不变；DDL 批次必须只含预定差异。历史失败记录不强行归零。
-- [ ] 验收后按 Derek 已确认规则，核实本批备份/临时文件代次、完整性、归属和打开引用，持锁并以精确 inode/mtime 护栏清除；保留生产数据库、原生 trajectory 和提交的简洁证据。平台拒绝则报告实际阻塞，不重复索要已给授权。
-- [ ] 更新进度/验收记录，区分代码/部署/生产读回/清理；不为纯文档再次部署，不把临时文件清理或 freelist 计为业务模型容量收益。
+- [x] 每批实施完成后确认实际 origin/main 增量、认领范围、精确提交及审查；正常合并、受影响复验并推送。运行时代码按标准 `python -m app.deploy --target-commit <完整已验证SHA>` 发布，不并行抢发布锁，不自行加 skip-quiet-wait。
+- [x] 完整 gate 保持 10 分钟/2 GB；备份验证、安静窗口与失败回滚不绕过。涉及 DDL 的 forward/inverse/current-data/旧代码冷启动证据必须在部署前完成。
+- [x] 生产读回实际安装 SHA/PID/health/frontend stamp、队列/Attention/History 翻页筛选详情、Task/Run/原生结果/回执；会话批次额外读 session 页面，反馈批次额外读反馈列表/详情。只读，不触发真实外发。
+- [x] 对照该批确切 schema SQL/字段/索引/FK 集合和序列。无 DDL 批次必须逐字不变；DDL 批次必须只含预定差异。历史失败记录不强行归零。
+- [x] 验收后按 Derek 已确认规则，核实本批备份/临时文件代次、完整性、归属和打开引用，持锁并以精确 inode/mtime 护栏清除；保留生产数据库、原生 trajectory 和提交的简洁证据。平台拒绝则报告实际阻塞，不重复索要已给授权。
+- [x] 更新进度/验收记录，区分代码/部署/生产读回/清理；不为纯文档再次部署，不把临时文件清理或 freelist 计为业务模型容量收益。

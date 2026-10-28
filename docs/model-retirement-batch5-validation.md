@@ -1,6 +1,6 @@
 # 模型退休第五批：关闭历史转换闭包
 
-状态：全部实施单元及独立SPEC／QUALITY／最终集成审查通过；标准发布、生产读回和清理仍待完成，尚未部署。
+状态：全部实施单元、独立SPEC／QUALITY／最终集成、精确4022bbe59标准发布和生产读回通过；本任务明确归属的临时产物及备份代次已清理／退休。
 
 ## Decision Runner 无 DDL 单元
 
@@ -15,15 +15,15 @@ Runner文件39项、两个确实不调用Codex的Worker节点、非live smoke构
 未启用真实CLI/provider/live发送。Ruff和diff检查通过，独立SPEC与QUALITY均PASS；
 审查为只读检查，未将它们误记为额外测试运行。
 
-临时产物：/private/tmp/ceo-runner-retirement.tzwA6t，待最终发布／读回后核实并清理。
+临时产物/private/tmp/ceo-runner-retirement.tzwA6t已在最终验收后确认无打开引用并删除。
 Business/Email/Workbench转换半部与旧声明来源依赖、map生成器的后续单元见下文，
-不宣称全仓库零兼容或数据库最优。当前生产发布由第四批独占，不能并行部署本单元。
+不宣称全仓库零兼容或数据库最优。实施期间保持发布串行，第四批后第五批均经标准流程完成。
 
 ## 显式前序声明依赖
 
 Store28.2/Email54的463项精确SQL冻结为内容无关的版本目录，规范hash
 8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a。
-当前Feedback发布/inverse/静默读取只引用该直接前代，目标28.3的全部SQL逐字不变；
+4022目标的Feedback发布/inverse/静默读取只引用该直接前代，目标28.3的全部SQL逐字不变；
 普通constructor不得载入历史目录。生产仍保留必要显式当前数据inverse，不保留
 运行时旧结构兼容。复制验证器只提取原生类型／rowid／水位比较与有界复制工具，
 不再为了这些通用操作导入已关闭的旧迁移主程序。
@@ -42,8 +42,7 @@ Store28.2/Email54的463项精确SQL冻结为内容无关的版本目录，规范
 当前原生候选／导入和语义导入70项验证通过（含exact schema）；SPEC发现两处
 混合旧测试仍含有效当前断言，已补回FK-on目标删除/ID变更保护、WorkTodo删除
 仍保留Task，以及任意status、非JSON文本、显式timestamp和SQLite类型比对。
-最后两文件47项通过；这是重叠运行，不相加为独立总数。独立SPEC最终PASS，
-QUALITY均PASS。三个归属测试临时目录已核实由实施者删除，无生产或备份操作。
+最后两文件47项通过；这是重叠运行，不相加为独立总数。独立SPEC与QUALITY最终均PASS。三个归属测试临时目录已核实由实施者删除，无生产或备份操作。
 
 ## Email／Workbench 已关闭转换
 
@@ -91,8 +90,7 @@ QUALITY发现已退休专用文件里有一个真实当前回归：schema重解�
 通过；两位reviewer复查PASS。不能因文件名旧就删除仍覆盖当前触发器的断言。
 根代理当前Task／Run／ReviewedCandidate／发布接口集成61项通过。
 
-本批所有实施单元现已通过审查；尚需正常主线整合与精确提交完整发布gate。
-第四批仍持标准发布锁等待在途业务，不并行部署第五批、不绕过安静门槛。
+本批所有实施单元通过审查；已正常整合主线，精确提交完整标准发布通过，未绕过安静门槛。
 
 ## 精确最终代码的当前数据副本复验
 
@@ -101,7 +99,49 @@ QUALITY发现已退休专用文件里有一个真实当前回归：schema重解�
 resolve/reopen/再claim，inverse保留新增轮次结果回执，真实af24旧代码冷读/冷写，
 再forward和当前代码再次读写通过。真实旧代码归档465个文件再次逐字核对一致。
 源代码各层已退休依赖不会影响显式当前inverse或旧代码冷启动；fixture拒绝网络和
-CLI，没有生产测试任务或实际发送。详见第五批JSON内完整逐表摘要；临时副本待读回清理。
+CLI，没有生产测试任务或实际发送。详见第五批JSON内完整逐表摘要；临时副本已在读回后按明确归属清理。
 
 最终独立集成审查PASS：23个已删Python模块无直接／动态引用，405个gate路径均存在。
 门禁/安静等待/备份验证/部署/生产读回仍走标准流程，不因本地通过跳过发布条件。
+
+## 标准发布与生产验收结案
+
+准确4022bbe59c5d258ab1a1a48d8a96fa6f7669e8d2经标准完整gate、自然quiet、
+备份与rollback流程于2026-10-28T11:54:07Z成功安装，operation
+deploy-ca69085b-4289-4acb-a5f3-668c8311dba9。运行代码来自独立冻结publish工作树，
+不让另一任务已推进到28.4的开发声明混入本次28.3目标；没有skip、force或生产测试任务。
+实际PID89202/health200/frontendstamp匹配；463项完整SQL仍ec77…129a0a、FK[]。
+
+当前正式Task列表20行及Task862来源证据可读；History实际下一页／已完成筛选生效，
+Attempt16220仍显示receipt20893及All approved actions verified。Feedback API保留
+46条无当前Round但来源已解决事实，时间逐值相等；前一发布已实际展开Feedback处理
+历史和已处理筛选。本次所有生产操作只读，没有处理／重开／同步／重发或发送测试。
+
+summary failed26保持不变；发布前19个History失败身份全部保留，新增400305是运行
+Task417755的会议Audit正常退回，Run记录retry，执行及Audit RuntimeAttempt均completed，
+无SQLite/FK或native transport失败。该业务修订不能被静默删除或伪装成全绿。
+Attention1来自此前已进入needs_human的OA417753；原反馈批次未解决导致degraded1
+单独保留，native可读381／不可用0，未改变业务判断、Audit或重试政策。
+
+## 后发并发版本与清理边界
+
+另一任务随后于12:03:28Z标准发布3f126d1ad0cf8830eb68bd0168723d51f8792580，
+新增独立WeChat转写缓存的Store28.4，已包含4022；本任务没有重复部署或降级。
+再次独立读回当前PID10517/health200，完整464项schema逐字等于声明、hash
+f8fa683f9b1ab7e77ebd076686eb2969c77cfbc36e0be3cb62fed4738038b78b、FK[]。
+已退休入口／直接executor／source_variant分支仍不存在。这份后发DDL不属于本批
+“无DDL”的收益或迁移验收，不冒称由本任务实施；不修改该任务认领的迁移发布文件。
+
+本任务514969600字节备份代次inode832838274已被后发workflow经验证的原子replacement
+退休，backup目录已无该inode。清理护栏发现生产SHA和inode代次变化即退出，没有误删
+后发文件。后发832916088代次已只读重验CEOB、integrity、完整schema/FK和成功operation，
+仍交其owner完成自身验收／清理；不把它算作本任务残留副本，也不宣称全项目备份目录为空。
+
+本轮publish raw工作树正常unregister后，最终测试根3458文件/693950960字节、Runner
+测试根5文件/6447字节均在无打开引用核对后删除，路径不存在。第四批已另清理7234文件
+/972661524字节、准确旧备份及编辑脚本。保留生产DB、原生trajectory、提交的简洁证据；
+不删除无法归属的其他任务默认pytest目录，不把临时清理当数据库容量缩减。
+
+五批批准的实施与验收工作完成。仍存在的真实业务needs_human／Audit修订及其他任务
+发布验收分别按其owner推进；不宣称全库最优或全仓库零历史工具。
+结构化证据：[第五批JSON](validation/2026-10-28-model-retirement-batch5.json)。

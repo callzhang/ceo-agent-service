@@ -4,8 +4,8 @@
 
 Run／采用结果只保留当前正面声明和真实身份／来源维护，不再生成旧字段全集映射。
 11项当前receipt SQL直接固定，逐字等于原生成结果，不改写旧execution_id声明。
-过期的9个release/source模块、旧copy工具和专用转换测试退出；当前显式Feedback
-28.2→28.3发布及新增数据inverse保留。所需历史Configs源SQL只在测试夹具中。
+过期的9个release/source模块、旧copy工具和专用转换测试退出；本批4022验收时保留的显式Feedback
+28.2→28.3发布及新增数据inverse有独立证据；后发28.4由另一任务负责。所需历史Configs源SQL只在测试夹具中。
 四张identity_map的身份事实、当前coalescer和历史查询不变。当前触发器重解析回归
 仍执行两次ALTER及EXPLAIN UPDATE；不因旧测试容器退休而取消当前覆盖。
 所有463项SQL与前一当前声明逐字一致，不新增schema版本、运行时兼容或policy。
