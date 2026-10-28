@@ -325,20 +325,6 @@ def register_console_routes(
         return {"ok": ok, "item": json_safe(item), "message": message,
                 "meta": {"updated_at": snapshot_at()}}
 
-    def fresh_zero_feedback_backlog() -> dict[str, int]:
-        """Read strict, synchronous queue evidence for feedback resolution."""
-
-        backlog = feedback_backlog_factory()
-        if not isinstance(backlog, dict):
-            raise ValueError("fresh local backlog evidence is unavailable")
-        evidence: dict[str, int] = {}
-        for name in ("processing", "failed", "retryable"):
-            value = backlog.get(name)
-            if type(value) is not int or value != 0:
-                raise ValueError("fresh local backlog evidence is unavailable or non-zero")
-            evidence[name] = value
-        return evidence
-
     if email_store_factory is not None:
         register_email_routes(
             app,
@@ -1635,23 +1621,8 @@ def register_console_routes(
                 status_code=409,
             )
         try:
-            backlog_evidence = fresh_zero_feedback_backlog()
-        except Exception:
-            return JSONResponse(
-                {
-                    "ok": False,
-                    "code": "feedback_resolution_incomplete",
-                    "message": "Fresh local backlog evidence is unavailable or non-zero",
-                    "details": {},
-                },
-                status_code=409,
-            )
-        try:
             evidence = ResolutionEvidence.model_validate(
-                {
-                    **{key: value for key, value in payload.items() if key != "feedback_ids"},
-                    "backlog_evidence": backlog_evidence,
-                }
+                {key: value for key, value in payload.items() if key != "feedback_ids"}
             )
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_invalid", "message": str(exc), "details": {}}, status_code=409)

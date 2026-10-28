@@ -265,7 +265,7 @@ class ResolutionEvidence(_StrictProcessingModel):
     health_evidence: dict[str, Any] = Field(
         default_factory=dict, validation_alias=AliasChoices("health_evidence", "health")
     )
-    backlog_evidence: dict[str, Any]
+    backlog_evidence: dict[str, Any] = Field(default_factory=dict)
     runtime_config_id: int = 0
     previous_runtime_config_id: int = 0
     load_receipt_id: int = 0
@@ -454,17 +454,7 @@ def validate_resolution_evidence(
         evidence,
         commit_is_ancestor=commit_is_ancestor,
     )
-    backlog = evidence.backlog_evidence
-    required_backlog_counts = {"processing", "failed", "retryable"}
-    if not required_backlog_counts <= set(backlog):
-        raise ValueError("resolution requires processing, failed, and retryable backlog counts")
-    if any(
-        not isinstance(backlog[name], int)
-        or isinstance(backlog[name], bool)
-        or backlog[name] != 0
-        for name in required_backlog_counts
-    ):
-        raise ValueError("resolution requires zero processing, failed, and retryable backlog")
+    _validate_backlog_evidence_snapshot(evidence)
 
 
 def validate_resolution_receipt(
@@ -501,21 +491,24 @@ def validate_resolution_receipt(
 
 
 def _validate_success_evidence(evidence: ResolutionEvidence) -> None:
-    backlog = evidence.backlog_evidence
-    required_backlog_counts = {"processing", "failed", "retryable"}
-    if not required_backlog_counts <= set(backlog):
-        raise ValueError("resolution requires processing, failed, and retryable backlog counts")
-    if any(
-        not isinstance(backlog[name], int)
-        or isinstance(backlog[name], bool)
-        or backlog[name] != 0
-        for name in required_backlog_counts
-    ):
-        raise ValueError("resolution requires zero processing, failed, and retryable backlog")
+    _validate_backlog_evidence_snapshot(evidence)
     test_codes_ok, has_test_code = _all_test_exit_codes_zero(evidence.test_evidence)
     if not evidence.test_evidence or not has_test_code or not test_codes_ok:
         raise ValueError("resolution requires successful test evidence")
     _validate_restart_and_health_evidence(evidence)
+
+
+def _validate_backlog_evidence_snapshot(evidence: ResolutionEvidence) -> None:
+    """Validate an optional queue snapshot without making it a completion gate."""
+
+    backlog = evidence.backlog_evidence
+    if not backlog:
+        return
+    required_counts = {"processing", "failed", "retryable"}
+    if not required_counts <= set(backlog):
+        raise ValueError("backlog evidence snapshot requires processing, failed, and retryable counts")
+    if any(type(backlog[name]) is not int or backlog[name] < 0 for name in required_counts):
+        raise ValueError("backlog evidence snapshot counts must be non-negative integers")
 
 
 def _validate_code_resolution_evidence(

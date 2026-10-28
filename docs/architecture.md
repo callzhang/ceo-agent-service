@@ -244,6 +244,8 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 Feedback processing 仍按批次领取，但结案可按 `feedback_ids` 指定批内项目。每个选中项目
 必须独立满足原有证据与关联校验；未选项目保持原状态，批次在全部项目结案前仍为
 `processing`。再次处理只选择未结案项目，不重放已结案项目的任务或外部动作。
+结案校验只使用选中项目自身的当前轮次、关联和完成回执；服务其他队列的积压继续由
+健康与队列投影报告，不阻止已满足自身结案条件的反馈项目完成。
 
 截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。下方按 Task2D、Task3E
 等阶段记录的“未启用”“仍待后续验收”“候选”等状态，是各阶段当时的历史实现边界，
@@ -1346,7 +1348,8 @@ Consumer 在 invocation 开始时接收这个 immutable snapshot；同一次调�
 `feedback_iteration` 是 runtime config 的系统能力，不是业务 producer feature：关闭它会阻止新的
 反馈 claim，并让 UI 显示 disabled 的处理入口，但不影响反馈读取、历史和 reopen。反馈结案证据
 按 decision scope 验证：Skill/config 路径需要匹配的 activation/load receipt，code 路径才需要
-本地 main 祖先 commit；两类路径都需要场景、健康和零 backlog 的已回读证据。
+本地 main 祖先 commit；适用路径还需要各自要求的场景和健康证据。服务级队列积压由单独的队列
+投影报告，不作为单个反馈项目的结案条件。
 
 普通会话里提出“修改分身规则、Skill 或服务行为”并不自动成为 `feedback_iteration` 队列项。
 只有输入上下文明确携带 `feedback_key` / `batch_id` 时，才要求反馈处理轮次记录；普通消息直接按
@@ -1563,7 +1566,8 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 后端必须从当前轮次回执中同时确认：代码已实现，测试成功，提交存在且是
 本地 `main` 的祖先，`com.ceo-agent-service.main` 已重启且 PID 实际变更，
 本地健康接口返回 HTTP 200 和 `ok=true`，权威实时的 `processing` / `failed` /
-`retryable` 数量都是零，并且状态和证据已经通过 API 持久化后回读一致。
+`retryable` 数量由独立队列投影报告，不作为单个反馈项目的结案门槛；状态和证据必须通过 API
+持久化后回读一致。
 
 该能力不在 Agent 页面增加第二套流程，也不使用模型合成重新打开理由或新回执。
 
