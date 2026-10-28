@@ -1,6 +1,6 @@
 # 模型退休第三批：Conversation session 唯一归属
 
-状态：候选实现、当前数据副本验收和独立SPEC/QUALITY最终复审通过；标准门禁/发布待办。
+状态：第三批已完成标准部署、生产读回、精确归属备份及临时目录清理。
 来源为实际已发布44c13bc91的Store28.1/Email54，目标Store28.2/Email54。
 
 ## 数据与调用合同
@@ -52,7 +52,26 @@ codec/water、旧constructor拒绝和当前选择器测试保留。现行feedbac
 没有改变session恢复、compact选择、Audit或授权政策。QUALITY复审通过元数据修复，
 无Important/Critical问题。
 
-尚需最新主线正常合并、标准完整gate/
-quiet/备份发布及生产UI/schema/原生结果读回，然后删除本批已验证备份和明确临时产物。
-第四批Feedback及第五批剩余历史闭包未完成。最终结构化证据见
+## 标准发布、生产读回与清理
+
+正常合并日报修复e20e61c91后17项受影响测试通过，准确安装
+`af24bc48595c0f3eb0edd80d9730f10fb37a45c6`。完整强制gate、默认quiet、验证备份、
+paired迁移/重启/健康流程通过，09:47:41Z账本succeeded，operation
+`deploy-1e77f697-9fdb-4c30-a83a-792ecf3b349c`；PID71305/health200/buildstamp一致。
+实际463项完整SQL/FK[]与目标逐项相等，两镜像payload键/生成列均确认物理消失。
+
+状态/Attention/History1、2页及done筛选/Attempt16220/canonical会话列表API均200。
+488条权威OAuth会话可列出；实际UI session列表、History21-40 page2和完成筛选、
+既有native session详情、All approved actions verified及receipt20893可读。
+部署前后的历史失败身份集合无增减；summary failed26/Attention0，processing按真实
+业务变化。未解决反馈健康项仍degraded1，native delivery401/不可用0；本批不代替
+业务反馈处理，没有生产测试任务或验收外发。
+
+daily替换代次inode831847485/mtime1793180909597007210/514969600字节在目录锁下
+重新验证CEOB、integrity_check ok、精确schema/FK[]及本批operation，无打开引用后
+用精确代次护栏删除并确认不存在。明确临时根3578文件/716702531字节（副本、旧代码、
+测试目录）确认不存在，验收tab已关闭；生产库和原生trajectory保留。
+第四批使用另一任务专属临时Git worktree继续开发，不纳入本批已完成清理。
+
+第四批Feedback及第五批剩余历史闭包未完成，最终结构化证据见
 [本批JSON](validation/2026-10-28-model-retirement-batch3.json)。
