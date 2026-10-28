@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite JSONB/生成列/复合 FK、pytest/Ruff、现有 Store/EmailStore、现有标准 app.deploy 和 console 前端。
 
-**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，会话/反馈/剩余历史闭包继续；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
+**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈/剩余历史闭包继续；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
 
 **Audit baseline:** production `d1efdbc28ddbc9ea847036c9f8ba3a597b354e88`，本地 `c866d4fbd051044f1ba86e846ab14b70706ba741`，检查时 main `0ef0a929565248a51ea5a9e8fd43d1abfe575d37`；48 表/476 对象。精确字段、调用方与索引证据见 [审计](../../database-simplification-audit-20261027.md) 和三个 CSV。实施先刷新基线，不硬编码本次 PID 或把本次行数当作未来迁移前置常量。
 
@@ -93,13 +93,13 @@ CREATE INDEX idx_setup_events_id ON setup_wizard_events(id DESC);
 
 **Modify:** app/state_definitions.py、app/store.py、app/audit_web.py、app/web_api/registration.py、app/cli.py、ConversationRecord 的真实声明/全部构造方、固定当前声明/元数据/manifest、显式 release/inverse 与 tests/test_codex_session_api.py、test_state_storage.py、test_consumer_session_prompt_fingerprint.py、test_consumer_skill_session_contract.py、test_audit_session_handoff.py。
 
-- [ ] 冻结全部 conversations/session DTO 读写方，包括已有 session 列表 HTML/API、Attempt 详情、CLI reset。按 conversation_id+既有 route_name 精确关联，不能按标题或 session 字符串跨会话合并。
-- [ ] 在最新副本分类核对：每个非空旧 session 都有同一 OAuth 关联；非空旧 hash 必须与 canonical 相等。任何非空冲突/缺失关联阻止迁移，补事实后重新冻结，不双向猜测覆盖。
-- [ ] 当前集合为 364 个 session、338 个非空相同 hash、26 个仅旧 hash 为空。Derek 已确认会话 inverse 由 canonical 重建完整副本：这 26 个空镜像恢复为现有非空 canonical hash，不额外保存旧空值。当前 session/hash 事实始终逐值不变；验收明确区分 canonical 事实与退休副本。
-- [ ] 写入只操作 conversation_runtime_sessions，清旧 codex_oauth mirror 分支。当前列表/DTO/详情直接从该 owner 读取；不要给旧 getter 留转发别名。
-- [ ] CLI OAuth reset 改为操作同一现有 canonical OAuth owner，保留其他 route。测试确认 reset 后 Consumer 不会继续恢复被 reset 的旧 OAuth 会话。无当前会话时明确不可用，不从旧列 fallback。
-- [ ] 删除旧 get/set hash、clear session helper 和两项 conversations payload 字段/同名 VIRTUAL 列；保留 title/single_chat/route timestamps 和 Run/Attempt 的独立 session 事实。
-- [ ] 副本正向后测试新会话、hash 更新、reset、其他 route 不变、历史 Run 原生结果可用/不可用、API/HTML session 列表；inverse 旧代码冷启动读取及写入新的会话后 reforward。比较 canonical 事实、身份、类型、序列和 FK。
+- [x] 冻结全部 conversations/session DTO 读写方，包括已有 session 列表 HTML/API、Attempt 详情、CLI reset。按 conversation_id+既有 route_name 精确关联，不能按标题或 session 字符串跨会话合并。
+- [x] 在最新副本分类核对：每个非空旧 session 都有同一 OAuth 关联；非空旧 hash 必须与 canonical 相等。任何非空冲突/缺失关联阻止迁移，补事实后重新冻结，不双向猜测覆盖。
+- [x] 当前集合为 364 个 session、338 个非空相同 hash、26 个仅旧 hash 为空。Derek 已确认会话 inverse 由 canonical 重建完整副本：这 26 个空镜像恢复为现有非空 canonical hash，不额外保存旧空值。当前 session/hash 事实始终逐值不变；验收明确区分 canonical 事实与退休副本。
+- [x] 写入只操作 conversation_runtime_sessions，清旧 codex_oauth mirror 分支。当前列表/DTO/详情直接从该 owner 读取；不要给旧 getter 留转发别名。
+- [x] CLI OAuth reset 改为操作同一现有 canonical OAuth owner，保留其他 route。测试确认 reset 后 Consumer 不会继续恢复被 reset 的旧 OAuth 会话。无当前会话时明确不可用，不从旧列 fallback。
+- [x] 删除旧 get/set hash、clear session helper 和两项 conversations payload 字段/同名 VIRTUAL 列；保留 title/single_chat/route timestamps 和 Run/Attempt 的独立 session 事实。
+- [x] 副本正向后测试新会话、hash 更新、reset、其他 route 不变、历史 Run 原生结果可用/不可用、API/HTML session 列表；inverse 旧代码冷启动读取及写入新的会话后 reforward。比较 canonical 事实、身份、类型、序列和 FK。
 
 ## Task 5 — Feedback Item 去掉 10 份镜像
 
