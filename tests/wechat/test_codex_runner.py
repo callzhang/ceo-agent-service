@@ -57,6 +57,11 @@ def test_send_is_one_codex_computer_use_turn_and_never_claims_delivery():
     assert "好的\n明天见" in call["prompt"]
     assert "明天有空吗" in call["prompt"]
     assert "one character at a time" in call["prompt"]
+    assert "2 to 4 characters" in call["prompt"]
+    instructions = call["command_factory"].developer_instructions
+    assert "Math.random()" in instructions
+    assert "pause(0.5, 1.2)" in instructions
+    assert "Never\n   paste" in call["prompt"]
     assert re.fullmatch(r"wechat-ui:send:[0-9a-f]{64}", call["workload_key"])
 
 
@@ -134,3 +139,29 @@ def test_only_codex_signed_in_with_chatgpt_offers_desktop_computer_use():
     assert DESKTOP_COMPUTER_USE in runtime_route_surface_capabilities(oauth)
     assert DESKTOP_COMPUTER_USE not in runtime_route_surface_capabilities(api)
     assert DESKTOP_COMPUTER_USE not in runtime_route_surface_capabilities(claude)
+
+
+def test_only_the_wechat_ui_turn_gets_codex_computer_use_back():
+    from app.wechat.codex_safety import enable_wechat_ui_desktop_control
+
+    disabled = [
+        "-c", 'mcp_servers.computer-use={"enabled" = false, "command" = "/usr/bin/false"}',
+        "-c", 'mcp_servers.computer-history={"enabled" = false, "command" = "/usr/bin/false"}',
+        "-c", 'mcp_servers.cua_repl={"enabled" = false, "command" = "/usr/bin/false"}',
+    ]
+    command = ["codex", "exec", *disabled, "-"]
+
+    enable_wechat_ui_desktop_control(command)
+
+    assert command == ["codex", "exec", *disabled[:4], "-"]
+
+
+def test_the_wechat_ui_turn_asks_for_desktop_control_and_others_do_not():
+    from app.agent_runtime_router import CodexCommandFactory
+
+    execution = Execution()
+    _runner(execution).send("Alex", "hi")
+
+    assert execution.calls[0]["command_factory"].wechat_ui_desktop_control is True
+    assert CodexCommandFactory.standard(
+        developer_instructions="x").wechat_ui_desktop_control is False

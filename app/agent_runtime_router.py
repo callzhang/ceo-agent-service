@@ -186,6 +186,7 @@ class CodexCommandFactory:
     project_doc_max_bytes: int | None = None
     tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None
     model_only: bool = False
+    wechat_ui_desktop_control: bool = False
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -204,6 +205,7 @@ class CodexCommandFactory:
         project_doc_max_bytes: int | None = None,
         tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
         model_only: bool = False,
+        wechat_ui_desktop_control: bool = False,
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -215,6 +217,7 @@ class CodexCommandFactory:
             project_doc_max_bytes=project_doc_max_bytes,
             tool_approval_modes_by_server=tool_approval_modes_by_server,
             model_only=model_only,
+            wechat_ui_desktop_control=wechat_ui_desktop_control,
         )
 
     def build(
@@ -253,6 +256,10 @@ class CodexCommandFactory:
             from app.wechat.codex_safety import make_model_only_agent_command
 
             make_model_only_agent_command(command)
+        if self.wechat_ui_desktop_control:
+            from app.wechat.codex_safety import enable_wechat_ui_desktop_control
+
+            enable_wechat_ui_desktop_control(command)
         return command, adapter.build_env(route)
 
 

@@ -37,6 +37,17 @@ Act like a careful person: one step at a time, never repeat an action that may
 already have taken effect. Touch only the chat you are asked about. Do not open,
 read aloud or change any other chat, contact, setting or file.
 
+Pause between steps like a person (WeChat logs the account out when UI events
+arrive back to back). In your computer-use JavaScript define and use:
+  const pause = (lo, hi) => new Promise(r => setTimeout(r, (lo + Math.random() * (hi - lo)) * 1000));
+and await, with a fresh random value every time:
+- pause(0.6, 1.4) after getting the WeChat app and before the first action;
+- pause(0.25, 0.7) before every click and pause(0.4, 1.0) after it;
+- pause(0.06, 0.2) after every typed letter, digit or symbol;
+- pause(0.3, 0.8) after every typed chunk of Chinese or other non-ASCII text;
+- pause(0.5, 1.2) after checking the input box and before pressing Return.
+Never batch several clicks or keystrokes without these pauses.
+
 End your turn with exactly one JSON object and nothing else.
 """
 
@@ -59,9 +70,11 @@ Send one message in WeChat.
 
 {open_steps}
 3. If that title is not exactly «{target}», stop without typing anything.
-4. Click into the message input box and type the message below with the
-   keyboard, one character at a time, exactly as written. Never paste it and
-   never set the input box value directly. A bare Return sends in WeChat, so
+4. Click into the message input box and type the message below exactly as
+   written with your keyboard-typing action. Type letters, digits and symbols
+   one character at a time; type Chinese and other non-ASCII text in short
+   chunks of 2 to 4 characters, the way an input method commits a word. Never
+   paste it and never set the input box value directly. A bare Return sends in WeChat, so
    insert a line break with Shift+Return; after the first one, check that
    nothing was sent and the input box still holds the text.
 5. Check that the input box now contains exactly the message and nothing else.
@@ -123,16 +136,16 @@ def _workload_key(operation: str, *parts: str) -> str:
 
 
 def _wechat_pid() -> int | None:
+    # The service's Python has no AppKit bridge; ask Launch Services directly.
     try:
-        from AppKit import NSRunningApplication
-    except Exception:
+        output = subprocess.run(
+            ["/usr/bin/lsappinfo", "info", "-only", "pid", "-app", WECHAT_BUNDLE_ID],
+            check=False, capture_output=True, text=True, timeout=5,
+        ).stdout
+    except (OSError, subprocess.SubprocessError):
         return None
-    for application in NSRunningApplication.runningApplicationsWithBundleIdentifier_(
-        WECHAT_BUNDLE_ID
-    ):
-        if int(application.processIdentifier()) > 0:
-            return int(application.processIdentifier())
-    return None
+    _, _, value = output.partition("=")
+    return int(value) if value.strip().isdigit() and int(value) > 0 else None
 
 
 def _screen_locked() -> bool:
@@ -187,6 +200,7 @@ class CodexWechatRunner:
                     use_output_schema=False,
                     skill_names=(),
                     project_doc_max_bytes=0,
+                    wechat_ui_desktop_control=True,
                 ),
                 parser=_parse_result,
                 result_codec=_RESULT_CODEC,

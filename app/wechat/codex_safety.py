@@ -98,7 +98,6 @@ AGENT_CLI_READ_TOOLS = (
 AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
     "consumer_document_write",
     "consumer_artifact_write",
-    "save_voice_transcript",
     "consumer_run_skill_script",
 )
 
@@ -439,6 +438,22 @@ def make_audit_agent_command(
         purpose_name=purpose_name,
         controlled_cli=controlled_cli,
     )
+
+
+# Derek 2026-10-28: computer use is enabled for the WeChat UI turn only (it
+# sends and opens chats with Codex's virtual pointer). Every other turn keeps
+# the manifest's desktop-control servers switched off.
+WECHAT_UI_DESKTOP_CONTROL_SERVER = "cua_repl"
+
+
+def enable_wechat_ui_desktop_control(command: list[str]) -> None:
+    """Undo the manifest's switch-off of Codex's computer-use tool, nothing else."""
+    for index in range(len(command) - 2, -1, -1):
+        if command[index] != "-c":
+            continue
+        match = _MANIFEST_DISABLED_SERVER.match(command[index + 1])
+        if match and match.group(1) == WECHAT_UI_DESKTOP_CONTROL_SERVER:
+            del command[index:index + 2]
 
 
 def make_model_only_agent_command(command: list[str]) -> None:
