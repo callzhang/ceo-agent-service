@@ -4235,6 +4235,57 @@ def test_principal_message_naming_the_agent_triggers_reply(
     assert pending_tasks[0].trigger_message_id == "msg-principal-instruction"
 
 
+def _principal_voice(title: str = "磊哥", single_chat: bool = True, text: str | None = None):
+    spoken = message(
+        text or "你帮我看看行不行\n[语音消息](mediaId=@abc)",
+        message_id="msg-principal-voice",
+        single_chat=single_chat,
+    ).model_copy(
+        update={
+            "sender_name": "磊哥",
+            "sender_user_id": None,
+            "sender_open_dingtalk_id": "current-open-id",
+            "conversation_title": title,
+        }
+    )
+    chat = conversation(single_chat=single_chat).model_copy(update={"title": title})
+    return chat, spoken
+
+
+def test_principal_voice_in_the_agent_chat_triggers_reply(tmp_path: Path, monkeypatch):
+    """A voice cannot carry `@磊哥`; in the agent's own chat it is the instruction."""
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    chat, spoken = _principal_voice()
+    dws = FakeDws([chat], {"cid-1": [spoken]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 1
+
+    pending_tasks = worker.store.list_reply_tasks(statuses=("pending",), limit=10)
+    assert [task.trigger_message_id for task in pending_tasks] == ["msg-principal-voice"]
+
+
+@pytest.mark.parametrize("title,single_chat,text", [
+    ("Casey", True, None),                      # the principal's voice to a colleague
+    ("磊哥", False, None),                      # a group is not the agent's own chat
+    ("磊哥", True, "不带语音的一句话"),          # text in the agent chat stays history
+])
+def test_other_principal_messages_stay_history(
+    tmp_path: Path, monkeypatch, title, single_chat, text,
+):
+    monkeypatch.setenv("CEO_AGENT_NAMES", "磊哥")
+    chat, spoken = _principal_voice(title, single_chat, text)
+    dws = FakeDws([chat], {"cid-1": [spoken]})
+    codex = FakeCodex(CodexDecision(action=CodexAction.SEND_REPLY, reply_text="收到"))
+    worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
+    _pin_principal_identity(worker)
+
+    assert worker.produce_once(max_tasks=1) == 0
+    assert worker.store.list_reply_tasks(statuses=("pending",), limit=10) == []
+
+
 def test_principal_group_message_without_the_agent_name_is_not_a_trigger(
     tmp_path: Path, monkeypatch
 ):

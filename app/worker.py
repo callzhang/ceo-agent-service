@@ -49,6 +49,7 @@ from app.consumer_agent import ConsumerAgentRunner
 from app.config import (
     agent_mention_aliases,
     broadcast_mention_aliases,
+    chat_bot_names,
     codex_capacity_retry_duration,
     env_duration,
     fast_path_unread_backoff_duration,
@@ -182,6 +183,7 @@ HANDOFF_NOTIFICATION_PREFIX = "【CEO Agent 转人工通知】"
 # Historical auto-ack marker. Keep filtering it from context, but do not send
 # new processing acknowledgements before final replies.
 PROCESSING_ACK = "收到，我正在处理（by 分身）"
+DINGTALK_VOICE_MARKER = "[语音消息](mediaId="
 CODEX_LOGIN_REQUIRED_PREFIX = "codex_login_required"
 CODEX_PROVIDER_AUTH_FAILED_PREFIX = "codex_provider_auth_failed"
 CODEX_PROVIDER_UNAVAILABLE_PREFIX = CODEX_PROVIDER_UNAVAILABLE
@@ -5105,6 +5107,7 @@ class DingTalkAutoReplyWorker:
             if (
                 not self._is_current_user_message_for_candidate_filter(message)
                 or self._is_principal_instruction_to_agent(message)
+                or self._is_principal_voice_to_agent_chat(conversation, message)
             )
             and message.open_message_id not in service_outbound
             and not self._is_service_agent_delivery(message)
@@ -5328,6 +5331,24 @@ class DingTalkAutoReplyWorker:
         if self._is_service_agent_delivery(message):
             return False
         return self._is_current_user_sender(message)
+
+    def _is_principal_voice_to_agent_chat(
+        self, conversation: DingTalkConversation, message: DingTalkMessage,
+    ) -> bool:
+        """True for a voice message the principal sends in the agent's own chat.
+
+        A voice message cannot carry `@磊哥`, and in the one-to-one chat named
+        after the agent there is nobody else it could be for (Derek 2026-10-28).
+        Only voice: every message the service delivers there is text, so this
+        cannot answer itself.
+        """
+        return (
+            conversation.single_chat
+            and conversation.title in chat_bot_names()
+            and DINGTALK_VOICE_MARKER in message.content
+            and not self._is_service_agent_delivery(message)
+            and self._is_current_user_sender(message)
+        )
 
     @staticmethod
     def _is_processing_ack_message(message: DingTalkMessage) -> bool:

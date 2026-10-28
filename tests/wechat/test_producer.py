@@ -260,6 +260,43 @@ def test_outbound_voice_is_ignored(producer, reader):
     assert producer.run_once() == 0
 
 
+def _self_chat_message(mid, *, kind="voice", direction="outbound", text="[语音3秒·未转写]"):
+    return direct_message(mid, text=text, kind=kind, direction=direction).model_copy(
+        update={"conversation_id": "filehelper", "sender_id": "self-1"}
+    )
+
+
+def _self_chat_scope():
+    return WechatReplyScope(
+        account_id="acct-1", target_type="direct", target_id="filehelper",
+        conversation_id="filehelper", display_name="文件传输助手",
+        trigger_mode="every_inbound_text", last_active_at="2026-07-17T09:00:00+00:00",
+    )
+
+
+def test_principals_own_voice_in_the_self_chat_is_enqueued(store, reader, account):
+    """A voice cannot carry an @-mention; in the self chat it is the instruction."""
+    store.replace_wechat_reply_scopes("acct-1", [_self_chat_scope()])
+    reader.messages = [_self_chat_message("v5")]
+    producer = WechatReplyProducer(store, reader, account, self_user_id="self-1")
+
+    assert producer.run_once() == 1
+    assert [t.trigger_message_id for t in store.list_reply_tasks(channel="wechat")] == ["v5"]
+
+
+def test_other_outbound_messages_in_the_self_chat_stay_ignored():
+    scope = _self_chat_scope()
+    # the service's own replies there are text; a voice elsewhere is the principal's reply
+    assert not is_reply_candidate(_self_chat_message("v6", kind="text", text="reply"),
+                                  scope, self_user_id="self-1")
+    elsewhere = direct_message("v7", text="[语音3秒·未转写]", kind="voice", direction="outbound")
+    assert not is_reply_candidate(elsewhere, scope, self_user_id="self-1")
+
+
+def test_self_chat_voice_still_needs_an_enabled_scope():
+    assert not is_reply_candidate(_self_chat_message("v8"), None, self_user_id="self-1")
+
+
 def test_shared_link_decoded_as_text_is_enqueued(producer, reader, store):
     reader.messages = [direct_message("d6", text="[链接]《Article》 https://example.com/a")]
     assert producer.run_once() == 1
