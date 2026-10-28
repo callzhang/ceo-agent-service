@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 import sqlite3
 
-from app.conversation_session_schema_release import session_target_objects
+from app.feedback_owner_schema_source import feedback_source_objects
 from app.state_storage import update_state_rows
 from app.task8_storage import register_task8_functions
 
@@ -27,7 +27,7 @@ JOIN_OWNERS = 'from feedback_processing_items i'+OWNER_JOINS
 
 @lru_cache(maxsize=1)
 def feedback_target_objects():
-    objects = {row[1]: row for row in session_target_objects()}
+    objects = {row[1]: row for row in feedback_source_objects()}
     tables = json.loads((Path(__file__).parent/'schema_fixtures'/'store28_3_feedback_item.json').read_text())
     if set(tables) != {'feedback_processing_items'}:
         raise ValueError('invalid Store28.3 frozen Feedback declaration')
@@ -70,7 +70,7 @@ def _rebuild_items(db, *, inverse):
         raise ValueError('Store28.3 transfer TEMP collision')
     # Only the four retained columns enter TEMP. Duplicate facts are never archived.
     db.execute('create temp table _store28_feedback_item as select task_id,feedback_key,batch_id,current_round_id from main.feedback_processing_items')
-    catalog = session_target_objects() if inverse else feedback_target_objects()
+    catalog = feedback_source_objects() if inverse else feedback_target_objects()
     definitions = tuple(row for row in catalog if row[2] == 'feedback_processing_items')
     db.execute('drop table main.feedback_processing_items')
     db.execute(next(row[3] for row in definitions if row[0] == 'table'))
@@ -98,7 +98,7 @@ class FeedbackOwnerSchemaRelease:
 
     def _verify(self, db, *, target):
         marker = _marker(db)
-        if (_objects(db) != (feedback_target_objects() if target else session_target_objects())
+        if (_objects(db) != (feedback_target_objects() if target else feedback_source_objects())
                 or marker is None or marker[0] != (TARGET_STORE_VERSION if target else SOURCE_STORE_VERSION)
                 or (not target and tuple(marker) != self.source_marker)
                 or db.execute('select max(version) from email_schema_migrations').fetchone()[0] != 54
@@ -157,7 +157,7 @@ def prepare_feedback_owner_release(path):
         register_task8_functions(db)
         db.execute('begin')
         marker = _marker(db)
-        if (_objects(db) != session_target_objects() or marker is None
+        if (_objects(db) != feedback_source_objects() or marker is None
                 or marker[0] != SOURCE_STORE_VERSION
                 or db.execute('select max(version) from email_schema_migrations').fetchone()[0] != 54):
             raise ValueError('unsupported Store28.2 / Email54 Feedback source')

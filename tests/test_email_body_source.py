@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tests.test_email_canonical_storage import current13 as current13, _message, _classification
+from tests.support.email_native_fixtures import _message, _classification
 
 
 def test_email_original_reference_has_one_nullable_owner_column(tmp_path):

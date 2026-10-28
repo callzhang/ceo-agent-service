@@ -1,15 +1,8 @@
-"""Pinned, unactivated adopted-result and receipt Run-reference contract."""
+"""Current adopted-result and receipt Run-reference declarations."""
 from __future__ import annotations
 
-from app.action_entity_definitions import RECEIPT_SCHEMA_DDL
-from app.action_storage import SOURCE_COLUMNS
 from app.schema_sql import serialize_schema_sql
 
-
-ADOPTED_SOURCE_KINDS = (
-    "review_candidates", "candidate_reviews", "candidate_selections",
-    "candidate_supplements", "candidate_executions", "candidate_execution_alias",
-)
 
 TABLES = {
     "run_adopted_results": """CREATE TABLE run_adopted_results (
@@ -109,28 +102,55 @@ TRIGGERS = {
 }
 
 
-def receipt_schema_patch():
-    """Return the current receipt declaration with a Consumer progress-owner FK.
-
-    All existing receipt columns, provider lineage constraints, observer
-    ownership, and immutability triggers are retained verbatim where possible.
-    """
-    declarations = []
-    for sql in RECEIPT_SCHEMA_DDL:
-        if sql.startswith("create table action_receipts"):
-            sql = sql.replace(
-                "execution_id integer, action_index integer",
-                "execution_run_id integer references run_execution_progress(consumer_run_id), action_index integer",
-            )
-        elif sql.startswith("create unique index idx_action_receipts_execution_order"):
-            sql = sql.replace(
-                "idx_action_receipts_execution_order on action_receipts(execution_id,action_index) ",
-                "idx_action_receipts_execution_run_order on action_receipts(execution_run_id,action_index) ",
-            ).replace("where execution_id is not null", "where execution_run_id is not null")
-        if "execution_id" in sql:
-            sql = sql.replace("execution_id", "execution_run_id")
-        declarations.append(sql)
-    return tuple(declarations)
+CURRENT_RECEIPT_SCHEMA_DDL = ('create table action_receipts (id integer primary key, action_id integer not null references '
+ 'actions(id), operation text, target text, provider_result_id text, provider_result_json text, '
+ 'result_digest text, status text check(status is null or status in '
+ "('done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')), "
+ 'attempt_number integer, error_text text, agent_run_id integer, started_at text, finished_at '
+ 'text, execution_run_id integer references run_execution_progress(consumer_run_id), action_index '
+ 'integer, outcome_json text, created_at text, updated_at text, observed_at text, dispatched_at '
+ 'text, provider_receipt_id integer references action_receipts(id))',
+ 'create index idx_action_receipts_action on action_receipts(action_id,id)',
+ 'create unique index idx_action_receipts_execution_run_order on '
+ 'action_receipts(execution_run_id,action_index) where execution_run_id is not null',
+ 'create table action_observers (action_id integer not null references actions(id), agent_run_id '
+ 'integer not null, task_id integer not null, created_at text not null, primary '
+ 'key(action_id,agent_run_id))',
+ 'create trigger trg_action_receipt_owner_insert before insert on action_receipts when not '
+ "exists(select 1 from actions where id=new.action_id and record_type='action') begin select "
+ "raise(abort,'receipt owner must be Action'); end",
+ 'create trigger trg_action_observer_owner_insert before insert on action_observers when not '
+ "exists(select 1 from actions where id=new.action_id and record_type='action') begin select "
+ "raise(abort,'observer owner must be Action'); end",
+ 'create trigger trg_action_receipt_reference_owner_insert before insert on action_receipts when '
+ 'new.provider_receipt_id is not null and not exists(select 1 from action_receipts r where '
+ 'r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not '
+ "null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
+ 'create trigger trg_action_receipt_reference_owner_update before update of provider_receipt_id on '
+ 'action_receipts when new.provider_receipt_id is not null and old.provider_receipt_id is not '
+ 'new.provider_receipt_id and not exists(select 1 from action_receipts r where '
+ 'r.id=new.provider_receipt_id and r.action_id=new.action_id and r.provider_result_json is not '
+ "null) begin select raise(abort,'provider receipt reference must resolve within Action'); end",
+ 'create trigger trg_action_delivery_receipt_owner_delete before delete on action_receipts when '
+ "exists(select 1 from actions a where a.record_type='action' and "
+ "a.action_delivery_receipt_id=old.id) begin select raise(abort,'Sent receipt is still referenced "
+ "by Action'); end",
+ 'create trigger trg_action_receipt_identity_immutable before update of id,action_id on '
+ 'action_receipts when old.id is not new.id or old.action_id is not new.action_id begin select '
+ "raise(abort,'receipt identity and owner are immutable'); end",
+ 'create trigger trg_action_receipt_lineage_immutable before update of '
+ 'provider_result_json,result_digest,provider_receipt_id on action_receipts when '
+ 'old.provider_result_json is not new.provider_result_json or (old.result_digest is not '
+ 'new.result_digest and not (old.result_digest is null and exists(select 1 from actions a where '
+ "a.record_type='action' and a.id=old.action_id and a.action_delivery_receipt_id=old.id))) or "
+ '(old.provider_receipt_id is not new.provider_receipt_id and not (((exists(select 1 from actions '
+ "a where a.record_type='action' and a.id=old.action_id and a.action_delivery_receipt_id=old.id) "
+ 'or (old.provider_result_json is null and old.execution_run_id is null and old.action_index is '
+ 'null) or (old.execution_run_id is not null and old.action_index is not null)) and exists(select '
+ '1 from action_receipts next where next.id=new.provider_receipt_id and '
+ 'next.action_id=old.action_id) and ((old.execution_run_id is not null and old.action_index is not '
+ "null) or new.observed_at is old.observed_at)))) begin select raise(abort,'provider receipt "
+ "versions and exact references are immutable'); end")
 
 
 def receipt_schema_objects():
@@ -142,95 +162,10 @@ def receipt_schema_objects():
         "trg_action_delivery_receipt_owner_delete", "trg_action_receipt_identity_immutable",
         "trg_action_receipt_lineage_immutable",
     )
-    declarations = receipt_schema_patch()
+    declarations = CURRENT_RECEIPT_SCHEMA_DDL
     if len(names) != len(declarations):
         raise ValueError("Action receipt declaration names are incomplete")
     return dict(zip(names, declarations, strict=True))
-
-
-def adoption_source_fields():
-    """All declared fields for adopted source families, with typed disposition."""
-    fields = {kind: SOURCE_COLUMNS[kind] for kind in ADOPTED_SOURCE_KINDS[:-1]}
-    fields["candidate_execution_alias"] = ("id", "candidate_id", "legacy_key")
-    return fields
-
-
-def field_map():
-    """Deterministic source-field to Run-owned contract mapping."""
-    mapping = {
-        "review_candidates": {
-            "id": ("run_adoption_identity_map", "source_public_id"),
-            "task_id": ("runs", "task_id (through consumer_run_id)"),
-            "execution_generation": ("runs", "execution_generation (through consumer_run_id)"),
-            "consumer_run_id": ("run_adopted_results", "consumer_run_id"),
-            "stage_index": ("run_adopted_results", "stage_index"),
-            "proposal_revision": ("runs", "proposal_revision (through consumer_run_id)"),
-            "predecessor_review_id": ("run_adopted_results", "predecessor_review_id"),
-            "candidate_digest": ("run_adopted_results", "candidate_digest"),
-            "candidate_json": ("run_adopted_results", "candidate_json"),
-            "invalidated_at": ("run_adopted_results", "invalidated_at"),
-            "invalidation_reason": ("run_adopted_results", "invalidation_reason"),
-            "created_at": ("run_adopted_results", "created_at"),
-        },
-        "candidate_reviews": {
-            "id": ("run_adopted_reviews", "id and run_adoption_identity_map.target_child_id"),
-            "candidate_id": ("run_adopted_reviews", "consumer_run_id (through review row)"),
-            "audit_run_id": ("run_adopted_reviews", "audit_run_id"),
-            "decision": ("run_adopted_reviews", "decision"),
-            "candidate_digest": ("run_adopted_reviews", "candidate_digest"),
-            "result_json": ("run_adopted_reviews", "result_json"),
-            "created_at": ("run_adopted_reviews", "created_at"),
-        },
-        "candidate_selections": {
-            "id": ("run_adoption_identity_map", "source_public_id"),
-            "candidate_id": ("run_adopted_selections", "consumer_run_id"),
-            "review_id": ("run_adopted_selections", "audit_run_id (via Review owner)"),
-            "option_key": ("run_adopted_selections", "option_key"),
-            "branch_json": (None, "derived from bound candidate option_key; omitted from stored target"),
-            "status": ("run_adopted_selections", "status"),
-            "created_at": ("run_adopted_selections", "created_at"),
-        },
-        "candidate_supplements": {
-            "id": ("run_adopted_supplements", "id and run_adoption_identity_map.target_child_id"),
-            "candidate_id": ("run_adopted_supplements", "consumer_run_id"),
-            "instruction": ("run_adopted_supplements", "instruction"),
-            "created_at": ("run_adopted_supplements", "created_at"),
-        },
-        "candidate_executions": {
-            "id": ("run_adoption_identity_map", "source_public_id"),
-            "candidate_id": ("run_execution_progress", "consumer_run_id"),
-            "review_id": ("run_execution_progress", "approved_audit_run_id"),
-            "selection_id": ("run_execution_progress", "selection_id (actual Selection business ID)"),
-            "status": ("run_execution_progress", "status"),
-            "lease_owner": ("run_execution_progress", "lease_owner"),
-            "lease_expires_at": ("run_execution_progress", "lease_expires_at"),
-            "result_json": ("run_execution_progress", "result_json"),
-            "created_at": ("run_execution_progress", "created_at"),
-            "updated_at": ("run_execution_progress", "updated_at"),
-        },
-        "candidate_execution_alias": {
-            "id": ("run_adoption_identity_map", "source physical identity"),
-            "candidate_id": ("run_execution_progress", "consumer_run_id"),
-            "legacy_key": ("run_adoption_identity_map", "source_public_id"),
-        },
-    }
-    return mapping
-
-
-def validate_field_map(mapping=None):
-    """Reject unknown or missing declared source fields before artifact use."""
-    actual = field_map() if mapping is None else mapping
-    expected = adoption_source_fields()
-    if set(actual) != set(expected):
-        raise ValueError("adoption source kinds differ from declarations")
-    for kind, fields in expected.items():
-        if set(actual[kind]) != set(fields):
-            raise ValueError(f"adoption fields differ from {kind} declarations")
-        for field, destination in actual[kind].items():
-            if (not isinstance(destination, tuple) or len(destination) != 2
-                    or destination[0] is None and not (kind == "candidate_selections" and field == "branch_json")):
-                raise ValueError(f"invalid adoption mapping for {kind}.{field}")
-    return True
 
 
 def schema_sql():

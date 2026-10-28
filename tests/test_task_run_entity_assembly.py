@@ -1,6 +1,5 @@
 from app.action_entity_transfer import _source_execution_layout as source_execution_layout
 import sqlite3
-import hashlib
 from pathlib import Path
 
 import pytest
@@ -82,43 +81,6 @@ def test_optional_email_ledger_is_present_only_in_the_paired_manifest():
     paired = task_run_entity_assembly_objects(email_ledger=True)
     assert "email_schema_migrations" not in bare
     assert paired["email_schema_migrations"] == EMAIL_LEDGER_SQL
-
-
-def test_frozen_predecessor_matches_the_confirmed_production_catalog():
-    from app.current_schema_manifest import create_current_email_migration_ledger, schema_objects
-    from app.predecessor_database_schema import create_store_2026_10_21_1_schema
-
-    db = sqlite3.connect(":memory:")
-    create_store_2026_10_21_1_schema(db)
-    create_current_email_migration_ledger(db)
-    assert "notify_on_completion" not in {
-        row[1] for row in db.execute("PRAGMA table_info(schedules)")
-    }
-    catalog = schema_objects(db)
-    assert len(catalog) == 505
-    assert hashlib.sha256(repr(catalog).encode()).hexdigest() == (
-        "920b7eedb6138439ab94d4fbf109e60258ce8842c212d3a2ee3eec56fb4ca290"
-    )
-
-
-def test_run_source_metadata_matches_current_native_factory_oracle():
-    from app.current_schema_manifest import current_objects
-    from app.run_entity_definitions import run_entity_field_map, validate_run_entity_contract
-
-    validate_run_entity_contract()
-    source_runs = next(sql for _kind, name, table, sql in current_objects(email_ledger=True)
-                       if name == "runs" and table == "runs")
-    source_db = sqlite3.connect(":memory:")
-    source_db.execute(source_runs)
-    source = {row[1]: (row[2].upper(), "PRIMARY KEY" if row[5] else "NOT NULL" if row[3] else "NULL allowed", row[4])
-              for row in source_db.execute("PRAGMA table_info(runs)")}
-    fields = {(row["source_kind"], row["source_field"]): row for row in run_entity_field_map()}
-    for source_kind in ("agent_runs", "agent_runtime_attempts", "agent_run_state_events", "scheduled_task_runs",
-                        "workbench_events", "codex_session_search_index", "email_classifier_runtime_samples",
-                        "setup_wizard_events"):
-        for field, metadata in source.items():
-            row = fields[(source_kind, field)]
-            assert (row["sql_type"], row["null_contract"], row["source_default"]) == metadata
 
 
 def test_complete_assembly_sql_artifact_is_deterministic():

@@ -30,9 +30,6 @@ from app.agent_result import (
 )
 from app.agent_effects import LEASE_SECONDS
 import app.worker as worker_module
-from app.codex_decision import (
-    CodexDecisionRunner,
-)
 from app.channel_gate import (
     ChannelGateResult,
     ChannelGateState,
@@ -2023,16 +2020,6 @@ def test_run_once_with_zero_batches_is_noop(tmp_path, monkeypatch):
     assert worker.store.list_errors() == []
 
 
-def developer_instructions_from_command(command: list[str]) -> str:
-    for index, item in enumerate(command):
-        if item != "-c":
-            continue
-        value = command[index + 1]
-        if value.startswith("developer_instructions="):
-            return json.loads(value.split("=", 1)[1])
-    raise AssertionError("developer_instructions config missing")
-
-
 def write_profile_for_consumer_test(tmp_path: Path, monkeypatch) -> str:
     profile = tmp_path / "profiles" / "work_profile.md"
     content = """# Alex Work Profile
@@ -2069,41 +2056,13 @@ def test_consumer_codex_command_injects_work_profile_content(
     tmp_path: Path, monkeypatch
 ):
     profile_content = write_profile_for_consumer_test(tmp_path, monkeypatch)
-    seen_instructions = []
-
-    def executor(command: list[str], prompt: str) -> str:
-        seen_instructions.append(developer_instructions_from_command(command))
-        return AgentEnvelope.model_validate(
-            {
-                "kind": "reply",
-                "user_response": {
-                    "mode": "ask_clarifying_question",
-                    "text": "先把岗位要求和候选人简历补齐，我再判断是否推进。",
-                    "sensitivity_kind": "external_candidate",
-                },
-                "system_actions": [],
-                "domain_payload": {
-                    "candidate_context_known": True,
-                    "candidate_department_ids": ["dept-candidate"],
-                },
-                "audit": {
-                    "summary": "仅根据当前消息判断，材料不足，需要追问。",
-                    "documents": [],
-                    "confidence": 0.8,
-                },
-            }
-        ).model_dump_json()
 
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Alex Chen(明哥) 这个候选人可以推进吗？")]},
     )
     dws.user_departments["sender-user-1"] = {"dept-candidate"}
-    codex = CodexDecisionRunner(
-        workspace=tmp_path,
-        executor=executor,
-        codex_home=tmp_path,
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     runner = script_agent_result(
         worker,
@@ -2119,7 +2078,7 @@ def test_consumer_codex_command_injects_work_profile_content(
 
     worker.run_once()
 
-    assert seen_instructions == []
+    assert codex.calls == []
     assert len(runner.calls) == 1
     context = runner.calls[0][2]
     assert "这个候选人可以推进吗" in context.trigger_text
@@ -2134,42 +2093,13 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
 ):
     write_profile_for_consumer_test(tmp_path, monkeypatch)
 
-    def executor(command: list[str], prompt: str) -> str:
-        instructions = developer_instructions_from_command(command)
-        assert "Profile 内容:" in instructions
-        assert "材料不完整时先追问，不拍板" in instructions
-        assert "这个候选人可以推进吗" in prompt
-        return AgentEnvelope.model_validate(
-            {
-                "kind": "reply",
-                "user_response": {
-                    "mode": "ask_clarifying_question",
-                    "text": "先把岗位要求和候选人简历补齐，我再判断是否推进。",
-                    "sensitivity_kind": "external_candidate",
-                },
-                "system_actions": [],
-                "domain_payload": {
-                    "candidate_context_known": True,
-                    "candidate_department_ids": ["dept-candidate"],
-                },
-                "audit": {
-                    "summary": "仅根据当前消息判断，缺少岗位要求和简历内容，按 profile 先追问材料。",
-                    "documents": [],
-                    "confidence": 0.8,
-                },
-            }
-        ).model_dump_json()
 
     dws = FakeDws(
         [conversation()],
         {"cid-1": [message("@Alex Chen(明哥) 这个候选人可以推进吗？")]},
     )
     dws.user_departments["sender-user-1"] = {"dept-candidate"}
-    codex = CodexDecisionRunner(
-        workspace=tmp_path,
-        executor=executor,
-        codex_home=tmp_path,
-    )
+    codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     runner = script_agent_result(
         worker,
@@ -2185,6 +2115,7 @@ def test_consumer_uses_profile_to_ask_for_missing_candidate_materials(
 
     worker.run_once()
 
+    assert codex.calls == []
     assert len(runner.calls) == 1
     assert "这个候选人可以推进吗" in runner.calls[0][2].trigger_text
     assert final_sent(dws) == []

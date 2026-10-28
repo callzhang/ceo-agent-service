@@ -152,18 +152,6 @@ def test_current_history_consumers_read_retained_fields_without_removed_controls
         assert {item.disposition for item in manifest.items} == {"history_only"}
 
 
-def test_frozen_historical_factories_still_match_actual_19_10(archived_sources):
-    from app.business_legacy_owner_storage import _business_declaration
-    from app.logical_run_definitions import logical_action_objects
-    actual = _old_process(archived_sources["2026-10-19.10"], """
-import json
-from app.business_legacy_owner_storage import _business_declaration
-from app.logical_run_definitions import logical_action_objects
-print(json.dumps([_business_declaration(target=True),[logical_action_objects(v) for v in ('fresh_memory_fk','actual_no_memory_fk')]]))
-""")
-    assert actual == [_business_declaration(target=True), [logical_action_objects(v) for v in ("fresh_memory_fk", "actual_no_memory_fk")]]
-
-
 def test_current_writers_and_payload_constraints_reject_retired_fields(tmp_path):
     from app.business_storage import insert_business, update_business
     from app.action_storage import insert_sync_action, update_sync_action

@@ -4,7 +4,7 @@ import sqlite3
 import pytest
 
 from app.feedback_owner_schema_release import prepare_feedback_owner_release, ROUND_NEUTRALS
-from app.conversation_session_schema_release import session_target_objects
+from app.feedback_owner_schema_source import feedback_source_objects
 from app.action_feedback_storage import insert_feedback_action
 from app.task8_storage import register_task8_functions
 
@@ -13,7 +13,7 @@ def source(path):
     with closing(sqlite3.connect(path)) as db:
         register_task8_functions(db)
         for kind in ('table','index','trigger'):
-            for row in session_target_objects():
+            for row in feedback_source_objects():
                 if row[0] == kind:
                     db.execute(row[3])
         db.execute("insert into state(record_type,legacy_key,payload_json) values('service_state','1',?)",
@@ -86,3 +86,62 @@ def test_mid_rebuild_failure_rolls_back_every_source_fact(tmp_path,monkeypatch):
     release.rollback()
     with closing(sqlite3.connect(path)) as db:
         assert db.serialize()==before
+
+
+def test_frozen_source_and_target_catalogs_match_exact_published_declarations():
+    import hashlib
+    import json
+    from app.feedback_owner_schema_source import feedback_source_objects
+    from app.feedback_owner_schema_release import feedback_target_objects
+
+    source_objects = feedback_source_objects()
+    assert len(source_objects) == len(feedback_target_objects()) == 463
+    for objects, expected in (
+        (source_objects, '8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a'),
+        (feedback_target_objects(), 'ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a'),
+    ):
+        assert hashlib.sha256(json.dumps(objects, ensure_ascii=False, separators=(',', ':')).encode()).hexdigest() == expected
+
+
+def test_release_and_new_writes_preserve_facts_through_inverse(tmp_path):
+    from app.store import AutoReplyStore
+    from tools.validate_feedback_owner_copy import fact_digest
+
+    path = tmp_path / 'source-independent.sqlite3'
+    source(path)
+    before = fact_digest(path)
+    release = prepare_feedback_owner_release(path)
+    release.publish()
+    assert fact_digest(path) == before
+    # The current Store is one release later; stack it to open the Store, then peel it off.
+    from app.wechat_voice_transcript_schema_release import prepare_wechat_voice_transcript_release
+    voice = prepare_wechat_voice_transcript_release(path)
+    voice.publish()
+    store = AutoReplyStore(path)
+    store.upsert_feedback_event(key='new-fact', feedback_token='token', comment='new', original_text='new')
+    voice.rollback()
+    after_write = fact_digest(path)
+    release.rollback()
+    assert fact_digest(path) == after_write
+    with closing(sqlite3.connect(path)) as db:
+        assert db.execute("select count(*) from actions where record_type='feedback_events' and fb_event_key='new-fact'").fetchone() == (1,)
+    prepare_feedback_owner_release(path).publish()
+    assert fact_digest(path) == after_write
+
+
+def test_deployment_ledger_survives_release_and_inverse(tmp_path):
+    from app.repository_updater import ExistingSchemaUpgradeStateStore
+
+    path = tmp_path / "ledger.sqlite3"
+    source(path)
+    state = ExistingSchemaUpgradeStateStore(path)
+    state.bind_committed_schema()
+    state.set_service_state("retirement-ledger-fixture", "updating")
+    release = prepare_feedback_owner_release(path)
+    release.publish()
+    state.bind_committed_schema()
+    assert state.get_service_state("retirement-ledger-fixture") == "updating"
+    state.set_service_state("retirement-ledger-fixture", "restarting")
+    release.rollback()
+    state.bind_committed_schema()
+    assert state.get_service_state("retirement-ledger-fixture") == "restarting"

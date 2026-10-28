@@ -1,11 +1,6 @@
-"""Pinned, unactivated Run-side entity contract for Task/Run Phase 2.
-
-This module contains target DDL and a source-field crosswalk only. It does not
-import or call the legacy Runs schema factory and performs no database IO.
-"""
+"""Current Run-side entity declarations."""
 from __future__ import annotations
 
-import sqlite3
 
 
 RUN_FIELDS = (
@@ -126,29 +121,6 @@ INDEXES = {
     "idx_setup_events_step": "CREATE INDEX idx_setup_events_step ON setup_wizard_events(step_id,id)",
 }
 
-SOURCE_FIELDS = {
-    "agent_runs": ("task_id parent_id execution_generation role proposal_revision turn_attempt operation_id status session_id transcript_start transcript_end structured_error_json error lease_owner lease_expires_at started_at completed_at created_at updated_at projection_json job_id source_type",),
-    "agent_runtime_attempts": ("parent_id status session_id transcript_start transcript_end lease_owner lease_expires_at started_at finished_at created_at updated_at workload_kind workload_key attempt_number route_name runtime_kind credential_mode model session_mode source_session_id attempt_purpose validation_retry_policy_id validation_result_schema_id failure_class failure_code failover_permitted transcript_reference first_effect_started_at result_schema_id",),
-    "agent_run_state_events": ("parent_id structured_error_json created_at phase",),
-    "scheduled_task_runs": ("lease_owner lease_expires_at created_at event_id scheduled_task_id trigger_kind scheduled_for dispatch_status skip_or_error_reason execution_kind execution_id dispatched_at first_scheduled_for occurrence_count result_summary snapshot_id",),
-    "workbench_events": ("task_id created_at sequence event_type payload_json",),
-    "codex_session_search_index": ("session_id created_at updated_at source_type source_id title",),
-    "email_classifier_runtime_samples": ("created_at model_id outcome fallback_code cache_hit runtime_warm queue_ms http_ms embedding_ms head_ms total_ms",),
-    "setup_wizard_events": ("status finished_at created_at step_id action_id summary evidence_json stdout_excerpt stderr_excerpt",),
-}
-
-SOURCE_DECLARED_FIELDS = tuple("""id record_type legacy_key task_id parent_id execution_generation role proposal_revision turn_attempt operation_id status session_id transcript_start transcript_end structured_error_json lease_owner lease_expires_at started_at completed_at finished_at created_at updated_at workload_kind workload_key attempt_number route_name runtime_kind credential_mode model session_mode source_session_id attempt_purpose validation_retry_policy_id validation_result_schema_id failure_class failure_code failover_permitted transcript_reference first_effect_started_at result_schema_id phase error projection_json job_id event_id scheduled_task_id trigger_kind scheduled_for dispatch_status skip_or_error_reason execution_kind execution_id dispatched_at first_scheduled_for occurrence_count result_summary snapshot_id sequence event_type payload_json source_type source_id title model_id outcome fallback_code cache_hit runtime_warm queue_ms http_ms embedding_ms head_ms total_ms step_id action_id summary evidence_json stdout_excerpt stderr_excerpt""".split())
-_INTEGER_FIELDS = frozenset("id task_id parent_id proposal_revision turn_attempt transcript_start transcript_end attempt_number failover_permitted job_id scheduled_task_id occurrence_count snapshot_id sequence cache_hit runtime_warm".split())
-_REAL_FIELDS = frozenset("queue_ms http_ms embedding_ms head_ms total_ms".split())
-
-
-def _source_metadata(field):
-    sql_type = "INTEGER" if field in _INTEGER_FIELDS else "REAL" if field in _REAL_FIELDS else "TEXT"
-    null_contract = "PRIMARY KEY" if field == "id" else "NOT NULL" if field in {"record_type", "created_at"} else "NULL allowed"
-    default = "current_timestamp" if field == "created_at" else None
-    return sql_type, null_contract, default
-
-
 def run_entity_objects() -> dict[str, str]:
     guards = {
         "trg_run_provenance_task_kind_insert": """CREATE TRIGGER trg_run_provenance_task_kind_insert BEFORE INSERT ON run_provenance
@@ -192,105 +164,3 @@ BEGIN SELECT RAISE(ABORT,'Run source and Task kind mismatch'); END""",
         "trg_runtime_attempt_lineage_immutable": "CREATE TRIGGER trg_runtime_attempt_lineage_immutable BEFORE UPDATE OF attempt_purpose,validation_retry_policy_id,validation_result_schema_id ON runtime_attempts WHEN NEW.attempt_purpose IS NOT OLD.attempt_purpose OR NEW.validation_retry_policy_id IS NOT OLD.validation_retry_policy_id OR NEW.validation_result_schema_id IS NOT OLD.validation_result_schema_id BEGIN SELECT RAISE(ABORT,'runtime attempt correction lineage is immutable'); END",
     }
     return {**TABLES, **INDEXES, **guards}
-
-
-def run_entity_field_map() -> list[dict]:
-    owners = {
-        "agent_runs": {"projection_json": ("run_projections", "projection_json"), "source_type": ("run_provenance", "source_type"), "job_id": ("run_provenance", "job_id")},
-        "agent_runtime_attempts": {field: ("runtime_attempts", field) for field in SOURCE_FIELDS["agent_runtime_attempts"][0].split()},
-        "agent_run_state_events": {"parent_id": ("run_failures", "run_id"), "phase": ("run_failures", "phase"), "structured_error_json": ("run_failures", "structured_error_json"), "created_at": ("run_failures", "created_at")},
-        "scheduled_task_runs": {field: ("schedule_occurrences", field) for field in SOURCE_FIELDS["scheduled_task_runs"][0].split()},
-        "workbench_events": {field: ("workbench_events", field) for field in SOURCE_FIELDS["workbench_events"][0].split()},
-        "codex_session_search_index": {field: ("codex_session_search_index", field) for field in SOURCE_FIELDS["codex_session_search_index"][0].split()},
-        "email_classifier_runtime_samples": {field: ("email_classifier_runtime_samples", "created_at" if field == "created_at" else field) for field in SOURCE_FIELDS["email_classifier_runtime_samples"][0].split()},
-        "setup_wizard_events": {field: ("setup_wizard_events", field) for field in SOURCE_FIELDS["setup_wizard_events"][0].split()},
-    }
-    primary = {"agent_runs": "runs", "agent_runtime_attempts": "runtime_attempts", "agent_run_state_events": "run_failures", "scheduled_task_runs": "schedule_occurrences", "workbench_events": "workbench_events", "codex_session_search_index": "codex_session_search_index", "email_classifier_runtime_samples": "email_classifier_runtime_samples", "setup_wizard_events": "setup_wizard_events"}
-    rows = []
-    for source, fields in SOURCE_FIELDS.items():
-        present = set(fields[0].split())
-        for field in ("id", "record_type", "legacy_key", *SOURCE_DECLARED_FIELDS[3:]):
-            if field == "id":
-                owner, target, target_field = "physical row identity", primary[source], "id"
-            elif field == "record_type":
-                owner, target, target_field = "source-kind migration discriminator", "run_entity_identity_map", "source_kind"
-            elif field == "legacy_key":
-                owner, target, target_field = "typed public identity and allocator", "run_entity_identity_map", "public_key"
-            elif field in owners[source] and field in present:
-                owner = ("typed Task/Meeting workload key or source fact"
-                         if source == "agent_runtime_attempts" and field == "parent_id"
-                         else "source fact")
-                target, target_field = owners[source][field]
-            elif source == "agent_runs" and field in present:
-                owner, target, target_field = "logical Run", "runs", field
-            elif field in present:
-                target = primary[source]
-                target_field = {"parent_id": "run_id", "record_type": "source_kind"}.get(field, "created_at" if field == "recorded_at" else field)
-                owner = "logical Run" if source == "agent_runs" else "source fact"
-            else:
-                owner, target, target_field = "source CHECK requires NULL for this kind", None, None
-            rows.append({"source_kind": source, "source_field": field, "target_owner": owner, "target_table": target, "target_field": target_field,
-                         "retirement_reason": "field is structurally NULL for this source kind" if field not in present and field not in {"id", "record_type", "legacy_key"} else None,
-                         "migration_metadata_only": field in {"record_type", "legacy_key"},
-                         "identity_order_semantics": "SQLite CAST(public_key AS INTEGER) where source index ordered by legacy_key" if field == "legacy_key" else None,
-                         "sql_type": _source_metadata(field)[0], "null_contract": _source_metadata(field)[1],
-                         "source_default": _source_metadata(field)[2]})
-    return rows
-
-
-def validate_run_entity_contract(mapping=None) -> None:
-    rows = run_entity_field_map() if mapping is None else list(mapping)
-    from app.logical_run_definitions import logical_run_objects
-
-    source_db = sqlite3.connect(":memory:")
-    source_db.execute(logical_run_objects()["runs"])
-    source_columns = {row[1]: row for row in source_db.execute("PRAGMA table_info(runs)")}
-    source_fields = tuple(source_columns)
-    expected = {(source, field) for source in SOURCE_FIELDS for field in source_fields}
-    seen = [(row.get("source_kind"), row.get("source_field")) for row in rows]
-    if len(seen) != len(set(seen)) or set(seen) != expected:
-        raise ValueError("source Run field coverage is duplicate, unknown, or incomplete")
-    generated = {(row["source_kind"], row["source_field"]): row for row in run_entity_field_map()}
-    for row in rows:
-        key = (row["source_kind"], row["source_field"])
-        expected_row = generated[key]
-        if any(row.get(field) != expected_row[field] for field in (
-                "target_owner", "target_table", "target_field", "retirement_reason",
-                "migration_metadata_only", "identity_order_semantics")):
-            raise ValueError(f"target mapping mismatch: {key}")
-        _, source_name, source_type, not_null, default, primary_key = source_columns[row["source_field"]]
-        source_metadata = (
-            source_type.upper(),
-            "PRIMARY KEY" if primary_key else "NOT NULL" if not_null else "NULL allowed",
-            default,
-        )
-        actual_metadata = (row.get("sql_type"), row.get("null_contract"), row.get("source_default"))
-        if source_name != row["source_field"] or actual_metadata != source_metadata:
-            raise ValueError(f"source declaration metadata mismatch: {(row['source_kind'], row['source_field'])}")
-    db = sqlite3.connect(":memory:")
-    from app.task_run_entity_definitions import task_run_entity_objects
-    task_objects = task_run_entity_objects()
-    run_objects = run_entity_objects()
-    for ddl in (*task_objects.values(), *run_objects.values()):
-        if ddl.lstrip().lower().startswith("create table"):
-            db.execute(ddl)
-    from app.configs_storage import create_configs_schema
-    from app.schedules_storage import create_schedules_schema
-    create_schedules_schema(db)
-    create_configs_schema(db)
-    for ddl in (*task_objects.values(), *run_objects.values()):
-        if not ddl.lstrip().lower().startswith("create table"):
-            db.execute(ddl)
-    target_columns = {
-        name: {column[1] for column in db.execute(f'PRAGMA table_info("{name}")')}
-        for name, in db.execute("SELECT name FROM sqlite_schema WHERE type='table'")
-    }
-    for row in rows:
-        if row["target_table"] is None:
-            if not row.get("retirement_reason"):
-                raise ValueError(f"unmapped source field: {(row['source_kind'], row['source_field'])}")
-            continue
-        if row["target_table"] not in target_columns:
-            raise ValueError(f"unknown target owner: {row['target_table']}")
-        if row["target_field"] not in target_columns[row["target_table"]]:
-            raise ValueError(f"unknown target field: {row['target_table']}.{row['target_field']}")

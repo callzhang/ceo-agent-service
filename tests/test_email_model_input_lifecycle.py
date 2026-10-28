@@ -8,7 +8,7 @@ import pytest
 from app.email_classifier_model import email_message_to_text, CpuTfidfLogisticClassifier
 from app.email_body_source import locate_original
 from tests.test_email_body_source import (
-    body_store as body_store, current13 as current13, _provider_message,
+    body_store as body_store, _provider_message,
 )
 
 

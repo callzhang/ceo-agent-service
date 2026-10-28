@@ -32,7 +32,6 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
     import json
     from app.current_schema_manifest import current_objects
     from app.feedback_owner_schema_release import feedback_target_objects
-    from app.model_retirement_schema_source import store26_objects
 
     for email_ledger, count, digest in (
         (False, 463, '147d3ac4553e6e54ff7183f582f1fae80e3f6e1b3653028a31a3415f6ce00d11'),
@@ -47,13 +46,6 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
             row for row in feedback_target_objects()
             if email_ledger or row[1] != 'email_schema_migrations')
 
-    for email_ledger, count, digest in (
-        (False, 475, '335bb6fe9c5c04a1c6f10849e8c7d4e8e1bee6e037ae070aea28126a506f8575'),
-        (True, 476, '105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754'),
-    ):
-        source = store26_objects(email_ledger=email_ledger)
-        assert len(source) == count
-        assert hashlib.sha256(json.dumps(source).encode()).hexdigest() == digest
 
 
 def test_current_field_and_payload_metadata_preserves_frozen_layouts():
@@ -117,11 +109,11 @@ hits = []
 original_read_bytes = Path.read_bytes
 original_read_text = Path.read_text
 def checked_read_bytes(path):
-    if path.name == "store26_1_email54_catalog.json":
+    if path.name in {"store28_2_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_bytes(path)
 def checked_read_text(path, *args, **kwargs):
-    if path.name == "store26_1_email54_catalog.json":
+    if path.name in {"store28_2_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_text(path, *args, **kwargs)
 Path.read_bytes = checked_read_bytes
@@ -132,8 +124,7 @@ def profile(frame, event, arg):
         name = frame.f_code.co_name
         if ((path.endswith("/app/action_storage.py") and name in
              {"_action_definitions", "_build_action_payloads", "action_payloads"}) or
-            (path.endswith("/app/business_definitions.py") and name == "_definitions") or
-            (path.endswith("/app/model_retirement_schema_source.py") and name == "store26_objects")):
+            (path.endswith("/app/business_definitions.py") and name == "_definitions")):
             hits.append((Path(path).name, name))
 sys.setprofile(profile)
 from app.store import AutoReplyStore
@@ -175,3 +166,15 @@ def test_current_assembly_cache_is_isolated_by_role_and_caller(monkeypatch):
     assert 'email_schema_migrations' in paired_again
     assert len(bare_again) == 463 and len(paired_again) == 464
     assert len(calls) == 2
+
+
+def test_current_schema_reparses_and_action_public_id_update_compiles():
+    from contextlib import closing
+    import sqlite3
+    from app.current_database_schema import create_current_database_schema
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        create_current_database_schema(db)
+        db.execute("alter table actions rename column td_lease_owner to renamed_lease_owner")
+        db.execute("alter table work_summary_inputs rename column body_compacted to renamed_body_compacted")
+        db.execute("explain update actions set legacy_key=legacy_key")

@@ -19,7 +19,7 @@ from app.state_definitions import state_projection
 from app.store import AutoReplyStore
 from app.store import STORE_SCHEMA_VERSION
 from app.store_schema_release import prepare_database_schema_release
-from tests.test_email_canonical_storage import _message, _classification
+from tests.support.email_native_fixtures import _message, _classification
 
 ROOT = Path(__file__).resolve().parents[1]
 RETIRED = {"class_" + name for name in ("sender", "subject", "received_at", "folder", "preview")}

@@ -1,6 +1,50 @@
 # CEO Agent Service Architecture
 
+## Run 正面声明与显式发布窗口收口（2026-10-28）
+
+Run／采用结果只保留当前正面声明和真实身份／来源维护，不再生成旧字段全集映射。
+11项当前receipt SQL直接固定，逐字等于原生成结果，不改写旧execution_id声明。
+过期的9个release/source模块、旧copy工具和专用转换测试退出；当前显式Feedback
+28.2→28.3发布及新增数据inverse保留。所需历史Configs源SQL只在测试夹具中。
+四张identity_map的身份事实、当前coalescer和历史查询不变。当前触发器重解析回归
+仍执行两次ALTER及EXPLAIN UPDATE；不因旧测试容器退休而取消当前覆盖。
+所有463项SQL与前一当前声明逐字一致，不新增schema版本、运行时兼容或policy。
+本段是代码合同；部署／生产功能／清理的实际状态以第五批验收为准。
+
+
+## Email／Workbench 历史转换退休（2026-10-28）
+
+Email现行投影、元数据、正文来源和业务写入继续使用原有owner；已关闭的旧表转换、
+来源变体识别和inverse写入退出。Workbench旧source13转换链路及专用探测退休，
+当前文件生命周期、Task/Run父子、事件和回执不变。仅保留实际显式来源工具依赖的
+原有声明，普通constructor不调用；测试当前值模板独立放在tests/support。
+没有DDL、字段、版本或发送／恢复政策变更，部署状态见第五批验收记录。
+
+
+## Business 当前写入与导入链路清退（2026-10-28）
+
+当前候选insert/update/delete及WorkTodo导入read/assign继续使用已有Business owner；
+关闭的候选／导入owner转换器、旧来源校验及专用final Action转换包退出代码。
+候选projection只按当前字段顺序读取，不再接收actual/fresh来源开关；现行生成DDL、
+外键、业务事实、引用与水位完全不变。当前测试使用原生Store，SQLite来源DDL只作
+独立存储语义oracle，不参与应用构造或兼容读取。实际部署状态见第五批验收记录。
+
+
+## Decision Runner 当前单一执行链路（2026-10-28）
+
+`CodexDecisionRunner` 只使用已有 `RoutedCodexExecution` 和持久化 Run，构造时传入
+Store 或已配置的 routed executor。旧 `executor` 注入、直接 subprocess 和专用命令／
+超时恢复分支已经退休；当前原生调用、结果解析、同会话纠正、session/transcript 范围、
+审计事件和 `_finalize_decision` 的现有合同不变。测试用 routed/native 替身，不真实外发。
+这项无 DDL 清理不改变路线能力、Audit、授权、重试或发送政策；实际部署状态见
+[第五批验收](model-retirement-batch5-validation.md)。
+
+
 ## Feedback 单一事实归属 Store28.3/Email54（2026-10-28）
+
+显式Feedback发布及inverse直接读取冻结的28.2/54目录；不再通过更早的会话／索引
+迁移包拼出前序SQL。普通constructor仍只使用当前正面声明，不载入历史目录。
+本单元不改变任何schema SQL、版本或业务事实。
 
 Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前证据从准确Round
 （id+feedback_key+batch_id）读取，resolved_at从同一来源反馈Action读取；无Round解决事实
@@ -12,8 +56,8 @@ Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前
 恢复，保留新增事实、身份、当前水位及FK集合。constructor不处理旧结构或自动补建。
 已关闭Task/Run/adoption转换包、其专用工具和测试退出；当前微信/审批/Workbench/反馈测试
 使用原生夹具，实际identity provenance与必要现行paired inverse保留。候选/安装/读回边界见
-[第四批验收](model-retirement-batch4-validation.md)；剩余Business/Email/Workbench和Runner
-转换半部仍是第五批后续范围。
+[第四批验收](model-retirement-batch4-validation.md)。上述转换半部与Runner已在第五批分单元退休，
+发布／读回状态见[第五批验收](model-retirement-batch5-validation.md)。
 
 ## 微信语音转写缓存 Store28.4/Email54（2026-10-28）
 
@@ -31,14 +75,14 @@ inverse 直接 `drop table`（缓存可重新转写，不丢业务事实），�
 session列表/Attempt关联直接读取canonical owner。CLI OAuth reset清除同一owner的OAuth槽，
 其他路线保留；原有全路线clear、路线上compare-and-clear与Run/Attempt原生证据不变。
 退休两个镜像payload键/生成列及旧getter/setter/clear、双写和无用开关，不保留运行时兼容。
-显式准确28.1→28.2发布先验证镜像非空事实与canonical一致；inverse从当前canonical恢复完整
+历史af24发布中的显式28.1→28.2先验证镜像非空事实与canonical一致；当时inverse从canonical恢复完整
 旧镜像（包括原来为空的hash），不保存镜像备份。463项schema、48表、1232列。历史声明固定，
 constructor不自动升级。af24bc485标准部署/读回/清理已完成，证据见[第三批验收](model-retirement-batch3-validation.md)。
 
 
 ## 模型退休第二批：Store28.1 / Email54（2026-10-28）
 
-当前代码声明为Store `2026-10-28.1` / Email54，完整配对463对象（bare462）。
+历史44c13bc91代码声明为Store `2026-10-28.1` / Email54，完整配对463对象（bare462）。
 正常constructor只接受空库或精确当前声明，不探测/修补旧结构。显式发布仅支持
 准确Store26.1/Email54前序，发布静默读取使用同一冻结来源；25.2/25.3退出自动
 发布窗口。必要历史工具使用自己的固定声明，不能随current重新生成旧来源。
@@ -77,7 +121,7 @@ History 可见页面仍按10秒间隔检查刷新；已有列表请求未完成�
 修改筛选、翻页或离开页面时仍取消过时请求，旧请求的迟到响应不能覆盖新结果。
 这不改变后端查询、结果排序、业务状态、审查或发送合同。
 
-显式 Store21.1 来源构造使用通知字段加入前的冻结 schedules 声明，保留原有
+历史验收的Store21.1来源工件采用通知字段加入前的冻结schedules声明，保留原有
 505项／920b7eed 摘要；当前 Task/Run SQL 文档则与当前声明同步，包含已有的
 notify_on_completion 字段。历史来源与当前目标不互相冒充，不增加运行时兼容。
 测试与实际发布读回见[收口验收](history-artifact-closeout-20261027.md)。

@@ -1,15 +1,13 @@
-import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
 from app.action_entity_definitions import ACTION_IDENTITY_MAP_DDL
-from app.action_storage import ACTION_RECORD_TYPES, SOURCE_COLUMNS
+from app.action_storage import ACTION_RECORD_TYPES
 from app.configs_definitions import CONFIG_INDEX_DDL, CONFIG_TABLE_DDL
 from app.run_adoption_definitions import (
-    ADOPTED_SOURCE_KINDS, INDEXES, TABLES, TRIGGERS, adoption_source_fields,
-    field_map, receipt_schema_patch, schema_sql, validate_field_map,
+    CURRENT_RECEIPT_SCHEMA_DDL, INDEXES, TABLES, TRIGGERS, schema_sql,
 )
 from app.run_entity_definitions import run_entity_objects
 from app.schedules_definitions import SCHEDULE_DDL, SCHEDULE_INDEXES
@@ -66,7 +64,7 @@ def _install_action_receipts(db):
         if (statement.lower().startswith(("create index ", "create unique index "))
                 and " on actions" in statement.lower()):
             db.execute(statement)
-    for sql in receipt_schema_patch():
+    for sql in CURRENT_RECEIPT_SCHEMA_DDL:
         db.execute(sql)
     db.execute(ACTION_IDENTITY_MAP_DDL[0])
 
@@ -88,25 +86,8 @@ def _review(db, consumer, audit, digest="digest-a", decision="approve"):
                (audit + 1000, consumer, audit, digest, decision, '{"review":"ok"}', "now"))
 
 
-def test_field_map_covers_current_source_fields_and_artifacts_are_exact():
-    mapping = field_map()
-    assert validate_field_map(mapping)
-    assert set(mapping) == set(ADOPTED_SOURCE_KINDS)
-    assert all(set(mapping[kind]) == set(adoption_source_fields()[kind]) for kind in mapping)
-    assert all(mapping[kind][field][0] is not None or field == "branch_json"
-               for kind in mapping for field in mapping[kind])
-    assert mapping["candidate_selections"]["branch_json"][0] is None
-    assert all("run_projections" not in str(dest) for source in mapping.values() for dest in source.values())
+def test_adoption_sql_artifact_is_exact():
     assert (ROOT / "docs/run-adoption-target.sql").read_text() == schema_sql()
-    artifact = json.loads((ROOT / "docs/run-adoption-field-map.json").read_text())
-    assert artifact["fields"] == _serialized_map()
-    assert artifact["source_constraints"]["candidate_to_review"].startswith("1:N")
-    assert "run_execution_progress(consumer_run_id)" in artifact["source_constraints"]["receipt_execution_association"]
-    assert set(SOURCE_COLUMNS["review_candidates"]) == set(mapping["review_candidates"])
-    unknown = {kind: dict(fields) for kind, fields in mapping.items()}
-    unknown["review_candidates"]["surprise"] = ("runs", "unexpected")
-    with pytest.raises(ValueError, match="review_candidates"):
-        validate_field_map(unknown)
 
 
 def test_committed_adoption_sql_executes_after_native_prerequisites():
@@ -125,14 +106,6 @@ def test_committed_adoption_sql_executes_after_native_prerequisites():
         "SELECT name,sql FROM sqlite_schema WHERE name NOT GLOB 'sqlite_*'")}
     assert actual == complete
     assert db.execute("PRAGMA foreign_key_check").fetchall() == []
-
-
-def _serialized_map():
-    return [
-        {"source_kind": kind, "source_field": field,
-         "target_table": dest[0], "target_field_or_expression": dest[1]}
-        for kind, fields in field_map().items() for field, dest in fields.items()
-    ]
 
 
 def test_candidate_review_selection_and_progress_reference_closure():
@@ -249,7 +222,7 @@ def test_receipts_keep_action_provider_and_observer_lineage_with_per_receipt_run
     assert db.execute("select provider_receipt_id from action_receipts where id=1").fetchone() == (3,)
     assert db.execute("select agent_run_id from action_observers").fetchone() == (999,)
     assert "execution_id" not in {r[1] for r in db.execute("pragma table_info(action_receipts)")}
-    assert any("provider_receipt_id" in sql for sql in receipt_schema_patch())
+    assert any("provider_receipt_id" in sql for sql in CURRENT_RECEIPT_SCHEMA_DDL)
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("insert into action_receipts(id,action_id,execution_run_id,action_index) values(4,1,11,0)")
     with pytest.raises(sqlite3.IntegrityError):
@@ -272,7 +245,7 @@ def test_identity_map_keeps_typed_non_derivable_public_ids_and_artifact_exactnes
 
 
 def test_receipt_patch_replaces_only_candidate_execution_association():
-    patch = "\n".join(receipt_schema_patch())
+    patch = "\n".join(CURRENT_RECEIPT_SCHEMA_DDL)
     assert "execution_run_id integer references run_execution_progress(consumer_run_id)" in patch
     assert schema_sql().index("CREATE TABLE run_execution_progress") < schema_sql().index("create table action_receipts")
     assert "idx_action_receipts_execution_run_order on action_receipts(execution_run_id,action_index)" in patch

@@ -9,7 +9,7 @@ import pytest
 from app.email_store import EmailStore
 from app.email_canonical_storage import upsert_email_message
 from tests.provider_state_fixtures import insert_observation
-from tests.test_email_canonical_storage import _message
+from tests.support.email_native_fixtures import _message
 from tests.test_email_exact_source import source, LOCATOR
 
 
@@ -467,7 +467,7 @@ def test_thread_discovery_reads_only_metadata_and_keeps_transitive_relations(sto
 def test_runtime_classification_getter_needs_no_original_or_model_input(stored, monkeypatch):
     from contextlib import contextmanager
     from app.email_canonical_storage import insert_email_classification, update_email_message
-    from tests.test_email_canonical_storage import _classification
+    from tests.support.email_native_fixtures import _classification
 
     with stored._connect() as db:
         insert_email_classification(db, _classification(
