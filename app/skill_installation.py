@@ -66,7 +66,7 @@ class SkillInstallationService:
                     path.parent.mkdir(parents=True, exist_ok=True)
                     path.write_bytes(item.content)
                     path.chmod(0o755 if item.executable else 0o644)
-                current = self.store.get_pending_or_active_runtime_skill_config()
+                current = self.store.get_latest_runtime_skill_config()
                 published = False
                 def publish():
                     nonlocal published
@@ -77,7 +77,7 @@ class SkillInstallationService:
                     published = True
                 try:
                     revision, _config = self.store.install_repository_skill(
-                        name, name, (staged / 'SKILL.md').read_text(encoding='utf-8'),
+                        name, name, (staged / 'SKILL.md').read_bytes().decode('utf-8'),
                         source=source, expected_parent_id=current.id if current else None,
                         publish_package=publish,
                     )

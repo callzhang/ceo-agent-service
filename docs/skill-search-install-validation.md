@@ -1,7 +1,7 @@
 # Skill search and installation validation
 
-Status: implementation and focused offline verification complete; independent
-branch review, standard deployment gate and production UI/readback are pending.
+Status: implementation, independent branch review and its bounded fix pass
+complete; standard deployment gate and production UI/readback are pending.
 This document does not assert that company Skill repository migration is done.
 
 ## Implemented behavior
@@ -21,9 +21,9 @@ start an external action or change task/Audit authorization policy.
 
 ## Evidence
 
-- 179 selected Python tests across 13 distinct files passed, one process per file,
-  including 34 new first-use/repository/discovery/installation/API tests. A
-  separate existing launchd test file is recorded when complete.
+- 204 selected Python tests across 16 distinct files passed, one process per file,
+  including 48 new first-use/repository/discovery/installation/API tests and
+  the existing startup, catalog, task-option and launchd regressions.
 - Frontend search component: 4 passed; Settings page: 66 passed and 2 preexisting
   skips; API client: 2 passed. TypeScript and production build pass.
 - Regression RED evidence includes absent baseline installer/repository reader/
@@ -41,6 +41,49 @@ start an external action or change task/Audit authorization policy.
   reachable. No public Skill was installed into the real user environment.
 - Ruff and diff checks pass. No real employee/OA data or private repository body
   is included in these tests or this document.
+
+## Independent review and fix pass
+
+A fresh read-only reviewer identified five reproducible functional issues. The
+source-shaped input classifier, ordinary multiline external frontmatter, root
+package boundaries, CRLF byte identity/capture, and post-load-failure config
+parent/inheritance behavior each have regression RED→GREEN evidence. Duplicate
+name rows are also unavailable through direct installation. The config change
+race still refuses publication and preserves the competing configuration.
+
+Two review notes were treated as functional issues: baseline preparation now
+appears before the first runbook verifier/startup, and the Skills page has an
+explicit return to all installed Skills. Owned metadata validation, prior frozen
+revisions, existing runtime load evidence and task/action policies are retained.
+No second review verdict is claimed; the author's fix pass is verified by the
+focused suite and the mandatory release gate remains independent.
+
+Native discovery against an existing private source also succeeded using the
+service account's existing Git authentication. That probe installed nothing;
+its repository identity, Skill names and bodies are not part of this artifact.
+
+## Support limits and implementation rulings
+
+Only the existing supported repository layouts are listed. Selecting a package
+excludes nested independent Skill directories; dependencies are installed
+separately. Tree/blob/archive/local installation, advanced ref selection,
+auto-update, hooks and automatic tool provisioning are outside this release.
+Symbolic links and bytecode caches follow existing omission semantics. Git LFS,
+submodule materialization and non-UTF-8 filenames are not validated installation
+capabilities. Distinct URL spellings/transports remain distinct source identities.
+An unavailable remote or unreachable commit produces an honest upstream error;
+no offline repository cache/remote-retention guarantee is claimed.
+
+Ordinary filesystem/SQLite exception rollback is verified. Durable recovery from
+process death between filesystem publication and DB commit, or from a second
+filesystem failure during rollback, is not added; interruption may require manual
+resolution rather than automatic overwrite. Console auth/trust/SSRF/malware and
+outbound policy changes remain separately scoped. Active status retains existing
+validated load-writer semantics, with real PID correspondence verified at release.
+Large histories/packages and fleet concurrency extremes are not benchmarked beyond
+existing command/request time budgets. The baseline's literal python3 convention
+was retained: the reviewer ran its exact 15-package operation under system3.9.6
+successfully; future non-stdlib imports would need renewed interpreter validation.
 
 ## Release boundaries
 

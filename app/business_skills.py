@@ -323,50 +323,53 @@ def installed_runtime_skill_paths(target_root: Path | None = None) -> tuple[Path
     return tuple(sorted(root.rglob("SKILL.md")))
 
 
-def _describe_skill_file(path: Path) -> tuple[str, str] | None:
-    """Return top-level name/use metadata without validating unrelated fields.
-
-    The runtime tree contains user and product Skills whose metadata has nested
-    requirements.  Catalog discovery only needs the two top-level scalars, so
-    it must not apply the stricter managed-Skill installation schema to the
-    rest of the header.  The narrow reader also preserves plain descriptions
-    containing an unquoted colon.
-    """
-    try:
-        lines = path.read_text(encoding="utf-8").splitlines()
-    except (OSError, UnicodeError):
-        return None
+def _parse_portable_skill_frontmatter(content: str, source_path: Path) -> dict[str, object]:
+    """Read catalog fields without imposing service-owned metadata structure."""
+    lines = content.splitlines()
     if not lines or lines[0] != "---":
-        return None
+        raise BusinessSkillValidationError(f"Skill must start with YAML frontmatter: {source_path}")
     try:
         end = lines.index("---", 1)
-    except ValueError:
-        return None
-    values: dict[str, str] = {}
+    except ValueError as exc:
+        raise BusinessSkillValidationError(f"Skill frontmatter is incomplete: {source_path}") from exc
+    values: dict[str, object] = {}
+    section = ""
     index = 1
     while index < end:
         line = lines[index]
         index += 1
-        if not line or line[:1].isspace() or line.lstrip().startswith("#"):
+        if not line.strip() or line.lstrip().startswith("#"):
             continue
-        key, separator, raw_value = line.partition(":")
-        if not separator or key not in {"name", "description"}:
+        indentation = len(line) - len(line.lstrip(" "))
+        key, separator, raw_value = line.strip().partition(":")
+        if not separator:
+            continue
+        if indentation:
+            if indentation == 2 and section == "metadata" and key == "author":
+                values["metadata"] = {"author": _frontmatter_scalar(raw_value.strip())}
+            continue
+        section = key
+        if key not in {"name", "description", "author"}:
             continue
         raw_value = raw_value.strip()
-        if raw_value in {"|", "|-", ">", ">-"}:
-            block: list[str] = []
-            while index < end and (
-                not lines[index] or lines[index][:1].isspace()
-            ):
+        if raw_value in {"|", "|-", "|+", ">", ">-", ">+"}:
+            block = []
+            while index < end and (not lines[index] or lines[index][:1].isspace()):
                 block.append(lines[index].strip())
                 index += 1
-            values[key] = (
-                "\n".join(block) if raw_value.startswith("|") else " ".join(block)
-            ).strip()
+            values[key] = ("\n".join(block) if raw_value.startswith("|") else " ".join(block)).strip()
         else:
             values[key] = _frontmatter_scalar(raw_value).strip()
-    name = values.get("name", "")
-    description = values.get("description", "")
+    return values
+
+
+def _describe_skill_file(path: Path) -> tuple[str, str] | None:
+    """Describe the same portable fields that external installation accepts."""
+    try:
+        values = _parse_portable_skill_frontmatter(path.read_bytes().decode("utf-8"), path)
+    except (OSError, UnicodeError, BusinessSkillValidationError):
+        return None
+    name, description = values.get("name", ""), values.get("description", "")
     return (name, description) if name and description else None
 
 

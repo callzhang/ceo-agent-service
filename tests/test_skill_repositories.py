@@ -99,3 +99,33 @@ def test_timeout_is_not_empty_search():
         raise subprocess.TimeoutExpired(args, kwargs['timeout'])
     with pytest.raises(TimeoutError):
         SkillRepositoryReader(run=timeout).list_skills(URL)
+
+
+def test_standard_external_frontmatter_keeps_multiline_description_and_nested_metadata(tmp_path):
+    root = repository(tmp_path)
+    add_skill(root)
+    text = '---\nname: example\ndescription: >\n  Reads input records and\n  produces a useful result.\nmetadata:\n  author: Example Author\n  tags:\n    - operations\n---\nExample body'
+    (root / 'skills/example/SKILL.md').write_text(text)
+    git(root, 'commit', '-am', 'Portable multiline metadata')
+    rows = reader_for(root).list_skills(URL)
+    assert rows[0].available
+    assert rows[0].description == 'Reads input records and produces a useful result.'
+    assert rows[0].author == 'Example Author'
+
+
+def test_root_package_excludes_other_skill_packages_but_keeps_support_files(tmp_path):
+    root = repository(tmp_path)
+    add_skill(root, '.', 'root')
+    add_skill(root, 'skills/other', 'other')
+    commit = add_skill(root, '.agents/skills/third', 'third')
+    package = reader_for(root).read_package(URL, commit, '.')
+    assert {f.path for f in package.files} == {'SKILL.md', 'references/guide.md'}
+    assert package.candidate.name == 'root'
+
+
+def test_duplicate_declared_name_cannot_install_an_unavailable_row(tmp_path):
+    root = repository(tmp_path)
+    add_skill(root, 'skills/one', 'same')
+    commit = add_skill(root, 'skills/two', 'same')
+    with pytest.raises(ValueError, match='Duplicate'):
+        reader_for(root).read_package(URL, commit, 'skills/one')

@@ -94,8 +94,20 @@ credentials, report the exact failed command and error.
 
 ## Phase 2: Download And Verify Components
 
-Start with the local component bootstrapper. It installs the components whose
-source is known on the machine and verifies the rest:
+Before the first verifier or application startup, install the missing generic
+release baseline with the configured Python interpreter (the agent runs this):
+
+```sh
+"$HOME/miniforge3/bin/python" - <<'PYTHON'
+from pathlib import Path
+from app.business_skills import install_public_skill_baseline
+install_public_skill_baseline(Path("ci/shared-skills"), Path.home() / ".agents/skills")
+PYTHON
+```
+
+This preserves existing installed content and excludes optional company packages.
+Then run the local component bootstrapper. It installs components whose source
+is known on the machine and verifies the complete generic Skill baseline:
 
 ```sh
 scripts/bootstrap-local-components.sh --format json

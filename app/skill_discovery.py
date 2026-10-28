@@ -32,7 +32,7 @@ class SkillDiscoveryService:
             raise ValueError('Enter a repository URL or public Skill name')
         query = query.strip()
         deadline = time.monotonic() + 120
-        if urlsplit(query).scheme or query.startswith('git@'):
+        if urlsplit(query).scheme or any(marker in query for marker in (':', '/', '\\', '@')):
             return SkillSearchResult(self.reader.list_skills(repository_url(query), deadline=deadline))
         if self.client is None:
             with httpx.Client(timeout=30) as client:

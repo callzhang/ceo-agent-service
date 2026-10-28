@@ -249,7 +249,7 @@ Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 
 每个安装者应部署自己的一套 service，使用自己的 Codex、DWS/Lark 登录、SQLite、workspace 和可选
 反馈服务。其他同事、HR、审批申请人和项目 owner 不需要安装代码，只需在原工作会话中与 Agent
-交互。安装程序只管理带 `managed_by: ceo-agent-service` 标记的八个 Skill，升级时保留其他用户 Skill。
+交互。安装程序准备声明的通用 Skill 基线，保留已有内容；额外安装的仓库 Skill 使用来源和修订登记，不改写其所有权标记。
 
 不要让使用者逐条复制终端命令完成安装。agent 应该自己执行命令、检查输出、编辑本机配置，只在需要用户完成
 登录授权、扫码确认、macOS 权限点击、安装来源确认或 live-send 决策时打断用户。

@@ -66,3 +66,31 @@ def test_late_metadata_timeout_is_explicit():
     result = SkillDiscoveryService(reader=Reader(failure=TimeoutError('timeout')), client=client).search('example')
     assert not result.items[0].available
     assert result.errors[0].message == 'Repository metadata timed out'
+
+
+@pytest.mark.parametrize('query', ['./private-skills', '../private-skills', '/Users/example/private-skills', '~/private-skills', 'skills/private-example'])
+def test_local_paths_are_rejected_without_public_lookup(query):
+    from app.skill_discovery import SkillDiscoveryService
+    def no_request(req):
+        pytest.fail('local path was sent to public index')
+    service = SkillDiscoveryService(reader=Reader(), client=httpx.Client(transport=httpx.MockTransport(no_request)))
+    with pytest.raises(ValueError):
+        service.search(query)
+
+
+def test_non_git_ssh_user_is_not_a_public_keyword():
+    from app.skill_discovery import SkillDiscoveryService
+    def no_request(req):
+        pytest.fail('private SSH source was sent to public index')
+    service = SkillDiscoveryService(reader=Reader(failure=SkillRepositoryError('service account access missing')), client=httpx.Client(transport=httpx.MockTransport(no_request)))
+    with pytest.raises(SkillRepositoryError):
+        service.search('alice@private.example:team/skills.git')
+
+
+def test_incomplete_ssh_source_is_rejected_without_public_lookup():
+    from app.skill_discovery import SkillDiscoveryService
+    def no_request(req):
+        pytest.fail('private source fragment reached the public index')
+    service = SkillDiscoveryService(reader=Reader(), client=httpx.Client(transport=httpx.MockTransport(no_request)))
+    with pytest.raises(ValueError):
+        service.search('git@private.example')

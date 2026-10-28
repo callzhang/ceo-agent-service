@@ -2251,12 +2251,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._immediate_write_transaction() as db:
             if db.execute(f"select 1 from ({config_projection('managed_skills')}) where name=?", (name,)).fetchone():
                 raise ValueError("Skill name conflict")
-            latest = db.execute(f"select id from ({config_projection('runtime_skill_configs')}) order by id desc limit 1").fetchone()
+            latest = db.execute(f"select id,status from ({config_projection('runtime_skill_configs')}) order by id desc limit 1").fetchone()
             parent = int(latest["id"]) if latest else None
             if parent != expected_parent_id:
                 raise ValueError("runtime Skill configuration parent conflict")
-            old_bindings = db.execute(f"select * from ({config_projection('runtime_skill_bindings')}) where config_id=? order by load_order", (parent,)).fetchall()
-            capability = db.execute(f"select enabled from ({config_projection('runtime_feedback_iteration_capabilities')}) where config_id=?", (parent,)).fetchone()
+            effective_parent = parent
+            if latest and latest["status"] == "load_failed":
+                active = db.execute(f"select id from ({config_projection('runtime_skill_configs')}) where status='active' order by id desc limit 1").fetchone()
+                effective_parent = int(active["id"]) if active else None
+            old_bindings = db.execute(f"select * from ({config_projection('runtime_skill_bindings')}) where config_id=? order by load_order", (effective_parent,)).fetchall()
+            capability = db.execute(f"select enabled from ({config_projection('runtime_feedback_iteration_capabilities')}) where config_id=?", (effective_parent,)).fetchone()
             publish_package()
             skill_id = int(insert_config(db, "managed_skills", {"name": name, "display_name": display_name}).lastrowid)
             revision_id = int(insert_config(db, "managed_skill_revisions", {
@@ -5521,6 +5525,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"select * from ({config_projection('runtime_skill_configs')}) "
                 "where status='active' order by id desc limit 1"
             ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def get_latest_runtime_skill_config(self) -> RuntimeSkillConfig | None:
+        """Return the exact latest version for installation's existing-parent CAS."""
+        with self._connect() as db:
+            row = db.execute(f"select * from ({config_projection('runtime_skill_configs')}) order by id desc limit 1").fetchone()
         return self._runtime_skill_config_from_row(row) if row is not None else None
 
     def get_pending_or_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:

@@ -1,8 +1,8 @@
 # Search and install Skills in Settings
 
 Status: the user approved the existing-page search/list/Install interaction on
-2026-10-28. The concrete contracts below accompany the implementation plan for
-review. No implementation, repository migration or publication has occurred.
+2026-10-28. The concrete contracts below are implemented and verified in the development
+branch. Standard publication is pending; company repository migration is separate.
 
 ## User outcome
 
@@ -10,7 +10,8 @@ After deploying the open-source service, the user opens the existing Settings â†
 Skills page, enters a repository URL or a public Skill name, clicks Search, and
 sees matching Skills. Each row shows its name, one-sentence description, author
 or maintainer, last modification time, source, and an Install button. Installing
-one row installs that Skill's complete directory, not every Skill in the repo.
+one row installs that Skill's complete directory, excluding nested independent
+Skill packages; it does not install every Skill in the repo.
 There is no separate enterprise setup wizard.
 
 ## Scope and decisions

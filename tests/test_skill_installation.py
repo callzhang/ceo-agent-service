@@ -122,3 +122,62 @@ def test_changed_installed_content_is_not_overwritten_on_repeat(tmp_path):
     with pytest.raises(ValueError, match='conflict'):
         perform(installer, candidate)
     assert path.read_text() == 'Local improvement'
+
+
+def test_crlf_content_and_local_edits_keep_exact_revision_bytes(tmp_path):
+    import hashlib
+    from app.managed_skills import capture_runtime_skill_edits
+    installer, store, candidate, files = setup_install(tmp_path)
+    expected = files[0].content.replace(b'\n', b'\r\n')
+    changed = (PackageFile('SKILL.md', expected), *files[1:])
+    installer.reader.read_package = lambda *args: SkillPackage(candidate, changed, package_digest(changed))
+    result = perform(installer, candidate)
+    assert store.get_managed_skill_revision(result.revision_id).content.encode() == expected
+    assert result.sha256 == hashlib.sha256(expected).hexdigest()
+    path = tmp_path / 'installed/example/SKILL.md'
+    assert path.read_bytes() == expected
+    assert capture_runtime_skill_edits(store, skills_root=tmp_path / 'installed') == ()
+    updated = expected + b'\r\nLocal edit'
+    path.write_bytes(updated)
+    captured = capture_runtime_skill_edits(store, skills_root=tmp_path / 'installed')
+    assert len(captured) == 1
+    assert store.list_managed_skill_revisions(result.skill_id)[-1].content.encode() == updated
+
+
+def test_install_after_load_failure_inherits_last_active_configuration(tmp_path):
+    installer, store, candidate, _ = setup_install(tmp_path)
+    active = store.create_runtime_skill_config([], expected_parent_id=None, feedback_iteration_enabled=False)
+    store.record_runtime_skill_load(active.id, pid=101, loaded={})
+    failed = store.create_runtime_skill_config([], expected_parent_id=active.id, feedback_iteration_enabled=True)
+    store.record_runtime_skill_load_failure(failed.id, pid=102, error='Synthetic load failure')
+    result = perform(installer, candidate)
+    assert result.install_status == 'installed'
+    current = store.get_pending_or_active_runtime_skill_config()
+    assert current.parent_id == failed.id
+    assert not store.feedback_iteration_enabled(current.id)
+    assert store.get_runtime_skill_config(failed.id).status == 'load_failed'
+
+
+def test_multiline_external_frontmatter_installs_without_rewriting(tmp_path):
+    installer, store, candidate, files = setup_install(tmp_path)
+    content = b'---\nname: example\ndescription: >\n  Reads input records and\n  produces a useful result.\nmetadata:\n  author: Example Author\n  tags:\n    - operations\n---\nExample body'
+    changed = (PackageFile('SKILL.md', content), *files[1:])
+    installer.reader.read_package = lambda *args: SkillPackage(candidate, changed, package_digest(changed))
+    result = perform(installer, candidate)
+    assert store.get_managed_skill_revision(result.revision_id).content.encode() == content
+    assert (tmp_path / 'installed/example/SKILL.md').read_bytes() == content
+
+
+def test_concurrent_config_change_is_not_overwritten(tmp_path, monkeypatch):
+    installer, store, candidate, _ = setup_install(tmp_path)
+    original = store.get_latest_runtime_skill_config
+    def changed_after_read():
+        prior = original()
+        store.create_runtime_skill_config([], expected_parent_id=prior.id if prior else None, feedback_iteration_enabled=False)
+        return prior
+    monkeypatch.setattr(store, 'get_latest_runtime_skill_config', changed_after_read)
+    with pytest.raises(ValueError, match='parent conflict'):
+        perform(installer, candidate)
+    assert store.get_managed_skill_by_name('example') is None
+    assert not (tmp_path / 'installed/example').exists()
+    assert not store.feedback_iteration_enabled(store.get_pending_or_active_runtime_skill_config().id)

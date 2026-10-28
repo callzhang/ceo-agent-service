@@ -15,6 +15,7 @@ from app.business_skills import (
     MANAGED_BY,
     BusinessSkillValidationError,
     _parse_frontmatter,
+    _parse_portable_skill_frontmatter,
     _required_scalar,
     load_bundled_business_skills,
 )
@@ -546,7 +547,7 @@ def capture_runtime_skill_edits(
         # One unreadable or foreign file must not hide edits to the others, so
         # each Skill is attempted and every failure is named at the end.
         try:
-            content = path.read_text(encoding="utf-8")
+            content = path.read_bytes().decode("utf-8")
             digest = validate_managed_skill_content(
                 name, content, require_managed_marker=not runtime_only
             )
@@ -920,7 +921,8 @@ def validate_managed_skill_content(
 
     source_path = Path(f"managed:{name}/SKILL.md")
     try:
-        frontmatter = _parse_frontmatter(content, source_path)
+        parser = _parse_frontmatter if require_managed_marker else _parse_portable_skill_frontmatter
+        frontmatter = parser(content, source_path)
         declared_name = _required_scalar(frontmatter, "name", source_path)
         _required_scalar(frontmatter, "description", source_path)
     except BusinessSkillValidationError as exc:

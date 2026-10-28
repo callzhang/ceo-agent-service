@@ -11,7 +11,7 @@ import tempfile
 import time
 from urllib.parse import urlsplit
 
-from app.business_skills import BusinessSkillValidationError, _parse_frontmatter
+from app.business_skills import BusinessSkillValidationError, _parse_portable_skill_frontmatter
 from app.managed_skills import validate_managed_skill_content
 
 
@@ -52,9 +52,10 @@ def repository_url(value: str) -> str:
     if not isinstance(value, str) or not value.strip() or any(c.isspace() for c in value.strip()):
         raise ValueError('Enter an HTTPS or SSH Git repository URL')
     value = value.strip()
-    if value.startswith('git@') and ':' in value:
-        host, path = value.split(':', 1)
-        if not host[4:] or not path or path.startswith('/'):
+    if '://' not in value and ':' in value and '@' in value.partition(':')[0]:
+        authority, path = value.rsplit(':', 1)
+        ssh = urlsplit('ssh://' + authority + '/' + path)
+        if not ssh.username or not ssh.hostname or ssh.password or not path:
             raise ValueError('Invalid SSH Git repository URL')
     else:
         parsed = urlsplit(value)
@@ -122,7 +123,7 @@ class SkillRepositoryReader:
         name = PurePosixPath(path).name if path != '.' else 'root'
         try:
             content = self._git('cat-file', 'blob', oid, cwd=root, deadline=deadline).decode('utf-8')
-            meta = _parse_frontmatter(content, Path(path) / 'SKILL.md')
+            meta = _parse_portable_skill_frontmatter(content, Path(path) / 'SKILL.md')
             name = meta.get('name', name)
             validate_managed_skill_content(name, content, require_managed_marker=False)
         except (ValueError, UnicodeError, BusinessSkillValidationError) as exc:
@@ -132,36 +133,45 @@ class SkillRepositoryReader:
         if isinstance(author, str) and author.strip():
             author, author_kind = author.strip(), 'author'
         else:
-            urlpath = repo_url.split(':', 1)[1] if repo_url.startswith('git@') else urlsplit(repo_url).path
+            urlpath = urlsplit(repo_url).path if '://' in repo_url else repo_url.rsplit(':', 1)[1]
             parts = PurePosixPath(urlpath.strip('/')).parts
             author = '/'.join(parts[:-1])
             author_kind = 'maintainer' if author else 'unknown'
         stamp = self._git('log', '-1', '--format=%cI', commit, '--', path, cwd=root, deadline=deadline).decode().strip()
         return RepositorySkill(repo_url, commit, path, name, meta['description'], author, author_kind, stamp or None)
 
+    def _list_at(self, root, repo_url, commit, entries, deadline):
+        rows = []
+        for file, oid, _executable in entries:
+            parts = PurePosixPath(file).parts
+            if file == 'SKILL.md' or (len(parts) == 3 and parts[0] == 'skills' and parts[-1] == 'SKILL.md') or (len(parts) == 4 and parts[:2] == ('.agents', 'skills') and parts[-1] == 'SKILL.md'):
+                rows.append(self._metadata(root, repo_url, commit, str(PurePosixPath(file).parent), oid, deadline))
+        counts = Counter(row.name for row in rows if row.available)
+        return tuple(replace(row, available=False, unavailable_reason='Duplicate declared Skill name in repository') if counts[row.name] > 1 else row for row in rows)
+
     def list_skills(self, repo_url: str, *, commit: str | None = None, deadline=None) -> tuple[RepositorySkill, ...]:
         repo_url = repository_url(repo_url)
         with self._repository(repo_url, commit, deadline) as (root, resolved, entries):
-            rows = []
-            for file, oid, _executable in entries:
-                parts = PurePosixPath(file).parts
-                if file == 'SKILL.md' or (len(parts) == 3 and parts[0] == 'skills' and parts[-1] == 'SKILL.md') or (len(parts) == 4 and parts[:2] == ('.agents', 'skills') and parts[-1] == 'SKILL.md'):
-                    rows.append(self._metadata(root, repo_url, resolved, str(PurePosixPath(file).parent), oid, deadline))
-            counts = Counter(row.name for row in rows if row.available)
-            return tuple(replace(row, available=False, unavailable_reason='Duplicate declared Skill name in repository') if counts[row.name] > 1 else row for row in rows)
+            return self._list_at(root, repo_url, resolved, entries, deadline)
 
     def read_package(self, repo_url: str, commit: str, skill_path: str) -> SkillPackage:
+        repo_url = repository_url(repo_url)
         if not isinstance(skill_path, str) or not skill_path or PurePosixPath(skill_path).is_absolute() or '..' in PurePosixPath(skill_path).parts:
             raise ValueError('Invalid Skill directory')
+        skill_path = str(PurePosixPath(skill_path))
         deadline = time.monotonic() + 120
         with self._repository(repo_url, commit, deadline) as (root, resolved, entries):
-            prefix = '' if skill_path == '.' else skill_path.rstrip('/') + '/'
-            matches = [(name, oid, execute) for name, oid, execute in entries if name.startswith(prefix)]
-            skill = next(((oid, name) for name, oid, _ in matches if name == prefix + 'SKILL.md'), None)
-            if skill is None:
-                raise ValueError('Skill directory has no SKILL.md')
-            candidate = self._metadata(root, repo_url, resolved, skill_path, skill[0], deadline)
+            candidates = self._list_at(root, repo_url, resolved, entries, deadline)
+            candidate = next((row for row in candidates if row.skill_path == skill_path), None)
+            if candidate is None:
+                raise ValueError('Unsupported Skill directory layout or missing SKILL.md')
             if not candidate.available:
                 raise ValueError(candidate.unavailable_reason)
+            prefix = '' if skill_path == '.' else skill_path + '/'
+            nested = tuple(str(PurePosixPath(name).parent) + '/' for name, _oid, _mode in entries
+                           if name.endswith('/SKILL.md') and name != prefix + 'SKILL.md'
+                           and name.startswith(prefix))
+            matches = [(name, oid, execute) for name, oid, execute in entries
+                       if name.startswith(prefix) and not name.startswith(nested)]
             files = tuple(PackageFile(name[len(prefix):], self._git('cat-file', 'blob', oid, cwd=root, deadline=deadline), execute) for name, oid, execute in matches)
             return SkillPackage(candidate, files, package_digest(files))

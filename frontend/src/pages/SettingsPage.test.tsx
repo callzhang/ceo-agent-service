@@ -1186,6 +1186,9 @@ describe("SettingsPage", () => {
     expect((await screen.findAllByText("Message Triage Skill")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Meeting Work Skill")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择 Message Triage" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "全部已安装" }));
+    expect(screen.getByText("Meeting Work Skill")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择 Message Triage" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("shows the WeChat automatic-reply configuration inside its Skill", async () => {
