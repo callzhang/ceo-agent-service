@@ -924,6 +924,43 @@ def install_bundled_business_skills(
     )
 
 
+
+def install_public_skill_baseline(
+    source_root: Path, target_root: Path,
+) -> tuple[InstalledBusinessSkill, ...]:
+    """Install missing public release packages, preserving existing local Skills."""
+    from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES, validate_managed_skill_content
+
+    source_root, target_root = Path(source_root), Path(target_root).expanduser()
+    _validate_install_target(target_root)
+    contents = {}
+    for name in REPOSITORY_MANAGED_SKILL_NAMES:
+        path = source_root / name / "SKILL.md"
+        try:
+            content = path.read_text(encoding="utf-8")
+        except OSError as exc:
+            raise BusinessSkillValidationError(f"missing public baseline: {path}") from exc
+        validate_managed_skill_content(name, content)
+        contents[name] = content
+    target_root.mkdir(parents=True, exist_ok=True)
+    created = []
+    with tempfile.TemporaryDirectory(prefix=".public-skills-", dir=target_root.parent) as temporary:
+        staging = Path(temporary)
+        try:
+            for name, content in contents.items():
+                destination = target_root / name
+                if destination.exists():
+                    continue
+                _stage_skill_package(source_root / name, staging / name, content.encode("utf-8"))
+                os.rename(staging / name, destination)
+                created.append(destination)
+        except BaseException:
+            for destination in reversed(created):
+                os.rename(destination, staging / destination.name)
+            raise
+    return tuple(InstalledBusinessSkill(name, target_root / name) for name in contents)
+
+
 def _validate_install_target(target_root: Path) -> None:
     try:
         resolved_target = target_root.resolve(strict=False)

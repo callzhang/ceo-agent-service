@@ -5892,3 +5892,7 @@ individual materials. Consumer and Audit compare the proposed message with that
 artifact. Installed-file, repository-source and managed release baselines are
 aligned to the exact same digest; this sync preserves the installed contract.
 The half-day leave correction remains a separate change.
+
+### Repository Skill installation (2026-10-28)
+
+First deployment installs missing public managed Skill packages from the release into the installed Skill directory before startup. Existing installed content is preserved. Enterprise packages are optional and are installed separately; the initial baseline does not copy adjacent company Skill folders. Bootstrap verifies the complete generic baseline.

@@ -2,6 +2,14 @@
 set -euo pipefail
 
 repo_root="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# First deployment supplies the public baseline; installed local edits are preserved.
+PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" python3 - "${repo_root}" <<'SKILLS'
+from pathlib import Path
+import sys
+from app.business_skills import install_public_skill_baseline
+install_public_skill_baseline(Path(sys.argv[1]) / "ci/shared-skills", Path.home() / ".agents/skills")
+SKILLS
+
 target_dir="${HOME}/Library/LaunchAgents"
 log_dir="${HOME}/Library/Logs/ceo-agent-service"
 domain="gui/$(id -u)"

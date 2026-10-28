@@ -15,10 +15,10 @@ SCRIPT = REPO_ROOT / "scripts" / "bootstrap-local-components.sh"
 
 def _seed_business_skills(home: Path) -> None:
     """Put the Skills where they are authored: ~/.agents/skills."""
-    from app.business_skills import BUNDLED_BUSINESS_SKILL_NAMES
+    from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES
 
     root = home / ".agents" / "skills"
-    for name in BUNDLED_BUSINESS_SKILL_NAMES:
+    for name in REPOSITORY_MANAGED_SKILL_NAMES:
         path = root / name / "SKILL.md"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(
