@@ -695,6 +695,32 @@ def test_producer_hydrates_missing_calendar_attendee_identity(tmp_path):
     }
 
 
+def test_producer_uses_minutes_creator_to_match_overlapping_calendar_event(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    meeting["flashUserInfo"] = {"name": "A", "userId": "u-a"}
+    event = matching_calendar_event(title="HSW孙老师交流")
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        calendar_pages={"": {"events": [event], "has_more": False, "next_cursor": ""}},
+        info={"minutes-1": ended_meeting()},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "pending"
+    evidence = json.loads(job.source_json)["calendar_evidence"]
+    assert evidence["event_id"] == "event-1"
+    assert {participant["user_id"] for participant in evidence["participants"]} == {
+        "u-derek",
+        "u-a",
+    }
+
+
 def _fake_resolve_sent_message_reference(self, open_task_id: str) -> dict:
     """Answer where a send landed, the way the provider's status call does."""
     self.__dict__.setdefault("resolved", []).append(open_task_id)

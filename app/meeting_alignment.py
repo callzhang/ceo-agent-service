@@ -347,6 +347,7 @@ def produce_meeting_alignment_jobs(
                 matcher_info,
                 events,
                 current_user_id=current_user_id,
+                creator=minutes_creator_from_list_item(list_item),
             )
         except MeetingSourceIncomplete as exc:
             _store_meeting_discovery_terminal_job(
@@ -572,6 +573,7 @@ def queue_recent_meeting_alignment_replay(
                 matcher_info,
                 events,
                 current_user_id=current_user_id,
+                creator=minutes_creator_from_list_item(list_item),
             )
         except MeetingSourceIncomplete as exc:
             result["outcome"] = "source_unavailable"
@@ -2305,9 +2307,12 @@ def _build_meeting_roster_evidence(
     events: list[DwsCalendarEvent],
     *,
     current_user_id: str,
+    creator: MeetingParticipant | None = None,
 ) -> CalendarMeetingEvidence:
     try:
-        evidence = build_calendar_meeting_evidence(info, events, current_user_id)
+        evidence = build_calendar_meeting_evidence(
+            info, events, current_user_id, creator=creator
+        )
         return _hydrate_calendar_participant_identities(dws, evidence)
     except MeetingSourceIncomplete:
         try:

@@ -1513,6 +1513,8 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
 
+会议日历事件可在标题不同的情况下关联到听记：听记创建者姓名必须与唯一、时间重叠且边界偏差在既有容差内的已确认日历事件中的一位参会人精确匹配。候选事件仍须唯一；创建者或事件关联有歧义时不推断参会人身份。
+
 会议总结按受众拆分内容。业务会议的普通结论、安排和行动发送到 Agent 根据实时业务承接证据
 选择的群；人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假内容不得进入该群消息，
 而是仅在收件人身份、职责和披露授权均有实时证据时，作为独立私聊消息发送给经核验的

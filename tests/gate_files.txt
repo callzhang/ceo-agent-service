@@ -75,6 +75,7 @@ tests/test_hourly_dry_run_launchd.py
 tests/test_leak_check.py
 tests/test_legacy_email_task_input_owner.py
 tests/test_main_launchd_resource_class.py
+tests/test_meeting_alignment.py
 tests/test_meeting_alignment_source.py
 tests/test_meeting_alignment_agent.py
 tests/test_meeting_alignment_delivery.py
