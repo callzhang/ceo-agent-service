@@ -851,7 +851,6 @@ class AgentTurnProcess(Generic[ResultT]):
         prompt_sections_by_runtime: Mapping[str, list[dict[str, str]]] | None = None,
         configure_command: Callable[[list[str]], None],
         parse_result: Callable[[str], ResultT],
-        persist_conversation_session: bool,
         prepare_result: Callable[[ResultT], ResultT] | None = None,
         result_contains_sensitive_value: Callable[[ResultT], bool] | None = None,
         expected_actions: tuple[dict[str, object], ...] = (),
@@ -912,6 +911,11 @@ class AgentTurnProcess(Generic[ResultT]):
             new_session = trusted_claude_session_id or _session_id(payload)
             if new_session:
                 observed_session_id = new_session
+                if run.role is AgentRole.CONSUMER:
+                    self.store.upsert_conversation(
+                        self.task.conversation_id, self.task.conversation_title,
+                        self.task.single_chat,
+                    )
                 if active_route is not None and (
                     force_new_session or active_route.name in fresh_route_sessions
                 ):
@@ -946,18 +950,6 @@ class AgentTurnProcess(Generic[ResultT]):
                         active_route.name,
                         new_session,
                         session_contract_hash_for_route(active_route),
-                    )
-                if not is_claude and (
-                    persist_conversation_session
-                    and run.role is AgentRole.CONSUMER
-                    and active_route is not None
-                    and active_route.name == "codex_oauth"
-                ):
-                    self.store.upsert_conversation(
-                        self.task.conversation_id,
-                        self.task.conversation_title,
-                        self.task.single_chat,
-                        new_session,
                     )
             persist_effect_event(
                 payload,

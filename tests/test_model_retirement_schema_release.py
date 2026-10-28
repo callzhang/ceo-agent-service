@@ -197,32 +197,15 @@ def test_current_constructor_does_not_convert_old_schema_or_touch_its_facts(tmp_
         assert _facts(db) == before
 
 
-def test_current_dispatch_selects_only_exact_previous_pair_and_then_current(tmp_path):
-    from app.current_publication_sources import _version
-    from app.model_retirement_schema_release import ModelRetirementSchemaRelease
-    from app.store_schema_release import prepare_database_schema_release
-
-    path = tmp_path / "dispatch.sqlite3"
-    _source(path)
-    with closing(_open(path)) as db:
-        assert _version(db) == "2026-10-26.1"
-    root = Path(__file__).resolve().parents[1]
-    release = prepare_database_schema_release(root, path)
-    assert isinstance(release, ModelRetirementSchemaRelease)
-    release.publish()
-    release.verify_loaded()
-    assert prepare_database_schema_release(root, path) is None
-    with closing(_open(path)) as db:
-        assert _version(db) == "2026-10-28.1"
-
 
 def test_copy_fixture_uses_current_cold_store_and_fake_receipt_without_cli(tmp_path):
     from tools.validate_model_retirement_copy import _seed
 
     path = tmp_path / "fixture.sqlite3"
-    _source(path)
-    release = prepare_model_retirement_release(path)
-    release.publish()
+    from app.store import AutoReplyStore
+    from app.email_store import EmailStore
+    AutoReplyStore(path)
+    EmailStore(path)
     first = _seed(Path(__file__).resolve().parents[1], path, [])
     second = _seed(Path(__file__).resolve().parents[1], path, [first])
     assert first["task_id"] != second["task_id"]

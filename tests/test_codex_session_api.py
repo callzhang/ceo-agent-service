@@ -151,7 +151,7 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
         transcript_end=20,
         first_effect_started_at="",
     )
-    store = SimpleNamespace(list_agent_runtime_attempts=lambda _run_id: [runtime_attempt])
+    store = SimpleNamespace(list_agent_runtime_attempts_for_runs=lambda _run_ids: {12: [runtime_attempt]})
     monkeypatch.setattr(
         "app.codex_history.find_codex_session_path",
         lambda _session_id: None,
@@ -162,3 +162,25 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
     assert payload[0]["session_available"] is False
     assert payload[0]["run_status"] == "completed"
     assert payload[0]["status"] == "completed"
+
+
+def test_session_list_uses_canonical_route_and_oauth_reset_preserves_other_route(tmp_path):
+    from app.audit_web import render_codex_session_list
+
+    store = AutoReplyStore(tmp_path / "sessions.sqlite3")
+    store.upsert_conversation("cid", "Conversation", True)
+    store.upsert_conversation_runtime_session("cid", "codex_oauth", "oauth-session", "hash")
+    store.upsert_conversation_runtime_session("cid", "other-route", "other-session", "other-hash")
+    store.upsert_conversation_runtime_session("cid", "codex_oauth", "new-session", "new-hash")
+    assert store.get_conversation_runtime_session("cid", "codex_oauth", required_contract_hash="new-hash") == "new-session"
+    assert store.clear_conversation_runtime_session_if_matches("cid", "codex_oauth", "oauth-session") == 0
+    with store._connect() as db:
+        payload = db.execute("select json(payload_json) from state where record_type='conversations'").fetchone()[0]
+    assert "codex_session_id" not in payload and "codex_session_contract_hash" not in payload
+    assert 'new-session' in render_codex_session_list(store)
+    result = _session_api(store).get('/api/console/codex/sessions').json()
+    assert any(row['id'] == 'new-session' and row['detail_url'] == '/codex/new-session' for row in result['items'])
+    assert store.reset_codex_oauth_sessions() == 1
+    assert store.get_conversation_runtime_session("cid", "codex_oauth") is None
+    assert store.get_conversation_runtime_session("cid", "other-route") == "other-session"
+    assert store.list_codex_conversations() == []

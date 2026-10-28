@@ -2431,9 +2431,9 @@ def register_console_routes(
     def console_codex_sessions():
         rows = []
         for conversation in store_factory().list_codex_conversations():
-            rows.append({"id": conversation.codex_session_id or conversation.conversation_id,
+            rows.append({"id": conversation.session_id or conversation.conversation_id,
                          "title": conversation.title, "type": "single" if conversation.single_chat else "group",
-                         "detail_url": f"/codex/{conversation.codex_session_id}" if conversation.codex_session_id else ""})
+                         "detail_url": f"/codex/{conversation.session_id}" if conversation.session_id else ""})
         return list_envelope(rows, page=1, page_size=max(20, len(rows)), total=len(rows))
 
     _CODEX_ROLE_LABELS = {"consumer": "处理 Agent", "audit": "审计 Agent"}

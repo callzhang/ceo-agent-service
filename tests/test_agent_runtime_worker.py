@@ -233,12 +233,9 @@ class PoisonedSessionFailureOrchestrator:
                     f"agent-task:{task.id}:{task.execution_generation}:proposal:1"
                 )
                 conversation_session = "healthy-consumer-session"
-            self.store.upsert_conversation(
-                task.conversation_id,
-                task.conversation_title,
-                task.single_chat,
-                conversation_session,
-            )
+            self.store.upsert_conversation(task.conversation_id, task.conversation_title, task.single_chat)
+            if conversation_session:
+                self.store.upsert_conversation_runtime_session(task.conversation_id, "codex_oauth", conversation_session)
             claim = self.store.claim_agent_run(
                 task.id,
                 task.execution_generation,
@@ -594,17 +591,14 @@ class ScriptedTaskOrchestrator:
         self.calls.append((task.id, task.execution_generation, context))
         self.read_only_values.append(True)
         script = self.scripts.pop(0)
-        session_id = self.store.get_codex_session_id(task.conversation_id)
+        session_id = self.store.get_conversation_runtime_session(task.conversation_id, "codex_oauth")
         if session_id:
             self.resume_session_ids.append(session_id)
         else:
             session_id = script.session_id
-            self.store.upsert_conversation(
-                task.conversation_id,
-                task.conversation_title,
-                task.single_chat,
-                session_id,
-            )
+            self.store.upsert_conversation(task.conversation_id, task.conversation_title, task.single_chat)
+            if session_id:
+                self.store.upsert_conversation_runtime_session(task.conversation_id, "codex_oauth", session_id)
         consumer_claim = self.store.claim_agent_run(
             task.id,
             task.execution_generation,
@@ -4121,12 +4115,8 @@ def test_stale_processing_resumes_same_generation_and_session(tmp_path: Path):
         owner="dead-worker",
         now="2026-07-28 07:00:00",
     )
-    worker.store.upsert_conversation(
-        task.conversation_id,
-        task.conversation_title,
-        task.single_chat,
-        "session-stale",
-    )
+    worker.store.upsert_conversation(task.conversation_id, task.conversation_title, task.single_chat)
+    worker.store.upsert_conversation_runtime_session(task.conversation_id, "codex_oauth", "session-stale")
     with worker.store._connect() as db:
         _update_reply_task_fixture(db, task.id, {"locked_at": "2026-07-28 07:00:00"})
 
@@ -4220,12 +4210,8 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
         owner="dead-worker",
         now="2026-07-28 07:00:00",
     )
-    worker.store.upsert_conversation(
-        task.conversation_id,
-        task.conversation_title,
-        task.single_chat,
-        "session-retry-after-restart",
-    )
+    worker.store.upsert_conversation(task.conversation_id, task.conversation_title, task.single_chat)
+    worker.store.upsert_conversation_runtime_session(task.conversation_id, "codex_oauth", "session-retry-after-restart")
     worker.store.fail_agent_run(
         claim.run.id,
         {"code": "temporary_read_failure", "retryable": True},

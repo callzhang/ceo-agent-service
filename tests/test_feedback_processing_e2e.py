@@ -95,12 +95,8 @@ def _seed_attempt_8308(store: AutoReplyStore) -> tuple[int, str]:
     """Seed a sent reply and feedback event with the historical attempt id."""
 
     token = "feedback-token-8308"
-    store.upsert_conversation(
-        "conversation-8308",
-        title="用户反馈回归",
-        single_chat=False,
-        codex_session_id="session-8308",
-    )
+    store.upsert_conversation("conversation-8308", title="用户反馈回归", single_chat=False)
+    store.upsert_conversation_runtime_session("conversation-8308", "codex_oauth", "session-8308")
     # A fresh test database has no reply attempts.  Setting the AUTOINCREMENT
     # sequence makes the fixture exercise the exact historical attempt route.
     with store._connect() as db:

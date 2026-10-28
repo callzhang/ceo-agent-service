@@ -270,7 +270,8 @@ def test_structured_runner_uses_conversation_session_lock_and_persists_session(
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", True, "session-1")
+    store.upsert_conversation("cid-1", "Friday", True)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     calls = []
 
     def executor(command, prompt, env):
@@ -322,7 +323,7 @@ def test_structured_runner_uses_conversation_session_lock_and_persists_session(
     )
 
     assert isinstance(result.envelope, AgentEnvelope)
-    assert store.get_codex_session_id("cid-1") == "session-1"
+    assert store.get_conversation_runtime_session("cid-1", "codex_oauth") == "session-1"
     assert routed.calls[0]["conversation_id"] == "cid-1"
 
 
@@ -332,7 +333,8 @@ def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", True, "missing-session")
+    store.upsert_conversation("cid-1", "Friday", True)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "missing-session")
     calls = []
 
     def executor(command, prompt, env):
@@ -384,7 +386,7 @@ def test_structured_runner_clears_missing_local_session_before_exec(tmp_path):
     )
 
     assert routed.calls[0]["conversation_id"] == "cid-1"
-    assert store.get_codex_session_id("cid-1") == "missing-session"
+    assert store.get_conversation_runtime_session("cid-1", "codex_oauth") == "missing-session"
 
 
 def test_structured_runner_resumes_session_to_repair_invalid_json(tmp_path):
@@ -457,7 +459,8 @@ def test_structured_runner_can_skip_persisting_shared_conversation_session(tmp_p
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", True, "chat-session")
+    store.upsert_conversation("cid-1", "Friday", True)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "chat-session")
 
     def executor(command, prompt, env):
         return "\n".join(
@@ -506,7 +509,7 @@ def test_structured_runner_can_skip_persisting_shared_conversation_session(tmp_p
     )
 
     assert result.codex_session_id == "structured-session"
-    assert store.get_codex_session_id("cid-1") == "chat-session"
+    assert store.get_conversation_runtime_session("cid-1", "codex_oauth") == "chat-session"
 
 
 def test_structured_runner_retries_fresh_after_session_refresh_error(tmp_path):
@@ -515,7 +518,8 @@ def test_structured_runner_retries_fresh_after_session_refresh_error(tmp_path):
     skill = tmp_path / "skill.md"
     skill.write_text("# Skill", encoding="utf-8")
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", True, "expired-session")
+    store.upsert_conversation("cid-1", "Friday", True)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "expired-session")
     spec = AgentSpec("reply", schema, [skill], [], "Return JSON.")
     from app.agent_runtime_router import RoutedCodexExecutionError
 

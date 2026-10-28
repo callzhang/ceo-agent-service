@@ -3983,12 +3983,7 @@ def test_recent_single_chat_recovery_uses_persisted_sender_identity(
         monkeypatch,
         dry_run=True,
     )
-    worker.store.upsert_conversation(
-        conversation_id="cid-mina",
-        title="Avery",
-        single_chat=True,
-        codex_session_id=None,
-    )
+    worker.store.upsert_conversation(conversation_id="cid-mina", title="Avery", single_chat=True)
     worker.store.enqueue_reply_task(
         conversation_id="cid-mina",
         conversation_title="Avery",
@@ -4906,12 +4901,7 @@ def _recoverable_single_chat_worker(tmp_path: Path, monkeypatch):
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        conversation_id="cid-recovered",
-        title="最近处理过的单聊",
-        single_chat=True,
-        codex_session_id=None,
-    )
+    worker.store.upsert_conversation(conversation_id="cid-recovered", title="最近处理过的单聊", single_chat=True)
     worker.store.mark_seen("msg-seen", "cid-recovered")
     return worker, dws
 
@@ -4951,12 +4941,7 @@ def test_produce_once_recovery_does_not_recover_recent_group_conversations(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        conversation_id="cid-group",
-        title="最近处理过的群聊",
-        single_chat=False,
-        codex_session_id=None,
-    )
+    worker.store.upsert_conversation(conversation_id="cid-group", title="最近处理过的群聊", single_chat=False)
     worker.store.mark_seen("msg-seen-group", "cid-group")
 
     queued = worker.produce_once(recovery=True)
@@ -7405,12 +7390,8 @@ def test_consume_once_external_dependency_honors_attempt_limit(
         max_task_attempts=1,
         scripted_runner=runner,
     )
-    worker.store.upsert_conversation(
-        "cid-1",
-        "Friday",
-        False,
-        "full-codex-session",
-    )
+    worker.store.upsert_conversation("cid-1", "Friday", False)
+    worker.store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "full-codex-session")
     worker.produce_once()
 
     assert worker.consume_once(max_tasks=1) == 0
@@ -7419,7 +7400,7 @@ def test_consume_once_external_dependency_honors_attempt_limit(
     task = worker.store.list_reply_tasks(statuses=("failed",), limit=1)[0]
     assert task.attempts == 1
     assert task.error == "codex_dependency_unavailable"
-    assert worker.store.get_codex_session_id("cid-1") == "full-codex-session"
+    assert worker.store.get_conversation_runtime_session("cid-1", "codex_oauth") == "full-codex-session"
     run = _get_audit_run(
         worker.store,
         task.id,
@@ -12467,7 +12448,8 @@ def test_invalid_agent_result_stops_at_attempt_limit_without_budget_bypass(
         monkeypatch,
         max_task_attempts=1,
     )
-    worker.store.upsert_conversation("cid-1", "Friday", False, "bad-session")
+    worker.store.upsert_conversation("cid-1", "Friday", False)
+    worker.store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "bad-session")
 
     class InvalidResultRunner(FakeAgentResultRunner):
         def run(self, task, context, **kwargs):
@@ -12496,7 +12478,7 @@ def test_invalid_agent_result_stops_at_attempt_limit_without_budget_bypass(
 
     assert worker.store.count_reply_tasks(status="pending") == 0
     assert worker.store.count_reply_tasks(status="failed") == 1
-    assert worker.store.get_codex_session_id("cid-1") == "bad-session"
+    assert worker.store.get_conversation_runtime_session("cid-1", "codex_oauth") == "bad-session"
 
 
 @pytest.mark.parametrize(
@@ -12514,7 +12496,8 @@ def test_recoverable_agent_runtime_failure_continues_stuck_conversation_session(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY)),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "Friday", False, "stuck-session")
+    worker.store.upsert_conversation("cid-1", "Friday", False)
+    worker.store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "stuck-session")
 
     class ProcessFailureRunner(FakeAgentResultRunner):
         def run(self, task, context, **kwargs):
@@ -12541,7 +12524,7 @@ def test_recoverable_agent_runtime_failure_continues_stuck_conversation_session(
 
     worker.run_once()
 
-    assert worker.store.get_codex_session_id("cid-1") == "stuck-session"
+    assert worker.store.get_conversation_runtime_session("cid-1", "codex_oauth") == "stuck-session"
     failed_run = _get_audit_run(worker.store, 1, "initial")
     assert failed_run is not None
     assert failed_run.codex_session_id == "stuck-session"
@@ -12931,12 +12914,8 @@ def test_resume_prompt_only_includes_turn_message_without_repeating_thread_promp
     dws = FakeDws([conversation()], {"cid-1": [trigger]})
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        "cid-1",
-        title="Friday",
-        single_chat=False,
-        codex_session_id="session-1",
-    )
+    worker.store.upsert_conversation("cid-1", title="Friday", single_chat=False)
+    worker.store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
 
     script_no_action(worker)
     worker.run_once()
@@ -13703,7 +13682,8 @@ def test_force_new_rerun_starts_fresh_codex_session(tmp_path: Path, monkeypatch)
         CodexDecision(action=CodexAction.NO_REPLY),
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation("cid-1", "Friday", False, "old-session")
+    worker.store.upsert_conversation("cid-1", "Friday", False)
+    worker.store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "old-session")
 
     script_no_action(worker)
     worker.rerun_message(conversation(), "msg-1", force_new_decision=True)
@@ -14533,7 +14513,7 @@ def test_single_chat_recent_context_after_seen_is_processed_when_unread_empty(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我倾向先推 HSW。")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    worker.store.upsert_conversation("cid-1", "Friday", True)
     worker.store.mark_seen("msg-handled", "cid-1")
     script_completed_result(worker, "已处理恢复窗口中的最新私聊。")
 
@@ -14587,7 +14567,7 @@ def test_single_chat_recovery_processes_unseen_gap_before_later_seen_anchor(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="我会处理这条。")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation("cid-1", "吴婷", True, None)
+    worker.store.upsert_conversation("cid-1", "吴婷", True)
     worker.store.mark_seen("msg-seen-old", "cid-1")
     worker.store.mark_seen("msg-seen-new", "cid-1")
 
@@ -14640,7 +14620,7 @@ def test_single_chat_recovery_requeues_revised_pending_calendar_card(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    worker.store.upsert_conversation("cid-1", "Friday", True)
     task_id = worker.store.enqueue_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -14712,7 +14692,7 @@ def test_single_chat_recovery_keeps_seen_non_calendar_message_deduped(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    worker.store.upsert_conversation("cid-1", "Friday", True)
     worker.store.mark_seen(original.open_message_id, "cid-1")
 
     assert worker.produce_once(recovery=True) == 0
@@ -14752,7 +14732,7 @@ def test_single_chat_recovery_does_not_requeue_resolved_calendar_card(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "Friday", True, None)
+    worker.store.upsert_conversation("cid-1", "Friday", True)
     task_id = worker.store.enqueue_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -14819,7 +14799,7 @@ def test_single_chat_recovery_does_not_coalesce_across_current_user_context(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "吴婷", True, None)
+    worker.store.upsert_conversation("cid-1", "吴婷", True)
     worker.store.mark_seen("msg-seen-anchor", "cid-1")
 
     assert worker.produce_once(recovery=True) == 2
@@ -14872,7 +14852,7 @@ def test_single_chat_recovery_keeps_unseen_message_and_calendar_invitation(
         FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="test")),
         monkeypatch,
     )
-    worker.store.upsert_conversation("cid-1", "吴婷", True, None)
+    worker.store.upsert_conversation("cid-1", "吴婷", True)
     worker.store.mark_seen("msg-seen-anchor", "cid-1")
 
     assert worker.produce_once(recovery=True, calendar_only=False) == 2
@@ -14962,12 +14942,8 @@ def test_resumed_prompt_context_only_includes_messages_after_last_seen(
     )
     codex = FakeCodex(CodexDecision(action=CodexAction.NO_REPLY, reason="handled"))
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
-    worker.store.upsert_conversation(
-        "cid-1",
-        title="Friday",
-        single_chat=False,
-        codex_session_id="session-1",
-    )
+    worker.store.upsert_conversation("cid-1", title="Friday", single_chat=False)
+    worker.store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     worker.store.mark_seen("old-seen", "cid-1")
 
     script_no_action(worker)
@@ -15099,7 +15075,7 @@ def test_new_principal_mention_is_processed(tmp_path: Path, monkeypatch):
     worker = make_worker(tmp_path, dws, codex, monkeypatch)
     store = worker.store
     script_completed_result(worker, "已处理新的 principal mention。")
-    store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
+    store.upsert_conversation("cid-1", "26年董事会筹备组", False)
     monkeypatch.setattr(
         "app.worker.send_macos_notification",
         lambda **kwargs: notifications.append(kwargs),
@@ -15119,7 +15095,7 @@ def test_new_principal_mention_is_processed(tmp_path: Path, monkeypatch):
 
 def test_group_unread_without_principal_mention_is_ignored(tmp_path: Path, monkeypatch):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "MKT core", False, None)
+    store.upsert_conversation("cid-1", "MKT core", False)
     latest = message(
         "［文件】星尘数据B轮融资 BP_20260526.pptx-2.pptx",
         message_id="file-after-handoff",
@@ -15306,7 +15282,7 @@ def test_dry_run_group_unread_without_principal_mention_is_ignored(
     tmp_path: Path, monkeypatch
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "26年董事会筹备组", False, None)
+    store.upsert_conversation("cid-1", "26年董事会筹备组", False)
     latest = message(
         "可以东风集团（京东云渠道）",
         message_id="msg-after-handoff",
@@ -16191,12 +16167,7 @@ def test_read_group_mention_after_seen_message_is_processed_from_mentions(
         CodexDecision(action=CodexAction.SEND_REPLY, reply_text="不应该调用")
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
-    worker.store.upsert_conversation(
-        "cid-hyperion",
-        "奔驰北美-Hyperion需求",
-        False,
-        None,
-    )
+    worker.store.upsert_conversation("cid-hyperion", "奔驰北美-Hyperion需求", False)
     worker.store.mark_seen("msg-handled", "cid-hyperion")
 
     queued = worker.produce_once(recovery=True)
@@ -16261,7 +16232,7 @@ def test_own_group_reply_does_not_hide_an_unanswered_group_mention(
     )
     worker = make_worker(tmp_path, dws, codex, monkeypatch, dry_run=True)
     worker.store.prepare_outbound_postfix(**delivery)
-    worker.store.upsert_conversation("cid-iter", "迭代群", False, None)
+    worker.store.upsert_conversation("cid-iter", "迭代群", False)
     worker.store.mark_seen("msg-handled", "cid-iter")
 
     queued = worker.produce_once(recovery=True)
@@ -17373,7 +17344,7 @@ def test_persists_codex_last_session_id_after_decision(tmp_path: Path, monkeypat
 
     worker.run_once()
 
-    assert store.get_codex_session_id("cid-1") is None
+    assert store.get_conversation_runtime_session("cid-1", "codex_oauth") is None
     run = store.get_agent_run(1)
     assert run is not None
     assert run.codex_session_id == "session-1"
@@ -17397,7 +17368,7 @@ def test_stale_codex_last_session_id_is_not_persisted(tmp_path: Path, monkeypatc
 
     worker.run_once()
 
-    assert store.get_codex_session_id("cid-1") is None
+    assert store.get_conversation_runtime_session("cid-1", "codex_oauth") is None
 
 
 def test_mail_reply_action_executes_before_chat_and_persists_result(

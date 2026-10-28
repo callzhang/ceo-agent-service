@@ -53,18 +53,18 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
     import hashlib
     import json
     from app.current_schema_manifest import current_objects
-    from app.model_retirement_schema_release import retirement_target_objects
+    from app.conversation_session_schema_release import session_target_objects
     from app.model_retirement_schema_source import store26_objects
 
     for email_ledger, count, digest in (
-        (False, 462, 'fb3746526bddae60d66cba8b0c5682d6f41af9bfa3416a0ae96e457598cdf97e'),
-        (True, 463, 'c3631f524450639a4e7124504686218cebf4e7caece3a893b703912d65d2600f'),
+        (False, 462, '7e4a5ab95e558ea7e88c3fbafa59d93191b16721b6818ae6a9da0eac46e26df5'),
+        (True, 463, 'b03e1a3054ab5b2481a7e6d15b00ac3aac7799138239b4a592293c1bda0c297e'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
         encoded = json.dumps(objects).encode()
         assert hashlib.sha256(encoded).hexdigest() == digest
-        assert objects == tuple(row for row in retirement_target_objects()
+        assert objects == tuple(row for row in session_target_objects()
                                 if email_ledger or row[1] != 'email_schema_migrations')
 
     for email_ledger, count, digest in (

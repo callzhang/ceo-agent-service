@@ -766,12 +766,8 @@ def test_orchestrated_attempt_detail_links_consumer_and_execution_sessions(
 
 
 def seed_attempt(store: AutoReplyStore) -> int:
-    store.upsert_conversation(
-        "cid-1",
-        title="技术部",
-        single_chat=False,
-        codex_session_id="session-1",
-    )
+    store.upsert_conversation("cid-1", title="技术部", single_chat=False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="技术部",
@@ -3122,12 +3118,8 @@ def test_render_attempt_list_hides_pending_counterparty_feedback(tmp_path: Path)
 def test_render_user_feedback_list_marks_pending_and_resolved(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     pending_attempt_id = seed_attempt(store)
-    store.upsert_conversation(
-        "cid-2",
-        title="产品群",
-        single_chat=False,
-        codex_session_id="session-2",
-    )
+    store.upsert_conversation("cid-2", title="产品群", single_chat=False)
+    store.upsert_conversation_runtime_session("cid-2", "codex_oauth", "session-2")
     resolved_attempt_id = store.record_reply_attempt(
         conversation_id="cid-2",
         conversation_title="产品群",
@@ -5878,12 +5870,8 @@ def test_render_attempt_list_does_not_pin_failed_reply_tasks(tmp_path: Path):
 def test_render_attempt_list_uses_attempt_codex_session_over_conversation(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = seed_attempt(store)
-    store.upsert_conversation(
-        "cid-1",
-        title="技术部",
-        single_chat=False,
-        codex_session_id="new-session",
-    )
+    store.upsert_conversation("cid-1", title="技术部", single_chat=False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "new-session")
 
     status, detail = render_attempt_detail(store, attempt_id)
 
@@ -9762,12 +9750,7 @@ def test_history_human_decision_rejects_failed_attempt_without_typed_decision(
     tmp_path: Path,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation(
-        "cid-history-decision",
-        title="HR",
-        single_chat=False,
-        codex_session_id="",
-    )
+    store.upsert_conversation("cid-history-decision", title="HR", single_chat=False)
     store.enqueue_reply_task(
         conversation_id="cid-history-decision",
         conversation_title="HR",

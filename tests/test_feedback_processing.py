@@ -195,36 +195,21 @@ def _native_predecessor_case(test):
     return run
 
 
-def test_native_feedback_receipts_survive_full_paired_selection(
-    tmp_path: Path, published_signal_source_tree: Path,
-):
-    """Genuine native public receipts remain readable after paired selection."""
+def test_native_feedback_receipts_survive_full_paired_selection(tmp_path: Path):
+    """Current public receipts survive the exact immediately-previous release."""
+    from app.conversation_session_schema_release import prepare_conversation_session_release
+    from tests.support.store28_session_source import create_store28_1_source
     db_path = tmp_path / "native-paired.sqlite3"
-    result = subprocess.run(
-        [
-            sys.executable, "-c",
-            "from app.store import AutoReplyStore\n"
-            "from app.email_store import EmailStore\n"
-            "import sys\n"
-            "from pathlib import Path\n"
-            "store=AutoReplyStore(Path(sys.argv[1]))\n"
-            "EmailStore(Path(sys.argv[1]))\n"
-            "store.upsert_feedback_event(key='feedback-native', "
-            "feedback_token='token-native', comment='source comment', "
-            "original_text='source original')\n"
-            "store.create_feedback_processing_batch(['feedback-native'], "
-            "batch_id='batch-native')\n"
-            "store.claim_feedback_processing_items('batch-native', "
-            "['feedback-native'])\n",
-            str(db_path),
-        ],
-        cwd=published_signal_source_tree,
-        capture_output=True,
-        text=True,
-        timeout=180,
-        check=False,
-    )
-    assert result.returncode == 0, result.stdout + result.stderr
+    with sqlite3.connect(db_path) as db:
+        create_store28_1_source(db)
+    initial = prepare_conversation_session_release(db_path)
+    initial.publish()
+    store = AutoReplyStore(db_path)
+    store.upsert_feedback_event(key='feedback-native', feedback_token='token-native',
+                                comment='source comment', original_text='source original')
+    store.create_feedback_processing_batch(['feedback-native'], batch_id='batch-native')
+    store.claim_feedback_processing_items('batch-native', ['feedback-native'])
+    initial.rollback()
     with sqlite3.connect(db_path) as db:
         native_events = db.execute(
             "select key,comment,original_text,resolved_at from ("
@@ -303,9 +288,8 @@ def test_feedback_event_seeds_processing_item_without_changing_event(tmp_path: P
 
 def test_manual_attempt_feedback_projection_keeps_context_and_pending_status(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "manual-feedback.sqlite3")
-    store.upsert_conversation(
-        "cid-1", title="技术部", single_chat=False, codex_session_id="session-1"
-    )
+    store.upsert_conversation("cid-1", title="技术部", single_chat=False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="技术部",
@@ -1194,14 +1178,13 @@ def test_current_cached_store_revalidates_invalid_round_payload_before_fast_retu
         ).fetchone() == (1.5, "real", "preserve cached invalid row")
 
 
-def test_current_cached_store_rejects_wrong_round_guard_manifest(tmp_path: Path):
+def test_current_cached_store_rejects_unexpected_round_index_manifest(tmp_path: Path):
     db_path = tmp_path / "cached-current-round-manifest.sqlite3"
     path_key = db_path.resolve()
     store_module._INITIALIZED_STORE_PATHS.discard(path_key)
     store = AutoReplyStore(db_path)
     assert path_key in store_module._INITIALIZED_STORE_PATHS
     with store._connect() as db:
-        db.execute("drop index idx_feedback_processing_rounds_feedback")
         db.execute(
             "create index idx_feedback_processing_rounds_feedback "
             "on feedback_processing_rounds(batch_id)"

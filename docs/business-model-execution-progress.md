@@ -6,7 +6,7 @@
 | --- | --- | --- |
 | 无 DDL 入口/当前 helper 清理 | c5f39aa8e标准部署；PID82581/health200；API/UI/native/回执读回及本轮目录/备份清理完成 | 476完整SQL/FK[]不变；19条History失败身份无增减；既有未解决反馈健康项仍独立存在 |
 | 重复索引/空 Configs 家族/NULL 元数据列 | 44c13bc91标准部署；PID25260/health200；精确schema/功能读回及备份/目录清理通过 | Store28.1/Email54、463对象/FK[]；内部占用少3.20MiB，文件大小不变，见[第二批验收](model-retirement-batch2-validation.md) |
-| Conversation session 唯一 owner | 候选runtime/正反迁移开发中，未上线 | Derek 已确认 inverse 从权威记录重建完整旧副本，不保存旧空 hash |
+| Conversation session 唯一 owner | 候选实现/定向测试/完整副本正反/旧代码冷启动及SPEC/QUALITY通过，未上线 | Derek 已确认 inverse 从权威记录重建完整旧副本，不保存旧空 hash |
 | Feedback Item 镜像退休 | 已计划，未实施 | 准确 current_round_id 与来源事件各自持有事实，保留无 Round 已解决记录 |
 | 关闭历史转换包/专用夹具 | 已计划，未实施 | 保留唯一身份 provenance 与必要现行显式发布/inverse |
 

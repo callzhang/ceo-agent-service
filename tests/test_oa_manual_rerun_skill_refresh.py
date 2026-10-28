@@ -431,7 +431,7 @@ def test_skipped_oa_review_without_feedback_cannot_be_reopened():
 
 def test_manual_oa_rerun_rotates_pending_generation_when_refreshed_skill_changes(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid", title="OA", single_chat=False, codex_session_id="")
+    store.upsert_conversation("cid", title="OA", single_chat=False)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid", conversation_title="OA", trigger_message_id="trigger",
         trigger_sender="Submitter", trigger_text="Review this OA", action="agent_run",

@@ -44,7 +44,7 @@ def test_audit_idle_timeout_binds_fresh_runtime_session_and_preserves_attempts(s
     assert [attempt.session_id for attempt in attempts] == ["audit-idle", "audit-recovered"]
     assert attempts[0].failure_code == "codex_idle_timeout"
     assert attempts[1].status == "completed"
-    assert store.get_codex_session_id(task.conversation_id) in (None, "")
+    assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") in (None, "")
 
 
 def test_audit_session_replacement_still_requires_explicit_handoff(setup):

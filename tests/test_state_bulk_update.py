@@ -57,20 +57,20 @@ def test_bulk_counts_guards_scope_and_native_facts(pair, kind):
                                    math.inf, -math.inf, 7, "new"))
 def test_bulk_scalar_affinity_and_untouched_encoded_leaf(pair, value):
     source, target, variant = pair
-    values = required(variant, "conversations", "one") | {
-        "codex_session_contract_hash": b"\x00\xff",
+    values = required(variant, "org_user_profiles", "one") | {
+        "manager_user_id": b"\x00\xff",
     }
-    native_insert(source, "conversations", values, -7)
-    insert_state(target, "conversations", values, source_rowid=-7)
+    native_insert(source, "org_user_profiles", values, -7)
+    insert_state(target, "org_user_profiles", values, source_rowid=-7)
     leaf = target.execute(
-        "select payload_json->'$.codex_session_contract_hash' from state"
+        "select payload_json->'$.manager_user_id' from state"
     ).fetchone()[0]
-    changes = {"codex_session_id": value}
-    assert native_update(source, "conversations", changes) == 1
-    assert update_state_rows(target, "conversations", changes) == 1
-    assert facts(source, "conversations") == facts(target, "conversations", True)
+    changes = {"open_dingtalk_id": value}
+    assert native_update(source, "org_user_profiles", changes) == 1
+    assert update_state_rows(target, "org_user_profiles", changes) == 1
+    assert facts(source, "org_user_profiles") == facts(target, "org_user_profiles", True)
     assert target.execute(
-        "select payload_json->'$.codex_session_contract_hash' from state"
+        "select payload_json->'$.manager_user_id' from state"
     ).fetchone()[0] == leaf
 
 

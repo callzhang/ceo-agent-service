@@ -60,11 +60,12 @@ def facts(db, kind, target=False):
 
 
 def test_scope_and_real_state_fields_only():
-    removed = {"in_handoff", "handoff_message_id", "handoff_message_create_time", "manual_clear_message_id"}
+    removed = {"in_handoff", "handoff_message_id", "handoff_message_create_time", "manual_clear_message_id",
+               "codex_session_id", "codex_session_contract_hash"}
     assert set(KINDS) == set(SOURCE["groups"]["state"]) - {"corpus_sources"}
     assert len(KINDS) == 15
-    assert sum(map(len, STATE_FIELDS.values())) == 85
-    assert len(STATE_TYPES) == 62
+    assert sum(map(len, STATE_FIELDS.values())) == 83
+    assert len(STATE_TYPES) == 60
     assert "corpus_sources" not in KINDS
     assert not removed.intersection(STATE_FIELDS["conversations"])
     for variant in ("actual", "fresh"):

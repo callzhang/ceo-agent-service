@@ -95,23 +95,23 @@ def test_defaultless_expression_abort_preserves_prior_caller_work(pair, replace)
 
 def test_nullable_expression_and_exact_existing_blob_leaf(pair):
     source, target, _variant = pair
-    rows = seed(pair, "conversations")
+    rows = seed(pair, "org_user_profiles")
     for db in (source, target):
         if db is source:
-            db.execute("update conversations set codex_session_contract_hash=?", (b"\x00\xff",))
+            db.execute("update org_user_profiles set manager_user_id=?", (b"\x00\xff",))
         else:
-            update_state_rows(db, "conversations", {"codex_session_contract_hash": b"\x00\xff"})
-    leaf = target.execute("select payload_json->'$.codex_session_contract_hash' from state").fetchone()[0]
+            update_state_rows(db, "org_user_profiles", {"manager_user_id": b"\x00\xff"})
+    leaf = target.execute("select payload_json->'$.manager_user_id' from state").fetchone()[0]
     assert source.execute(
-        "update conversations set codex_session_id=null where conversation_id=?",
-        (rows[0]["conversation_id"],),
+        "update org_user_profiles set open_dingtalk_id=null where user_id=?",
+        (rows[0]["user_id"],),
     ).rowcount == 1
     assert update_state_rows(
-        target, "conversations", {}, update_json={"codex_session_id": "json_quote(null)"},
-        where_sql="conversation_id=?", parameters=(rows[0]["conversation_id"],),
+        target, "org_user_profiles", {}, update_json={"open_dingtalk_id": "json_quote(null)"},
+        where_sql="user_id=?", parameters=(rows[0]["user_id"],),
     ) == 1
-    assert facts(source, "conversations") == facts(target, "conversations", True)
-    assert target.execute("select payload_json->'$.codex_session_contract_hash' from state").fetchone()[0] == leaf
+    assert facts(source, "org_user_profiles") == facts(target, "org_user_profiles", True)
+    assert target.execute("select payload_json->'$.manager_user_id' from state").fetchone()[0] == leaf
 
 
 @pytest.mark.parametrize("values,expressions", [

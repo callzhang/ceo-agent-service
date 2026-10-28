@@ -490,7 +490,6 @@ class AuditAgentRunner:
             result_contains_sensitive_value=lambda result: audit_result_contains_sensitive_value(
                 result, context.candidate,
             ),
-            persist_conversation_session=False,
             image_paths=[Path(path) for path in context.task.image_paths],
             required_capabilities=self._required_capabilities(context),
         )

@@ -10,7 +10,6 @@ from app.model_retirement_schema_source import install_store26_table
 from app.scheduled_task_notification_schema_source import PREVIOUS_SCHEDULES_DDL
 from app.schedules_definitions import SCHEDULE_INDEXES
 from app.provider_state_storage import create_provider_state_schema
-from app.state_storage import create_state_schema
 from app.task_lifecycle_current_schema import create_current_task20_schema, install_current_task_child_guards
 from app.logical_run_current_schema import create_current_run11_schema
 from app.run_storage import install_run_child_guards
@@ -38,7 +37,7 @@ def create_store_2026_10_21_1_schema(db):
     for sql in SCHEDULE_INDEXES:
         db.execute(sql)
     install_store26_table(db, "configs")
-    create_state_schema(db)
+    install_store26_table(db, "state")
     create_provider_state_schema(db)
     create_current_task20_schema(db)
     create_current_run11_schema(db)

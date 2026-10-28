@@ -23,6 +23,7 @@ from app.agent_runtime_contracts import (
 from app.agent_runtime_router import AgentRuntimeRouter, RuntimeRouteDecision
 from app.agent_turn_runner import (
     AgentTurnProcess,
+    _consumer_session_contract_hash,
     _decode_runtime_domain_result,
     _encode_runtime_domain_result,
     _required_runtime_capabilities,
@@ -182,7 +183,8 @@ def test_failed_compact_attempt_retries_same_session_with_full_input(tmp_path):
     store = AutoReplyStore(tmp_path / "turns.sqlite3")
     task = _task(store)
     store.upsert_conversation_runtime_session(
-        task.conversation_id, "codex_oauth", "session-a", "contract-v1"
+        task.conversation_id, "codex_oauth", "session-a",
+        _consumer_session_contract_hash("", "Return the exact schema."),
     )
     config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "codex_oauth"})
     route = config.routes[0]
@@ -226,7 +228,6 @@ def test_failed_compact_attempt_retries_same_session_with_full_input(tmp_path):
         developer_instructions="Return the exact schema.",
         configure_command=lambda _command: None,
         parse_result=parse_consumer_agent_wire_result,
-        persist_conversation_session=False,
         session_scoped_prompt={
             "route_name": "codex_oauth", "session_id": "session-a",
             "prompt": "feedback only",
@@ -486,15 +487,18 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
             developer_instructions=current_developer_instructions,
             configure_command=lambda command: None,
             parse_result=parse_consumer_agent_wire_result,
-            persist_conversation_session=True,
             prepare_result=prepare_result,
             conversation_contract_hash="contract-v1",
         )
 
     execute(task)
     assert store.get_conversation_runtime_session(
-        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+        task.conversation_id, "claude_api",
+        required_contract_hash=_consumer_session_contract_hash("contract-v1", "Return the exact schema."),
     ) == session_id
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) is None
 
     def stream_for_result(result_text: str) -> str:
         return "\n".join(
@@ -709,7 +713,6 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch)
         developer_instructions="Return the exact schema.",
         configure_command=lambda command: None,
         parse_result=parse_consumer_agent_wire_result,
-        persist_conversation_session=True,
         conversation_contract_hash="contract-v1",
     )
 
@@ -747,8 +750,11 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch)
     assert store.get_conversation_runtime_session(
         task.conversation_id,
         "claude_api",
-        required_contract_hash="contract-v1",
+        required_contract_hash=_consumer_session_contract_hash("contract-v1", "Return the exact schema."),
     ) == claude_session
+    assert store.get_conversation_runtime_session(
+        task.conversation_id, "claude_api", required_contract_hash="contract-v1"
+    ) is None
 
 
 def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
@@ -823,7 +829,6 @@ def test_friday_runtime_fallback_completes_consumer_run(tmp_path):
         developer_instructions="Return the exact schema.",
         configure_command=lambda command: None,
         parse_result=parse_consumer_agent_wire_result,
-        persist_conversation_session=False,
         conversation_contract_hash="contract-v1",
     )
 
@@ -863,7 +868,6 @@ def test_forced_runtime_provider_failure_never_falls_back(tmp_path):
             developer_instructions="Return schema",
             configure_command=lambda command: None,
             parse_result=parse_consumer_agent_wire_result,
-            persist_conversation_session=False,
         )
     assert [attempt.route_name for attempt in store.list_agent_runtime_attempts(claim.run.id)] == [route.name]
     assert len(calls) == 1
@@ -886,7 +890,7 @@ def test_audit_pre_session_failure_is_ordinary_failed_retry(tmp_path, codex_fail
     def executor(command, *, on_stdout_line, **kwargs):
         return ProcessRunResult(1, "", codex_failure)
     with pytest.raises(Exception):
-        AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner="audit", executor=executor, runtime_config=config, runtime_router=Router()).execute(run=run, prompt="Audit", session_id=None, developer_instructions="Return schema", configure_command=lambda c: None, parse_result=lambda raw: parse_audit_agent_wire_result(raw, proposal_revision=run.proposal_revision, candidate_digest="0" * 64), persist_conversation_session=False)
+        AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner="audit", executor=executor, runtime_config=config, runtime_router=Router()).execute(run=run, prompt="Audit", session_id=None, developer_instructions="Return schema", configure_command=lambda c: None, parse_result=lambda raw: parse_audit_agent_wire_result(raw, proposal_revision=run.proposal_revision, candidate_digest="0" * 64))
     persisted = store.get_agent_run(run.id)
     assert persisted is not None
     assert persisted.status in {"failed", "running"}

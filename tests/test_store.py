@@ -4566,16 +4566,12 @@ def test_store_writer_can_commit_while_reader_transaction_is_open(tmp_path: Path
 
 def test_conversation_session_persists(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation(
-        conversation_id="cid-1",
-        title="Friday",
-        single_chat=False,
-        codex_session_id="session-1",
-    )
+    store.upsert_conversation(conversation_id="cid-1", title="Friday", single_chat=False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
 
     loaded = AutoReplyStore(tmp_path / "worker.sqlite3")
 
-    assert loaded.get_codex_session_id("cid-1") == "session-1"
+    assert loaded.get_conversation_runtime_session("cid-1", "codex_oauth") == "session-1"
 
 
 def test_codex_session_lock_is_exclusive(tmp_path):
@@ -8604,7 +8600,8 @@ def test_record_okr_review_item_requires_item_json(tmp_path):
 
 def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.upsert_conversation("cid-1", "Friday", False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -8618,10 +8615,10 @@ def test_reset_codex_sessions_clears_conversation_mapping_only(tmp_path: Path):
         codex_transcript_end_line=9,
     )
 
-    cleared = store.reset_codex_sessions()
+    cleared = store.reset_codex_oauth_sessions()
 
     assert cleared == 1
-    assert store.get_codex_session_id("cid-1") is None
+    assert store.get_conversation_runtime_session("cid-1", "codex_oauth") is None
     attempt = store.get_reply_attempt(attempt_id)
     assert attempt is not None
     assert attempt.codex_session_id == "session-1"

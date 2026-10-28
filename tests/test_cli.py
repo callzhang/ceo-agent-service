@@ -4237,7 +4237,8 @@ def test_settings_defaults_point_to_memory_home(monkeypatch):
 def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path):
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3")
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.upsert_conversation("cid-1", "Friday", False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -4254,7 +4255,7 @@ def test_reset_codex_sessions_command_only_clears_conversation_sessions(tmp_path
     loaded = cli.AutoReplyStore(settings.db_path)
     attempt = loaded.get_reply_attempt(attempt_id)
     assert cleared == 1
-    assert loaded.get_codex_session_id("cid-1") is None
+    assert loaded.get_conversation_runtime_session("cid-1", "codex_oauth") is None
     assert attempt is not None
     assert attempt.codex_session_id == "session-1"
 
@@ -4275,7 +4276,7 @@ def test_send_attempt_command_queues_direct_agent_without_sending(
         dws_transient_retry_delay_seconds=0,
     )
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.upsert_conversation("cid-1", "Friday", False)
     enqueue_trigger_task(store)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -4321,7 +4322,7 @@ def test_send_attempt_command_dedupes_same_pending_rerun_without_direct_send(
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.upsert_conversation("cid-1", "Friday", False)
     enqueue_trigger_task(store)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -4352,7 +4353,7 @@ def test_send_attempt_command_refuses_unavailable_original_without_queue(
 ):
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.upsert_conversation("cid-1", "Friday", False)
     if source != "missing":
         enqueue_trigger_task(store)
         if source == "compacted":
@@ -4457,7 +4458,7 @@ def test_send_attempt_command_persists_instruction_as_new_reviewed_attempt(
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.upsert_conversation("cid-1", "Friday", False)
     enqueue_trigger_task(store)
     source_attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -4500,7 +4501,7 @@ def test_send_attempt_command_reopens_needs_human_with_reviewed_instruction(
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.upsert_conversation("cid-1", "Friday", False)
     enqueue_trigger_task(store)
     source_attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -4543,7 +4544,7 @@ def test_send_attempt_oa_rerun_uses_current_business_object_task(tmp_path):
     conversation_id = "oa_pending_scan:process-1"
     oa_url = "https://aflow.dingtalk.com/detail?procInstId=process-1&taskId=task-1"
     key = "oa:process-1:task-1"
-    store.upsert_conversation(conversation_id, "审批待办", True, None)
+    store.upsert_conversation(conversation_id, "审批待办", True)
     for day in ("2026-09-22", "2026-09-23"):
         store.enqueue_reply_task(
             conversation_id=conversation_id,
@@ -4603,7 +4604,7 @@ def test_send_attempt_command_rotates_pending_task_with_previous_error(
     monkeypatch.setattr(cli, "DwsClient", FakeDws)
     settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", dry_run=False)
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, None)
+    store.upsert_conversation("cid-1", "Friday", False)
     enqueue_trigger_task(store)
     attempt_id = store.record_reply_attempt(
         conversation_id="cid-1",
@@ -4648,7 +4649,7 @@ def test_send_attempt_command_queues_existing_calendar_attempt(
         dws_transient_retry_delay_seconds=0,
     )
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Calendar", True, None)
+    store.upsert_conversation("cid-1", "Calendar", True)
     enqueue_trigger_task(
         store, conversation_title="Calendar", single_chat=True,
         trigger_sender="Avery", trigger_text="[日程]",
@@ -5641,7 +5642,8 @@ def test_rerun_message_command_loads_conversation_and_calls_worker(
         corpus_dir=tmp_path / "corpus",
     )
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.upsert_conversation("cid-1", "Friday", False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
 
     class FakeWorker:
         def rerun_message(
@@ -5689,7 +5691,8 @@ def test_rerun_message_command_does_not_overwrite_worker_task_state(
         corpus_dir=tmp_path / "corpus",
     )
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.upsert_conversation("cid-1", "Friday", False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
     store.enqueue_reply_task(
         conversation_id="cid-1",
         conversation_title="Friday",
@@ -5743,7 +5746,8 @@ def test_rerun_message_command_treats_naive_context_time_as_dingtalk_time(
         corpus_dir=tmp_path / "corpus",
     )
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.upsert_conversation("cid-1", "Friday", False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
 
     class FakeWorker:
         def rerun_message(
@@ -5794,7 +5798,8 @@ def test_rerun_message_command_reports_missing_message(monkeypatch, tmp_path):
         corpus_dir=tmp_path / "corpus",
     )
     store = cli.AutoReplyStore(settings.db_path)
-    store.upsert_conversation("cid-1", "Friday", False, "session-1")
+    store.upsert_conversation("cid-1", "Friday", False)
+    store.upsert_conversation_runtime_session("cid-1", "codex_oauth", "session-1")
 
     class FakeWorker:
         def rerun_message(

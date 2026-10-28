@@ -519,7 +519,7 @@ CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
 CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-28.1"
+STORE_SCHEMA_VERSION = "2026-10-28.2"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -874,9 +874,12 @@ class ConversationRecord(BaseModel):
     conversation_id: str
     title: str
     single_chat: bool
-    codex_session_id: str | None = None
     direct_user_id: str = ""
     direct_open_dingtalk_id: str = ""
+
+
+class ConversationSessionRecord(ConversationRecord):
+    session_id: str
 
 
 class CodexSessionSearchResult(BaseModel):
@@ -10881,13 +10884,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "delete from state where record_type='conversation_runtime_sessions' and conversation_id=?",
                     (conversation_id,),
                 )
-                update_state_rows(
-                    db,
-                    "conversations",
-                    {"codex_session_id": None, "codex_session_contract_hash": ""},
-                    where_sql="conversation_id=? and codex_session_id is not null",
-                    parameters=(conversation_id,),
-                )
             next_generation = uuid4().hex
             parameters = dict(task["parameters"])
             parameters.update(force_new_decision=1, recovery_code=recovery_code.strip())
@@ -14424,35 +14420,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError("structured RuntimeAttempt changed before OKR Run binding")
 
     def upsert_conversation(
-        self,
-        conversation_id: str,
-        title: str,
-        single_chat: bool,
-        codex_session_id: str | None,
+        self, conversation_id: str, title: str, single_chat: bool,
     ) -> None:
         with self._connect() as db:
             db.execute("begin")
             upsert_state(
                 db, "conversations",
                 {"conversation_id": conversation_id, "title": title,
-                 "single_chat": int(single_chat), "codex_session_id": codex_session_id},
+                 "single_chat": int(single_chat)},
                 {"title": state_json_field("title"),
-                 "single_chat": state_json_field("single_chat"),
-                 "codex_session_id": (
-                     "case when excluded.codex_session_id is not null then " +
-                     state_json_field("codex_session_id") + " else " +
-                     state_json_field("codex_session_id", "state") + " end"
-                 )},
+                 "single_chat": state_json_field("single_chat")},
             )
-
-    def get_codex_session_id(self, conversation_id: str) -> str | None:
-        projection = "(" + state_projection("conversations") + ")"
-        with self._connect() as db:
-            row = db.execute(
-                f"select codex_session_id from {projection} where conversation_id=?",
-                (conversation_id,),
-            ).fetchone()
-            return None if row is None else row["codex_session_id"]
 
     def upsert_conversation_runtime_session(
         self,
@@ -14489,13 +14467,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             {field: state_json_field(field) for field in
              ("session_id", "contract_hash", "updated_at")},
         )
-        if route_name == "codex_oauth":
-            update_state_rows(
-                db, "conversations",
-                {"codex_session_id": session_id,
-                 "codex_session_contract_hash": contract_hash},
-                where_sql="conversation_id=?", parameters=(conversation_id,),
-            )
 
     def get_conversation_runtime_session(
         self,
@@ -14545,8 +14516,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
         Some work is a fresh look at external state rather than a continuing
         conversation: resuming there lets a turn answer from its own previous
-        transcript instead of reading the source again. Clearing only the
-        legacy `conversations` column would leave the other routes resuming.
+        transcript instead of reading the source again. Every route slot is
+        cleared so none can resume.
         """
         conversation_id = self._require_runtime_attempt_text(
             conversation_id, field="conversation_id"
@@ -14556,13 +14527,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "delete from state where record_type='conversation_runtime_sessions' and conversation_id=?",
                 (conversation_id,),
             )
-            legacy = update_state_rows(
-                db, "conversations",
-                {"codex_session_id": None, "codex_session_contract_hash": ""},
-                where_sql="conversation_id=? and codex_session_id is not null",
-                parameters=(conversation_id,),
-            )
-            return max(cursor.rowcount, legacy)
+            return cursor.rowcount
 
     def clear_conversation_runtime_session_if_matches(
         self,
@@ -14574,8 +14539,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     ) -> int:
         """Clear one Consumer route slot without deleting attempt/Audit evidence.
 
-        The OAuth compatibility column is cleared in the same transaction when
-        it names the same session. Other route slots are never affected.
+        Other route slots are never affected.
         """
         conversation_id = self._require_runtime_attempt_text(
             conversation_id, field="conversation_id"
@@ -14598,16 +14562,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 """,
                 (conversation_id, route_name, *expected_session_ids),
             )
-            cleared = cursor.rowcount
-            if route_name == "codex_oauth":
-                legacy = update_state_rows(
-                    db, "conversations",
-                    {"codex_session_id": None, "codex_session_contract_hash": ""},
-                    where_sql=f"conversation_id=? and codex_session_id in ({placeholders})",
-                    parameters=(conversation_id, *expected_session_ids),
-                )
-                cleared = max(cleared, legacy)
-            return cleared
+            return cursor.rowcount
 
     def open_runtime_route_pause(
         self,
@@ -14762,48 +14717,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             "route_pauses": pauses,
             "capability_snapshots": snapshots,
         }
-
-    def get_codex_session_contract_hash(self, conversation_id: str) -> str:
-        projection = "(" + state_projection("conversations") + ")"
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select codex_session_contract_hash
-                from {projection}
-                where conversation_id=?
-                """,
-                (conversation_id,),
-            ).fetchone()
-            return "" if row is None else str(row["codex_session_contract_hash"] or "")
-
-    def set_codex_session_contract_hash(
-        self,
-        conversation_id: str,
-        contract_hash: str,
-    ) -> int:
-        if not contract_hash.strip():
-            raise ValueError("contract_hash must be non-empty")
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            changed = update_state_rows(
-                db, "conversations", {"codex_session_contract_hash": contract_hash},
-                where_sql="conversation_id=?", parameters=(conversation_id,),
-            )
-            row = db.execute(
-                f"select conversation_id, codex_session_id from ({state_projection('conversations')}) "
-                "where conversation_id=? and codex_session_id is not null "
-                "and codex_session_id<>''",
-                (conversation_id,),
-            ).fetchone()
-            if row is not None:
-                upsert_state(
-                    db, "conversation_runtime_sessions",
-                    {"conversation_id": row["conversation_id"],
-                     "route_name": "codex_oauth", "session_id": row["codex_session_id"],
-                     "contract_hash": contract_hash, "updated_at": now_text},
-                    {field: state_json_field(field) for field in
-                     ("session_id", "contract_hash", "updated_at")},
-                )
-            return changed
 
     def acquire_codex_session_lock(self, conversation_id: str, owner: str) -> bool:
         if not conversation_id.strip():
@@ -15258,42 +15171,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 db.execute("delete from tasks where id=? and kind='reply'", (duplicate_id,))
             return 1
 
-    def reset_codex_sessions(self) -> int:
+    def reset_codex_oauth_sessions(self) -> int:
         with self._connect() as db:
-            db.execute("begin")
-            changed = update_state_rows(
-                db, "conversations",
-                {"codex_session_id": None, "codex_session_contract_hash": ""},
-                where_sql="codex_session_id is not null and codex_session_id != ''",
+            cursor = db.execute(
+                "delete from state where record_type='conversation_runtime_sessions' and route_name='codex_oauth'"
             )
-            return changed
-
-    def clear_codex_session(self, conversation_id: str) -> int:
-        with self._connect() as db:
-            db.execute("begin")
-            changed = update_state_rows(
-                db, "conversations",
-                {"codex_session_id": None, "codex_session_contract_hash": ""},
-                where_sql="conversation_id=?", parameters=(conversation_id,),
-            )
-            return changed
-
-    def clear_codex_session_if_matches(
-        self,
-        conversation_id: str,
-        expected_session_id: str,
-    ) -> int:
-        if not expected_session_id.strip():
-            raise ValueError("expected_session_id must be non-empty")
-        with self._connect() as db:
-            db.execute("begin")
-            changed = update_state_rows(
-                db, "conversations",
-                {"codex_session_id": None, "codex_session_contract_hash": ""},
-                where_sql="conversation_id=? and codex_session_id=?",
-                parameters=(conversation_id, expected_session_id),
-            )
-            return changed
+            return cursor.rowcount
 
     def clear_agent_run_session(
         self,
@@ -15324,26 +15207,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     changed += 1
             return changed
 
-    def list_codex_conversations(self) -> list[ConversationRecord]:
-        projection = "(" + state_projection("conversations") + ")"
+    def list_codex_conversations(self) -> list[ConversationSessionRecord]:
+        conversations = "(" + state_projection("conversations") + ")"
+        sessions = "(" + state_projection("conversation_runtime_sessions") + ")"
         with self._connect() as db:
             rows = db.execute(
-                f"""
-                select conversation_id, title, single_chat, codex_session_id
-                from {projection}
-                where codex_session_id is not null and codex_session_id != ''
-                order by title, conversation_id
-                """
+                f"""select c.conversation_id, c.title, c.single_chat, s.session_id
+                from {conversations} c join {sessions} s
+                  on s.conversation_id=c.conversation_id and s.route_name='codex_oauth'
+                order by c.title, c.conversation_id"""
             ).fetchall()
-            return [
-                ConversationRecord(
-                    conversation_id=row["conversation_id"],
-                    title=row["title"],
-                    single_chat=bool(row["single_chat"]),
-                    codex_session_id=row["codex_session_id"],
-                )
-                for row in rows
-            ]
+            return [ConversationSessionRecord(
+                conversation_id=row["conversation_id"], title=row["title"],
+                single_chat=bool(row["single_chat"]), session_id=row["session_id"],
+            ) for row in rows]
 
     def list_recent_single_chat_conversations(
         self,
@@ -15371,7 +15248,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     c.conversation_id,
                     c.title,
                     c.single_chat,
-                    c.codex_session_id,
                     coalesce((
                         select json_extract(t.trigger_message_json, '$.sender_user_id')
                         from ({NATIVE_REPLY_TASK_CURRENT_SQL}) t
@@ -15407,7 +15283,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     conversation_id=row["conversation_id"],
                     title=row["title"],
                     single_chat=bool(row["single_chat"]),
-                    codex_session_id=row["codex_session_id"],
                     direct_user_id=row["direct_user_id"],
                     direct_open_dingtalk_id=row["direct_open_dingtalk_id"],
                 )
@@ -15419,7 +15294,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             row = db.execute(
                 f"""
-                select conversation_id, title, single_chat, codex_session_id
+                select conversation_id, title, single_chat
                 from {projection}
                 where conversation_id=?
                 """,
@@ -15431,7 +15306,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 conversation_id=row["conversation_id"],
                 title=row["title"],
                 single_chat=bool(row["single_chat"]),
-                codex_session_id=row["codex_session_id"],
             )
 
     def find_single_chat_conversation_by_title(
@@ -15441,7 +15315,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select conversation_id, title, single_chat, codex_session_id
+                select conversation_id, title, single_chat
                 from {projection}
                 where title=? and single_chat=1
                 order by conversation_id
@@ -15456,7 +15330,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 conversation_id=row["conversation_id"],
                 title=row["title"],
                 single_chat=bool(row["single_chat"]),
-                codex_session_id=row["codex_session_id"],
             )
 
     def find_conversation_by_title(self, title: str) -> ConversationRecord | None:
@@ -15464,7 +15337,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             rows = db.execute(
                 f"""
-                select conversation_id, title, single_chat, codex_session_id
+                select conversation_id, title, single_chat
                 from {projection}
                 where title=?
                 order by single_chat, conversation_id
@@ -15479,7 +15352,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 conversation_id=row["conversation_id"],
                 title=row["title"],
                 single_chat=bool(row["single_chat"]),
-                codex_session_id=row["codex_session_id"],
             )
 
     def has_seen(self, message_id: str) -> bool:

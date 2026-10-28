@@ -68,7 +68,6 @@ def test_turn_refreshes_capabilities_before_initial_route_decision(tmp_path):
             developer_instructions="Return the result schema.",
             configure_command=lambda _command: None,
             parse_result=parse_consumer_agent_wire_result,
-            persist_conversation_session=False,
         )
 
     assert calls == ["refresh:False", "route", "refresh:True", "route"]

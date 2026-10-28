@@ -404,3 +404,4 @@ tests/test_current_declarations_independent.py
 tests/test_attention_attempt_links.py
 tests/test_oa_business_attention.py
 tests/test_model_retirement_schema_release.py
+tests/test_conversation_session_schema_release.py

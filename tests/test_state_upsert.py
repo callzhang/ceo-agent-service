@@ -91,21 +91,21 @@ def test_nullable_primary_keys_keep_multiple_null_rows(pair, kind):
 
 @pytest.mark.parametrize("value", (-2.2101102838387424e-85, 7.294214896064974e-137,
                                   b"blob", float("inf"), float("-inf"), None))
-def test_session_coalesce_retains_native_affinity_and_encoded_leaf(pair, value):
-    source, target, _ = pair
-    old = {"conversation_id": "same", "title": "old", "single_chat": 1,
-           "codex_session_id": b"old", "codex_session_contract_hash": "untouched"}
-    source.execute("insert into conversations(" + ",".join(old) + ") values(?,?,?,?,?)", tuple(old.values()))
-    insert_state(target, "conversations", old)
-    values = {"conversation_id": "same", "title": "new" if value is None else value, "single_chat": 1, "codex_session_id": value}
-    native = {"title": "excluded.title", "codex_session_id": "coalesce(excluded.codex_session_id,conversations.codex_session_id)"}
-    encoded = {"title": state_json_field("title"), "codex_session_id":
-               "case when excluded.codex_session_id is not null then " +
-               state_json_field("codex_session_id") + " else " +
-               state_json_field("codex_session_id", "state") + " end"}
-    assert native_upsert(source, "conversations", values, native) == upsert_state(
-        target, "conversations", values, encoded) == 1
-    assert facts(source, "conversations") == facts(target, "conversations", True)
+def test_nullable_coalesce_retains_native_affinity_and_encoded_leaf(pair, value):
+    source, target, variant = pair
+    old = minimal(variant, "org_user_profiles") | {"user_id": "same", "name": "old",
+           "open_dingtalk_id": b"old", "manager_user_id": "untouched"}
+    source.execute("insert into org_user_profiles(" + ",".join(old) + ") values(" + ",".join("?" for _ in old) + ")", tuple(old.values()))
+    insert_state(target, "org_user_profiles", old)
+    values = minimal(variant, "org_user_profiles") | {"user_id": "same", "name": "new" if value is None else value, "open_dingtalk_id": value}
+    native = {"name": "excluded.name", "open_dingtalk_id": "coalesce(excluded.open_dingtalk_id,org_user_profiles.open_dingtalk_id)"}
+    encoded = {"name": state_json_field("name"), "open_dingtalk_id":
+               "case when excluded.open_dingtalk_id is not null then " +
+               state_json_field("open_dingtalk_id") + " else " +
+               state_json_field("open_dingtalk_id", "state") + " end"}
+    assert native_upsert(source, "org_user_profiles", values, native) == upsert_state(
+        target, "org_user_profiles", values, encoded) == 1
+    assert facts(source, "org_user_profiles") == facts(target, "org_user_profiles", True)
 
 
 @pytest.mark.parametrize("by", (None, float("nan"), "", "bob", b"bob"))

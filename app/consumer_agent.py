@@ -857,7 +857,6 @@ class ConsumerAgentRunner:
         session_id = None if force_new_session else (
             claim.run.codex_session_id if conversation_session_id is not None else None
         ) or conversation_session_id
-        persist_conversation_session = not bool(route_sessions)
         process = AgentTurnProcess[ConsumerAgentResult](
             store=self.store,
             task=task,
@@ -1122,7 +1121,6 @@ class ConsumerAgentRunner:
                     proposal_revision=proposal_revision,
                     source_client=self.source_client,
                 ),
-                persist_conversation_session=persist_conversation_session,
                 on_progress=renew_session_lock,
                 image_paths=[Path(path) for path in context.image_paths],
                 required_capabilities=self._required_capabilities(context),

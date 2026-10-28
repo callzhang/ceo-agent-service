@@ -160,10 +160,10 @@ class FixtureConsumer:
             owner="fixture-consumer",
         )
         assert claim.claimed
-        session_id = self.store.get_codex_session_id(task.conversation_id) or "consumer-session"
-        self.store.upsert_conversation(
-            task.conversation_id, task.conversation_title, task.single_chat, session_id
-        )
+        session_id = self.store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") or "consumer-session"
+        self.store.upsert_conversation(task.conversation_id, task.conversation_title, task.single_chat)
+        if session_id:
+            self.store.upsert_conversation_runtime_session(task.conversation_id, "codex_oauth", session_id)
         self.store.set_agent_run_session(claim.run.id, session_id, owner="fixture-consumer")
         result = _consumer_result(self.case)
         self.store.complete_agent_run(

@@ -1,0 +1,290 @@
+{
+  "phase": "candidate_validated_not_deployed",
+  "target_schema": {
+    "store": "2026-10-28.2",
+    "email": 54,
+    "objects": 463,
+    "tables": 48,
+    "columns": 1232,
+    "ordinary_columns": 534,
+    "virtual_columns": 698,
+    "sha256": "8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a"
+  },
+  "source_commit": "44c13bc91f975c87a8a6f8e60cd5c1b1a05320b4",
+  "copy_validation": {
+    "checked_at": "2026-10-28T09:27:22.695591+00:00",
+    "status": "passed",
+    "source": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3",
+    "copy": "/private/tmp/ceo-retirement-session-copy.zJHPWm/validation.sqlite3",
+    "old_root": "/private/tmp/ceo-retirement-session-copy.zJHPWm/old-code",
+    "native_tables_including_sequence": 49,
+    "source_fact_hashes": {
+      "run_entity_identity_map": {
+        "rows": 172078,
+        "sha256": "9ed0b7d02373600598a0ca3d513f7b558401ac3269afac4939a428370fd66a53"
+      },
+      "configs": {
+        "rows": 7509,
+        "sha256": "0969561d07ff63c916116a468bd4b362f0d7a1ffe60759349ded5f474863b14f"
+      },
+      "schedules": {
+        "rows": 16,
+        "sha256": "391c6c6f1501a30f4af349f48830ea44b90d617da0d78482bf9bf6cb3ec3722e"
+      },
+      "actions": {
+        "rows": 90782,
+        "sha256": "dcf82a2e5012cdd53c05f96b9b956254f9cf7565baba7d5a74e028f21586c941"
+      },
+      "action_receipts": {
+        "rows": 21148,
+        "sha256": "f46e1fb0373617783300e018e45a765b140a6714131f28287a2d70d49dfb22af"
+      },
+      "run_execution_progress": {
+        "rows": 612,
+        "sha256": "bbcaba067177552a4ff8ca31526631bf086ecb7b3c58830df50ce343f5f895aa"
+      },
+      "run_adopted_selections": {
+        "rows": 0,
+        "sha256": "27b0a9dc295aa16ee527ec0fa0dc6f8c07a0de446db90964bf79508985d15c5d"
+      },
+      "run_adopted_reviews": {
+        "rows": 1821,
+        "sha256": "a5a541145a190f766e7e5b490b28470f5344a05b8375a4b2e1536b00f414223d"
+      },
+      "email_classifier_runtime_samples": {
+        "rows": 2048,
+        "sha256": "e8a751c6728f6fa1ef38b31c4bb89cc06a8f1e7c35a9345dcd6f392bcf154700"
+      },
+      "codex_session_search_index": {
+        "rows": 795,
+        "sha256": "1230908c1afd5eaf66093b6a4b61185e65d6053a38e9bb548412dc560bb7f5fe"
+      },
+      "workbench_events": {
+        "rows": 1397,
+        "sha256": "cf8aff3b2554e5dad72acea4e1d90e4390770d1e219133c16f0fda093a166941"
+      },
+      "run_failures": {
+        "rows": 1164,
+        "sha256": "bfad970f59b122b205e13f18e83eb57c1c4468da2af36e5126115bbcfe5cf6b8"
+      },
+      "runtime_attempts": {
+        "rows": 27505,
+        "sha256": "17702702a84fc1851cef058c577c4e82b0344e9acf1068c7a42cee443741960d"
+      },
+      "run_adopted_supplements": {
+        "rows": 8,
+        "sha256": "d5fe4fb54a369baa980cfddf975f8154bd67db22e15c00214d34710458ced53a"
+      },
+      "run_projections": {
+        "rows": 10802,
+        "sha256": "b80c0941f0241118c3adc7e1049f6792e8743c156bfc3a8bd3da976f40bbf5ff"
+      },
+      "action_entity_identity_map": {
+        "rows": 31822,
+        "sha256": "de0624a9eb579f87bc1389fd3ffc31726d2487619794ba4b281f367b3db052f7"
+      },
+      "run_adopted_results": {
+        "rows": 1834,
+        "sha256": "72d24197237376f266b24ed19cd230ef331f50caac7a14002fe6d49ffe550206"
+      },
+      "tasks": {
+        "rows": 19989,
+        "sha256": "7ad255942ee7eab946d606ee5312a9a4f2b322cbda5a55cfbcf3a270a071b21a"
+      },
+      "provider_state": {
+        "rows": 73697,
+        "sha256": "84cf983eb0e85559d0300ac7207903c9ac4d166accf59beaa1e3d2627eaae860"
+      },
+      "reply_attempt_receipt_refs": {
+        "rows": 64,
+        "sha256": "4f3c31023538ff3aee97a8f557c430254a3ac45a61f22efdb8f2508fcad4205e"
+      },
+      "email_schema_migrations": {
+        "rows": 41,
+        "sha256": "1638fc476222fd3972e2d702efa3bed6ae271f32815948e6ce0f5b87fb764929"
+      },
+      "feedback_processing_rounds": {
+        "rows": 9,
+        "sha256": "82141700f0c2a9949c2d285f6ed26eeac13b6f426b890ad5c09e0cb6e31fe6dc"
+      },
+      "workbench_attachments": {
+        "rows": 0,
+        "sha256": "44787050357d1fdcda0e3fe54b1e93b6327432a7a55af67ac5c1726ed8d0923f"
+      },
+      "state": {
+        "rows": 24313,
+        "sha256": "2d8b14d9906c98cf10b1215f66773e16d091cc6cc90e8181d8b0cd3ea2eb37dc"
+      },
+      "task_business_keys": {
+        "rows": 8942,
+        "sha256": "18e4ed6e6da8860962d5e9a749afa531b796088917a36f644051559bd0a1050a"
+      },
+      "provenance": {
+        "rows": 291,
+        "sha256": "a2b1814a5b2e9d8a60895fbbbe6345f08ff12922460051ab2c78c082bd6dbe72"
+      },
+      "emails": {
+        "rows": 11270,
+        "sha256": "b39e07b763982997648f5745de87130041bcd7c56e5ae444e4fd2a637d7d3e19"
+      },
+      "work_summary_inputs": {
+        "rows": 9148,
+        "sha256": "bf1c1f8c9e9c0513af109a7494a54223a35bc207dcad9324741e57f77757e318"
+      },
+      "feedback_processing_items": {
+        "rows": 54,
+        "sha256": "c72bb8fa62241f53327a6a52f1254de306a5c087ca1990ca237392a1e623a4bb"
+      },
+      "task_run_identity_map": {
+        "rows": 19744,
+        "sha256": "e9e6d1b76dbc6e1c46a05c499a34f5968f11aa33525b86adf0e1a176eb9d3ad3"
+      },
+      "business": {
+        "rows": 5303,
+        "sha256": "8ae549e3fc38624843acd2ffb4d50d02c4098eb7527869b34f806cbab3f40a14"
+      },
+      "run_adoption_identity_map": {
+        "rows": 3405,
+        "sha256": "1f1905e4acf211854dbaa78075c547cac5a33916227f1f50841bd07f41130914"
+      },
+      "runs": {
+        "rows": 39126,
+        "sha256": "ecece6124ba4e3af45be4f7ecf2f332b66628410cb0dc03c10c48ca96ba710f3"
+      },
+      "setup_wizard_events": {
+        "rows": 22,
+        "sha256": "391b5c19a283829f96cd99100f8775c91e6fd6e725d9da1bd8950fd9802d209b"
+      },
+      "email_classification_inputs": {
+        "rows": 1430,
+        "sha256": "fe11866eb6fe9f45dc63458b362f748dc0021961b7f01c0d30dfc3bdd783bdb8"
+      },
+      "task_inputs": {
+        "rows": 9221,
+        "sha256": "05e67bff818c69a4d97a2d648e46ac75757eab9f9feb94addeadf25ee6771b63"
+      },
+      "run_provenance": {
+        "rows": 13649,
+        "sha256": "4ef5eed138d18b5f0cc85458a0937d9679733e26de18b6b1ef2f9c00b39ba523"
+      },
+      "okr_review_items": {
+        "rows": 413,
+        "sha256": "e2cba6482203eea19cd1f718f22155d556ce371f430e8698ff0a11ce159c68f7"
+      },
+      "workbench_turns": {
+        "rows": 41,
+        "sha256": "9c31bba88d59ea454aceb6072a29683414e6c1c5ee8cdd22fadf6798bf49d106"
+      },
+      "task_results": {
+        "rows": 2505,
+        "sha256": "22e1d2ad10d563e629d975c545f6662e5c6b53bdb7e6310621c67c79cd8e9dbc"
+      },
+      "schedule_occurrences": {
+        "rows": 119037,
+        "sha256": "d699a0fcb29528672f81f1f799ff0aa49420c4aacab6d3ddd0cc679688910dd5"
+      },
+      "email_historical_candidates": {
+        "rows": 924,
+        "sha256": "41e78a5a748f8f223b0ecef995b9a6d66ef9d7a3d9aafe6f75a6d7fb71930998"
+      },
+      "action_observers": {
+        "rows": 637,
+        "sha256": "ddbf1d33181da3313950e26ba7bdc4e1da1d1d675848ca771c93c239c690e15a"
+      },
+      "workbench_tasks": {
+        "rows": 21,
+        "sha256": "c90a1bb3502623f5d777d982fa8da2335920c6014983a6e7b849ed21c247c6a2"
+      },
+      "sqlite_sequence": {
+        "rows": 58,
+        "sha256": "63daa9d5cd8f8d7f478937c12d242526cbb4d8ad21bb4edf31031b6654f7b072"
+      },
+      "feedback_processing_batches": {
+        "rows": 4,
+        "sha256": "e06bbb6434628bada92f2730db170b82015292a616b080cda1ce5807a8efdba1"
+      },
+      "oa_notification_events": {
+        "rows": 42,
+        "sha256": "1574d656d620266335e329f1a84366e6d5d7c2797e64bc0e2cabe8aa67c96020"
+      },
+      "feedback_iteration_decisions": {
+        "rows": 6,
+        "sha256": "62264cfc67b2e5b3154096e826c6fd3385e982d35ec3eec304fe8ccd9347d2ca"
+      },
+      "workbench_artifacts": {
+        "rows": 0,
+        "sha256": "c1c8c1dc27d4fa5012b327fe3f68061e14dbc2112877029bcb6a50ff234b9ba0"
+      }
+    },
+    "forward_preserved": true,
+    "inverse_retained_new_facts": true,
+    "old_code_cold_read_write": true,
+    "reforward_preserved": true,
+    "all_canonical_session_payloads_byte_equal": true,
+    "original_rows_unchanged": true,
+    "provider": "double; network and CLI refused",
+    "fixture_identities": [
+      {
+        "task_id": 417746,
+        "run_id": 400269,
+        "action_id": 126005,
+        "receipt_id": 21149,
+        "key": "schema-copy:53643207-74d8-48cc-bd5e-02e325bf6df1"
+      },
+      {
+        "task_id": 417747,
+        "run_id": 400270,
+        "action_id": 126006,
+        "receipt_id": 21150,
+        "key": "schema-copy:0905d79f-adff-4d87-af02-b284644a130c"
+      },
+      {
+        "task_id": 417748,
+        "run_id": 400271,
+        "action_id": 126007,
+        "receipt_id": 21151,
+        "key": "schema-copy:a4ee041f-f152-4080-a0e3-449e6d9f7ace"
+      }
+    ],
+    "new_session_identities": [
+      {
+        "key": "session-copy:9c7da7dc-7a8c-475d-91ec-b7a10636f36d",
+        "session_id": "native-copy:43df2da0-1d74-4f21-be2c-184e4aaa3b34"
+      },
+      {
+        "key": "session-copy:379187d8-a080-495e-b530-3d6f4950887f",
+        "session_id": "native-copy:28b66c22-5ec5-4146-b2a3-af268756fd68"
+      },
+      {
+        "key": "session-copy:2912ab3d-8f15-42e2-8b65-cc7559399847",
+        "session_id": "native-copy:00eb1ba2-bc1b-4d3f-9ee8-a9a00d0c0935"
+      }
+    ]
+  },
+  "tests": {
+    "consumer_group": 234,
+    "store_task_runtime_group": 546,
+    "worker_cli_group": 717,
+    "state_upsert_group": 216,
+    "state_storage": 147,
+    "parent_release_selector_artifact_feedback": 41,
+    "groups_overlap": true,
+    "metadata_regression": "RED missing metadata then GREEN",
+    "new_metadata_and_flag_callers": 45,
+    "direct_turn_file": 60,
+    "old_baseline_failed_three_contract_fixtures": 3,
+    "repaired_three_current_contract_fixtures": 3,
+    "scoped_ruff": "passed",
+    "current_copy_and_old_code": "passed"
+  },
+  "reviews": {
+    "spec": "PASS, including exact-selector and actual-copy script/report recheck",
+    "quality": "PASS after route-neutral metadata fix; no Important/Critical finding",
+    "old_archive_app_files_verified": 463
+  },
+  "production": null,
+  "cleanup": {
+    "status": "pending_acceptance",
+    "owned_root": "/private/tmp/ceo-retirement-session-copy.zJHPWm"
+  }
+}

@@ -64,7 +64,7 @@ def test_consumer_session_reuse_requires_the_same_developer_contract(tmp_path):
     assert stale is None
 
 
-@pytest.mark.parametrize("contract_change", [None, "mismatch", "missing"])
+@pytest.mark.parametrize("contract_change", [None, "mismatch", "missing", "reset"])
 def test_consumer_reuses_only_matching_conversation_route_session(store, task, context, contract_change):
     config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_oauth")
     current_schema = {
@@ -82,7 +82,9 @@ def test_consumer_reuses_only_matching_conversation_route_session(store, task, c
     assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == "session-a"
 
     saved_hash = store.get_conversation_runtime_session_contract_hash(task.conversation_id, "codex_oauth")
-    if contract_change is not None:
+    if contract_change == "reset":
+        assert store.reset_codex_oauth_sessions() == 1
+    elif contract_change is not None:
         store.upsert_conversation_runtime_session(
             task.conversation_id, "codex_oauth", "session-a",
             saved_hash + "-changed" if contract_change == "mismatch" else "",
@@ -103,3 +105,22 @@ def test_consumer_reuses_only_matching_conversation_route_session(store, task, c
         assert "resume" not in second.commands[0]
     assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == expected_session
     assert store.get_conversation_runtime_session_contract_hash(task.conversation_id, "codex_oauth") == saved_hash
+
+
+def test_new_nonworker_conversation_session_has_listable_metadata(store, task, context):
+    assert store.get_conversation(task.conversation_id) is None
+    config, router, adapter = _consumer_runtime_dependencies(store, routes="codex_oauth")
+    executor = CapturingExecutor(_result_jsonl(session="new-session"))
+    ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+        runtime_config=config, runtime_router=router, codex_adapter=adapter,
+        codex_session_exists=lambda _: True,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    conversation = store.get_conversation(task.conversation_id)
+    assert conversation is not None
+    assert (conversation.title, conversation.single_chat) == (task.conversation_title, task.single_chat)
+    assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == "new-session"
+    assert [(row.conversation_id, row.session_id) for row in store.list_codex_conversations()] == [
+        (task.conversation_id, "new-session")
+    ]

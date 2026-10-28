@@ -1112,7 +1112,6 @@ class DingTalkAutoReplyWorker:
                 conversation_id=conversation.open_conversation_id,
                 title=conversation.title,
                 single_chat=conversation.single_chat,
-                codex_session_id=None,
             )
             conversation_mentions = addressed_messages.get(
                 conversation.open_conversation_id, []

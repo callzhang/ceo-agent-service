@@ -3144,7 +3144,7 @@ def export_feedback_command(
 
 def reset_codex_sessions_command(settings: WorkerSettings) -> int:
     store = AutoReplyStore(settings.db_path)
-    cleared = store.reset_codex_sessions()
+    cleared = store.reset_codex_oauth_sessions()
     print(f"reset-codex-sessions cleared={cleared}", flush=True)
     return cleared
 

@@ -1,5 +1,17 @@
 # CEO Agent Service Architecture
 
+## 会话唯一归属候选 Store28.2/Email54（2026-10-28）
+
+正常运行只在`conversation_runtime_sessions`保存按会话和路线的session/hash，
+`conversations`只保留元数据。Consumer观测session时统一写入已有任务的普通会话元数据；
+session列表/Attempt关联直接读取canonical owner。CLI OAuth reset清除同一owner的OAuth槽，
+其他路线保留；原有全路线clear、路线上compare-and-clear与Run/Attempt原生证据不变。
+退休两个镜像payload键/生成列及旧getter/setter/clear、双写和无用开关，不保留运行时兼容。
+显式准确28.1→28.2发布先验证镜像非空事实与canonical一致；inverse从当前canonical恢复完整
+旧镜像（包括原来为空的hash），不保存镜像备份。463项schema、48表、1232列。历史声明固定，
+constructor不自动升级。候选/实际上线边界与证据见[第三批验收](model-retirement-batch3-validation.md)。
+
+
 ## 模型退休第二批：Store28.1 / Email54（2026-10-28）
 
 当前代码声明为Store `2026-10-28.1` / Email54，完整配对463对象（bare462）。

@@ -7,7 +7,7 @@ remain in their versioned release modules and are not runtime fallbacks.
 from app.current_schema_manifest import STORE_VERSION as TARGET_STORE_VERSION, EMAIL_VERSION as TARGET_EMAIL_VERSION, schema_is_current, schema_objects
 from app.state_definitions import state_projection
 
-PREVIOUS_STORE_VERSION = '2026-10-26.1'
+PREVIOUS_STORE_VERSION = '2026-10-28.1'
 PREVIOUS_STORE_VERSIONS = (PREVIOUS_STORE_VERSION,)
 
 
@@ -25,10 +25,11 @@ def _version(db, *, release_source_email_version=None):
     if version == TARGET_STORE_VERSION and schema_is_current(db):
         return version
     if version == PREVIOUS_STORE_VERSION:
-        from app.model_retirement_schema_source import store26_objects
+        from app.model_retirement_schema_release import retirement_target_objects
         email_ledger = ledger is not None
         if (email_version == TARGET_EMAIL_VERSION
-                and schema_objects(db) == store26_objects(email_ledger=email_ledger)):
+                and schema_objects(db) == tuple(row for row in retirement_target_objects()
+                                               if email_ledger or row[1] != 'email_schema_migrations')):
             return version
     raise ValueError('unsupported current publication declaration; explicit source migration required')
 

@@ -7676,8 +7676,8 @@ def render_attempt_detail(store: AutoReplyStore, attempt_id: int) -> tuple[int, 
         sent_reply,
         _feedback_events_by_sent_reply(store, [sent_reply] if sent_reply else []),
     )
-    codex_session_id = attempt.codex_session_id or store.get_codex_session_id(
-        attempt.conversation_id
+    codex_session_id = attempt.codex_session_id or store.get_conversation_runtime_session(
+        attempt.conversation_id, "codex_oauth"
     )
     agent_runs = []
     terminal_run = None
@@ -7990,7 +7990,7 @@ def _meeting_run_display_status(
 def render_codex_session_list(store: AutoReplyStore) -> str:
     rows = []
     for conversation in store.list_codex_conversations():
-        session_id = conversation.codex_session_id or ""
+        session_id = conversation.session_id
         latest_attempts = store.list_reply_attempts_for_conversation(
             conversation.conversation_id,
             limit=1,

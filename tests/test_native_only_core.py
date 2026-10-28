@@ -403,7 +403,6 @@ def test_completed_turn_reuses_adopted_plan_without_recapturing_sources(tmp_path
                                  owner='consumer', executor=unexpected).execute(
         run=run, prompt='same task', session_id=None, developer_instructions='',
         configure_command=unexpected, parse_result=unexpected, prepare_result=unexpected,
-        persist_conversation_session=True,
     )
     assert recovered.result == prepared
     assert store.get_agent_run(run.id).final_result_json == ''
@@ -592,7 +591,7 @@ def test_prepared_failure_does_not_adopt_native_proposed_success(tmp_path, monke
         configure_command=lambda command: command.extend([
             "--output-schema", str(native_output_schema_path("consumer", purpose="general")),
         ]), parse_result=parse_consumer_agent_wire_result,
-        prepare_result=prepare, persist_conversation_session=True,
+        prepare_result=prepare,
     )
     assert result.result.outcome is ConsumerOutcome.FAILED
     assert store.get_agent_run(run.id).status == 'failed'
