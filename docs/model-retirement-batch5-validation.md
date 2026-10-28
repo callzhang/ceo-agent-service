@@ -31,3 +31,16 @@ Store28.2/Email54的463项精确SQL冻结为内容无关的版本目录，规范
 相关source/target/新写入/inverse/reforward和cold guard15项通过。静默窗口中
 一个旧用例仍拿25.2当受支持前代，改为准确28.2；保留运行Run计数及损坏声明
 只读拒绝断言，整份drain测试33项通过。没有恢复旧选择器分支。
+
+## Business 转换闭包
+
+删除Business候选和旧导入owner的已关闭转换／inverse、独占校验和子表安装入口，
+保留8个现行函数逐AST不变。final_action_schema仅有专用测试调用，连同该工具和
+专用测试一起退休。移除候选projection的来源变体参数和已无调用的旧来源常量，
+当前所有调用方原本均使用同一默认投影；正面DDL与463项SQL完整摘要不变。
+
+当前原生候选／导入和语义导入70项验证通过（含exact schema）；SPEC发现两处
+混合旧测试仍含有效当前断言，已补回FK-on目标删除/ID变更保护、WorkTodo删除
+仍保留Task，以及任意status、非JSON文本、显式timestamp和SQLite类型比对。
+最后两文件47项通过；这是重叠运行，不相加为独立总数。独立SPEC最终PASS，
+QUALITY均PASS。三个归属测试临时目录已核实由实施者删除，无生产或备份操作。

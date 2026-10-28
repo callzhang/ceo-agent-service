@@ -1,5 +1,14 @@
 # Current Runtime Mechanism
 
+## Business 当前写入与导入链路清退（2026-10-28）
+
+当前候选insert/update/delete及WorkTodo导入read/assign继续使用已有Business owner；
+关闭的候选／导入owner转换器、旧来源校验及专用final Action转换包退出代码。
+候选projection只按当前字段顺序读取，不再接收actual/fresh来源开关；现行生成DDL、
+外键、业务事实、引用与水位完全不变。当前测试使用原生Store，SQLite来源DDL只作
+独立存储语义oracle，不参与应用构造或兼容读取。实际部署状态见第五批验收记录。
+
+
 ## Decision Runner 当前单一执行链路（2026-10-28）
 
 `CodexDecisionRunner` 只使用已有 `RoutedCodexExecution` 和持久化 Run，构造时传入
