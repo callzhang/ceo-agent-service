@@ -1,5 +1,21 @@
 # Current Runtime Mechanism
 
+## Feedback 单一事实归属 Store28.3/Email54（2026-10-28）
+
+Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前证据从准确Round
+（id+feedback_key+batch_id）读取，resolved_at从同一来源反馈Action读取；无Round解决事实
+继续可查。创建/领取/关联/patch/解决/重开不双写镜像。移除同源别名间的重复比较，保留
+原有Task/来源/指针/批次/状态/类型及外部回执资格；Round写后检查当前指针条件，竞争仍回滚。
+没有新审查、授权、重试政策。当前正面声明48表/463对象/1222列，不靠旧字段集相减。
+
+显式28.2→28.3 release先验证源镜像逐值/类型匹配真实owner，再移除；inverse由当前owner
+恢复，保留新增事实、身份、当前水位及FK集合。constructor不处理旧结构或自动补建。
+已关闭Task/Run/adoption转换包、其专用工具和测试退出；当前微信/审批/Workbench/反馈测试
+使用原生夹具，实际identity provenance与必要现行paired inverse保留。候选/安装/读回边界见
+[第四批验收](model-retirement-batch4-validation.md)；剩余Business/Email/Workbench和Runner
+转换半部仍是第五批后续范围。
+
+
 ## 会话唯一归属候选 Store28.2/Email54（2026-10-28）
 
 正常运行只在`conversation_runtime_sessions`保存按会话和路线的session/hash，
@@ -131,7 +147,7 @@ inverse CREATE 原始 SQL、恢复版本时钟，保留新任务、Action、收�
 
 Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、其上一版本（Store `2026-10-19.12` 经 `action_entity` 与 `task_run_entity` 发布）以及仅 Email 变化的发布；面向更旧目标版本的分支和 `prepare_store_schema_release` 里的 Run／Task／Workbench／Action 旧转换已删除，遇到这些版本一律以 `Store schema release needs a verified inverse for this transition` 拒绝。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。生产已于 Store `2026-10-23.1`／Email54，不受影响；回滚到比上一版本更旧的提交不再有自动逆迁。
 
-2026-10-25 第三阶段（Derek 批准）：上一版本发布 `app/task_run_entity_schema_release.py` 已退役，连同 `scripts/inverse_task_run_entity.py`、`tools/validate_task_run_entity_copy.py`、`tests/test_task_run_entity_schema_release.py`、`tests/test_current_publication_sources.py`（该发布期望 Email 53 而当前配对是 Email 54，已无法发布）。`prepare_database_schema_release` 现在只处理当前 Store／Email 版本和仅 Email 变化的发布；标记为 Store `2026-10-21.1` 的数据库一律以 `unsupported current Action source schema; explicit paired release required` 拒绝。生产 `auto-reply.sqlite3.task-run-inverse.json` 逆向交接文件原样保留，但已无命令可以消费它，回滚到 `2026-10-21.1` 不再有自动逆迁。`task_entity_schema`、`run_entity_schema`、`run_adoption_*` 的转换／逆向函数不再被任何应用代码调用，仅剩测试和 `scripts/validate_task_2d*` 引用，留待下一阶段决定。
+2026-10-25 第三阶段（Derek 批准）：上一版本发布 `app/task_run_entity_schema_release.py` 已退役，连同 `scripts/inverse_task_run_entity.py`、`tools/validate_task_run_entity_copy.py`、`tests/test_task_run_entity_schema_release.py`、`tests/test_current_publication_sources.py`（该发布期望 Email 53 而当前配对是 Email 54，已无法发布）。`prepare_database_schema_release` 现在只处理当前 Store／Email 版本和仅 Email 变化的发布；标记为 Store `2026-10-21.1` 的数据库一律以 `unsupported current Action source schema; explicit paired release required` 拒绝。生产 `auto-reply.sqlite3.task-run-inverse.json` 逆向交接文件原样保留，但已无命令可以消费它，回滚到 `2026-10-21.1` 不再有自动逆迁。`task_entity_schema`、`run_entity_schema`、`run_adoption_*` 的转换／逆向函数不再被任何应用代码调用，当时仅剩测试和 `scripts/validate_task_2d*` 引用；本待办已在2026-10-28第四批候选中完成闭包退休，当前范围及发布状态见本文顶部与第四批验收。
 
 2026-10-24 第二阶段：27 个历史 `*_schema_release` 模块（`action_email`、`task20`、`runs11`、`confirmation`、`selection`、`result`、`email_metadata`、`execution_owner`、`sent_result`、`shared_action`、`specialized_action`、`prepared_action`、`logical_run`、`business_legacy_field`、`business`、`configs`、`state`、`provider_state`、`task`、`run`、`workbench`、`action`、`action_delivery`、`action_postfix`、`action_receipt`、`action_reply`、`task_lifecycle`）及其测试、`scripts/validate_*_copy.py` 与 `scripts/retire_verified_email_inputs.py` 已删除。现行存储仍用到的辅助函数迁入 `app/business_schema_helpers.py`、`app/configs_schema_current.py`、`app/provider_state_schema_current.py`、`app/result_schema_helpers.py`、`app/runs11_schema_helpers.py`、`app/state_schema_current.py`，代码逐字复制，没有改行为。部署路径只剩 `store_schema_release`、`action_entity_schema_release`、`task_run_entity_schema_release`、`email_schema_release`、`current_action_schema_release`；`app/email_publication_sources.py` 和 `scheduled_config_storage.publication_scheduled_source` 无运行时调用方，一并删除。
 同日第二阶段补充：只被已删迁移链引用的 13 个历史结构模块也已删除（`business_legacy_field_schema`、`email_metadata_schema`、`email_training_migration`、`execution_owner_schema`、`final_source_migration`、`logical_run_schema`、`model_result_schema`、`prepared_action_schema`、`sent_result_schema`、`shared_action_schema`、`specialized_action_schema`、`task_lifecycle_schema`、`state_publication_sources`），其测试随之退役。

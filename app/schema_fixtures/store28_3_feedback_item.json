@@ -1,0 +1,1 @@
+{"feedback_processing_items": "CREATE TABLE feedback_processing_items (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), feedback_key TEXT UNIQUE, batch_id TEXT NOT NULL, current_round_id INTEGER NOT NULL)"}

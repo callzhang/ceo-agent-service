@@ -87,12 +87,12 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             email_version = (db.execute(
                 "select max(version) from main.email_schema_migrations"
             ).fetchone()[0] if "email_schema_migrations" in tables else None)
-        from app.conversation_session_schema_release import (
-            SOURCE_STORE_VERSION as SESSION_SOURCE_STORE_VERSION,
-            prepare_conversation_session_release,
+        from app.feedback_owner_schema_release import (
+            SOURCE_STORE_VERSION as FEEDBACK_SOURCE_STORE_VERSION,
+            prepare_feedback_owner_release,
         )
-        if marker == (SESSION_SOURCE_STORE_VERSION,) and email_version == CURRENT_EMAIL_VERSION:
-            return prepare_conversation_session_release(path)
+        if marker == (FEEDBACK_SOURCE_STORE_VERSION,) and email_version == CURRENT_EMAIL_VERSION:
+            return prepare_feedback_owner_release(path)
         if not tables:
             require_current_pair(path)
             return None

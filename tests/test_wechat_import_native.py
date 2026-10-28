@@ -5,12 +5,9 @@ from types import SimpleNamespace
 import pytest
 
 from app.store import AutoReplyStore
-from app.task_entity_schema import capture_task_entities, migrate_task_entities
 from app.task_entity_storage import create_task, get_task
-from app.task12_storage import update_task12
 from app.wechat.memory_import import CodexMemoryExtractionRunner, CodexMemoryRecallMatcher
 from app.task_run_entity_assembly import task_run_entity_assembly_objects
-from tests.test_task_entity_schema import _source
 
 
 class AssembledTaskStore(AutoReplyStore):
@@ -159,63 +156,53 @@ def test_wechat_import_attempt_parent_requires_running_native_import_task(store)
 @pytest.mark.parametrize(
     ("status", "error"), [("completed", ""), ("failed", "import failed")]
 )
-def test_migrated_running_wechat_import_finishes_existing_task_result(
+def test_running_wechat_import_finishes_existing_task_result(
     tmp_path, status, error
 ):
-    db = _source()
-    db.row_factory = sqlite3.Row
-    update_task12(db, "wechat_memory_import_jobs", 232, {
-        "status": "running", "error": "", "finished_at": "",
-    })
+    store = AssembledTaskStore(tmp_path / "native-running-import.sqlite3")
+    task_id = store.begin_wechat_memory_import_job(import_run_id="scope", account_id="acct")
+    db = store.db
+    db.execute("insert into task_results(task_id,result_kind,finished_at) values(?, 'wechat_import', '')", (task_id,))
     db.commit()
-    db.execute("begin immediate")
-    metadata = capture_task_entities(db)
-    migrate_task_entities(db, metadata)
-    db.commit()
-
-    task = get_task(db, 232)
+    task = get_task(db, task_id)
     assert task["kind"] == "wechat_import" and task["status"] == "running"
     original_result = tuple(db.execute(
         "select finished_at,result_json,decision_json from task_results "
-        "where task_id=232 and result_kind='wechat_import'"
+        "where task_id=? and result_kind='wechat_import'", (task_id,)
     ).fetchone())
     assert original_result == ("", None, None)
 
-    store = AssembledTaskStore.__new__(AssembledTaskStore)
-    store.path = tmp_path / "migrated-running-import.sqlite3"
-    store.db = db
-
     db.execute(
         "create trigger reject_wechat_import_result before update on task_results "
-        "when old.task_id=232 and old.result_kind='wechat_import' "
-        "begin select raise(abort,'test result write failure'); end"
+        "when old.task_id=%d and old.result_kind='wechat_import' "
+        "begin select raise(abort,'test result write failure'); end" % task_id
     )
     with pytest.raises(sqlite3.IntegrityError, match="test result write failure"):
-        store.finish_wechat_memory_import_job(232, status=status, error=error)
-    assert get_task(db, 232)["status"] == "running"
+        store.finish_wechat_memory_import_job(task_id, status=status, error=error)
+    assert get_task(db, task_id)["status"] == "running"
     assert tuple(db.execute(
         "select finished_at,result_json,decision_json from task_results "
-        "where task_id=232 and result_kind='wechat_import'"
+        "where task_id=? and result_kind='wechat_import'", (task_id,)
     ).fetchone()) == original_result
     db.execute("drop trigger reject_wechat_import_result")
 
-    store.finish_wechat_memory_import_job(232, status=status, error=error)
+    store.finish_wechat_memory_import_job(task_id, status=status, error=error)
 
-    task = get_task(db, 232)
+    task = get_task(db, task_id)
     result = tuple(db.execute(
         "select finished_at,result_json,decision_json from task_results "
-        "where task_id=232 and result_kind='wechat_import'"
+        "where task_id=? and result_kind='wechat_import'", (task_id,)
     ).fetchone())
     assert task["status"] == status and task["error"] == error
     assert result[0] and result[1:] == original_result[1:]
     assert db.execute(
-        "select count(*) from task_results where task_id=232 and result_kind='wechat_import'"
+        "select count(*) from task_results where task_id=? and result_kind='wechat_import'", (task_id,)
     ).fetchone()[0] == 1
-    store.finish_wechat_memory_import_job(232, status=status, error=error)
-    assert get_task(db, 232)["status"] == task["status"]
+    store.finish_wechat_memory_import_job(task_id, status=status, error=error)
+    assert get_task(db, task_id)["status"] == task["status"]
     assert tuple(db.execute(
         "select finished_at,result_json,decision_json from task_results "
-        "where task_id=232 and result_kind='wechat_import'"
+        "where task_id=? and result_kind='wechat_import'", (task_id,)
     ).fetchone()) == result
 
 

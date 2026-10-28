@@ -25,46 +25,24 @@ def test_current_declarations_do_not_call_historical_builders(monkeypatch):
         assert row[3:6] == ("fixture", "evidence", "clock")
 
 
-def test_field_map_artifact_matches_current_definitions():
-    import json
-    from pathlib import Path
-    from app.run_adoption_definitions import field_map as adoption_field_map
-    from app.run_entity_definitions import run_entity_field_map
-    from app.task_run_entity_definitions import task_run_field_map, task_run_identity_associations
-
-    root = Path(__file__).resolve().parents[1]
-    field_map = json.loads((root / 'docs/task-run-entity-assembly-field-map.json').read_text())
-    adoption = [
-        {'source_kind': kind, 'source_field': field, 'target_table': destination[0],
-         'target_field_or_expression': destination[1]}
-        for kind, fields in adoption_field_map().items() for field, destination in fields.items()
-    ]
-    assert field_map == {'task_fields': list(task_run_field_map()),
-                         'task_identity_associations': list(task_run_identity_associations()),
-                         'run_fields': run_entity_field_map(), 'adoption_fields': adoption}
-    assert len(field_map['task_fields']) == 287
-    assert len(field_map['run_fields']) == 8 * 79
-    assert len(field_map['adoption_fields']) == 43
-    assert (root / 'docs/task-run-entity-assembly-retirement.sql').read_text().startswith(
-        '-- Unactivated Task/Run assembly retirement inventory; not executable migration SQL.\n')
 
 
 def test_both_current_schema_roles_preserve_exact_catalogs():
     import hashlib
     import json
     from app.current_schema_manifest import current_objects
-    from app.conversation_session_schema_release import session_target_objects
+    from app.feedback_owner_schema_release import feedback_target_objects
     from app.model_retirement_schema_source import store26_objects
 
     for email_ledger, count, digest in (
-        (False, 462, '7e4a5ab95e558ea7e88c3fbafa59d93191b16721b6818ae6a9da0eac46e26df5'),
-        (True, 463, 'b03e1a3054ab5b2481a7e6d15b00ac3aac7799138239b4a592293c1bda0c297e'),
+        (False, 462, 'ded768be455ab4a82fcc6eb505e478dbff6d57cff002c715fe3afc834d1ab693'),
+        (True, 463, 'e3ea9a1a55fa459d1a4b6f096b801c53e3b972c9f022a31bca173c17df8931e4'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
         encoded = json.dumps(objects).encode()
         assert hashlib.sha256(encoded).hexdigest() == digest
-        assert objects == tuple(row for row in session_target_objects()
+        assert objects == tuple(row for row in feedback_target_objects()
                                 if email_ledger or row[1] != 'email_schema_migrations')
 
     for email_ledger, count, digest in (

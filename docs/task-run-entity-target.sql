@@ -30,7 +30,7 @@ CREATE TABLE email_classification_inputs (task_id INTEGER PRIMARY KEY REFERENCES
 
 CREATE TABLE work_summary_inputs (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), source_type TEXT NOT NULL, source_ref TEXT NOT NULL, payload_json TEXT NOT NULL, source_created_at TEXT NOT NULL DEFAULT '', body_sha256 TEXT NOT NULL DEFAULT '', body_bytes INTEGER NOT NULL DEFAULT 0, body_compacted INTEGER NOT NULL DEFAULT 0);
 
-CREATE TABLE feedback_processing_items (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), feedback_key TEXT UNIQUE, batch_id TEXT NOT NULL, workbench_task_id TEXT NOT NULL, workbench_turn_id TEXT NOT NULL, attempt_id INTEGER NOT NULL, agent_run_id INTEGER NOT NULL, commit_sha TEXT NOT NULL, test_evidence_json TEXT NOT NULL, restart_evidence_json TEXT NOT NULL, health_evidence_json TEXT NOT NULL, note TEXT NOT NULL, resolved_at TEXT NOT NULL, current_round_id INTEGER NOT NULL);
+CREATE TABLE feedback_processing_items (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), feedback_key TEXT UNIQUE, batch_id TEXT NOT NULL, current_round_id INTEGER NOT NULL);
 
 CREATE TABLE task_run_identity_map (source_kind TEXT NOT NULL, physical_id INTEGER NOT NULL, public_key TEXT, public_key_type TEXT NOT NULL, target_id INTEGER NOT NULL, PRIMARY KEY(source_kind,physical_id), UNIQUE(source_kind,target_id), CHECK(public_key_type IN ('null','integer','text','blob')));
 

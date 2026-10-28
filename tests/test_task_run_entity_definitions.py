@@ -4,8 +4,6 @@ import pytest
 
 from app.task_run_entity_definitions import (
     task_run_entity_objects,
-    task_run_field_map,
-    validate_task_run_field_map,
 )
 
 
@@ -21,23 +19,6 @@ def test_target_schema_executes_and_has_task_run_domain_owners():
     assert not {'runs', 'actions', 'action_receipts'} & names
 
 
-def test_field_map_is_total_unique_and_fails_unknown_or_missing_source_fields():
-    mapping = task_run_field_map()
-    validate_task_run_field_map(mapping)
-    with pytest.raises(ValueError, match='unknown source field'):
-        validate_task_run_field_map((*mapping, {**mapping[0], 'source_kind': 'invented', 'source_field': 'x'}))
-    with pytest.raises(ValueError, match='unmapped source field'):
-        validate_task_run_field_map(mapping[1:])
-    with pytest.raises(ValueError, match='duplicate source field'):
-        validate_task_run_field_map((*mapping, mapping[0]))
-    for changed in (
-        {**mapping[1], 'sql_type': 'BLOB'},
-        {**mapping[1], 'null_contract': 'NULL allowed'},
-        {**mapping[1], 'source_default': '0'},
-        {**mapping[1], 'storage_wrapper': 'legacy_key'},
-    ):
-        with pytest.raises(ValueError, match='source metadata mismatch'):
-            validate_task_run_field_map((mapping[0], changed, *mapping[2:]))
 
 
 def test_task_input_identity_and_multi_key_relation_are_real_constraints():
@@ -222,10 +203,8 @@ def test_feedback_item_native_insert_accepts_source_valid_unassigned_batch_value
         )
         db.execute(
             """insert into feedback_processing_items(
-                task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,
-                attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,
-                health_evidence_json,note,resolved_at,current_round_id
-            ) values(?,?,?,'','',0,0,'','{}','{}','{}','','',0)""",
+                task_id,feedback_key,batch_id,current_round_id
+            ) values(?,?,?,0)""",
             (task_id, feedback_key, batch_id),
         )
     assert db.execute(

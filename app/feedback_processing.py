@@ -81,7 +81,7 @@ class FeedbackProcessingBatch(_StrictProcessingModel):
 
 
 class FeedbackProcessingItem(_StrictProcessingModel):
-    """Persisted state and evidence for one feedback event."""
+    """Current Task, exact pointed Round, and source event resolution projection."""
 
     feedback_key: str
     current_round_id: int = 0

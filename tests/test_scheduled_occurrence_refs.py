@@ -1,72 +1,13 @@
 import pytest
 
-from app.run_entity_schema import _replace_json_integer_leaf
 
 
-def test_occurrence_leaf_translation_preserves_unrelated_source_bytes_and_inverse():
-    source = '{  "other" : "7003", "scheduled_consumer" : { "scheduled_task_run_id" : 7003 } }'
-
-    native, changed = _replace_json_integer_leaf(
-        source,
-        ("scheduled_consumer", "scheduled_task_run_id"),
-        {7003: 9503}.__getitem__,
-    )
-    assert changed == 1
-    assert native == source.replace(" : 7003", " : 9503")
-
-    restored, changed = _replace_json_integer_leaf(
-        native,
-        ("scheduled_consumer", "scheduled_task_run_id"),
-        {9503: 7003}.__getitem__,
-    )
-    assert changed == 1
-    assert restored == source
 
 
-def test_occurrence_leaf_translation_rejects_duplicate_path_keys():
-    source = '{"scheduled_consumer":{"scheduled_task_run_id":7003,"scheduled_task_run_id":8003}}'
-    with pytest.raises(ValueError, match="duplicate key"):
-        _replace_json_integer_leaf(
-            source,
-            ("scheduled_consumer", "scheduled_task_run_id"),
-            {7003: 9503}.__getitem__,
-        )
 
 
-def test_occurrence_leaf_translation_rejects_non_integer_or_unmapped_refs():
-    path = ("scheduled_consumer", "scheduled_task_run_id")
-    with pytest.raises(ValueError, match="positive integer"):
-        _replace_json_integer_leaf(
-            '{"scheduled_consumer":{"scheduled_task_run_id":true}}', path,
-            {1: 2}.__getitem__,
-        )
-    with pytest.raises(KeyError):
-        _replace_json_integer_leaf(
-            '{"scheduled_consumer":{"scheduled_task_run_id":7003}}', path,
-            {}.__getitem__,
-        )
 
 
-def test_empty_optional_input_json_is_preserved_without_reference_parsing():
-    import sqlite3
-
-    from app.run_entity_schema import _translate_schedule_input_refs
-
-    db = sqlite3.connect(":memory:")
-    db.execute(
-        "create table task_inputs(id integer primary key, trigger_message_json text, "
-        "input_provenance_json text)"
-    )
-    db.execute("insert into task_inputs values(1, '', '')")
-    _translate_schedule_input_refs(
-        db,
-        lambda _value: (_ for _ in ()).throw(AssertionError("empty JSON has no reference")),
-        native=True,
-    )
-    assert db.execute(
-        "select trigger_message_json,input_provenance_json from task_inputs where id=1"
-    ).fetchone() == ("", "")
-    db.close()
 
 
 def test_historical_empty_grammar_requires_complete_counts_and_allows_email_scan_inputs():
