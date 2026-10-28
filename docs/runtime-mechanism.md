@@ -56,8 +56,8 @@ Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前
 恢复，保留新增事实、身份、当前水位及FK集合。constructor不处理旧结构或自动补建。
 已关闭Task/Run/adoption转换包、其专用工具和测试退出；当前微信/审批/Workbench/反馈测试
 使用原生夹具，实际identity provenance与必要现行paired inverse保留。候选/安装/读回边界见
-[第四批验收](model-retirement-batch4-validation.md)；剩余Business/Email/Workbench和Runner
-转换半部仍是第五批后续范围。
+[第四批验收](model-retirement-batch4-validation.md)。上述转换半部与Runner已在第五批分单元退休，
+发布／读回状态见[第五批验收](model-retirement-batch5-validation.md)。
 
 
 ## 会话唯一归属 Store28.2/Email54（2026-10-28）
