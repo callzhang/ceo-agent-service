@@ -494,6 +494,15 @@ class RuntimeSkillEditCapture:
     sha256: str
 
 
+def repository_installed_skill_names(store: "AutoReplyStore") -> set[str]:
+    """Names explicitly imported from Git, including their later local edits."""
+    return {
+        skill.name for skill in store.list_managed_skills()
+        if any(revision.source.startswith('{"kind":"git-skill",')
+               for revision in store.list_managed_skill_revisions(skill.id))
+    }
+
+
 def capture_runtime_skill_edits(
     store: "AutoReplyStore", *, skills_root: Path | None = None
 ) -> tuple[RuntimeSkillEditCapture, ...]:
@@ -516,11 +525,7 @@ def capture_runtime_skill_edits(
     ).expanduser()
     captured: list[RuntimeSkillEditCapture] = []
     problems: list[str] = []
-    external_names = {
-        skill.name for skill in store.list_managed_skills()
-        if any(revision.source.startswith('{"kind":"git-skill",')
-               for revision in store.list_managed_skill_revisions(skill.id))
-    }
+    external_names = repository_installed_skill_names(store)
     for name in dict.fromkeys((*VERSIONED_RUNTIME_SKILL_NAMES, *sorted(external_names))):
         runtime_only = name in RUNTIME_ONLY_VERSIONED_SKILL_NAMES or name in external_names
         path = root / name / "SKILL.md"

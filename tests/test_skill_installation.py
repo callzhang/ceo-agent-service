@@ -1,6 +1,5 @@
 from concurrent.futures import ThreadPoolExecutor
 import json
-from pathlib import Path
 import sqlite3
 
 import pytest

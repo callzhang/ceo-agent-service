@@ -1,4 +1,3 @@
-from pathlib import Path
 
 import app.business_skills as skills
 from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES

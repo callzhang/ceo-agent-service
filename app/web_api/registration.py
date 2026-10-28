@@ -66,6 +66,7 @@ from app.managed_skills import (
     import_repository_managed_skills,
     export_managed_skill_revision,
     validate_managed_skill_name,
+    repository_installed_skill_names,
 )
 from app.feedback_processing import (
     FeedbackIterationDecision,
@@ -1891,11 +1892,14 @@ def register_console_routes(
         if set(payload) - {"content", "parent_revision_id"}:
             return JSONResponse({"ok": False, "code": "validation_error", "message": "unsupported managed revision fields", "details": {}}, status_code=422)
         try:
-            revision = managed_store().create_managed_skill_revision(
+            store = managed_store()
+            skill = store.get_managed_skill(skill_id)
+            revision = store.create_managed_skill_revision(
                 skill_id,
                 payload.get("content"),
                 source="settings",
                 parent_revision_id=payload.get("parent_revision_id"),
+                require_managed_marker=skill is None or skill.name not in repository_installed_skill_names(store),
             )
         except ManagedSkillValidationError as exc:
             return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)

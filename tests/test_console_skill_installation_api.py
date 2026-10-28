@@ -49,3 +49,17 @@ def test_invalid_install_request_is_rejected_before_install():
         pytest.fail('invalid request reached installer')
     response = client_for(install=unexpected).post('/api/console/settings/skill-installs', json={'repo_url': 12})
     assert response.status_code == 422
+
+
+def test_imported_external_skill_can_be_edited_without_adding_ownership_marker(tmp_path):
+    from app.store import AutoReplyStore
+    from app.web_api.registration import register_console_routes
+    store = AutoReplyStore(tmp_path / 'editable.sqlite3')
+    skill = store.create_managed_skill('external-example', 'External Example')
+    text = '---\nname: external-example\ndescription: Example\n---\nOriginal'
+    original = store.create_managed_skill_revision(skill.id, text, source='{"kind":"git-skill","version":1}', require_managed_marker=False)
+    app = FastAPI()
+    register_console_routes(app, store_factory=lambda: store, status_payload_factory=lambda: {}, feedback_backlog_factory=lambda: {}, attention_rows_factory=lambda: [])
+    result = TestClient(app).post(f'/api/console/settings/managed-skills/{skill.id}/revisions', json={'content': text + '\nEdited locally', 'parent_revision_id': original.id})
+    assert result.status_code == 201
+    assert result.json()['content'] == text + '\nEdited locally'

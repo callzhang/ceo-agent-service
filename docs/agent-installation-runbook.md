@@ -671,3 +671,27 @@ Only after reviewing dry-run attempts with the user:
 - launchd is installed only after dry-run approval.
 - No unresolved `failed` or `processing` backlog remains.
 - Live send is disabled unless the user explicitly approved it.
+
+## Install additional Skills from Settings
+
+After deployment, use Settings → Skills. Enter an HTTPS/SSH Git repository URL
+(public or private), or a public Skill name, and click Search. Repository access
+uses the service OS account's normal Git credentials; public-name discovery uses
+skills.sh and reads the matching repositories for descriptions, authors or
+maintainers, and last modification times. A direct private URL is never sent to
+the public name index. Configure native Git authentication on the service host
+when access fails; credentials do not go into the search field.
+
+Click Install beside the desired Skill. Its complete directory, including
+scripts/references/assets, is installed at the exact commit returned by search.
+The installed list includes Skills with no feature association. Installation
+records a pending runtime configuration; apply it through the normal service
+restart lifecycle and verify loaded state separately. It does not enable a
+scheduled task, connector or external action. Existing packages are preserved;
+repeated identical installs are idempotent, while changed-source/name collisions
+are reported for resolution. Updates are not pulled automatically.
+
+First installation supplies missing generic baseline packages before the worker
+starts. The bootstrap check verifies that baseline; it is not the repository
+search installer. Enterprise-rule migration and old public-history treatment
+remain a separate release workstream.
