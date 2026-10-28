@@ -86,6 +86,20 @@ def test_outbound_action_review_contract_is_explicit_and_audit_only(tmp_path):
     assert "For every proposed message, email, or other externally visible action" not in consumer
 
 
+def test_audit_does_not_require_approval_for_configured_ai_service_processing(tmp_path):
+    path = tmp_path / "rules.md"
+    path.write_text("", encoding="utf-8")
+
+    consumer = render_audit_rules(AgentRole.CONSUMER, path)
+    audit = render_audit_rules(AgentRole.AUDIT, path)
+
+    assert "configured AI Services tool" not in consumer
+    assert "configured AI Services tool" in audit
+    assert "not a separate business action requiring human approval" in audit
+    assert "Continue to assess content sensitivity, task scope and explicit no-processing instructions" in audit
+    assert "review the exact recipient or target, content, evidence, and task scope" in audit
+
+
 def test_default_oa_rules_keep_material_and_policy_gaps_separate():
     rules = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
 

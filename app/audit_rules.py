@@ -36,6 +36,14 @@ OUTBOUND_ACTION_REVIEW_CONTRACT = (
     "performed the action. Audit must never send it or perform the external "
     "action; only the System Executor executes the exact persisted approved plan."
 )
+AI_SERVICE_PROCESSING_CONTRACT = (
+    "Calling a configured AI Services tool such as OCR or transcription to read task source material "
+    "is a configured service capability, not a separate business action requiring human approval. "
+    "Do not reject or request extra approval merely because the exact source bytes are processed by "
+    "that configured service. Continue to assess content sensitivity, task scope and explicit "
+    "no-processing instructions under the applicable rules, and preserve actual tool/provider "
+    "failures. This does not authorize disclosure to message recipients or any other external action."
+)
 BUSINESS_CONTEXT_CONTRACT = (
     "Judge business suitability from the complete task and conversation context, "
     "the principal's responsibility, applicable workflow, source facts and action consequences. "
@@ -260,6 +268,7 @@ def render_audit_rules(role: AgentRole, path: Path | None = None, *, create_miss
     ]
     if role is AgentRole.AUDIT:
         sections.insert(1, OUTBOUND_ACTION_REVIEW_CONTRACT)
+        sections.insert(2, AI_SERVICE_PROCESSING_CONTRACT)
     if role is AgentRole.CONSUMER:
         sections.append(memory_write_reminder())
     return "\n\n".join(sections)
