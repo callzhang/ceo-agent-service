@@ -279,3 +279,56 @@ def test_execution_uncertainty_does_not_overwrite_terminal_skip_explanation():
     )
 
     assert message == "原 OA 流程已终止，此跟进已跳过；原消息送达情况仍未核实。"
+
+
+def test_reconciled_wechat_task_explains_sent_reply_instead_of_execution_failure():
+    from app.web_api.attempts import _reconciled_wechat_message
+
+    attempt = SimpleNamespace(channel="wechat", conversation_id="melody115", trigger_message_id="wx-1")
+    calls = []
+
+    class Store:
+        def get_wechat_reply_task_reconciliation(self, conversation_id, trigger_message_id):
+            calls.append((conversation_id, trigger_message_id))
+            return SimpleNamespace(kind="wechat_reply_task_done_reconciled")
+
+    message = _reconciled_wechat_message(Store(), attempt, SimpleNamespace(status="done"))
+    assert message == "已通过微信读回确认这条回复已发送；原执行回执保留，无需操作。"
+    assert calls == [("melody115", "wx-1")]
+
+    class Skipped(Store):
+        def get_wechat_reply_task_reconciliation(self, conversation_id, trigger_message_id):
+            return SimpleNamespace(kind="wechat_reply_task_skipped_reconciled")
+
+    assert "旧候选已跳过" in _reconciled_wechat_message(Skipped(), attempt, SimpleNamespace(status="skipped"))
+
+
+def test_reconciled_wechat_message_stays_silent_without_a_settlement_or_for_other_channels():
+    from app.web_api.attempts import _reconciled_wechat_message
+
+    class Empty:
+        def get_wechat_reply_task_reconciliation(self, conversation_id, trigger_message_id):
+            return None
+
+    wechat = SimpleNamespace(channel="wechat", conversation_id="c", trigger_message_id="m")
+    assert _reconciled_wechat_message(Empty(), wechat, SimpleNamespace(status="done")) == ""
+    assert _reconciled_wechat_message(Empty(), wechat, SimpleNamespace(status="failed")) == ""
+    dingtalk = SimpleNamespace(channel="dingtalk", conversation_id="c", trigger_message_id="m")
+    assert _reconciled_wechat_message(object(), dingtalk, SimpleNamespace(status="done")) == ""
+
+
+def test_console_command_record_renders_what_who_where_when():
+    import json
+
+    from app.web_api.attempts import _console_command_display
+
+    ui = SimpleNamespace(kind="console_rerun_requested", created_at="2026-10-28 19:02:04", detail=json.dumps({
+        "attempt_id": 16295, "command": "rerun", "actor": "console-ui",
+        "client": "127.0.0.1", "user_agent": "Mozilla/5.0",
+    }))
+    assert _console_command_display(ui) == "重新处理 · console-ui · 127.0.0.1 · 2026-10-28 19:02:04"
+
+    script = SimpleNamespace(kind="console_retry_requested", created_at="2026-10-28 19:26:24", detail=json.dumps({
+        "attempt_id": 16295, "command": "retry", "actor": "", "client": "127.0.0.1", "user_agent": "curl/8.7.1",
+    }))
+    assert _console_command_display(script) == "重试（读回确认） · 未标识来源（curl/8.7.1） · 127.0.0.1 · 2026-10-28 19:26:24"

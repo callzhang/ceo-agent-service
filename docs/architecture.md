@@ -2454,6 +2454,10 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 投递状态回写 Attempt 只认任务当前执行代（Derek 2026-10-28）：旧代的失败投递被新代已发送投递标为 `superseded` 时不再回写同一个 Attempt，避免把刚发送成功的状态覆盖成 `skipped`。Reader 对本机微信显示不了的 appmsg 输出 `[无法显示的内容…]` 占位并归为 `unknown`，不再伪装成 `[链接]` 分享、不生成回复任务（细节见 runtime-mechanism）。
 
+Reader 与服务同版本（Derek 2026-10-28）：Reader 源文件摘要是双方共享的版本号，打包时写进 app，每条 IPC 回复带上，服务每次调用核对，不一致即拒绝并要求重建 Reader（细节见 runtime-mechanism）。
+
+控制台命令记录来源（Derek 2026-10-28）：被接受的 Attempt 重新处理/重试/再次发送各写一条带 actor、客户端和 User-Agent 的记录，详情页按行显示；读回收口的任务在详情页说明「已通过读回确认发送」而不是「执行失败」（细节见 runtime-mechanism）。
+
 失败微信 Attempt 的 History「重试」API 先只读对账，不再次发送：当前已审核候选、审核、执行代、动作正文和 Delivery 证据必须完全绑定。`sent` 只有在微信 Reader 从精确账号、会话和发送时间窗口读回唯一匹配的本人消息后，才能把失败 Task 结算为 `done`；`superseded` 只有在其明确 successor 链最终到达已发送且精确读回的 Delivery、旧正文在完整有限读回窗口内不存在时才能结算为 `skipped`。读回缺失、重复或窗口不完整均保留失败并返回冲突。原失败 Attempt、Run 和动作记录不改写；该 API 不创建 Sender，也不重放消息。
 
 内部处理失败的正式 API 是 `POST /api/console/history/{attempt_id}/rerun`：它把同一业务输入送回原任务流程，由原审核和投递门禁重新处理，不需要通过聊天确认卡回复。`/retry` 仅用于上段所述的外部动作读回对账，不能替代或触发重跑。

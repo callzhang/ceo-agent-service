@@ -1386,7 +1386,13 @@ export function getResource(path: string, signal?: AbortSignal) {
 }
 
 export function command(path: string, body: Record<string, unknown> = {}) {
-  return request<{ ok: boolean; item?: unknown; message: string; meta: { updated_at: string } }>(path, { method: "POST", body: JSON.stringify(body) });
+  // The service records who asked for an Attempt command; a click in this UI
+  // identifies itself, a script calling the same API does not.
+  return request<{ ok: boolean; item?: unknown; message: string; meta: { updated_at: string } }>(path, {
+    method: "POST",
+    headers: { "X-Console-Actor": "console-ui" },
+    body: JSON.stringify(body),
+  });
 }
 
 export function resolveFeedback(id: string) { return command(`/api/console/feedback/${encodeURIComponent(id)}/resolve`); }

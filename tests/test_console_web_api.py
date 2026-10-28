@@ -3666,6 +3666,52 @@ def test_sent_wechat_history_has_separate_exact_message_resend_route(tmp_path: P
     assert store.get_reply_task(task.id).execution_generation != original_generation
 
 
+def test_console_attempt_commands_record_their_source_and_show_on_the_detail(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id="melody115", message_id="wx-1",
+        sender_id="melody115", sender_display_name="Melody",
+        conversation_type="direct", direction="inbound",
+        sent_at="2026-09-26T14:12:52-07:00", kind="text",
+        text="他说 memory 不仅是 data", source_version="4.1.10",
+    )
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Melody", single_chat=True,
+        trigger_message_id=trigger.message_id, trigger_create_time=trigger.sent_at,
+        trigger_sender="Melody", trigger_text=trigger.text,
+        trigger_message_json=trigger.model_dump_json(),
+    )
+    task = store.get_reply_task_for_message("melody115", "wx-1", channel="wechat")
+    assert task is not None
+    with store._connect() as db:
+        set_native_task_fields(db, "reply_tasks", task.id, {"status": "done"})
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=trigger.conversation_id,
+        conversation_title="Melody", trigger_message_id=trigger.message_id,
+        trigger_sender="Melody", trigger_text=trigger.text,
+        action="send_reply", sensitivity_kind="normal", send_status="sent",
+    )
+
+    with _client(tmp_path) as client:
+        # A refused command leaves no record.
+        assert client.post(f"/api/console/history/{attempt_id}/rerun").status_code == 409
+        assert store.list_console_attempt_commands("melody115", "wx-1") == []
+        response = client.post(
+            f"/api/console/history/{attempt_id}/resend-wechat",
+            json={"trigger_message_id": "wx-1"},
+            headers={"X-Console-Actor": "console-ui", "User-Agent": "Mozilla/5.0 test"},
+        )
+        assert response.status_code == 200
+        detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+
+    records = store.list_console_attempt_commands("melody115", "wx-1")
+    assert [record.kind for record in records] == ["console_resend_wechat_requested"]
+    rows = [row["value"] for row in detail["metadata"] if row["label"] == "操作记录"]
+    assert len(rows) == 1
+    assert rows[0].startswith("再次发送 · console-ui · ")
+
+
 def test_wechat_history_retry_uses_reconciliation_result_without_confirmation_card(
     tmp_path: Path, monkeypatch,
 ):

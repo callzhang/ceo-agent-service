@@ -128,6 +128,12 @@ tests/test_service_codex_config.py
 tests/test_service_heartbeat.py
 tests/test_service_supervisor.py
 tests/test_skill_features.py
+tests/test_skill_first_install.py
+tests/test_skill_first_install_flow.py
+tests/test_skill_repositories.py
+tests/test_skill_discovery.py
+tests/test_skill_installation.py
+tests/test_console_skill_installation_api.py
 tests/test_skill_feedback.py
 tests/test_skill_files.py
 tests/test_stardust_oa_attendance_oncall_leave.py
@@ -409,10 +415,4 @@ tests/test_business_candidate_storage.py
 tests/test_business_legacy_owner_storage.py
 tests/wechat/test_codex_runner.py
 tests/wechat/test_send_message_handler.py
-tests/test_skill_first_install.py
-tests/test_skill_first_install_flow.py
-tests/test_skill_repositories.py
-tests/test_skill_discovery.py
-tests/test_skill_installation.py
-tests/test_console_skill_installation_api.py
 tests/test_wechat_voice_transcript_retirement_release.py

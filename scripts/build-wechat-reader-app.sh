@@ -41,7 +41,13 @@ if [[ ! -x "${builder_python}" ]] || ! "${builder_python}" -m PyInstaller --vers
   exit 2
 fi
 
-mkdir -p "${output_dir}" "${build_root}/work" "${build_root}/spec"
+mkdir -p "${output_dir}" "${build_root}/work" "${build_root}/spec" "${build_root}/stamp"
+
+# The service refuses a Reader whose code version differs from its own
+# (app/wechat/reader_version.py). Embed the digest of exactly the sources this
+# build packages, so the installed app can report it on every IPC reply.
+reader_version="$(cd "${repo_root}" && PYTHONPATH="${repo_root}" "${builder_python}" -m app.wechat.reader_version)"
+printf '%s\n' "${reader_version}" > "${build_root}/stamp/reader_version.txt"
 
 pyinstaller_args=(
   --noconfirm
@@ -57,6 +63,7 @@ pyinstaller_args=(
 if [[ -n "${signing_identity}" ]]; then
   pyinstaller_args+=(--codesign-identity "${signing_identity}")
 fi
+pyinstaller_args+=(--add-data "${build_root}/stamp/reader_version.txt:.")
 pyinstaller_args+=("${repo_root}/app/wechat/reader_helper.py")
 
 "${builder_python}" -m PyInstaller "${pyinstaller_args[@]}"
@@ -77,6 +84,7 @@ else
   codesign --force --deep --sign - "${app_path}"
 fi
 codesign --verify --deep --strict --verbose=2 "${app_path}"
+printf 'reader version %s\n' "${reader_version}"
 
 actual_bundle_id="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleIdentifier' "${info_plist}")"
 if [[ "${actual_bundle_id}" != "${bundle_id}" ]]; then

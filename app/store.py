@@ -24025,6 +24025,79 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return None if row is None else ReplyError.model_validate(dict(row))
 
+    WECHAT_RECONCILED_TASK_KINDS = (
+        "wechat_reply_task_done_reconciled",
+        "wechat_reply_task_skipped_reconciled",
+    )
+
+    def get_wechat_reply_task_reconciliation(
+        self, conversation_id: str, trigger_message_id: str,
+    ) -> ReplyError | None:
+        """The read-back settlement that closed this WeChat task, if one exists.
+
+        ``settle_failed_wechat_task_from_delivery`` records it as a resolved
+        error row; the Attempt page reads it to explain a ``done`` task whose
+        execution receipt still says ``failed``.
+        """
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select * from ({ERROR_SQL})
+                where conversation_id=? and message_id=? and kind in (?, ?)
+                order by id desc limit 1
+                """,
+                (conversation_id, trigger_message_id, *self.WECHAT_RECONCILED_TASK_KINDS),
+            ).fetchone()
+            return None if row is None else ReplyError.model_validate(dict(row))
+
+    CONSOLE_ATTEMPT_COMMANDS = ("rerun", "retry", "resend_wechat")
+
+    def record_console_attempt_command(
+        self, attempt_id: int, command: str, *, actor: str, client: str, user_agent: str,
+    ) -> bool:
+        """Record who asked the console to act on an Attempt, and when.
+
+        Derek, 2026-10-28: two console clicks on attempt 16295 (a rerun, then a
+        read-back retry) could not be traced to anyone. Each accepted command is
+        now a resolved error row (the same place the read-back settlement writes
+        its record) keyed by the Attempt's conversation and trigger message.
+        """
+        if command not in self.CONSOLE_ATTEMPT_COMMANDS:
+            raise ValueError(f"unknown console attempt command: {command}")
+        attempt = self.get_reply_attempt(attempt_id)
+        if attempt is None:
+            return False
+        detail = json.dumps({
+            "attempt_id": int(attempt_id), "command": command,
+            "actor": actor.strip()[:128], "client": client.strip()[:128],
+            "user_agent": user_agent.strip()[:256],
+        }, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        with self._immediate_write_transaction() as db:
+            insert_error_action(db, {
+                "conversation_id": attempt.conversation_id,
+                "message_id": attempt.trigger_message_id,
+                "kind": f"console_{command}_requested",
+                "detail": detail,
+                "resolution": "operator_command",
+            }, resolved_at_now=True)
+        return True
+
+    def list_console_attempt_commands(
+        self, conversation_id: str, trigger_message_id: str,
+    ) -> list[ReplyError]:
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select * from ({ERROR_SQL})
+                where conversation_id=? and message_id=?
+                  and kind in ({",".join("?" for _ in self.CONSOLE_ATTEMPT_COMMANDS)})
+                order by id asc
+                """,
+                (conversation_id, trigger_message_id,
+                 *(f"console_{command}_requested" for command in self.CONSOLE_ATTEMPT_COMMANDS)),
+            ).fetchall()
+            return [ReplyError.model_validate(dict(row)) for row in rows]
+
     def list_errors_after(self, error_id: int) -> list[ReplyError]:
         with self._connect() as db:
             rows = db.execute(

@@ -98,6 +98,11 @@ conversation the task names, or end without sending.
   principal to state a considered stance. Say which in the summary.
 - If the principal already replied on the same topic after the message, return
   `no_action`. A principal message whose body cannot be read counts as a reply.
+- Never repeat an ask. If the conversation already shows this account asking the
+  sender the same question or for the same material, and nothing the sender sent
+  since then answers it, return `no_action` and name that earlier message in the
+  summary. Another unreadable, empty or placeholder message from the sender is not
+  an answer and does not reopen the ask; the principal decides whether to ask again.
 - Group messages that did not mention the current account are background only.
 - Compare the current time with the message time. If a late reply no longer serves its
   purpose, or would suggest that an action is still happening on time, return

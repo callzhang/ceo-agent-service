@@ -21,6 +21,7 @@ from typing import Any, Callable
 from app.wechat.models import (
     WechatAccount, WechatCapability, WechatMessage, WechatVoiceUnavailable,
 )
+from app.wechat.reader_version import expected_reader_version, running_reader_version
 
 
 PROTOCOL_VERSION = 1
@@ -175,6 +176,10 @@ class _ReaderRequestHandler(socketserver.StreamRequestHandler):
         self._reply({"ok": False, "error": {"code": code, "message": message}})
 
     def _reply(self, payload: dict) -> None:
+        # Every reply, success or error, names the Reader's code version so the
+        # service can refuse to work with a Reader built from other sources.
+        version = getattr(getattr(self, "server", None), "reader_version", "")
+        payload = {**payload, "reader_version": version}
         try:
             self.wfile.write(json.dumps(payload, separators=(",", ":")).encode("utf-8") + b"\n")
         except BrokenPipeError:
@@ -194,10 +199,12 @@ class WechatReaderUnixServer(socketserver.ThreadingUnixStreamServer):
         rpc_service: WechatReaderRpcService,
         *,
         max_request_bytes: int = DEFAULT_MAX_REQUEST_BYTES,
+        reader_version: str | None = None,
     ):
         self.socket_path = Path(socket_path).expanduser()
         self.rpc_service = rpc_service
         self.max_request_bytes = max_request_bytes
+        self.reader_version = reader_version or running_reader_version()
         self.socket_path.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
         if self.socket_path.exists() or self.socket_path.is_symlink():
             mode = self.socket_path.lstat().st_mode
@@ -224,14 +231,40 @@ class WechatReaderClient:
         *,
         timeout_seconds: float = 5.0,
         max_response_bytes: int = DEFAULT_MAX_RESPONSE_BYTES,
+        expected_version: str | None = None,
     ):
         self.socket_path = Path(socket_path).expanduser()
         self.timeout_seconds = timeout_seconds
         self.max_response_bytes = max_response_bytes
+        self.expected_reader_version = (
+            expected_version if expected_version is not None else expected_reader_version()
+        )
+
+    def _check_reader_version(self, response: Any) -> None:
+        """Refuse any reply from a Reader whose code differs from this service's.
+
+        Checked on every call, before the reply's own result is read, so a
+        stale Reader cannot answer even a health check as if it were current.
+        """
+        reported = response.get("reader_version") if isinstance(response, dict) else None
+        reported = str(reported or "")
+        if reported == self.expected_reader_version:
+            return
+        raise ReaderIpcError(
+            f"CEO WeChat Reader runs code version {reported or 'unknown'} but this service "
+            f"expects {self.expected_reader_version}; rebuild and reinstall the Reader app "
+            "(scripts/build-wechat-reader-app.sh, scripts/install-wechat-reader-app.sh).",
+            code="reader_version_mismatch",
+        )
 
     def _request(
         self, method: str, params: dict | None = None, *, timeout_seconds: float | None = None
     ) -> Any:
+        return self._exchange(method, params, timeout_seconds=timeout_seconds).get("result")
+
+    def _exchange(
+        self, method: str, params: dict | None = None, *, timeout_seconds: float | None = None
+    ) -> dict:
         request = json.dumps({
             "protocol_version": PROTOCOL_VERSION,
             "method": method,
@@ -256,17 +289,21 @@ class WechatReaderClient:
             response = json.loads(raw)
         except (json.JSONDecodeError, UnicodeDecodeError) as exc:
             raise ReaderIpcError("invalid WeChat reader response") from exc
+        self._check_reader_version(response)
         if not isinstance(response, dict) or not response.get("ok"):
             error = response.get("error", {}) if isinstance(response, dict) else {}
             message = error.get("message", "reader request failed")
             raise ReaderIpcError(
                 str(message), code=str(error.get("code", "reader_error")),
             )
-        return response.get("result")
+        return response
 
     def health(self, *, timeout_seconds: float | None = None) -> dict:
-        result = self._request("health", timeout_seconds=timeout_seconds)
-        return result if isinstance(result, dict) else {}
+        response = self._exchange("health", timeout_seconds=timeout_seconds)
+        result = response.get("result")
+        result = dict(result) if isinstance(result, dict) else {}
+        result["reader_version"] = str(response.get("reader_version") or "")
+        return result
 
     def discover_accounts(self) -> list[WechatAccount]:
         return [WechatAccount.model_validate(item) for item in self._request("discover_accounts")]
