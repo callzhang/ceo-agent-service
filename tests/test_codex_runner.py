@@ -1,5 +1,6 @@
 import json
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -449,12 +450,16 @@ def test_codex_runner_blocks_reply_when_only_dws_material_read_fails(tmp_path: P
             ),
         ]
     )
-    runner = CodexDecisionRunner(
-        workspace=tmp_path,
-        executor=lambda _command, _prompt: raw,
-    )
+    class Routed:
+        def execute(self, **kwargs):
+            return SimpleNamespace(
+                value=kwargs["parser"](raw), session_id="test-session",
+                transcript_start=0, transcript_end=0,
+            )
 
-    decision = runner.decide("整理近一个月和连航有关的听记", session_id=None)
+    runner = CodexDecisionRunner(workspace=tmp_path, routed_execution=Routed())
+
+    decision = runner.decide("整理近一个月和连航有关的听记", session_id=None, run_id=41)
 
     assert decision.action == CodexAction.STOP_WITH_ERROR
     assert decision.reason.startswith("dws_transient_dependency_unavailable:")

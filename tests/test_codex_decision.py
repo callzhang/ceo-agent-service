@@ -1,3 +1,4 @@
+import inspect
 import json
 from pathlib import Path
 from types import SimpleNamespace
@@ -5,7 +6,6 @@ from types import SimpleNamespace
 import pytest
 from pydantic import ValidationError
 
-import app.codex_decision as codex_decision
 from app.codex_decision import (
     CodexDecisionRunner,
     _decision_envelope_repair_prompt,
@@ -14,51 +14,34 @@ from app.codex_decision import (
     extract_codex_session_id,
     parse_codex_json,
 )
-from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_runner import memory_connector_config_issue
 from app.dingtalk_models import (
     CalendarResponseStatus,
     CodexAction,
-    CodexDecision,
     SensitivityKind,
 )
 from app.leak_check import contains_forbidden_leak
-from app.process_runner import ProcessRunResult
 
 
-def _option_value(command: list[str], flag: str) -> str:
-    """Return the value following ``flag`` in a codex command."""
-    return command[command.index(flag) + 1]
+def test_decision_runner_exposes_only_routed_execution():
+    assert "executor" not in inspect.signature(CodexDecisionRunner).parameters
 
 
-class FakeExecutor:
-    def __init__(self, outputs: list[str]):
-        self.outputs = outputs
-        self.commands: list[list[str]] = []
-        self.prompts: list[str] = []
-
-    def __call__(self, command: list[str], prompt: str) -> str:
-        self.commands.append(command)
-        self.prompts.append(prompt)
-        return self.outputs.pop(0)
 
 
-def make_runner(
-    tmp_path: Path,
-    executor=None,
-    timeout_seconds: int = 120,
-    idle_timeout_seconds: int = 180,
-) -> CodexDecisionRunner:
-    runner = CodexDecisionRunner(
-        workspace=tmp_path,
-        executor=executor or (lambda _command, _prompt: ""),
-        timeout_seconds=timeout_seconds,
-        idle_timeout_seconds=idle_timeout_seconds,
-        codex_home=tmp_path,
-    )
-    if executor is None:
-        runner.executor = runner._subprocess_executor
-    return runner
+
+
+
+
+def _routed_runner(tmp_path: Path, raw: str) -> CodexDecisionRunner:
+    class Routed:
+        def execute(self, **kwargs):
+            return SimpleNamespace(
+                value=kwargs["parser"](raw), session_id="routed-session",
+                transcript_start=0, transcript_end=0,
+            )
+
+    return CodexDecisionRunner(workspace=tmp_path, codex_home=tmp_path, routed_execution=Routed())
 
 
 def test_routed_decision_requires_and_uses_persisted_agent_run(tmp_path: Path):
@@ -161,6 +144,53 @@ def test_routed_decision_correction_prompt_names_rejected_fields(tmp_path: Path)
     decision = runner.decide("decide", None, run_id=42)
 
     assert decision.action == CodexAction.NO_REPLY
+
+
+def test_routed_decision_repairs_once_with_images_and_native_commands(tmp_path, monkeypatch):
+    from app.agent_runtime_router import RoutedCodexExecution
+    from app.codex_history import count_codex_session_lines
+    from app.codex_runtime_adapter import CodexRuntimeAdapter
+    from app.process_runner import ProcessRunResult
+    from app.store import AutoReplyStore
+    from tests.support.native_protocol import install_protocol_native_trajectories
+    from tests.test_routed_codex_execution import config, make_router, seed_agent_run_parent
+
+    store = AutoReplyStore(tmp_path / "decision.sqlite3")
+    run_id = seed_agent_run_parent(store)
+    runtime_config = config.__wrapped__()
+    commands, prompts = [], []
+
+    class Executor:
+        def __call__(self, command, **kwargs):
+            commands.append(command)
+            prompts.append(kwargs["prompt"])
+            message = "not json" if len(commands) == 1 else _agent_envelope_json(
+                kind="no_action", summary="无需回复。"
+            )
+            return ProcessRunResult(0, "\n".join(json.dumps(event) for event in [
+                {"type": "thread.started", "thread_id": "decision-session"},
+                {"type": "item.completed", "item": {"type": "agent_message", "text": message}},
+                {"type": "turn.completed"},
+            ]), "")
+
+    install_protocol_native_trajectories(tmp_path, monkeypatch, Executor)
+    routed = RoutedCodexExecution(
+        store=store, config=runtime_config, router=make_router(store, runtime_config),
+        adapter=CodexRuntimeAdapter(tmp_path, runtime_config), executor=Executor(),
+        session_line_counter=lambda session: count_codex_session_lines(
+            session, codex_home=tmp_path / "codex-home"
+        ),
+    )
+    runner = CodexDecisionRunner(workspace=tmp_path, routed_execution=routed)
+    image = tmp_path / "diagram.png"
+
+    decision = runner.decide("decide", None, image_paths=[image], run_id=run_id)
+
+    assert decision.action == CodexAction.NO_REPLY
+    assert len(commands) == 2
+    assert all(command[command.index("--image") + 1] == str(image) for command in commands)
+    assert "resume" in commands[1] and "decision-session" in commands[1]
+    assert "did not contain an AgentEnvelope JSON object" in prompts[1]
 
 
 def _agent_envelope_json(
@@ -825,105 +855,12 @@ def test_parse_codex_json_accepts_event_msg_agent_message_payload():
     assert decision.reply_text == "收到"
 
 
-def test_invalid_json_retries_once(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            "not json",
-            _agent_envelope_json(
-                kind="no_action",
-                mode="no_reply",
-                summary="无需回复，消息只是抄送。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(prompt="decide", session_id="session-1")
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert len(executor.commands) == 2
-    assert executor.commands[0][:6] == [
-        "codex",
-        "--cd",
-        str(tmp_path),
-        "exec",
-        "resume",
-        "--json",
-    ]
-    assert executor.commands[0][-2:] == ["session-1", "-"]
-    assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:6] == [
-        "codex",
-        "--cd",
-        str(tmp_path),
-        "exec",
-        "resume",
-        "--json",
-    ]
-    assert executor.commands[1][-2] == "session-1"
-    assert "Problems in the previous output" in executor.prompts[1]
-    assert "did not contain an AgentEnvelope JSON object" in executor.prompts[1]
-    assert '"oa_approval"' in executor.prompts[1]
-    assert '"handoff_to_human"' in executor.prompts[1]
 
 
-def test_runner_reads_current_session_when_stdout_has_no_decision(tmp_path: Path):
-    session_id = "thread-1"
-    session_path = (
-        tmp_path
-        / "sessions"
-        / "2026"
-        / "05"
-        / "27"
-        / f"rollout-2026-05-27T06-51-23-{session_id}.jsonl"
-    )
-    session_path.parent.mkdir(parents=True)
-    session_path.write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
-                json.dumps(
-                    {
-                        "type": "response_item",
-                        "payload": {
-                            "type": "message",
-                            "role": "assistant",
-                            "content": [
-                                {
-                                    "type": "output_text",
-                                    "text": _agent_envelope_json(
-                                        mode="send_reply",
-                                        text="今晚只放一个主目标。",
-                                        summary="只需上下文判断。",
-                                    ),
-                                }
-                            ],
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-    executor = FakeExecutor(
-        [json.dumps({"type": "thread.started", "thread_id": session_id})]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.SEND_REPLY
-    assert decision.reply_text == "今晚只放一个主目标。"
-    assert runner.last_session_id == session_id
-    assert len(executor.commands) == 1
 
 
 def test_runner_tracks_audit_tool_events(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            "\n".join(
+    raw = "\n".join(
                 [
                     json.dumps(
                         {
@@ -950,11 +887,9 @@ def test_runner_tracks_audit_tool_events(tmp_path: Path):
                     ),
                 ]
             )
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
+    runner = _routed_runner(tmp_path, raw)
 
-    runner.decide(prompt="decide", session_id=None)
+    runner.decide(prompt="decide", session_id=None, run_id=41)
 
     assert runner.last_audit_tool_events[0]["tool"] == "exec_command"
     assert "rg -n" in runner.last_audit_tool_events[0]["command"]
@@ -965,9 +900,7 @@ def test_runner_tracks_dws_material_read_audit_events(tmp_path: Path):
         "dws doc read --node https://alidocs.dingtalk.com/i/nodes/doc123 "
         "--format json"
     )
-    executor = FakeExecutor(
-        [
-            "\n".join(
+    raw = "\n".join(
                 [
                     json.dumps(
                         {
@@ -1004,11 +937,9 @@ def test_runner_tracks_dws_material_read_audit_events(tmp_path: Path):
                     ),
                 ]
             )
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
+    runner = _routed_runner(tmp_path, raw)
 
-    runner.decide(prompt="decide", session_id=None)
+    runner.decide(prompt="decide", session_id=None, run_id=41)
 
     assert runner.last_audit_tool_events == [
         {
@@ -1027,140 +958,12 @@ def test_runner_tracks_dws_material_read_audit_events(tmp_path: Path):
     ]
 
 
-def test_empty_reply_for_reply_action_retries_once(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            json.dumps({"action": "send_reply", "reply_text": ""}),
-            _agent_envelope_json(
-                mode="send_reply",
-                text="收到，我看一下",
-                summary="只需当前消息判断，基于当前消息可直接确认。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(prompt="decide", session_id="session-1")
-
-    assert decision.action == CodexAction.SEND_REPLY
-    assert decision.reply_text == "收到，我看一下"
-    assert len(executor.commands) == 2
-    assert "did not contain an AgentEnvelope JSON object" in executor.prompts[1]
 
 
-def test_decide_forwards_images_to_initial_and_repair_turns(tmp_path: Path):
-    image = tmp_path / "diagram.png"
-    executor = FakeExecutor(
-        [
-            json.dumps({"action": "send_reply", "reply_text": ""}),
-            _agent_envelope_json(
-                mode="send_reply",
-                text="这张图可以放官网。",
-                summary="只需当前消息判断，并结合图片内容；未找到文档证据。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(
-        prompt="decide",
-        session_id="session-1",
-        image_paths=[image],
-    )
-
-    assert decision.reply_text == "这张图可以放官网。"
-    # The service MCP manifest is spliced in before the session id, so check
-    # the option pairs and the prompt marker rather than the command tail.
-    for command in executor.commands[:2]:
-        assert _option_value(command, "--image") == str(image)
-        assert command[-2:] == ["session-1", "-"]
 
 
-def test_first_turn_invalid_json_retries_with_extracted_session_id(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            "\n".join(
-                [
-                    json.dumps({"type": "session", "id": "new-session"}),
-                    json.dumps({"type": "agent_message", "message": "not json"}),
-                ]
-            ),
-            _agent_envelope_json(
-                kind="no_action",
-                mode="no_reply",
-                summary="修复后判断无需回复。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert runner.last_session_id == "new-session"
-    assert executor.commands[0][:3] == [
-        "codex",
-        "exec",
-        "--json",
-    ]
-    assert _option_value(executor.commands[0], "--cd") == str(tmp_path)
-    assert executor.commands[0][-1] == "-"
-    assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:6] == [
-        "codex",
-        "--cd",
-        str(tmp_path),
-        "exec",
-        "resume",
-        "--json",
-    ]
-    assert executor.commands[1][-2] == "new-session"
 
 
-def test_first_turn_invalid_json_retries_with_thread_started_id(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {"type": "agent_message", "text": "not json"},
-                        }
-                    ),
-                ]
-            ),
-            _agent_envelope_json(
-                kind="no_action",
-                mode="no_reply",
-                summary="修复后判断无需回复。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert runner.last_session_id == "thread-1"
-    assert executor.commands[0][:3] == [
-        "codex",
-        "exec",
-        "--json",
-    ]
-    assert _option_value(executor.commands[0], "--cd") == str(tmp_path)
-    assert executor.commands[0][-1] == "-"
-    assert 'approvals_reviewer="auto_review"' in executor.commands[0]
-    assert executor.commands[1][:6] == [
-        "codex",
-        "--cd",
-        str(tmp_path),
-        "exec",
-        "resume",
-        "--json",
-    ]
-    assert executor.commands[1][-2] == "thread-1"
 
 
 def test_parse_codex_json_accepts_item_completed_message_output_text():
@@ -1223,97 +1026,26 @@ def test_parse_codex_json_accepts_task_complete_last_agent_message():
     assert decision.audit_summary == "对方只是确认收到，无需回复。"
 
 
-def test_invalid_json_waits_for_session_decision_before_repair(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            "\n".join(
-                [
-                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-                    json.dumps({"type": "turn.started"}),
-                    json.dumps(
-                        {
-                            "type": "item.completed",
-                            "item": {"type": "reasoning", "text": "thinking"},
-                        }
-                    ),
-                ]
-            )
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-    waits: list[int] = []
-    session_decision = CodexDecision(
-        action=CodexAction.SEND_REPLY,
-        reply_text="按这个口径推进。",
-        audit_documents=[],
-        audit_summary="只需上下文判断，当前消息足够确认回复。",
-    )
-
-    def fake_current_session_decision(wait_seconds: int = 0):
-        waits.append(wait_seconds)
-        return session_decision if wait_seconds > 0 else None
-
-    runner._current_session_decision = fake_current_session_decision  # type: ignore[method-assign]
-
-    decision = runner.decide(prompt="decide", session_id="thread-1")
-
-    assert decision.action == CodexAction.SEND_REPLY
-    assert decision.reply_text == "按这个口径推进。"
-    assert waits == [15]
-    assert len(executor.commands) == 1
 
 
-def test_invalid_json_twice_returns_stop_with_error(tmp_path: Path):
-    executor = FakeExecutor(["not json", "still not json"])
-    runner = make_runner(tmp_path, executor=executor)
-    runner._current_session_decision = lambda wait_seconds=0: None  # type: ignore[method-assign]
-
-    decision = runner.decide(prompt="decide", session_id="session-1")
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert "invalid JSON" in decision.reason
 
 
-def test_missing_audit_summary_retries_once(tmp_path: Path):
-    executor = FakeExecutor(
-        [
-            json.dumps({"action": "no_reply", "reason": "cc only"}),
-            _agent_envelope_json(
-                kind="no_action",
-                mode="no_reply",
-                summary="消息只是抄送，无需回复。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
-
-    decision = runner.decide(prompt="decide", session_id="session-1")
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert decision.audit_summary == "消息只是抄送，无需回复。"
-    assert len(executor.commands) == 2
-    assert "did not contain an AgentEnvelope JSON object" in executor.prompts[1]
 
 
 def test_reply_with_empty_audit_documents_accepts_nonempty_audit_summary(
     tmp_path: Path,
 ):
-    executor = FakeExecutor(
-        [
-            _agent_envelope_json(
+    raw = _agent_envelope_json(
                 mode="send_reply",
                 text="先按A方案走",
                 summary="未使用可作为业务依据的文档材料；本次判断主要基于当前群聊上下文和直接@明哥的管理同步规则。",
-            ),
-        ]
-    )
-    runner = make_runner(tmp_path, executor=executor)
+            )
+    runner = _routed_runner(tmp_path, raw)
 
-    decision = runner.decide(prompt="decide", session_id="session-1")
+    decision = runner.decide(prompt="decide", session_id="session-1", run_id=41)
 
     assert decision.action == CodexAction.SEND_REPLY
     assert decision.audit_summary.startswith("未使用可作为业务依据的文档材料")
-    assert len(executor.commands) == 1
 
 
 def test_append_signature_once():
@@ -1341,349 +1073,3 @@ def test_detects_forbidden_leaks():
     assert contains_forbidden_leak("/tmp/secret.md") is True
     assert contains_forbidden_leak("/home/principal/secret.md") is True
     assert contains_forbidden_leak("正常回复（by明哥分身）") is False
-
-
-def test_subprocess_executor_passes_timeout(tmp_path: Path, monkeypatch):
-    calls = []
-
-    def fake_run(command, **kwargs):
-        calls.append((command, kwargs))
-        return ProcessRunResult(
-            returncode=0,
-            stdout=_agent_envelope_json(
-                kind="no_action",
-                mode="no_reply",
-                summary="无需回复。",
-            ),
-            stderr="",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path, timeout_seconds=7, idle_timeout_seconds=3)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert calls[0][1]["total_timeout_seconds"] == 7
-    assert calls[0][1]["idle_timeout_seconds"] == 3
-    assert calls[0][1]["prompt"] == "decide"
-    assert "--ignore-user-config" not in calls[0][0]
-
-
-def test_subprocess_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=-15,
-            stdout="",
-            stderr="",
-            timed_out=True,
-            timeout_kind="total",
-            timeout_reason="process timed out after 7 seconds",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path, timeout_seconds=7)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert "timed out" in decision.reason
-    assert decision.external_dependency_failed is True
-
-
-def test_subprocess_idle_timeout_returns_stop_with_error(tmp_path: Path, monkeypatch):
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=-15,
-            stdout="",
-            stderr="",
-            timed_out=True,
-            timeout_kind="idle",
-            timeout_reason="process produced no output for 3 seconds",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path, timeout_seconds=7, idle_timeout_seconds=3)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert decision.reason == "process produced no output for 3 seconds"
-
-
-def test_subprocess_timeout_uses_finished_session_decision(
-    tmp_path: Path, monkeypatch
-):
-    session_id = "thread-timeout-1"
-    session_path = (
-        tmp_path
-        / "sessions"
-        / "2026"
-        / "05"
-        / "27"
-        / f"rollout-2026-05-27T07-21-00-{session_id}.jsonl"
-    )
-    session_path.parent.mkdir(parents=True)
-    session_path.write_text(
-        "\n".join(
-            [
-                json.dumps({"type": "session_meta", "payload": {"id": session_id}}),
-                json.dumps(
-                    {
-                        "type": "event_msg",
-                        "payload": {
-                            "type": "agent_message",
-                            "message": json.dumps(
-                                json.loads(
-                                    _agent_envelope_json(
-                                        mode="send_reply",
-                                        text="这版可以先发，先改四个硬伤。",
-                                        summary="已查看材料并给出反馈。",
-                                        documents=[
-                                            {
-                                                "title": "BP",
-                                                "url": "tmp/bp.pdf",
-                                                "relevance": "用于审核反馈。",
-                                            }
-                                        ],
-                                    )
-                                ),
-                                ensure_ascii=False,
-                            ),
-                        },
-                    },
-                    ensure_ascii=False,
-                ),
-            ]
-        )
-        + "\n",
-        encoding="utf-8",
-    )
-
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=-15,
-            stdout=json.dumps({"type": "thread.started", "thread_id": session_id}),
-            stderr="",
-            timed_out=True,
-            timeout_kind="total",
-            timeout_reason="process timed out after 7 seconds",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path, timeout_seconds=7)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.SEND_REPLY
-    assert decision.reply_text == "这版可以先发，先改四个硬伤。"
-    assert runner.last_session_id == session_id
-
-
-def test_subprocess_nonzero_keeps_stdout_decision(tmp_path: Path, monkeypatch):
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout=_agent_envelope_json(
-                kind="no_action",
-                mode="no_reply",
-                summary="stdout 已经有合法决策。",
-            ),
-            stderr="warning only",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.NO_REPLY
-    assert decision.reason == "stdout 已经有合法决策。"
-
-
-def test_subprocess_nonzero_preserves_thread_id_for_error(tmp_path: Path, monkeypatch):
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout=json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-            stderr="fatal schema error",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert runner.last_session_id == "thread-1"
-    assert "fatal schema error" in decision.reason
-
-
-def test_subprocess_auth_failure_has_structured_failure_code(
-    tmp_path: Path, monkeypatch
-):
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout="",
-            stderr=(
-                "Missing bearer or basic authentication in header "
-                "for /v1/responses"
-            ),
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert decision.external_dependency_failed is True
-    assert decision.failure_code == CODEX_PROVIDER_AUTH_FAILED
-
-
-def test_subprocess_nonzero_reports_error_line_before_startup_warning(
-    tmp_path: Path, monkeypatch
-):
-    stderr = "\n".join(
-        [
-            "2026-05-26T20:24:01Z WARN codex_core_plugins::startup_remote_sync: startup remote plugin sync failed; will retry",
-            "2026-05-26T20:24:02Z ERROR codex_api::endpoint::responses_websocket: failed to connect to websocket: HTTP error: 401 Unauthorized",
-            "2026-05-26T20:24:02Z WARN codex_core::session::turn: stream disconnected",
-        ]
-    )
-
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout=json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-            stderr=stderr,
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert "ERROR codex_api" in decision.reason
-    assert "401 Unauthorized" in decision.reason
-    assert "startup_remote_sync" not in decision.reason
-
-
-def test_subprocess_nonzero_reports_stdout_error_before_warning_only_stderr(
-    tmp_path: Path, monkeypatch
-):
-    stdout = "\n".join(
-        [
-            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-            json.dumps({"type": "turn.started"}),
-            json.dumps(
-                {
-                    "type": "error",
-                    "message": "Your workspace is out of credits. Ask your workspace owner to refill in order to continue.",
-                }
-            ),
-            json.dumps({"type": "turn.failed"}),
-        ]
-    )
-    stderr = (
-        "2026-06-10T00:01:15.198160Z WARN codex_file_watcher: "
-        "failed to unwatch /Users/derek/Documents/memory/.agents/skills: No watch was found."
-    )
-
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout=stdout,
-            stderr=stderr,
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert "out of credits" in decision.reason
-    assert "failed to unwatch" not in decision.reason
-
-
-def test_subprocess_nonzero_keeps_native_codex_transport_fallback_context(
-    tmp_path: Path, monkeypatch
-):
-    stdout = "\n".join(
-        [
-            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-            json.dumps({"type": "turn.started"}),
-            json.dumps(
-                {
-                    "type": "error",
-                    "message": (
-                        "Falling back from WebSockets to HTTPS transport. "
-                        "stream disconnected before completion: tls handshake eof"
-                    ),
-                }
-            ),
-            json.dumps(
-                {
-                    "type": "error",
-                    "message": (
-                        "unexpected status 401 Unauthorized: Missing bearer or "
-                        "basic authentication in header, url: "
-                        "https://api.openai.com/v1/responses"
-                    ),
-                }
-            ),
-            json.dumps({"type": "turn.failed"}),
-        ]
-    )
-
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout=stdout,
-            stderr="",
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert "stream disconnected before completion" in decision.reason
-    assert "transport fallback" in decision.reason
-    assert "Missing bearer" in decision.reason
-
-
-def test_subprocess_nonzero_warning_only_stderr_uses_generic_failure_reason(
-    tmp_path: Path, monkeypatch
-):
-    stdout = "\n".join(
-        [
-            json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
-            json.dumps({"type": "turn.started"}),
-            json.dumps({"type": "task_complete", "last_agent_message": None}),
-        ]
-    )
-    stderr = (
-        "2026-06-10T00:01:15.198160Z WARN codex_file_watcher: "
-        "failed to unwatch /Users/derek/Documents/memory/.agents/skills: No watch was found."
-    )
-
-    def fake_run(command, **kwargs):
-        return ProcessRunResult(
-            returncode=1,
-            stdout=stdout,
-            stderr=stderr,
-        )
-
-    monkeypatch.setattr(codex_decision, "run_process_with_idle_timeout", fake_run)
-    runner = make_runner(tmp_path)
-
-    decision = runner.decide(prompt="decide", session_id=None)
-
-    assert decision.action == CodexAction.STOP_WITH_ERROR
-    assert decision.reason == "codex exec failed without a valid AgentEnvelope"
-    assert "failed to unwatch" not in decision.reason

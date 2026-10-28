@@ -1,5 +1,15 @@
 # Current Runtime Mechanism
 
+## Decision Runner 当前单一执行链路（2026-10-28）
+
+`CodexDecisionRunner` 只使用已有 `RoutedCodexExecution` 和持久化 Run，构造时传入
+Store 或已配置的 routed executor。旧 `executor` 注入、直接 subprocess 和专用命令／
+超时恢复分支已经退休；当前原生调用、结果解析、同会话纠正、session/transcript 范围、
+审计事件和 `_finalize_decision` 的现有合同不变。测试用 routed/native 替身，不真实外发。
+这项无 DDL 清理不改变路线能力、Audit、授权、重试或发送政策；实际部署状态见
+[第五批验收](model-retirement-batch5-validation.md)。
+
+
 ## Feedback 单一事实归属 Store28.3/Email54（2026-10-28）
 
 Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前证据从准确Round
