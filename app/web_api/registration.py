@@ -898,6 +898,17 @@ def register_console_routes(
             )
         return command_result(message="已记录为 skipped；原外部动作不确定状态保留")
 
+    def _record_console_command(attempt_id: int, command: str, request: Request) -> None:
+        """Keep who asked for an Attempt command: the console UI sends
+        ``X-Console-Actor: console-ui``; a script or another agent calling the
+        API shows up by its user agent and client address instead."""
+        store_factory().record_console_attempt_command(
+            attempt_id, command,
+            actor=request.headers.get("x-console-actor", ""),
+            client=request.client.host if request.client else "",
+            user_agent=request.headers.get("user-agent", ""),
+        )
+
     @app.post("/api/console/history/{attempt_id}/rerun")
     async def console_history_rerun(attempt_id: int, request: Request):
         from app.audit_web import handle_rerun_attempt_post
@@ -909,12 +920,12 @@ def register_console_routes(
         )
         if status >= 400:
             return JSONResponse({"ok": False, "code": "rerun_failed", "message": "无法重跑该 Attempt", "details": {"technical": normalize_display_value(body)}}, status_code=status)
+        _record_console_command(attempt_id, "rerun", request)
         return command_result(message="重跑已提交")
 
     @app.post("/api/console/history/{attempt_id}/retry")
     async def console_history_retry(attempt_id: int, request: Request):
         """Retry failed WeChat work through exact Reader reconciliation, without sending."""
-        del request
         from app.wechat_reconciliation import reconcile_failed_wechat_attempt
 
         try:
@@ -929,6 +940,7 @@ def register_console_routes(
                 {"ok": False, "code": "retry_unresolved", "message": "当前失败无法由精确读回安全恢复", "details": result},
                 status_code=409,
             )
+        _record_console_command(attempt_id, "retry", request)
         return command_result(message="已通过原生读回恢复该任务", item=result)
 
     @app.post("/api/console/history/{attempt_id}/resend-wechat")
@@ -944,6 +956,7 @@ def register_console_routes(
         )
         if status >= 400:
             return JSONResponse({"ok": False, "code": "resend_failed", "message": "无法再次发送该微信回复", "details": {"technical": normalize_display_value(body)}}, status_code=status)
+        _record_console_command(attempt_id, "resend_wechat", request)
         return command_result(message="再次发送已提交")
 
     @app.post("/api/console/history/{attempt_id}/recall")

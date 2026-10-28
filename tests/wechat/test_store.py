@@ -1391,3 +1391,64 @@ def test_failed_delivery_that_was_not_a_pre_action_failure_cannot_be_retried(tmp
         store.requeue_expired_wechat_delivery_for_user(delivery_id)
 
     assert _wechat_delivery_and_attempt_state(store, delivery_id) == before
+
+
+def test_console_attempt_commands_are_recorded_with_actor_and_listed_per_attempt(tmp_path):
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-28T10:01:00", trigger_sender="Alex",
+        trigger_text="message",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="message",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="failed", channel="wechat",
+    )
+    assert store.list_console_attempt_commands("u1", "m1") == []
+    assert store.record_console_attempt_command(
+        attempt_id, "rerun", actor="console-ui", client="127.0.0.1", user_agent="Mozilla/5.0",
+    )
+    assert store.record_console_attempt_command(
+        attempt_id, "retry", actor="", client="127.0.0.1", user_agent="curl/8.7.1",
+    )
+    assert store.record_console_attempt_command(
+        attempt_id + 99, "rerun", actor="x", client="", user_agent="",
+    ) is False
+    with pytest.raises(ValueError):
+        store.record_console_attempt_command(attempt_id, "delete", actor="", client="", user_agent="")
+
+    records = store.list_console_attempt_commands("u1", "m1")
+    assert [record.kind for record in records] == ["console_rerun_requested", "console_retry_requested"]
+    assert all(record.resolved_at for record in records)
+    import json as _json
+    first = _json.loads(records[0].detail)
+    assert first == {"actor": "console-ui", "attempt_id": attempt_id, "client": "127.0.0.1",
+                     "command": "rerun", "user_agent": "Mozilla/5.0"}
+    assert _json.loads(records[1].detail)["actor"] == ""
+    # Another conversation's commands stay out of this Attempt's record.
+    assert store.list_console_attempt_commands("u2", "m1") == []
+
+
+def test_wechat_reconciliation_record_is_found_by_conversation_and_trigger(tmp_path):
+    from app.action_storage import insert_error_action
+
+    store = _store(tmp_path)
+    assert store.get_wechat_reply_task_reconciliation("u1", "m1") is None
+    with store._immediate_write_transaction() as db:
+        insert_error_action(db, {
+            "conversation_id": "u1", "message_id": "m1",
+            "kind": "wechat_reply_task_done_reconciled",
+            "detail": "{\"delivery_id\":152}", "resolution": "verified_wechat_delivery_readback",
+        }, resolved_at_now=True)
+        insert_error_action(db, {
+            "conversation_id": "u1", "message_id": "m1",
+            "kind": "console_retry_requested", "detail": "{}", "resolution": "operator_command",
+        }, resolved_at_now=True)
+    record = store.get_wechat_reply_task_reconciliation("u1", "m1")
+    assert record is not None
+    assert record.kind == "wechat_reply_task_done_reconciled"
+    assert record.resolution == "verified_wechat_delivery_readback"
+    assert store.get_wechat_reply_task_reconciliation("u1", "m2") is None

@@ -750,6 +750,57 @@ def _system_execution_payload(
     }
 
 
+_CONSOLE_COMMAND_LABELS = {
+    "rerun": "重新处理",
+    "retry": "重试（读回确认）",
+    "resend_wechat": "再次发送",
+}
+
+
+def _console_command_display(record: Any) -> str:
+    """One line per accepted console command: what, who, from where, when."""
+    detail = _stored_json(getattr(record, "detail", ""), {})
+    if not isinstance(detail, dict):
+        detail = {}
+    command = str(detail.get("command") or "").strip()
+    if not command:
+        kind = str(getattr(record, "kind", "") or "")
+        command = kind.removeprefix("console_").removesuffix("_requested")
+    actor = str(detail.get("actor") or "").strip()
+    client = str(detail.get("client") or "").strip()
+    user_agent = str(detail.get("user_agent") or "").strip()
+    who = actor or "未标识来源"
+    if not actor and user_agent:
+        who = f"未标识来源（{user_agent[:60]}）"
+    parts = [_CONSOLE_COMMAND_LABELS.get(command, command), who]
+    if client:
+        parts.append(client)
+    parts.append(normalize_display_value(getattr(record, "created_at", "")))
+    return " · ".join(part for part in parts if part)
+
+
+def _reconciled_wechat_message(store: Any, attempt: Any, reply_task: Any) -> str:
+    """Explain a WeChat task closed by read-back although its execution record failed.
+
+    The console's read-back retry keeps the failed execution receipt on purpose
+    and settles the task from the Reader's exact outbound message. Without this
+    the page said "执行失败" next to a ``done`` task whose reply had been sent.
+    """
+    if str(getattr(attempt, "channel", "") or "") != "wechat":
+        return ""
+    if str(getattr(reply_task, "status", "") or "") not in {"done", "skipped"}:
+        return ""
+    reader = getattr(store, "get_wechat_reply_task_reconciliation", None)
+    record = reader(attempt.conversation_id, attempt.trigger_message_id) if callable(reader) else None
+    if record is None:
+        return ""
+    if str(getattr(record, "kind", "")) == "wechat_reply_task_done_reconciled":
+        return "已通过微信读回确认这条回复已发送；原执行回执保留，无需操作。"
+    if str(getattr(record, "kind", "")) == "wechat_reply_task_skipped_reconciled":
+        return "已通过微信读回确认后续回复已发出，这条旧候选已跳过；原执行回执保留。"
+    return ""
+
+
 def _oa_decision_payload(
     attempt: Any, reviewed: dict[str, Any] | None,
     execution: dict[str, Any] | None,
@@ -1162,6 +1213,8 @@ def build_attempt_detail(
                 str(system_execution["status"]),
                 execution_messages.get(system_execution["status"], status_message),
             )
+            if system_execution["status"] == "failed" and reply_task is not None:
+                status_message = _reconciled_wechat_message(store, attempt, reply_task) or status_message
     if rerun_block_reason:
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:
@@ -1281,6 +1334,10 @@ def build_attempt_detail(
                 "value": "人工重新处理：不是审核反馈后的复审。",
             }
         )
+    list_commands = getattr(store, "list_console_attempt_commands", None)
+    if callable(list_commands):
+        for record in list_commands(attempt.conversation_id, attempt.trigger_message_id):
+            metadata.append({"label": "操作记录", "value": _console_command_display(record)})
     return 200, {
         "id": attempt.id,
         "title": normalize_display_value(attempt.conversation_title),
