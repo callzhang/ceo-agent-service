@@ -458,6 +458,7 @@ def queue_recent_meeting_alignment_replay(
     now: datetime,
     limit: int,
     offset: int = 0,
+    meeting_id: str | None = None,
     settle_seconds: int = 600,
     discovery_lookback: timedelta = DEFAULT_MEETING_DISCOVERY_LOOKBACK,
     feature_registry: FeatureRegistry | None = None,
@@ -468,6 +469,8 @@ def queue_recent_meeting_alignment_replay(
         raise ValueError("meeting replay limit must be positive")
     if offset < 0:
         raise ValueError("meeting replay offset must not be negative")
+    if meeting_id is not None and not meeting_id.strip():
+        raise ValueError("meeting replay ID must not be blank")
     fetch_limit = limit + offset
     if fetch_limit > REPLAY_PAGE_SIZE_LIMIT:
         raise ValueError(
@@ -484,18 +487,30 @@ def queue_recent_meeting_alignment_replay(
     current_user_id = dws.get_current_user_id().strip()
     if not current_user_id:
         raise DwsError("meeting producer current user id is missing")
-    page = dws.list_minutes_page(
-        limit=fetch_limit,
-        cursor="",
-        start=(now - discovery_lookback).isoformat(),
-        end=now.isoformat(),
-    )
-    raw_items = page.get("items")
-    if not isinstance(raw_items, list):
-        raise DwsError("meeting replay minutes page items must be a list")
+    start = (now - discovery_lookback).isoformat()
+    end = now.isoformat()
+    if meeting_id is not None:
+        raw_items = [
+            item
+            for item in _list_all_minutes(dws, start=start, end=end)
+            if minutes_meeting_id(item) == meeting_id
+        ]
+        if not raw_items:
+            raise DwsError("requested meeting ID was not found in recent Minutes")
+    else:
+        page = dws.list_minutes_page(
+            limit=fetch_limit,
+            cursor="",
+            start=start,
+            end=end,
+        )
+        raw_items = page.get("items")
+        if not isinstance(raw_items, list):
+            raise DwsError("meeting replay minutes page items must be a list")
 
     results: list[dict[str, Any]] = []
-    for list_item in raw_items[offset:fetch_limit]:
+    selected_items = raw_items if meeting_id is not None else raw_items[offset:fetch_limit]
+    for list_item in selected_items:
         if not isinstance(list_item, dict):
             results.append(
                 {
@@ -545,7 +560,7 @@ def queue_recent_meeting_alignment_replay(
                 result["outcome"] = "already_sent"
                 results.append(result)
                 continue
-            if existing.status not in {"no_action", "failed"}:
+            if existing.status not in {"no_action", "failed", "needs_human"}:
                 result["outcome"] = existing.status
                 results.append(result)
                 continue
@@ -604,7 +619,9 @@ def queue_recent_meeting_alignment_replay(
             ensure_ascii=False,
             sort_keys=True,
         )
-        if existing is not None and existing.status in {"no_action", "failed"}:
+        if existing is not None and existing.status in {
+            "no_action", "failed", "needs_human"
+        }:
             reopened = store.reopen_meeting_alignment_job_for_replay(
                 existing.id,
                 title=metadata.title,

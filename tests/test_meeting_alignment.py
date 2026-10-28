@@ -993,6 +993,49 @@ def test_replay_reports_transcript_source_failure_without_calendar_label(tmp_pat
     assert "transcript roster unavailable" in results[0]["error"]
 
 
+def test_exact_replay_refreshes_needs_human_source_before_ordinary_audit(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    meeting["flashUserInfo"] = {"name": "A", "userId": "u-a"}
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        calendar_pages={
+            "": {
+                "events": [matching_calendar_event(title="HSW孙老师交流")],
+                "has_more": False,
+                "next_cursor": "",
+            }
+        },
+    )
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1",
+        title="HSW主观任务评估范式与成本优化",
+        source_json='{"old_source":true}',
+        participants_json="[]",
+        ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(),
+        status="needs_human",
+    )
+
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=1,
+        meeting_id="minutes-1",
+    )
+
+    assert results[0]["outcome"] == "queued"
+    assert results[0]["job_id"] == job_id
+    replayed = store.get_meeting_alignment_job(job_id)
+    assert replayed.status == "pending"
+    assert json.loads(replayed.source_json)["calendar_evidence"]["source"] == "calendar"
+    assert {
+        participant["user_id"]
+        for participant in json.loads(replayed.source_json)["calendar_evidence"]["participants"]
+    } == {"u-derek", "u-a"}
+
+
 def test_producer_skips_ambiguous_calendar_matches_without_creating_needs_human(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = FakeDws(
@@ -1356,7 +1399,8 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
     assert results[1]["job_id"] == old_id
 
 
-def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_path):
+@pytest.mark.parametrize("status", ["failed", "needs_human"])
+def test_replay_keeps_prepared_delivery_on_recovery_path(tmp_path, status):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     meeting = ended_meeting(meeting_id="minutes-prepared")
     dws = FakeDws(
@@ -1370,7 +1414,7 @@ def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_pat
         participants_json="[]",
         ended_at=meeting["endTimeISO"],
         eligible_at=NOW.isoformat(),
-        status="failed",
+        status=status,
     )
     delivery_key = f"meeting-alignment:{job_id}:{meeting['taskUuid']}"
     store.prepare_meeting_alignment_message(
@@ -1382,12 +1426,18 @@ def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_pat
         feedback_base_url="",
     )
 
-    results = queue_recent_meeting_alignment_replay(store, dws, now=NOW, limit=50)
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=50,
+        meeting_id=meeting["taskUuid"] if status == "needs_human" else None,
+    )
 
-    assert results[0]["outcome"] == "failed"
+    assert results[0]["outcome"] == status
     assert results[0]["job_id"] == job_id
     replayed = store.get_meeting_alignment_job(job_id)
-    assert replayed.status == "failed"
+    assert replayed.status == status
     assert replayed.title == "Original title"
     assert replayed.source_json == "{\"original\":true}"
     assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(

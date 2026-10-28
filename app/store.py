@@ -13768,7 +13768,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             task = get_task(db, job_id)
             current = self._native_meeting_alignment_job(db, job_id)
             if (task is None or task["kind"] != "meeting_alignment" or current is None
-                    or task["status"] not in {"no_action", "failed"} or current.send_result_json != "{}"):
+                    or task["status"] not in {"no_action", "failed", "needs_human"}
+                    or task["locked_at"] is not None or current.send_result_json != "{}"):
+                return None
+            if db.execute(
+                "select 1 from actions where record_type='meeting_alignment_delivery_claims' "
+                "and td_claim_job_id=? limit 1",
+                (job_id,),
+            ).fetchone():
+                return None
+            if task["lease_owner"] and db.execute(
+                "select julianday(?)>julianday('now')", (task["lease_expires_at"],)
+            ).fetchone()[0]:
+                return None
+            if db.execute(
+                "select 1 from runs r join run_provenance p on p.run_id=r.id "
+                "where p.source_type='meeting_alignment_runs' and r.task_id=? "
+                "and r.status='running' limit 1",
+                (job_id,),
+            ).fetchone() or db.execute(
+                "select 1 from runtime_attempts a join runs r on r.id=a.parent_id "
+                "join run_provenance p on p.run_id=r.id "
+                "and p.source_type='meeting_alignment_runs' "
+                "where r.task_id=? and a.status in ('starting','running') limit 1",
+                (job_id,),
+            ).fetchone():
                 return None
             delivery_key = get_meeting_delivery_key(db, job_id)
             target_key_prefix = delivery_key + ":target:"
@@ -13778,6 +13802,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound "
                 "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
                 "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
+                (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) receipt "
+                "where receipt.channel='dingtalk' and (receipt.delivery_key in (?,?) "
+                "or substr(receipt.delivery_key,1,length(?))=?) limit 1",
                 (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
             ).fetchone():
                 return None
