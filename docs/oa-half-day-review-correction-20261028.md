@@ -69,3 +69,11 @@ bounded synthetic evidence, not a replay of private production records.
 
 Publication and business recovery are pending. Local edits are not live rules,
 and completed internal comment tasks do not mean the OA requests are resolved.
+
+
+The repository publisher regression now pins the verified prior attendance
+file independently of the candidate source digest. This is a real version
+transition, so old and new hashes are not required to be equal. The obsolete
+no-op assertion failed before this test-only repair. The unrelated installed
+OKR v21 baseline is synchronized in its own explicitly authorized commit; the
+standard publication gate and final readback remain required.
