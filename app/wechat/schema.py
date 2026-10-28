@@ -110,6 +110,8 @@ def decode_message(content, ct_flag, local_type) -> str:
         title = (tm.group(1).strip() if tm else "")
         des = (dm.group(1).strip() if dm else "")
         url = (um.group(1).strip().replace("&amp;", "&") if um else "")
+        if _is_unsupported_placeholder(title, url):
+            return unsupported_placeholder(raw)
         if title:
             out = f"[链接]《{title}》"
             if des:
@@ -118,6 +120,38 @@ def decode_message(content, ct_flag, local_type) -> str:
                 out += f" {url}"
             return out
     return ""
+
+
+_UNSUPPORTED_URL_PREFIX = "https://support.weixin.qq.com/update"
+_UNSUPPORTED_TITLE_MARKERS = (
+    "does not support this content",
+    "不支持该内容",
+    "不支持展示该内容",
+    "不支持此内容",
+)
+_APPMSG_TYPE = re.compile(r"<type>(\d+)</type>")
+UNSUPPORTED_PREFIX = "[无法显示的内容"
+
+
+def _is_unsupported_placeholder(title: str, url: str) -> bool:
+    """WeChat substitutes its own title and update link for an appmsg this
+    client version cannot render. That text is WeChat's placeholder, not what
+    the sender shared, so it must not be presented as a link."""
+    if url.startswith(_UNSUPPORTED_URL_PREFIX):
+        return True
+    lowered = title.lower()
+    return any(marker in lowered for marker in _UNSUPPORTED_TITLE_MARKERS)
+
+
+def unsupported_placeholder(raw: str) -> str:
+    """Text for a message whose content this WeChat version cannot show.
+
+    It says plainly that the sender's content was not read, so an Agent reading
+    the conversation does not take WeChat's update notice for a shared article.
+    """
+    match = _APPMSG_TYPE.search(raw)
+    kind = f"，appmsg 类型 {match.group(1)}" if match else ""
+    return f"{UNSUPPORTED_PREFIX}·本机微信版本不支持这类消息{kind}，看不到发送方发了什么]"
 
 
 _VOICE_LENGTH = re.compile(r'voicelength="(\d+)"')
@@ -142,7 +176,10 @@ def kind_for(local_type: int, decoded_text: str = "") -> str:
     """Map WeChat's local type to the normalized message kind.
 
     Shared articles use appmsg type 49.  Their decoded title/URL is usable
-    text context, so keep them eligible for the normal text reply path.  Image
+    text context, so keep them eligible for the normal text reply path.  An
+    appmsg this WeChat version cannot render decodes to the unsupported
+    placeholder, not to ``[链接]``, so like an image it stays non-text: the
+    content was not read, and there is nothing for a reply to answer.  Image
     and other binary messages remain non-text until the reader supplies media
     bytes or a vision input path.
     """

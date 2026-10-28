@@ -76,3 +76,29 @@ def test_group_voice_with_sender_prefix_and_missing_length_still_has_a_placehold
     assert schema.kind_for(34, text) == "voice"
     assert text.startswith("[语音·未转写")
 
+
+
+UNSUPPORTED_APPMSG = (
+    b"<msg><appmsg><title><![CDATA[Your current Weixin version does not support this content. "
+    b"Update to the latest version.]]></title><type>51</type>"
+    b"<url><![CDATA[https://support.weixin.qq.com/update/]]></url></appmsg></msg>"
+)
+
+
+def test_unsupported_appmsg_is_labelled_unreadable_not_as_a_link():
+    text = schema.decode_message(UNSUPPORTED_APPMSG, 0, 49)
+    assert text == "[无法显示的内容·本机微信版本不支持这类消息，appmsg 类型 51，看不到发送方发了什么]"
+    assert not text.startswith("[链接]")
+    assert "support.weixin.qq.com" not in text
+
+
+def test_unsupported_appmsg_does_not_create_a_text_reply_candidate():
+    text = schema.decode_message(UNSUPPORTED_APPMSG, 0, 49)
+    assert schema.kind_for(49, text) == "unknown"
+
+
+def test_unsupported_appmsg_detected_by_chinese_title_without_update_url():
+    content = "<appmsg><title>当前微信版本不支持该内容，请升级至最新版本</title></appmsg>".encode("utf-8")
+    text = schema.decode_message(content, 0, 49)
+    assert text.startswith(schema.UNSUPPORTED_PREFIX)
+    assert schema.kind_for(49, text) == "unknown"

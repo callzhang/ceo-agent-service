@@ -12767,6 +12767,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 cls._native_wechat_task(db, int(delivery["reply_task_id"])))
         if task is None:
             return
+        if str(delivery["execution_generation"]) != str(task["execution_generation"]):
+            # The Attempt stands for the task's current generation. A delivery
+            # of an earlier generation (a failed draft that a rerun replaced)
+            # being closed as superseded must not overwrite the status the
+            # current generation's delivery just wrote (2026-10-28: attempt
+            # 16295 showed "skipped" one second after its reply was sent).
+            return
         attempt = db.execute(
             f"""
             select id
