@@ -59,11 +59,11 @@ Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前
 [第四批验收](model-retirement-batch4-validation.md)。上述转换半部与Runner已在第五批分单元退休，
 发布／读回状态见[第五批验收](model-retirement-batch5-validation.md)。
 
-## 微信语音转写缓存 Store28.4/Email54（2026-10-28）
+## 撤销微信语音转写缓存 Store28.5/Email54（2026-10-28）
 
-新表 `wechat_voice_transcripts` 随配对发布 28.3→28.4 上线：只 `create table`，inverse 只 `drop table`
-并恢复 Store 标记，不迁移数据、不改其他表。发布前后各验证完整 schema、FK 与 quick_check；
-部署路径 `prepare_database_schema_release` 对 28.3 标记选择该发布，对 28.4 无操作。
+配对发布 28.4→28.5 只 `drop table wechat_voice_transcripts`；inverse 重建该表并写回发布时记录的行，
+恢复 Store 标记。发布前后各验证完整 schema、FK 与 quick_check，部署路径 `prepare_database_schema_release`
+对 28.4 标记选择该发布，对 28.5 无操作。`save_message_audio` 不再查缓存，`save_voice_transcript` 已删除。
 
 ## 会话唯一归属 Store28.2/Email54（2026-10-28）
 
