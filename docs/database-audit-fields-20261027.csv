@@ -1,0 +1,1247 @@
+table,column,type,storage,notnull,default,pk_position,index_key_references,outgoing_fk_targets,decision,owner_or_evidence
+action_entity_identity_map,action_id,INTEGER,ordinary,1,,0,idx_action_identity_map_owner,actions.id,保留／本轮未建立删除证据,旧 typed/composite 身份到 Action/Receipt 的映射
+action_entity_identity_map,receipt_id,INTEGER,ordinary,0,,0,,action_receipts.id,保留／本轮未建立删除证据,旧 typed/composite 身份到 Action/Receipt 的映射
+action_entity_identity_map,source_identity,TEXT,ordinary,1,,2,sqlite_autoindex_action_entity_identity_map_1,,保留／本轮未建立删除证据,旧 typed/composite 身份到 Action/Receipt 的映射
+action_entity_identity_map,source_type,TEXT,ordinary,1,,1,sqlite_autoindex_action_entity_identity_map_1,,保留／本轮未建立删除证据,旧 typed/composite 身份到 Action/Receipt 的映射
+action_observers,action_id,INTEGER,ordinary,1,,1,sqlite_autoindex_action_observers_1,actions.id,保留／本轮未建立删除证据,多个 Run 观察同一 Action 的真实关系
+action_observers,agent_run_id,INTEGER,ordinary,1,,2,sqlite_autoindex_action_observers_1,,保留／本轮未建立删除证据,多个 Run 观察同一 Action 的真实关系
+action_observers,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,多个 Run 观察同一 Action 的真实关系
+action_observers,task_id,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,多个 Run 观察同一 Action 的真实关系
+action_receipts,action_id,INTEGER,ordinary,1,,0,idx_action_receipts_action,actions.id,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,action_index,INTEGER,ordinary,0,,0,idx_action_receipts_execution_run_order,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,agent_run_id,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,attempt_number,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,created_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,dispatched_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,error_text,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,execution_run_id,INTEGER,ordinary,0,,0,idx_action_receipts_execution_run_order,run_execution_progress.consumer_run_id,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,finished_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,id,INTEGER,ordinary,0,,1,idx_action_receipts_action,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,observed_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,operation,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,outcome_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,provider_receipt_id,INTEGER,ordinary,0,,0,,action_receipts.id,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,provider_result_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,provider_result_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,result_digest,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,started_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,status,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,target,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+action_receipts,updated_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,执行/发送准备/provider 回执与不可变引用
+actions,_kind,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,acknowledged_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_account_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_action_identity,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_action_plan_id,TEXT,VIRTUAL,0,,0,idx_actions_action_direct_email_plan_operation,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_agent_run_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_business_object_key,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_classification_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_conversation_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_data,BLOB,ordinary,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_delivery_channel,TEXT,VIRTUAL,0,,0,idx_actions_action_delivery_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_delivery_key,TEXT,VIRTUAL,0,,0,idx_actions_action_delivery_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_delivery_receipt_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_external_action_key,TEXT,VIRTUAL,0,,0,idx_actions_action_external_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_family,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_feedback_token,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_index,INTEGER,VIRTUAL,0,,0,idx_actions_intent_run,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_next_attempt_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_operation,TEXT,VIRTUAL,0,,0,idx_actions_action_direct_email_plan_operation,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_origin,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_parameters_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_postfix_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_prepared_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_prepared_body,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_prepared_receipt_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_recall_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_recall_key,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_recall_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_recalled_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_started_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_trigger_message_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,action_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,agent_run_id,INTEGER,ordinary,0,,0,idx_actions_intent_run;idx_actions_intent_operation;idx_actions_intent_authorization;idx_actions_execution_receipt_run;idx_actions_execution_receipt_operation,runs.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,arguments_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_action,TEXT,VIRTUAL,0,,0,idx_actions_reply_trigger_history,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_agent_run_id,INTEGER,VIRTUAL,0,,0,idx_actions_reply_run_recovery,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_audit_documents_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_audit_summary,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_audit_tool_events_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_calendar_event_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_calendar_response_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_calendar_response_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_channel,TEXT,VIRTUAL,0,,0,idx_actions_reply_current_trigger,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_codex_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_codex_session_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_codex_transcript_end_line,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_codex_transcript_start_line,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_conversation_id,TEXT,VIRTUAL,0,,0,idx_actions_reply_trigger_history;idx_actions_reply_current_trigger,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_conversation_single_chat,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_conversation_title,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_corrected_reply_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_created_at,TEXT,VIRTUAL,0,,0,idx_actions_reply_status;idx_actions_reply_oa_history;idx_actions_reply_created,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_direct_open_dingtalk_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_direct_user_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_document_action_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_draft_reply_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_feedback_scope,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_final_reply_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_human_decision_options_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_mail_action_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_mail_mailbox,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_mail_message_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_mail_reply_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_mail_subject,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_oa_action,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_oa_action_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_oa_process_instance_id,TEXT,VIRTUAL,0,,0,idx_actions_reply_oa_history,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_oa_remark,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_oa_task_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_oa_url,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_permission_action,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_permission_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_reaction_action_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_resolution,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_resolved_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_retry_count,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_reviewed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_reviewer_feedback,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_send_error,TEXT,VIRTUAL,0,,0,idx_actions_reply_run_recovery,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_send_status,TEXT,VIRTUAL,0,,0,idx_actions_reply_status,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_sensitivity_kind,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_skill_update_receipts_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_skill_update_requested,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_trigger_create_time,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_trigger_message_id,TEXT,VIRTUAL,0,,0,idx_actions_reply_trigger_message;idx_actions_reply_trigger_history;idx_actions_reply_current_trigger,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_trigger_sender,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_trigger_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_trigger_text_provenance_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_universal_execution_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_universal_execution_scope_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,attempt_updated_at,TEXT,VIRTUAL,0,,0,idx_actions_reply_current_trigger,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,authorization_id,TEXT,VIRTUAL,0,,0,idx_actions_intent_authorization,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_after_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_attention_item_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_attention_events_lookup,business.attention_item_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_before_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_created_at,TEXT,VIRTUAL,0,,0,idx_actions_business_attention_events_lookup,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_event_type,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_events_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_proposal_tasks_attention_item_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_attention_proposal_tasks_lookup;idx_actions_business_attention_proposal_tasks_key,business.attention_item_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_proposal_tasks_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_proposal_tasks_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_attention_proposal_tasks_lookup;idx_actions_business_attention_proposal_tasks_key,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_tasks_attention_item_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_attention_tasks_lookup;idx_actions_business_attention_tasks_key,business.attention_item_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_tasks_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_attention_tasks_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_attention_tasks_lookup;idx_actions_business_attention_tasks_key,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_project_evidence_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_project_evidence_project_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_project_evidence_key,business.project_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_project_evidence_signal_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_project_evidence_key,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_active,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_anchor_links_lookup,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_anchor_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_anchor_links_task_id;idx_actions_business_task_anchor_links_lookup,business.anchor_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_evidence_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_status,TEXT,VIRTUAL,0,,0,idx_actions_business_task_anchor_links_lookup,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_anchor_links_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_anchor_links_task_id;idx_actions_business_task_anchor_links_lookup,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_actor_kind,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_actor_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_actor_user_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_date_type,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_raw_phrase,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_source_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_date_evidence_lookup,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_date_evidence_value_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_evidence_created_at,TEXT,VIRTUAL,0,,0,idx_actions_business_task_evidence_lookup,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_evidence_evidence_role,TEXT,VIRTUAL,0,,0,idx_actions_business_task_evidence_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_evidence_signal_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_evidence_lookup;idx_actions_business_task_evidence_key,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_evidence_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_evidence_lookup;idx_actions_business_task_evidence_key,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_from_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_relations_reverse;idx_actions_business_task_relations_lookup;idx_actions_business_task_relations_key,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_relation_type,TEXT,VIRTUAL,0,,0,idx_actions_business_task_relations_reverse;idx_actions_business_task_relations_lookup;idx_actions_business_task_relations_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_supporting_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_relations_to_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_task_relations_reverse;idx_actions_business_task_relations_lookup;idx_actions_business_task_relations_key,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_signals_context_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_signals_conversation_title,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_signals_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_signals_dedupe_key,TEXT,VIRTUAL,0,,0,idx_actions_business_task_signals_dedupe_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_task_signals_provenance_id,INTEGER,VIRTUAL,0,,0,idx_actions_signal_shared,provenance.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_work_cluster_tasks_cluster_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_work_cluster_tasks_lookup;idx_actions_business_work_cluster_tasks_key,business.work_cluster_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_work_cluster_tasks_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,ba_work_cluster_tasks_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_business_work_cluster_tasks_lookup;idx_actions_business_work_cluster_tasks_key,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,business_signal_public_id,INTEGER,VIRTUAL,0,,0,idx_actions_signal_shared;idx_actions_business_signal_public_id,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,capability,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,cli,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,command_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,command_path,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,completed,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,dispatched_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,effect_counted,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_account_configuration_snapshot,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_account_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_account_snapshot_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_account_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_action_id,TEXT,VIRTUAL,0,,0,idx_actions_email_email_direct_retry_requests_0,actions.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_action_identity,TEXT,VIRTUAL,0,,0,idx_actions_email_email_unsubscribe_steps_0;idx_actions_email_email_unsubscribe_receipts_1;idx_actions_email_email_unsubscribe_receipts_0;idx_actions_email_email_unsubscribe_effects_0;idx_actions_email_email_unsubscribe_continuations_0;idx_actions_email_email_unsubscribe_claims_1;idx_actions_email_email_unsubscribe_claims_0;idx_actions_email_email_unsubscribe_cancellations_0;idx_actions_email_email_reply_receipts_1;idx_actions_email_email_reply_dispatch_claims_2;idx_actions_email_email_reply_dispatch_claims_0,actions.email_public_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_action_parameters_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_action_plan_id,TEXT,VIRTUAL,0,,0,idx_actions_email_email_action_plans_1,actions.email_public_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_action_plan_version,INTEGER,VIRTUAL,0,,0,idx_actions_email_email_action_plans_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_actions_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_applied_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_attempt_number,INTEGER,VIRTUAL,0,,0,idx_actions_email_email_direct_retry_requests_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_audit_agent_run_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_authorization_snapshot_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_category,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_claim_parent_type,TEXT,VIRTUAL,0,,0,,actions.record_type,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_claimed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_classification_id,INTEGER,VIRTUAL,0,,0,idx_actions_email_email_unsubscribe_receipts_0;idx_actions_email_email_action_plans_0,emails.classification_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_classification_source,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_completed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_confidence,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_config_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_controls_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_decision_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_display_excerpt,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_effect_digest,TEXT,VIRTUAL,0,,0,idx_actions_email_email_unsubscribe_effects_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_entry_reference,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_entry_url,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_evidence,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_expected_current_action_plan_id,TEXT,VIRTUAL,0,,0,idx_actions_email_email_feedback_requests_1,actions.email_public_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_feedback_request_id,TEXT,VIRTUAL,0,,0,idx_actions_email_email_feedback_requests_2,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_action_outcome,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_created_at,TEXT,VIRTUAL,0,,0,idx_actions_email_history_created,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_event_id,TEXT,VIRTUAL,0,,0,idx_actions_history_public_id;idx_actions_email_history_created,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_important,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_model_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_predicted_category,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_probability,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_stable_message_identity,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_history_threshold,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_lease_token,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_legacy_serialization_pre_v16,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_model_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_observation_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_observation_reference,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_account_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_action_ids_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_action_outcome,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_action_plan_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_classification_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_created_at,TEXT,VIRTUAL,0,,0,idx_actions_email_operation_processing,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_important,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_model_id,TEXT,VIRTUAL,0,,0,idx_actions_email_operation_identity,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_operation_id,TEXT,VIRTUAL,0,,0,idx_actions_operation_public_id;idx_actions_email_operation_processing,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_parent_type,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_predicted_category,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_probability,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_stable_message_identity,TEXT,VIRTUAL,0,,0,idx_actions_email_operation_identity,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_status,TEXT,VIRTUAL,0,,0,idx_actions_email_operation_processing,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_threshold,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operation_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_operations_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_outcome,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_outgoing_message_id,TEXT,VIRTUAL,0,,0,idx_actions_email_email_reply_receipts_0;idx_actions_email_email_reply_dispatch_claims_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_owner_generation,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_owner_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_phase,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_plan_parent_type,TEXT,VIRTUAL,0,,0,,actions.record_type;actions.record_type;actions.record_type,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_previous_effect_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_provider_operation,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_provider_receipt_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_provider_result_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_provider_target,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_public_key,TEXT,VIRTUAL,0,,0,idx_actions_email_public_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_receipt_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_reference,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_requested_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_result_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_result_text_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_result_text_truncated,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_resulting_action_plan_id,TEXT,VIRTUAL,0,,0,idx_actions_email_email_feedback_requests_0,actions.email_public_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_sender,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_sequence,INTEGER,VIRTUAL,0,,0,idx_actions_email_email_unsubscribe_steps_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_source_readback_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_stable_message_identity,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_started_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_state,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_status,TEXT,VIRTUAL,0,,0,idx_actions_email_email_unsubscribe_claims_0;idx_actions_email_email_reply_dispatch_claims_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_thread_identity,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,email_updated_at,TEXT,VIRTUAL,0,,0,idx_actions_email_email_unsubscribe_claims_0;idx_actions_email_email_reply_dispatch_claims_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_conversation_id,TEXT,VIRTUAL,0,,0,idx_actions_errors_unresolved;idx_actions_errors_reply_task_settlement,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_detail,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_kind,TEXT,VIRTUAL,0,,0,idx_actions_errors_unresolved;idx_actions_errors_reply_task_settlement,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_message_id,TEXT,VIRTUAL,0,,0,idx_actions_errors_unresolved;idx_actions_errors_reply_task_settlement,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_resolution,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,error_resolved_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,execution_id,INTEGER,ordinary,0,,0,,actions.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,exit_code,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,external_action_key,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_decision_id,INTEGER,ordinary,0,,0,idx_actions_fb_decision_item;idx_actions_fb_decision_feedback_round,feedback_iteration_decisions.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_comment,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_feedback_token,TEXT,VIRTUAL,0,,0,idx_actions_fb_event_token,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_key,TEXT,VIRTUAL,0,,0,idx_actions_fb_event_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_original_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_rating,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_rating_label,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_raw_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_received_at,TEXT,VIRTUAL,0,,0,idx_actions_fb_event_token,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_reply_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_resolved_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_source,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_event_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_feedback_key,TEXT,ordinary,0,,0,idx_actions_fb_decision_item;idx_actions_fb_decision_feedback_round,feedback_processing_items.feedback_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_round_id,INTEGER,ordinary,0,,0,idx_actions_fb_decision_feedback_round,feedback_processing_rounds.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_batch_id,TEXT,VIRTUAL,0,,0,idx_actions_fb_transition_batch_round,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_feedback_key,TEXT,VIRTUAL,0,,0,idx_actions_fb_transition_feedback,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_from_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_round_id,INTEGER,VIRTUAL,0,,0,idx_actions_fb_transition_round;idx_actions_fb_transition_batch_round,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_to_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_workbench_task_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,fb_transition_workbench_turn_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,legacy_key,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_attempt_ref,INTEGER,ordinary,0,,0,idx_actions_memory_unique;idx_actions_memory_attempt,actions.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_attempts,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_event_type,TEXT,VIRTUAL,0,,0,idx_actions_memory_unique,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_last_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_memory_episode_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_status,TEXT,VIRTUAL,0,,0,idx_actions_memory_status,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,memory_updated_at,TEXT,VIRTUAL,0,,0,idx_actions_memory_status,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,operation,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,operation_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,operation_id,TEXT,VIRTUAL,0,,0,idx_actions_execution_receipt_operation,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,payload_json,BLOB,ordinary,1,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,persisted,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,prepared_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,receipt_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,receipt_operation_id,TEXT,VIRTUAL,0,,0,idx_actions_intent_operation,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,record_type,TEXT,VIRTUAL,0,,0,idx_actions_reply_status;idx_actions_reply_public_order;idx_actions_reply_created;idx_actions_public_id;idx_actions_memory_public_order;idx_actions_email_public_key,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,result_digest,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,runtime_config_ref,INTEGER,ordinary,0,,0,idx_actions_skill_load_config,configs.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,safe_to_confirm,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_config_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_config_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_config_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_path,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_pid,INTEGER,VIRTUAL,0,,0,idx_actions_skill_load_pid,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_revision_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_revision_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_revision_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_revision_ref,INTEGER,ordinary,0,,0,idx_actions_skill_export_revision,configs.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,skill_sha256,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,state,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_after_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_attempt_count,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_before_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_business_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_sync_business_task_dingtalk_links_1;idx_actions_sync_business_task_dingtalk_links_0,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_changes_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_claim_token,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_send_attempts_2;idx_actions_sync_business_task_follow_up_send_attempts_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_claimed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_completed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_conflict_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_created_at,TEXT,VIRTUAL,0,,0,idx_actions_sync_work_updates_0;idx_actions_sync_business_task_events_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_deadline_at_snapshot,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_dedupe_key,TEXT,VIRTUAL,0,,0,idx_actions_sync_business_task_follow_ups_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_description,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_dingtalk_task_id,TEXT,VIRTUAL,0,,0,idx_actions_sync_work_todo_dingtalk_links_2,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_draft_action_id,INTEGER,ordinary,0,,0,,actions.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_draft_id,INTEGER,VIRTUAL,0,,0,idx_actions_sync_follow_up_send_attempts_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_draft_revision,INTEGER,VIRTUAL,0,,0,idx_actions_sync_follow_up_send_attempts_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_event_type,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_evidence_check_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_evidence_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_executor_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_executor_user_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_files_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_idempotency_uuid,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_last_dingtalk_done,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_last_dingtalk_payload_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_last_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_last_pull_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_last_push_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_late_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_lease_expires_at,TEXT,VIRTUAL,0,,0,idx_actions_sync_task_todo_sync_outbox_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_lease_owner,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_lease_until,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_send_attempts_0;idx_actions_sync_business_task_follow_up_send_attempts_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_next_attempt_at,TEXT,VIRTUAL,0,,0,idx_actions_sync_business_task_todo_sync_outbox_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_operation,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_operation_key,TEXT,VIRTUAL,0,,0,idx_actions_sync_task_todo_sync_outbox_1;idx_actions_sync_business_task_todo_sync_outbox_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_owner_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_owner_user_id,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_drafts_4,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_owners_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_participants_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_priority,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_priority_snapshot,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_project_id,INTEGER,VIRTUAL,0,,0,idx_actions_sync_work_updates_1;idx_actions_sync_follow_up_drafts_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_question_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_reaction_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_reaction_summary,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_receipt_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_retry_count,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_review_enqueued_revision,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_review_source_ref,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_revision,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_risk_check_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_scheduled_at,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_drafts_5;idx_actions_sync_follow_up_drafts_1;idx_actions_sync_follow_up_drafts_0;idx_actions_sync_business_task_follow_ups_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_send_claim_idempotency_uuid,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_send_claim_revision,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_send_claim_token,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_send_result_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_sent_at,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_drafts_4;idx_actions_sync_follow_up_drafts_3,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_source_ref,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_source_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_source_type,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_state,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_send_attempts_0;idx_actions_sync_business_task_follow_up_send_attempts_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_status,TEXT,VIRTUAL,0,,0,idx_actions_sync_work_todo_dingtalk_links_0;idx_actions_sync_task_todo_sync_outbox_0;idx_actions_sync_follow_up_drafts_5;idx_actions_sync_business_task_todo_sync_outbox_0;idx_actions_sync_business_task_follow_ups_0;idx_actions_sync_business_task_dingtalk_links_1,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_summary,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_suppressed_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_tags_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_target_conversation_id,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_drafts_3,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_target_kind,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_task_id,INTEGER,VIRTUAL,0,,0,idx_actions_sync_business_task_events_0,business.task_public_id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_title,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_title_snapshot,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_todo_id,INTEGER,VIRTUAL,0,,0,idx_actions_sync_follow_up_drafts_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_updated_at,TEXT,VIRTUAL,0,,0,idx_actions_sync_follow_up_drafts_2,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,sync_work_todo_id,INTEGER,VIRTUAL,0,,0,idx_actions_sync_work_todo_dingtalk_links_1;idx_actions_sync_work_todo_dingtalk_links_0,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,target_identifiers_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_account_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_action_started_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_attempts,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_available_at,TEXT,VIRTUAL,0,,0,idx_actions_td_task_due;idx_actions_td_meeting_due,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_claim_job_id,INTEGER,ordinary,0,,0,,tasks.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_claim_token,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_consumer_run_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_conversation_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_evidence_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_execution_generation,TEXT,VIRTUAL,0,,0,idx_actions_td_wechat_task_generation;idx_actions_td_task_memory_unique,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_lease_expires_at,TEXT,VIRTUAL,0,,0,idx_actions_td_task_lease;idx_actions_td_meeting_lease,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_lease_owner,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_meeting_job_id,INTEGER,ordinary,0,,0,idx_actions_td_meeting_memory_unique,tasks.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_memories_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_memory_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_payload_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_pre_action_failure,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_reply_task_id,INTEGER,ordinary,0,,0,idx_actions_td_wechat_task_generation;idx_actions_td_task_memory_unique,tasks.id,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_reply_text,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_skip_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_started_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_status,TEXT,VIRTUAL,0,,0,idx_actions_td_wechat_status;idx_actions_td_task_lease;idx_actions_td_task_due;idx_actions_td_meeting_lease;idx_actions_td_meeting_due,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_target_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_target_type,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,td_written_memory_ids_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+actions,updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,Action/反馈/历史业务等现存家族的受约束存储；共同 Action 与回执分工
+business,anchor_active,INTEGER,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,anchor_anchor_ref,TEXT,VIRTUAL,1,,0,idx_business_anchor_identity,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,anchor_anchor_type,TEXT,VIRTUAL,1,,0,idx_business_anchor_public_type;idx_business_anchor_identity;idx_business_typed_anchor,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,anchor_public_id,INTEGER,VIRTUAL,0,,0,idx_business_anchor_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_anchor_id,INTEGER,VIRTUAL,0,,0,,business.anchor_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_assessment_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_business_area,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_category,TEXT,VIRTUAL,0,,0,idx_business_attention_list,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_ceo_action,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_current_state,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_evidence_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_public_id,INTEGER,VIRTUAL,0,,0,idx_business_attention_item_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_resolution_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_resolved_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_stable_key,TEXT,VIRTUAL,0,,0,idx_business_attention_stable_key,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,attention_item_why_attention,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,canonical_anchor_ref,INTEGER,ordinary,0,,0,,business.id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,canonical_anchor_ref_type,TEXT,VIRTUAL,0,,0,,business.record_type,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,completed_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,context_project_ref,INTEGER,ordinary,0,,0,,business.id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,context_project_ref_type,TEXT,VIRTUAL,0,,0,,business.record_type,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,created_at,TEXT,ordinary,1,current_timestamp,0,idx_business_bugfix_status,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,id,INTEGER,ordinary,0,,1,idx_business_typed_anchor;idx_business_typed_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,import_task_id,INTEGER,ordinary,0,,0,,business.task_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,legacy_key,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,merged_task_ref,INTEGER,ordinary,0,,0,,business.id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,merged_task_ref_type,TEXT,VIRTUAL,0,,0,,business.record_type,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,payload_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_anchor_type,TEXT,VIRTUAL,1,,0,,business.anchor_anchor_type,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_candidate_cluster_id,INTEGER,VIRTUAL,0,,0,idx_business_project_candidate_cluster,business.work_cluster_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_candidate_confirmation_signal_id,INTEGER,VIRTUAL,0,,0,,actions.business_signal_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_candidate_confirmed_project_id,INTEGER,VIRTUAL,0,,0,,business.project_public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_candidate_public_id,INTEGER,VIRTUAL,0,,0,idx_business_project_candidate_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_candidate_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_canonical_anchor_id,INTEGER,VIRTUAL,1,,0,idx_business_project_anchor,business.public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_context_revision_context_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_context_revision_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_context_revision_project_id,INTEGER,VIRTUAL,1,,0,idx_business_context_project,business.public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_crm_customer_candidates_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_crm_customer_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_crm_customer_id,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_crm_customer_label,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_crm_customer_lookup_status,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_crm_customer_name,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_public_id,INTEGER,VIRTUAL,0,,0,idx_business_project_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,project_registry_source,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,public_id,INTEGER,VIRTUAL,0,,0,idx_business_project_candidate_cluster;idx_business_attention_list;idx_business_todo_evidence_project;idx_business_todo_evidence_status;idx_business_todo_evidence_todo;idx_business_context_project;idx_business_anchor_public_type;idx_business_task_updated;idx_business_task_stage;idx_business_task_relevance;idx_business_typed_anchor;idx_business_typed_id;idx_business_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,record_type,TEXT,ordinary,1,,0,idx_business_typed_anchor;idx_business_typed_id;idx_business_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_attempt_id,INTEGER,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_conversation_title,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_feedback_comment,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_feedback_event_key,TEXT,VIRTUAL,1,,0,idx_business_bugfix_feedback_event_key,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_feedback_token,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_reason,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,service_bugfix_candidate_trigger_text,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,source_created_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,source_ref,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,source_type,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,status,TEXT,ordinary,1,'',0,idx_business_project_candidate_cluster;idx_business_attention_list;idx_business_todo_evidence_status;idx_business_todo_evidence_todo;idx_business_work_todo_project_status;idx_business_bugfix_status;idx_business_task_stage,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_business_relevance,TEXT,VIRTUAL,1,,0,idx_business_task_relevance,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_commitment_status,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_deadline_at,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_description,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_formal_basis,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_last_activity_at,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_merged_into_task_id,INTEGER,VIRTUAL,0,,0,,business.public_id,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_missing_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_origin,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_owner_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_owner_name,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_owner_user_id,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_public_id,INTEGER,VIRTUAL,0,,0,idx_business_task_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_stage,TEXT,VIRTUAL,1,,0,idx_business_task_stage,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,task_suggestion_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,title,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_confidence,REAL,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_decision_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_dedupe_key,TEXT,VIRTUAL,1,,0,idx_business_todo_evidence_dedupe_key,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_evidence_text,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_project_id,INTEGER,VIRTUAL,1,,0,idx_business_todo_evidence_project,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_reason,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_todo_id,INTEGER,VIRTUAL,1,,0,idx_business_todo_evidence_todo,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,todo_evidence_candidate_work_summary_input_id,INTEGER,VIRTUAL,1,,0,idx_business_todo_evidence_work_input,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,updated_at,TEXT,ordinary,1,'',0,idx_business_attention_list;idx_business_task_updated;idx_business_task_stage;idx_business_task_relevance,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_account_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_category,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_cleanup_notes,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_confidence,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_edited_statement,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_evidence_excerpt,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_import_run_id,TEXT,VIRTUAL,0,,0,idx_business_wechat_candidate_identity,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_memory_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_memory_write_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_memory_write_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_public_id,INTEGER,VIRTUAL,0,,0,idx_business_wechat_memory_candidate_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_reviewed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_reviewer,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_sensitivity,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_source_conversation_ids_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_source_message_ids_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_source_time_end,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_source_time_start,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,wechat_memory_candidate_statement,TEXT,VIRTUAL,0,,0,idx_business_wechat_candidate_identity,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_cluster_public_id,INTEGER,VIRTUAL,0,,0,idx_business_work_cluster_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_background,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_blocker,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_category,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_current_state,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_facts_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_goal,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_last_activity_at,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_next_step,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_owner_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_owner_name,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_owner_user_id,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_public_id,INTEGER,VIRTUAL,0,,0,idx_business_work_project_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_related_people_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_source_conversations_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_project_tags_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_blocker,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_completion_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_created_from_update_id,INTEGER,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_deadline_at,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_description,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_follow_up_question,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_owner_evidence_json,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_owner_name,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_owner_user_id,TEXT,VIRTUAL,1,,0,,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_project_id,INTEGER,VIRTUAL,1,,0,idx_business_work_todo_project_status,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+business,work_todo_public_id,INTEGER,VIRTUAL,0,,0,idx_business_work_todo_public_id,,保留／本轮未建立删除证据,正式业务 Task/Project 与仍可查的历史业务事实
+codex_session_search_index,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+codex_session_search_index,id,INTEGER,ordinary,0,,1,idx_codex_session_id;idx_codex_session_source_id,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+codex_session_search_index,session_id,TEXT,ordinary,1,,0,sqlite_autoindex_codex_session_search_index_1,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+codex_session_search_index,source_id,TEXT,ordinary,1,,0,idx_codex_session_source_id;idx_codex_session_source,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+codex_session_search_index,source_type,TEXT,ordinary,1,,0,idx_codex_session_source_id;idx_codex_session_source,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+codex_session_search_index,title,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+codex_session_search_index,updated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,原生 session 可重建搜索索引
+configs,account_agent_lookback_days,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_display_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_email_address,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_enabled,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_imap_host,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_imap_move_mode,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_imap_port,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_imap_secret_reference,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_imap_tls,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_imap_username,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_model_lookback_days,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_scan_folders_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_scan_interval_seconds,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_scan_read_state,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_smtp_host,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_smtp_port,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_smtp_secret_reference,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_smtp_tls,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_smtp_username,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,account_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_account_id,TEXT,ordinary,0,,0,idx_configs_binding_active_provider;idx_configs_binding_identity,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_account_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_account_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_binding_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_category_key,TEXT,ordinary,0,,0,idx_configs_binding_identity,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_category_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_category_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_last_verified_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_provider_folder_id,TEXT,VIRTUAL,0,,0,idx_configs_binding_active_provider,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,binding_provider_folder_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_action_parameters_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_actions_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_config_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_core_description,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_description_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_display_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_enabled,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_exclude_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_include_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_threshold,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,category_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,feedback_capability_config_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,feedback_capability_config_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,feedback_capability_config_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,feedback_capability_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,feedback_capability_enabled,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,id,INTEGER,ordinary,0,,1,idx_configs_typed_public,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,legacy_key,TEXT,ordinary,1,,0,idx_configs_legacy,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,numeric_public_key,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,payload_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,promotion_category_precision_min,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,promotion_category_validation_samples_min,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,promotion_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,promotion_micro_f1_min,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,promotion_p95_latency_max_ms,REAL,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,public_key,TEXT,VIRTUAL,0,,0,idx_configs_typed_public;idx_configs_public,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,record_type,TEXT,ordinary,1,,0,idx_configs_typed_public;idx_configs_public;idx_configs_legacy,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,revision_category_key,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,revision_config_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,revision_config_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,revision_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,runtime_config_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,runtime_config_parent_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,runtime_config_parent_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,runtime_config_parent_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,runtime_config_parent_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,runtime_config_status,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_config_snapshot_json,TEXT,VIRTUAL,0,,0,idx_configs_schedule_snapshot,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_managed_revision_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_managed_skill_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_position,INTEGER,VIRTUAL,0,,0,idx_configs_schedule_ref_position,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_revision_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_revision_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_revision_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_schedule_ref,INTEGER,ordinary,0,,0,,schedules.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_scheduled_task_id,INTEGER,VIRTUAL,0,,0,idx_configs_schedule_ref_position,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_skill_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_skill_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_skill_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_skill_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_skill_ref_skill_source,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,schedule_snapshot_public_id,INTEGER,VIRTUAL,0,,0,idx_configs_schedule_snapshot_public_id,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_config_id,INTEGER,VIRTUAL,0,,0,idx_configs_binding_config_order;idx_configs_binding_order;idx_configs_binding_skill,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_config_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_config_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_config_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_enabled,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_load_order,INTEGER,VIRTUAL,0,,0,idx_configs_binding_config_order;idx_configs_binding_order,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_purpose,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_revision_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_revision_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_revision_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_revision_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_skill_id,INTEGER,VIRTUAL,0,,0,idx_configs_binding_skill,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_skill_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_skill_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_binding_skill_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_display_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_name,TEXT,VIRTUAL,0,,0,idx_configs_skill_name,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_content,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_parent_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_parent_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_parent_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_parent_revision_id,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_revision_number,INTEGER,VIRTUAL,0,,0,idx_configs_revision_number,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_sha256,TEXT,VIRTUAL,0,,0,idx_configs_revision_identity,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_skill_id,INTEGER,VIRTUAL,0,,0,idx_configs_revision_number;idx_configs_revision_identity,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_skill_ref,INTEGER,ordinary,0,,0,,configs.id,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_skill_ref_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_skill_ref_public_key,TEXT,VIRTUAL,0,,0,,configs.public_key,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,skill_revision_source,TEXT,VIRTUAL,0,,0,idx_configs_revision_identity,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_description_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_folder_label_watermark,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_frozen,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_important_label_watermark,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_input_schema_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_manifest_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_observed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_seed,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_snapshot_digest,TEXT,ordinary,0,,0,idx_configs_snapshot_digest,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,snapshot_snapshot_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,source_key,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,transition_actor,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_created_at,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_from_mode,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_from_model_id,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_promotion_config_version,TEXT,ordinary,0,,0,,configs.public_key,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_promotion_kind,TEXT,VIRTUAL,0,,0,,configs.record_type,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_promotion_ref,INTEGER,ordinary,0,,0,,configs.id,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_reason,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_status,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_target_model_id,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,transition_to_mode,TEXT,VIRTUAL,0,,0,,,空家族显式 DDL 退休,现行模型切换历史在 registry manifest；旧家族零行，迁移前重验
+configs,wechat_scope_account_id,TEXT,VIRTUAL,0,,0,idx_configs_wechat_scope,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_binding_evidence_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_binding_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_conversation_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_disabled_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_display_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_enabled,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_last_discovered_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_target_id,TEXT,VIRTUAL,0,,0,idx_configs_wechat_scope,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_target_type,TEXT,VIRTUAL,0,,0,idx_configs_wechat_scope,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_trigger_mode,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+configs,wechat_scope_updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,现行配置/版本/绑定/manifest 身份；含一个空的重复切换家族
+email_classification_inputs,channel,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,分类输入/provenance；小冗余尚待独立合同核对
+email_classification_inputs,input_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,分类输入/provenance；小冗余尚待独立合同核对
+email_classification_inputs,stable_message_identity,TEXT,ordinary,1,,0,sqlite_autoindex_email_classification_inputs_1,,保留／本轮未建立删除证据,分类输入/provenance；小冗余尚待独立合同核对
+email_classification_inputs,task_id,INTEGER,ordinary,0,,1,,tasks.id,保留／本轮未建立删除证据,分类输入/provenance；小冗余尚待独立合同核对
+email_classifier_runtime_samples,cache_hit,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,embedding_ms,REAL,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,fallback_code,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,head_ms,REAL,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,http_ms,REAL,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,id,INTEGER,ordinary,0,,1,idx_email_samples_model;idx_email_samples_id,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,model_id,TEXT,ordinary,1,,0,idx_email_samples_model,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,outcome,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,queue_ms,REAL,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,runtime_warm,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_classifier_runtime_samples,total_ms,REAL,ordinary,1,,0,,,保留／本轮未建立删除证据,有界无正文性能样本，供百分位 API
+email_historical_candidates,account_id,TEXT,ordinary,1,,0,idx_email_historical_candidates_account_id_folder_model_id_stable_message_identity_identity,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,attempted_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,folder,TEXT,ordinary,1,,0,idx_email_historical_candidates_account_id_folder_model_id_stable_message_identity_identity,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,model_id,TEXT,ordinary,1,,0,idx_email_historical_candidates_account_id_folder_model_id_stable_message_identity_identity,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,next_retry_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,normalized_text,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,provider_message_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,reason,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,stable_message_identity,TEXT,ordinary,1,,0,idx_email_historical_candidates_account_id_folder_model_id_stable_message_identity_identity,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,state,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,uid,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,uidvalidity,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_historical_candidates,updated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,历史分类候选与摘要 hash
+email_schema_migrations,applied_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,显式 Email 版本迁移标记
+email_schema_migrations,version,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,显式 Email 版本迁移标记
+emails,account_id,TEXT,ordinary,1,,0,idx_emails_message_account_locator;idx_emails_class_account_status;idx_emails_class_account_locator,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_agent_result_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_category,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_classification_source,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_confidence,REAL,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_config_version,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_confirmed_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_confirmed_category,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_created_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_current_action_plan_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_included_in_model_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_legacy_processed_without_plan,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_margin,REAL,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_model_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_model_text,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_predicted_category,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_probabilities_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_rfc_message_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_status,TEXT,ordinary,0,,0,idx_emails_class_status;idx_emails_class_account_status;idx_emails_class_account_locator,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_thread_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,class_updated_at,TEXT,ordinary,0,,0,idx_emails_class_status;idx_emails_class_account_status;idx_emails_class_account_locator,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,classification_id,INTEGER,ordinary,0,,0,idx_emails_class_status;sqlite_autoindex_emails_1,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_attachment_metadata_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_folder,TEXT,ordinary,1,,0,idx_emails_message_account_locator;idx_emails_class_account_locator,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_id,INTEGER,ordinary,1,,0,sqlite_autoindex_emails_2,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_in_reply_to,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_normalized_text,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_preview,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_received_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_recipients_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_references_json,TEXT,ordinary,1,'[]',0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_rfc_message_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_sender,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_source_reference_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_subject,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_thread_identity,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,message_updated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,stable_message_identity,TEXT,ordinary,1,,0,sqlite_autoindex_emails_3,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,uid,INTEGER,ordinary,1,,0,idx_emails_message_account_locator;idx_emails_class_account_locator,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+emails,uidvalidity,INTEGER,ordinary,1,,0,idx_emails_message_account_locator;idx_emails_class_account_locator,,保留／本轮未建立删除证据,当前邮件身份、分类结果及限定预览
+feedback_iteration_decisions,batch_id,TEXT,ordinary,1,,0,idx_feedback_iteration_decisions_batch,feedback_processing_batches.batch_id,保留／本轮未建立删除证据,反馈迭代决定；保留当前写入 API
+feedback_iteration_decisions,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,反馈迭代决定；保留当前写入 API
+feedback_iteration_decisions,decision_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,反馈迭代决定；保留当前写入 API
+feedback_iteration_decisions,id,INTEGER,ordinary,0,,1,idx_feedback_iteration_decisions_batch,,保留／本轮未建立删除证据,反馈迭代决定；保留当前写入 API
+feedback_iteration_decisions,workbench_task_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,反馈迭代决定；保留当前写入 API
+feedback_iteration_decisions,workbench_turn_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,反馈迭代决定；保留当前写入 API
+feedback_processing_batches,batch_id,TEXT,ordinary,0,,0,idx_feedback_processing_batches_batch_id_identity,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_batches,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_batches,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_batches,requested_count,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_batches,resolved_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_batches,status,TEXT,ordinary,1,'pending',0,,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_batches,updated_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,反馈处理批次关系
+feedback_processing_items,agent_run_id,INTEGER,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,attempt_id,INTEGER,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,batch_id,TEXT,ordinary,1,,0,idx_feedback_processing_items_batch,,保留／本轮未建立删除证据,反馈 Task/来源/批次/当前轮次指针；现有十项镜像可退休
+feedback_processing_items,commit_sha,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,current_round_id,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,反馈 Task/来源/批次/当前轮次指针；现有十项镜像可退休
+feedback_processing_items,feedback_key,TEXT,ordinary,0,,0,idx_feedback_processing_items_feedback_key_identity;sqlite_autoindex_feedback_processing_items_1,,保留／本轮未建立删除证据,反馈 Task/来源/批次/当前轮次指针；现有十项镜像可退休
+feedback_processing_items,health_evidence_json,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,note,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,resolved_at,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确源 actions[feedback_events].fb_event_resolved_at；46 个无 Round 非空值不可丢
+feedback_processing_items,restart_evidence_json,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,task_id,INTEGER,ordinary,0,,1,,tasks.id,保留／本轮未建立删除证据,反馈 Task/来源/批次/当前轮次指针；现有十项镜像可退休
+feedback_processing_items,test_evidence_json,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,workbench_task_id,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_items,workbench_turn_id,TEXT,ordinary,1,,0,,,切换调用方后显式 DDL 退休,准确 current_round_id 指向的 feedback_processing_rounds；无当前轮次使用既有中性值
+feedback_processing_rounds,agent_run_id,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,attempt_id,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,backlog_evidence_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,batch_id,TEXT,ordinary,1,'',0,idx_feedback_processing_rounds_feedback_key_batch_id_identity;idx_feedback_processing_rounds_batch,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,commit_sha,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,feedback_key,TEXT,ordinary,1,,0,idx_feedback_processing_rounds_feedback_key_round_number_identity;idx_feedback_processing_rounds_feedback_key_batch_id_identity;idx_feedback_processing_rounds_feedback,feedback_processing_items.feedback_key,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,health_evidence_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,note,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,receipt_version,INTEGER,ordinary,1,1,0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,reopen_reason,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,reopened_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,resolved_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,restart_evidence_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,round_number,INTEGER,ordinary,1,,0,idx_feedback_processing_rounds_feedback_key_round_number_identity;idx_feedback_processing_rounds_feedback,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,scope_receipt_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,started_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,status,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,test_evidence_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,updated_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,workbench_task_id,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+feedback_processing_rounds,workbench_turn_id,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,反馈轮次、证据、解决/重开和回执
+oa_notification_events,channel,TEXT,ordinary,1,'dingtalk',0,idx_oa_notification_events_channel_conversation_id_trigger_message_id_identity,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,claimed_attempt_id,INTEGER,ordinary,1,0,0,idx_oa_notification_events_claim,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,conversation_id,TEXT,ordinary,1,,0,idx_oa_notification_events_channel_conversation_id_trigger_message_id_identity,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,conversation_title,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,event_kind,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,id,INTEGER,ordinary,0,,1,idx_oa_notification_events_case_status;idx_oa_notification_events_claim,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,last_error,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,oa_url,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,process_instance_id,TEXT,ordinary,1,'',0,idx_oa_notification_events_case_status,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,requires_reply,INTEGER,ordinary,1,0,0,idx_oa_notification_events_case_status,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,result_attempt_id,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,sent_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,status,TEXT,ordinary,1,'pending',0,idx_oa_notification_events_case_status;idx_oa_notification_events_claim,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,task_id,TEXT,ordinary,1,'',0,idx_oa_notification_events_case_status,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,trigger_create_time,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,trigger_message_id,TEXT,ordinary,1,,0,idx_oa_notification_events_channel_conversation_id_trigger_message_id_identity,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,trigger_message_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,trigger_sender,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,trigger_text,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+oa_notification_events,updated_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,OA 通知业务状态及回执
+okr_review_items,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,item_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,kr_title,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,kr_weight,REAL,ordinary,1,0,0,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,objective_title,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,objective_weight,REAL,ordinary,1,0,0,,,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+okr_review_items,request_id,INTEGER,ordinary,1,,0,,tasks.id,保留／本轮未建立删除证据,OKR 审阅子项业务结果
+provenance,author_kind,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,author_name,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,author_user_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,body_sha256,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,body_utf8_bytes,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,conversation_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,id,INTEGER,ordinary,0,,1,idx_provenance_source,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,identity_key,TEXT,ordinary,1,,0,sqlite_autoindex_provenance_1,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,native_provenance_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,provider_locator_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,source_ref,TEXT,ordinary,1,,0,idx_provenance_source,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,source_time,TEXT,ordinary,1,,0,idx_provenance_source,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provenance,source_type,TEXT,ordinary,1,,0,idx_provenance_source,,保留／本轮未建立删除证据,不可变来源身份、版本和定位
+provider_state,account_id,TEXT,ordinary,1,,0,idx_provider_state_observation_folder;idx_provider_state_generation_identity;idx_provider_state_observation_identity,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,category_key,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,important,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,important_signals_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,observed_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,provider_folder_id,TEXT,ordinary,0,,0,idx_provider_state_observation_folder;idx_provider_state_generation_identity,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,provider_folder_name,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,record_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,stable_message_identity,TEXT,ordinary,0,,0,idx_provider_state_observation_identity,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+provider_state,state,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,邮件 provider 当前观察事实和目录代次
+reply_attempt_receipt_refs,attempt_id,INTEGER,ordinary,0,,1,,actions.id,保留／本轮未建立删除证据,局部 Reply 结果对权威回执的精确引用
+reply_attempt_receipt_refs,receipt_id,INTEGER,ordinary,1,,0,idx_reply_attempt_receipt_refs_receipt,action_receipts.id,保留／本轮未建立删除证据,局部 Reply 结果对权威回执的精确引用
+run_adopted_results,candidate_digest,TEXT,ordinary,1,,0,sqlite_autoindex_run_adopted_results_1,,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,candidate_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,consumer_run_id,INTEGER,ordinary,0,,1,sqlite_autoindex_run_adopted_results_1,runs.id,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,invalidated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,invalidation_reason,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,predecessor_review_id,INTEGER,ordinary,0,,0,,run_adopted_reviews.id,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_results,stage_index,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,Run 已采用业务候选及 digest
+run_adopted_reviews,audit_run_id,INTEGER,ordinary,1,,0,idx_run_adopted_reviews_consumer;sqlite_autoindex_run_adopted_reviews_2;sqlite_autoindex_run_adopted_reviews_1,runs.id,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_reviews,candidate_digest,TEXT,ordinary,1,,0,,run_adopted_results.candidate_digest,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_reviews,consumer_run_id,INTEGER,ordinary,1,,0,idx_run_adopted_reviews_consumer;sqlite_autoindex_run_adopted_reviews_2,run_adopted_results.consumer_run_id,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_reviews,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_reviews,decision,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_reviews,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_reviews,result_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,绑定准确候选的审查结果
+run_adopted_selections,audit_run_id,INTEGER,ordinary,1,,0,sqlite_autoindex_run_adopted_selections_3;sqlite_autoindex_run_adopted_selections_2,run_adopted_reviews.audit_run_id,保留／本轮未建立删除证据,准确候选/审查的规则选择；保留真实 API/FK
+run_adopted_selections,consumer_run_id,INTEGER,ordinary,1,,0,sqlite_autoindex_run_adopted_selections_3;sqlite_autoindex_run_adopted_selections_2;sqlite_autoindex_run_adopted_selections_1,run_adopted_reviews.consumer_run_id;run_adopted_results.consumer_run_id,保留／本轮未建立删除证据,准确候选/审查的规则选择；保留真实 API/FK
+run_adopted_selections,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,准确候选/审查的规则选择；保留真实 API/FK
+run_adopted_selections,id,INTEGER,ordinary,0,,1,sqlite_autoindex_run_adopted_selections_3,,保留／本轮未建立删除证据,准确候选/审查的规则选择；保留真实 API/FK
+run_adopted_selections,option_key,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,准确候选/审查的规则选择；保留真实 API/FK
+run_adopted_selections,status,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,准确候选/审查的规则选择；保留真实 API/FK
+run_adopted_supplements,consumer_run_id,INTEGER,ordinary,1,,0,idx_run_adopted_supplements_consumer,run_adopted_results.consumer_run_id,保留／本轮未建立删除证据,已采用补充结果
+run_adopted_supplements,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,已采用补充结果
+run_adopted_supplements,id,INTEGER,ordinary,0,,1,idx_run_adopted_supplements_consumer,,保留／本轮未建立删除证据,已采用补充结果
+run_adopted_supplements,instruction,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,已采用补充结果
+run_adoption_identity_map,source_kind,TEXT,ordinary,1,,1,sqlite_autoindex_run_adoption_identity_map_1,,保留／本轮未建立删除证据,旧 Candidate/Review/Execution 源身份映射
+run_adoption_identity_map,source_physical_id,INTEGER,ordinary,1,,2,sqlite_autoindex_run_adoption_identity_map_1,,保留／本轮未建立删除证据,旧 Candidate/Review/Execution 源身份映射
+run_adoption_identity_map,source_public_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,旧 Candidate/Review/Execution 源身份映射
+run_adoption_identity_map,source_public_id_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,旧 Candidate/Review/Execution 源身份映射
+run_adoption_identity_map,target_child_id,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,旧 Candidate/Review/Execution 源身份映射
+run_adoption_identity_map,target_run_id,INTEGER,ordinary,1,,0,,runs.id,保留／本轮未建立删除证据,旧 Candidate/Review/Execution 源身份映射
+run_entity_identity_map,allocator_highwater,INTEGER,ordinary,0,,0,,,显式 DDL 退休,172078 行全 NULL、无读取；inverse 恢复 NULL，不删除其他身份事实
+run_entity_identity_map,physical_id,INTEGER,ordinary,1,,2,sqlite_autoindex_run_entity_identity_map_1,,保留／本轮未建立删除证据,不可普遍反推的旧 Run typed 身份与顺序
+run_entity_identity_map,public_key,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,不可普遍反推的旧 Run typed 身份与顺序
+run_entity_identity_map,public_key_order,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,不可普遍反推的旧 Run typed 身份与顺序
+run_entity_identity_map,public_key_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,不可普遍反推的旧 Run typed 身份与顺序
+run_entity_identity_map,source_kind,TEXT,ordinary,1,,1,sqlite_autoindex_run_entity_identity_map_2;sqlite_autoindex_run_entity_identity_map_1,,保留／本轮未建立删除证据,不可普遍反推的旧 Run typed 身份与顺序
+run_entity_identity_map,target_id,INTEGER,ordinary,1,,0,sqlite_autoindex_run_entity_identity_map_2,,保留／本轮未建立删除证据,不可普遍反推的旧 Run typed 身份与顺序
+run_execution_progress,approved_audit_run_id,INTEGER,ordinary,1,,0,,run_adopted_selections.audit_run_id;run_adopted_reviews.audit_run_id;run_adopted_reviews.audit_run_id,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,consumer_run_id,INTEGER,ordinary,0,,1,,run_adopted_selections.consumer_run_id;run_adopted_reviews.consumer_run_id;run_adopted_results.consumer_run_id,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,lease_expires_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,lease_owner,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,result_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,selection_id,INTEGER,ordinary,0,,0,,run_adopted_selections.id;run_adopted_selections.id,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,status,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_execution_progress,updated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,采用后执行进度、租约及结果
+run_failures,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,服务端失败事实，非 CLI trajectory 事件
+run_failures,id,INTEGER,ordinary,0,,1,idx_run_failures_run,,保留／本轮未建立删除证据,服务端失败事实，非 CLI trajectory 事件
+run_failures,phase,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,服务端失败事实，非 CLI trajectory 事件
+run_failures,run_id,INTEGER,ordinary,1,,0,idx_run_failures_run,runs.id,保留／本轮未建立删除证据,服务端失败事实，非 CLI trajectory 事件
+run_failures,structured_error_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,服务端失败事实，非 CLI trajectory 事件
+run_projections,projection_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,已采用的 Task 投影
+run_projections,run_id,INTEGER,ordinary,0,,1,,runs.id,保留／本轮未建立删除证据,已采用的 Task 投影
+run_provenance,job_id,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,专业 Run 的既有来源/任务身份
+run_provenance,run_id,INTEGER,ordinary,0,,1,,runs.id,保留／本轮未建立删除证据,专业 Run 的既有来源/任务身份
+run_provenance,source_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,专业 Run 的既有来源/任务身份
+runs,completed_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,error,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,execution_generation,TEXT,ordinary,0,,0,idx_runs_turn_identity,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,id,INTEGER,ordinary,0,,1,idx_runs_parent;idx_runs_task,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,lease_expires_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,lease_owner,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,operation_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,parent_id,INTEGER,ordinary,0,,0,idx_runs_parent,runs.id,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,proposal_revision,INTEGER,ordinary,0,,0,idx_runs_turn_identity,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,role,TEXT,ordinary,0,,0,idx_runs_turn_identity,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,session_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,started_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,status,TEXT,ordinary,0,,0,idx_runs_status_updated,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,structured_error_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,task_id,INTEGER,ordinary,0,,0,idx_runs_task;idx_runs_turn_identity,tasks.id,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,transcript_end,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,transcript_start,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,turn_attempt,INTEGER,ordinary,0,,0,idx_runs_turn_identity,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runs,updated_at,TEXT,ordinary,0,,0,idx_runs_status_updated,,保留／本轮未建立删除证据,逻辑运行、角色和修订父链
+runtime_attempts,attempt_number,INTEGER,ordinary,1,,0,idx_runtime_attempts_run_order;sqlite_autoindex_runtime_attempts_1,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,attempt_purpose,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,credential_mode,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,failover_permitted,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,failure_class,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,failure_code,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,finished_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,first_effect_started_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,lease_expires_at,TEXT,ordinary,1,,0,idx_runtime_attempts_active_lease,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,lease_owner,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,model,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,parent_id,INTEGER,ordinary,0,,0,idx_runtime_attempts_run_order,runs.id,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,result_schema_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,route_name,TEXT,ordinary,1,,0,idx_runtime_attempts_active_route,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,runtime_kind,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,session_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,session_mode,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,source_session_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,started_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,status,TEXT,ordinary,1,,0,idx_runtime_attempts_active_lease,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,transcript_end,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,transcript_reference,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,transcript_start,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,updated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,validation_result_schema_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,validation_retry_policy_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,workload_key,TEXT,ordinary,1,,0,idx_runtime_attempts_active_route;sqlite_autoindex_runtime_attempts_1,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+runtime_attempts,workload_kind,TEXT,ordinary,1,,0,idx_runtime_attempts_active_route;sqlite_autoindex_runtime_attempts_1,,保留／本轮未建立删除证据,真实 CLI 调用、retry/resume、route/model/session
+schedule_occurrences,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,dispatch_status,TEXT,ordinary,1,,0,idx_schedule_occurrences_dispatch;idx_schedule_occurrences_claim,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,dispatched_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,event_id,TEXT,ordinary,1,,0,sqlite_autoindex_schedule_occurrences_1,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,execution_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,execution_kind,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,first_scheduled_for,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,id,INTEGER,ordinary,0,,1,idx_schedule_occurrences_covered_range;idx_schedule_occurrences_task_chronology;idx_schedule_occurrences_reply_execution;idx_schedule_occurrences_latest;idx_schedule_occurrences_dispatch;idx_schedule_occurrences_claim,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,lease_expires_at,TEXT,ordinary,0,,0,idx_schedule_occurrences_dispatch,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,lease_owner,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,occurrence_count,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,result_summary,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,scheduled_for,TEXT,ordinary,1,,0,idx_schedule_occurrences_scheduled_instant;idx_schedule_occurrences_dispatch;idx_schedule_occurrences_claim,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,scheduled_task_id,INTEGER,ordinary,1,,0,idx_schedule_occurrences_covered_range;idx_schedule_occurrences_task_chronology;idx_schedule_occurrences_scheduled_instant;idx_schedule_occurrences_reply_execution;idx_schedule_occurrences_latest,schedules.id,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,skip_or_error_reason,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,snapshot_id,INTEGER,ordinary,0,,0,idx_schedule_occurrences_covered_range,configs.schedule_snapshot_public_id,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedule_occurrences,trigger_kind,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度触发、租约、结果和连续空跑区间
+schedules,command,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,cron_expression,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,deleted_at,TEXT,ordinary,0,,0,idx_schedules_enabled,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,description,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,enabled,INTEGER,ordinary,1,,0,idx_schedules_enabled,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,id,INTEGER,ordinary,0,,1,idx_schedules_enabled,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,migration_key,TEXT,ordinary,0,,0,idx_schedules_migration_key,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,name,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,notify_on_completion,INTEGER,ordinary,1,1,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,prompt,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,required_runtime_capabilities_json,TEXT,ordinary,1,'[]',0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,runtime_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,runtime_options_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,timezone,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,updated_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,version,INTEGER,ordinary,1,1,0,,,保留／本轮未建立删除证据,调度配置及计划身份
+schedules,working_directory,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,调度配置及计划身份
+setup_wizard_events,action_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,evidence_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,finished_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,id,INTEGER,ordinary,0,,1,idx_setup_events_step;idx_setup_events_id,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,status,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,stderr_excerpt,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,stdout_excerpt,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,step_id,TEXT,ordinary,1,,0,idx_setup_events_step,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+setup_wizard_events,summary,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,setup 动作证据和事件回执
+state,account_dir,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,account_id,TEXT,VIRTUAL,0,,0,idx_state_wechat_read_state_pk;idx_state_email_scan_cursors_pk;idx_state_email_historical_traversals_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,adapter_name,TEXT,VIRTUAL,0,,0,idx_state_dispatcher_expiry;idx_state_dispatcher_claim_leases_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,app_version,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,capability_reason,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,capability_status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,channel,TEXT,VIRTUAL,0,,0,idx_state_channel_login_reservations_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,codex_session_contract_hash,TEXT,VIRTUAL,0,,0,,,切换调用方后显式 DDL 退休,conversation_runtime_sessions.session_id/contract_hash 为唯一 owner；非 Run/Attempt session
+state,codex_session_id,TEXT,VIRTUAL,0,,0,,,切换调用方后显式 DDL 退休,conversation_runtime_sessions.session_id/contract_hash 为唯一 owner；非 Run/Attempt session
+state,contract_hash,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,conversation_id,TEXT,VIRTUAL,0,,0,idx_state_conversations_pk;idx_state_conversation_runtime_sessions_pk;idx_state_codex_session_locks_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,created_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,cursor_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,db_dir,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,department_ids_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,department_names_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,failure_code,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,fetched_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,folder,TEXT,VIRTUAL,0,,0,idx_state_email_scan_cursors_pk;idx_state_email_historical_traversals_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,generation,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,has_subordinate,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,key,TEXT,VIRTUAL,0,,0,idx_state_service_state_pk;idx_state_org_cache_metadata_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,last_error,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,last_scan_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,last_seen_uid,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,last_success_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,lease_expires_at,TEXT,VIRTUAL,0,,0,idx_state_dispatcher_expiry,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,legacy_key,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,locked_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,manager_name,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,manager_user_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,manual_confirmed_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,manual_confirmed_by,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,message_id,TEXT,VIRTUAL,0,,0,idx_state_seen_messages_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,model_id,TEXT,VIRTUAL,0,,0,idx_state_email_historical_traversals_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,name,TEXT,VIRTUAL,0,,0,idx_state_org_name,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,open_dingtalk_id,TEXT,VIRTUAL,0,,0,idx_state_org_open_id,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,opened_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,org_labels_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,owner,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,owner_pid,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,payload_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,record_type,TEXT,ordinary,1,,0,idx_state_dispatcher_terminal;idx_state_source_rowid,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,reservation_owner,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,reserved_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,retry_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,route_name,TEXT,VIRTUAL,0,,0,idx_state_runtime_route_pauses_pk;idx_state_conversation_runtime_sessions_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,scanner_name,TEXT,VIRTUAL,0,,0,idx_state_daily_scan_state_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,seen_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,self_user_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,session_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,single_chat,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,source_id,TEXT,VIRTUAL,0,,0,idx_state_dispatcher_expiry;idx_state_dispatcher_claim_leases_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,status,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,step_id,TEXT,VIRTUAL,0,,0,idx_state_setup_wizard_steps_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,summary,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,terminal_at,TEXT,VIRTUAL,0,,0,idx_state_dispatcher_terminal,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,title,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,uidvalidity,INTEGER,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,updated_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,user_id,TEXT,VIRTUAL,0,,0,idx_state_org_user_profiles_pk,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,value,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,value_json,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,watermark_message_id,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+state,watermark_sent_at,TEXT,VIRTUAL,0,,0,,,保留／本轮未建立删除证据,当前状态、route 会话和游标；含旧会话双写
+task_business_keys,business_key,TEXT,ordinary,1,,0,idx_business_object_tasks_business_key_identity;sqlite_autoindex_task_business_keys_1,,保留／本轮未建立删除证据,稳定业务 key 与 Task 多对一关联
+task_business_keys,created_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,稳定业务 key 与 Task 多对一关联
+task_business_keys,id,INTEGER,ordinary,0,,1,,,保留／本轮未建立删除证据,稳定业务 key 与 Task 多对一关联
+task_business_keys,task_id,INTEGER,ordinary,1,,0,,tasks.id,保留／本轮未建立删除证据,稳定业务 key 与 Task 多对一关联
+task_business_keys,updated_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,稳定业务 key 与 Task 多对一关联
+task_inputs,business_object_key,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,channel,TEXT,ordinary,1,,0,sqlite_autoindex_task_inputs_2,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,conversation_id,TEXT,ordinary,1,,0,sqlite_autoindex_task_inputs_2,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,conversation_title,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,id,INTEGER,ordinary,0,,1,sqlite_autoindex_task_inputs_1,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,input_compacted,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,input_provenance_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,input_revision_key,TEXT,ordinary,1,'',0,sqlite_autoindex_task_inputs_2,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,oa_url,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,single_chat,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,task_id,INTEGER,ordinary,1,,0,sqlite_autoindex_task_inputs_1,tasks.id,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,trigger_create_time,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,trigger_message_id,TEXT,ordinary,1,,0,sqlite_autoindex_task_inputs_2,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,trigger_message_json,TEXT,ordinary,1,'{}',0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,trigger_sender,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_inputs,trigger_text,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,输入修订、完整幂等身份和 provenance
+task_results,calendar_summary_result_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,calendar_summary_status,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,decision_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,final_message,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,finished_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,mentions_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,result_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,result_kind,TEXT,ordinary,1,,2,sqlite_autoindex_task_results_1,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,send_result_json,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,target_id,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,target_kind,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,target_title,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_results,task_id,INTEGER,ordinary,1,,1,sqlite_autoindex_task_results_1,tasks.id,保留／本轮未建立删除证据,已采用 Task 业务结果
+task_run_identity_map,physical_id,INTEGER,ordinary,1,,2,sqlite_autoindex_task_run_identity_map_1,,保留／本轮未建立删除证据,无法直接重建的旧 Task 身份
+task_run_identity_map,public_key,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,无法直接重建的旧 Task 身份
+task_run_identity_map,public_key_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,无法直接重建的旧 Task 身份
+task_run_identity_map,source_kind,TEXT,ordinary,1,,1,sqlite_autoindex_task_run_identity_map_2;sqlite_autoindex_task_run_identity_map_1,,保留／本轮未建立删除证据,无法直接重建的旧 Task 身份
+task_run_identity_map,target_id,INTEGER,ordinary,1,,0,sqlite_autoindex_task_run_identity_map_2,,保留／本轮未建立删除证据,无法直接重建的旧 Task 身份
+tasks,adapter_name,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,attempts,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,available_at,TEXT,ordinary,0,,0,idx_tasks_email_classification_status;idx_tasks_claim_due,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,claimed_input_id,INTEGER,ordinary,0,,0,,task_inputs.id,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,claimed_input_version,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,created_at,TEXT,ordinary,1,,0,idx_tasks_workbench_turn_created;idx_tasks_workbench_turn_status_created,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,current_input_id,INTEGER,ordinary,0,,0,,task_inputs.id,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,error,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,execution_generation,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,generation,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,id,INTEGER,ordinary,0,,1,idx_tasks_workbench_turn_created;idx_tasks_workbench_turn_status_created;idx_tasks_wechat_import_status;idx_tasks_feedback_processing_status;idx_tasks_email_classification_status;idx_tasks_claim_due,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,input_version,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,kind,TEXT,ordinary,1,,0,idx_tasks_claim_due,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,lease_expires_at,TEXT,ordinary,0,,0,idx_tasks_workbench_turn_status_lease;idx_tasks_email_classification_status,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,lease_owner,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,locked_at,TEXT,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,owner_pid,INTEGER,ordinary,0,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,parameters_json,BLOB,ordinary,1,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,status,TEXT,ordinary,1,,0,idx_tasks_workbench_turn_status_lease;idx_tasks_workbench_turn_status_created;idx_tasks_wechat_import_status;idx_tasks_feedback_processing_status;idx_tasks_email_classification_status;idx_tasks_claim_due,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+tasks,updated_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,九类可执行 Task 共同生命周期
+work_summary_inputs,body_bytes,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,body_compacted,INTEGER,ordinary,1,0,0,,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,body_sha256,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,payload_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,source_created_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,source_ref,TEXT,ordinary,1,,0,idx_work_summary_source_identity,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,source_type,TEXT,ordinary,1,,0,idx_work_summary_source_identity,,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+work_summary_inputs,task_id,INTEGER,ordinary,0,,1,,tasks.id,保留／本轮未建立删除证据,工作摘要来源的 provenance 与必要调度状态
+workbench_artifacts,created_at,TEXT,ordinary,1,current_timestamp,0,idx_workbench_artifacts_created_id_turn;idx_workbench_artifacts_turn_created_id,,保留／本轮未建立删除证据,当前 Workbench 产物关系；有注册调用，空表不退休
+workbench_artifacts,id,INTEGER,ordinary,0,,1,idx_workbench_artifacts_id_identity;idx_workbench_artifacts_created_id_turn;idx_workbench_artifacts_turn_created_id,,保留／本轮未建立删除证据,当前 Workbench 产物关系；有注册调用，空表不退休
+workbench_artifacts,label,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 产物关系；有注册调用，空表不退休
+workbench_artifacts,media_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 产物关系；有注册调用，空表不退休
+workbench_artifacts,path,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 产物关系；有注册调用，空表不退休
+workbench_artifacts,workbench_turn_id,INTEGER,ordinary,1,,0,idx_workbench_artifacts_created_id_turn;idx_workbench_artifacts_turn_created_id,workbench_turns.task_id,保留／本轮未建立删除证据,当前 Workbench 产物关系；有注册调用，空表不退休
+workbench_attachments,client_request_id,TEXT,ordinary,1,,0,idx_workbench_attachments_task_request,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,content_sha256,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,created_at,TEXT,ordinary,1,current_timestamp,0,idx_workbench_attachments_task_created_id,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,filename,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,id,INTEGER,ordinary,0,,1,idx_workbench_attachments_id_identity;idx_workbench_attachments_task_created_id,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,media_type,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,size_bytes,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,storage_path,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_attachments,workbench_task_id,INTEGER,ordinary,1,,0,idx_workbench_attachments_task_created_id;idx_workbench_attachments_task_request,workbench_tasks.id,保留／本轮未建立删除证据,当前 Workbench 附件身份；有注册调用，空表不退休
+workbench_events,created_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 事件身份和顺序
+workbench_events,event_type,TEXT,ordinary,1,,0,idx_workbench_events_type,,保留／本轮未建立删除证据,Workbench 事件身份和顺序
+workbench_events,id,INTEGER,ordinary,0,,1,idx_workbench_events_task;idx_workbench_events_id_turn,,保留／本轮未建立删除证据,Workbench 事件身份和顺序
+workbench_events,payload_json,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 事件身份和顺序
+workbench_events,sequence,INTEGER,ordinary,1,,0,sqlite_autoindex_workbench_events_1,,保留／本轮未建立删除证据,Workbench 事件身份和顺序
+workbench_events,task_id,INTEGER,ordinary,1,,0,idx_workbench_events_task;idx_workbench_events_id_turn;sqlite_autoindex_workbench_events_1,tasks.id,保留／本轮未建立删除证据,Workbench 事件身份和顺序
+workbench_tasks,archived_at,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_tasks,created_at,TEXT,ordinary,1,current_timestamp,0,,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_tasks,id,INTEGER,ordinary,0,,1,idx_workbench_tasks_updated,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_tasks,provider_session_ref,TEXT,ordinary,1,'',0,,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_tasks,runtime_kind,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_tasks,title,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_tasks,updated_at,TEXT,ordinary,1,current_timestamp,0,idx_workbench_tasks_updated,,保留／本轮未建立删除证据,Workbench 领域会话身份，区别于执行 Task
+workbench_turns,client_request_id,TEXT,ordinary,1,,0,sqlite_autoindex_workbench_turns_1,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,completed_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,error_code,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,error_detail,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,execution_run_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,resume_context,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,runtime_quiesced_run_id,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,started_at,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,stop_requested,INTEGER,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,task_id,INTEGER,ordinary,0,,1,,tasks.id,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,task_sequence,INTEGER,ordinary,1,,0,sqlite_autoindex_workbench_turns_2,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,user_text,TEXT,ordinary,1,,0,,,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
+workbench_turns,workbench_task_id,INTEGER,ordinary,1,,0,sqlite_autoindex_workbench_turns_2,workbench_tasks.id,保留／本轮未建立删除证据,Workbench 会话轮次及执行 Run 引用
