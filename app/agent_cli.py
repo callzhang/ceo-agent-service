@@ -10,6 +10,7 @@ import json
 import mimetypes
 import os
 import posixpath
+import re
 import shutil
 import sqlite3
 import stat
@@ -1586,16 +1587,12 @@ def _current_task_channel(db_path: Path | None, task_id: int | None) -> str | No
     return row[0]
 
 
-def _bound_wechat_conversation(
+def _bound_task_conversation(
     db_path: Path | None, task_id: int | None, generation: str | None,
-) -> tuple[str, str]:
-    """The conversation id and type of the claimed WeChat task.
-
-    A WeChat task may read only its own conversation, so the tool takes no
-    conversation argument.
-    """
+) -> tuple[str, str, bool]:
+    """The channel, conversation id and single-chat flag of the claimed reply task."""
     if db_path is None or task_id is None:
-        raise ValueError("a WeChat read needs a claimed WeChat task")
+        raise ValueError("a conversation read needs a claimed reply task")
     from app.store import NATIVE_REPLY_TASK_CLAIMED_SQL
 
     database = Path(db_path).resolve()
@@ -1608,9 +1605,23 @@ def _bound_wechat_conversation(
         ).fetchone()
     if row is None or row[0] != generation:
         raise ValueError("bound task generation or input changed")
-    if row[1] != "wechat" or not row[3]:
+    return row[1], row[3], bool(row[2])
+
+
+def _bound_wechat_conversation(
+    db_path: Path | None, task_id: int | None, generation: str | None,
+) -> tuple[str, str]:
+    """The conversation id and type of the claimed WeChat task.
+
+    A WeChat task may read only its own conversation, so the tool takes no
+    conversation argument.
+    """
+    channel, conversation_id, single_chat = _bound_task_conversation(
+        db_path, task_id, generation,
+    )
+    if channel != "wechat" or not conversation_id:
         raise ValueError("the bound task is not a WeChat conversation")
-    return row[3], "direct" if row[2] else "group"
+    return conversation_id, "direct" if single_chat else "group"
 
 
 def _bound_direct_chat_sender(
@@ -1778,6 +1789,70 @@ def _task_file_root(
         raise ValueError("task file generation changed")
     migrate_legacy_task_artifacts(task_id)
     return task_artifact_directory(task_id, generation, create=create)
+
+
+def _save_wechat_voice(
+    db_path: Path | None, root: Path, conversation_id: str, message_id: str,
+) -> tuple[str, float]:
+    from app.wechat import service
+    from app.wechat.models import WechatVoiceUnavailable
+    from app.wechat.reader_ipc import ReaderIpcError
+    from app.wechat.voice import silk_to_wav
+    from app.store import AutoReplyStore
+
+    state = service.ready_account_state(AutoReplyStore(db_path))
+    if state is None:
+        raise ValueError("no ready WeChat account")
+    try:
+        silk = service.build_reader().read_voice(
+            service.account_from_state(state),
+            conversation_id=conversation_id, message_id=message_id,
+        )
+        wav, seconds = silk_to_wav(silk)
+    except WechatVoiceUnavailable as exc:
+        raise ValueError(f"could not read the voice message: {exc}") from exc
+    except ReaderIpcError as exc:
+        if exc.code != "voice_unavailable":
+            raise
+        raise ValueError(f"could not read the voice message: {exc}") from exc
+    name = f"wechat-voice-{message_id}.wav"
+    _write_task_file(root, name, wav)
+    return name, seconds
+
+
+def _save_dingtalk_audio(
+    root: Path, conversation_id: str, message_id: str, resource_id: str,
+) -> str:
+    from app.dws_client import DwsClient
+
+    if not isinstance(resource_id, str) or not 1 <= len(resource_id) <= 512:
+        raise ValueError("a DingTalk voice needs the mediaId of the message as resource_id")
+    dws = DwsClient()
+    with tempfile.TemporaryDirectory(prefix=_TASK_ARTIFACT_TEMP_PREFIX, dir=root) as directory:
+        scratch = Path(directory).resolve()
+        payload = dws.run_json([
+            dws.dws_bin, "chat", "+messages-resource-download",
+            "--resource-id", resource_id, "--type", "mediaId",
+            "--message-id", message_id, "--open-conversation-id", conversation_id,
+            "--output", "audio", "--format", "json",
+        ], cwd=scratch)
+        if (not isinstance(payload, dict) or payload.get("messageVerified") is not True
+                or payload.get("messageId") != message_id
+                or payload.get("resourceId") != resource_id
+                or not isinstance(payload.get("localPath"), str)):
+            raise ValueError("could not read the voice message: download identity unverified")
+        path = Path(payload["localPath"])
+        path = path if path.is_absolute() else scratch / path
+        path.resolve().relative_to(scratch)
+        if path.is_symlink() or not path.is_file() or path.stat().st_size <= 0:
+            raise ValueError("could not read the voice message: download is empty")
+        suffix = path.suffix.lower()
+        if not re.fullmatch(r"\.[a-z0-9]{1,5}", suffix):
+            suffix = ".audio"
+        stem = hashlib.sha256(f"{message_id}\0{resource_id}".encode()).hexdigest()[:16]
+        name = f"dingtalk-audio-{stem}{suffix}"
+        _write_task_file(root, name, path.read_bytes())
+    return name
 
 
 class _NoRedirects(HTTPRedirectHandler):
@@ -2660,53 +2735,43 @@ def build_role_server(
             ],
         }
 
-    def save_wechat_voice(message_id: str) -> dict[str, object]:
-        """Save the audio of a voice message of this task's WeChat conversation.
+    def save_message_audio(message_id: str, resource_id: str = "") -> dict[str, object]:
+        """Save the audio of a voice message of this task's conversation as a task file.
 
-        Pass the message_id of a "[语音…]" message. The audio is stored as a WAV
-        task file; the result names it, ready for upload_audio_file. An
+        Pass the message_id of a WeChat "[语音…]" message, or of a DingTalk
+        "[语音消息](mediaId=…)" message together with that mediaId as resource_id.
+        The result names the task file. To transcribe it: ai_services
+        create_audio_upload, then upload_audio_file(name, upload_url), then poll
+        ai_services get_audio_transcription(job_id) until status is done. An
         unreadable voice raises an error; it is neither empty nor answered.
         """
-        from app.wechat import service
-        from app.wechat.models import WechatVoiceUnavailable
-        from app.wechat.reader_ipc import ReaderIpcError
-        from app.wechat.voice import silk_to_wav
-
         if not isinstance(message_id, str) or not 1 <= len(message_id) <= 128:
             raise ValueError("voice message id is invalid")
-        conversation_id, _ = _bound_wechat_conversation(
+        channel, conversation_id, _ = _bound_task_conversation(
             db_path, task_id, artifact_generation,
         )
-        from app.store import AutoReplyStore
-
-        state = service.ready_account_state(AutoReplyStore(db_path))
-        if state is None:
-            raise ValueError("no ready WeChat account")
-        try:
-            silk = service.build_reader().read_voice(
-                service.account_from_state(state),
-                conversation_id=conversation_id, message_id=message_id,
-            )
-            wav, seconds = silk_to_wav(silk)
-        except WechatVoiceUnavailable as exc:
-            raise ValueError(f"could not read the voice message: {exc}") from exc
-        except ReaderIpcError as exc:
-            if exc.code != "voice_unavailable":
-                raise
-            raise ValueError(f"could not read the voice message: {exc}") from exc
-        name = f"wechat-voice-{message_id}.wav"
+        if not conversation_id:
+            raise ValueError("the bound task has no conversation")
         root = _task_file_root(db_path, task_id, artifact_generation, create=True)
-        _write_task_file(root, name, wav)
-        return {
-            "message_id": message_id,
-            "name": name,
-            "duration_seconds": round(seconds, 1),
-        }
+        if channel == "wechat":
+            name, seconds = _save_wechat_voice(
+                db_path, root, conversation_id, message_id,
+            )
+        elif channel == "dingtalk":
+            name, seconds = _save_dingtalk_audio(
+                root, conversation_id, message_id, resource_id,
+            ), None
+        else:
+            raise ValueError("the bound task's channel has no voice messages")
+        result: dict[str, object] = {"message_id": message_id, "name": name}
+        if seconds is not None:
+            result["duration_seconds"] = round(seconds, 1)
+        return result
 
     def upload_audio_file(name: str, upload_url: str) -> dict[str, object]:
         """Send one audio task file to a one-time upload URL, without reading it.
 
-        `name` is a task file (for example the one save_wechat_voice returned);
+        `name` is a task file (for example the one save_message_audio returned);
         `upload_url` is the one-time URL a transcription service handed out for
         it (ai_services create_audio_upload). The audio travels from the task
         directory to that URL and never passes through you. The result is the
@@ -3125,7 +3190,7 @@ def build_role_server(
         ("search_dingtalk_documents", search_dingtalk_documents),
         ("read_dingtalk_messages", read_dingtalk_messages),
         ("read_wechat_messages", read_wechat_messages),
-        ("save_wechat_voice", save_wechat_voice),
+        ("save_message_audio", save_message_audio),
         ("upload_audio_file", upload_audio_file),
         ("search_dingtalk_messages", search_dingtalk_messages),
         ("read_dingtalk_thread_replies", read_dingtalk_thread_replies),

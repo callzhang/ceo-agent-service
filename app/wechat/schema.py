@@ -131,7 +131,7 @@ def voice_placeholder(raw: str) -> str:
     """
     match = _VOICE_LENGTH.search(raw)
     seconds = f"{max(1, round(int(match.group(1)) / 1000))}秒" if match else ""
-    return f"[语音{seconds}·未转写，用 save_wechat_voice 取音频再转写]"
+    return f"[语音{seconds}·未转写，用 save_message_audio 取音频再转写]"
 
 
 def table_for(conversation_username: str) -> str:
