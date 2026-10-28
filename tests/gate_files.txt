@@ -77,6 +77,7 @@ tests/test_legacy_email_task_input_owner.py
 tests/test_main_launchd_resource_class.py
 tests/test_meeting_alignment_source.py
 tests/test_meeting_alignment_agent.py
+tests/test_meeting_alignment_delivery.py
 tests/test_meeting_audience_eval.py
 tests/test_memory_limit.py
 tests/test_memory_setup.py

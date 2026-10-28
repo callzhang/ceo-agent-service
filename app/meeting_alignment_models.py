@@ -385,7 +385,8 @@ class MeetingAlignmentDecision(StrictModel):
     )
     audience_scope: Literal["business", "personal"] = Field(
         description=(
-            "business=业务承接群总结；personal=整场均为个人事项的完整日历 1:1。"
+            "business=业务承接群总结；没有合适业务群时可发给相关参会人单聊；"
+            "personal=整场均为个人事项的完整日历 1:1。"
             "sensitive_private_message 非 null 时必须是 business。"
         )
     )
@@ -426,7 +427,8 @@ class MeetingAlignmentDecision(StrictModel):
             "必填且不能为 null。group 与 direct 两种形态的字段互斥，但 kind、"
             "conversation_id、direct_user_id、title、candidates 五个键在任何形态下都必须"
             "出现，未使用的一侧要显式写成空值而不是省略："
-            "audience_scope=business 时 target.kind 必须是 group；"
+            "audience_scope=business 时优先 target.kind=group；没有合适业务群时可 target.kind=direct，"
+            "目标必须是来源中稳定匹配的相关参会人，不能是当前用户；"
             "kind=group 时 conversation_id 非空、candidates 非空且 conversation_id 必须等于 candidates[0]."
             "conversation_id、direct_user_id 必须是 \"\"；kind=direct 时 title 非空、"
             "conversation_id 必须是 \"\"、candidates 必须是 []，direct_user_id 写对方"
