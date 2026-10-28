@@ -56,8 +56,6 @@ create table action_receipts (id integer primary key, action_id integer not null
 
 create table action_observers (action_id integer not null references actions(id), agent_run_id integer not null, task_id integer not null, created_at text not null, primary key(action_id,agent_run_id));
 
-CREATE INDEX idx_run_adopted_reviews_consumer ON run_adopted_reviews(consumer_run_id,audit_run_id);
-
 CREATE INDEX idx_run_adopted_supplements_consumer ON run_adopted_supplements(consumer_run_id,id);
 
 create index idx_action_receipts_action on action_receipts(action_id,id);

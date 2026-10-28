@@ -26,8 +26,8 @@ from tests.test_email_store import _task2_account_values
 
 def test_seven_declared_fields_and_order():
     actual = capture()["actual"]["tables"]
-    assert len(CONFIG_FIELDS) == 15
-    assert sum(map(len, CONFIG_FIELDS.values())) == 118
+    assert len(CONFIG_FIELDS) == 14
+    assert sum(map(len, CONFIG_FIELDS.values())) == 108
     with closing(sqlite3.connect(":memory:")) as db:
         create_schedules_schema(db)
         if not db.execute("select 1 from sqlite_master where name='actions'").fetchone():
@@ -124,7 +124,7 @@ VALID = {
 INSERT_ORDER = (
     "email_accounts", "email_category_configs",
     "email_model_promotion_configs", "email_category_description_revisions",
-    "email_category_folder_bindings", "email_model_mode_transitions",
+    "email_category_folder_bindings",
     "email_training_snapshots",
 )
 
@@ -255,9 +255,6 @@ BAD = (
     ("email_category_description_revisions", {"config_json": "invalid-json"}),
     ("email_category_folder_bindings", {"binding_status": "unknown"}),
     ("email_category_folder_bindings", {"provider_folder_id": ""}),
-    ("email_model_mode_transitions", {"from_mode": "unknown"}),
-    ("email_model_mode_transitions", {"status": "pending"}),
-    ("email_model_mode_transitions", {"promotion_config_version": "missing"}),
     ("email_model_promotion_configs", {"micro_f1_min": 1.1}),
     ("email_model_promotion_configs", {"category_validation_samples_min": 0}),
     ("email_model_promotion_configs", {"p95_latency_max_ms": float("inf")}),
@@ -276,9 +273,6 @@ def test_each_email_kind_native_rejection(variant, kind, change):
             insert_both(source, target, "email_accounts", VALID["email_accounts"])
             insert_both(source, target, "email_category_configs",
                         VALID["email_category_configs"])
-        if kind == "email_model_mode_transitions":
-            insert_both(source, target, "email_model_promotion_configs",
-                        VALID["email_model_promotion_configs"])
         candidate = VALID[kind] | change
         with pytest.raises(sqlite3.Error):
             source_insert(source, kind, candidate)

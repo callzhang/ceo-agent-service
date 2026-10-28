@@ -154,9 +154,9 @@ def test_schedule_dispatch_state_and_domain_uniqueness_are_preserved():
 
 def test_public_id_collisions_across_source_kinds_are_supported():
     db = database()
-    db.executemany("INSERT INTO run_entity_identity_map VALUES (?,?,?,?,?,?,?)", [
-        ('agent_runs', 10, '7', 'text', 7, 1, 14),
-        ('scheduled_task_runs', 20, '7', 'text', 7, 1, 194000),
+    db.executemany("INSERT INTO run_entity_identity_map(source_kind,physical_id,public_key,public_key_type,public_key_order,target_id) VALUES (?,?,?,?,?,?)", [
+        ('agent_runs', 10, '7', 'text', 7, 1),
+        ('scheduled_task_runs', 20, '7', 'text', 7, 1),
     ])
     assert db.execute("SELECT count(*) FROM run_entity_identity_map WHERE public_key='7'").fetchone()[0] == 2
 

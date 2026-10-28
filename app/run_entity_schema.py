@@ -7,6 +7,7 @@ import json
 import re
 
 from app import logical_run_current_schema, run_entity_definitions, task20_definitions
+from app.model_retirement_schema_source import store26_objects
 from app.runs11_definitions import RUN11_NEW_KINDS
 
 _STAGE = "_run_entity_forward_rows"
@@ -19,7 +20,12 @@ _PROFESSIONAL_TASK_KINDS = {
     "okr_review_runs": "okr_review_requests",
 }
 _PROFESSIONAL = frozenset(_PROFESSIONAL_TASK_KINDS)
-_TARGETS = run_entity_definitions.run_entity_objects()
+
+_run_target_names = run_entity_definitions.run_entity_objects()
+_TARGETS = {name: sql for _, name, _, sql in store26_objects() if name in _run_target_names}
+# Include the retired 26.1 indexes in this historical conversion target.
+_TARGETS.update({name: sql for _, name, _, sql in store26_objects() if name in (
+    "idx_codex_session_id", "idx_email_samples_id", "idx_setup_events_id")})
 _OWNED_TABLES = tuple(name for name, sql in _TARGETS.items()
                       if sql.lstrip().lower().startswith("create table "))
 _SOURCE_TO_OWNER = {

@@ -82,8 +82,8 @@ def test_eight_kinds_all_45_source_fields_and_storage_classes(variant):
 
 def test_all_fifteen_kind_columns():
     frozen = json.loads((ROOT / 'docs/superpowers/specs/2026-10-15-database-redesign-config-state-native-source.json').read_text())
-    assert set(CONFIG_FIELDS) == set(frozen['groups']['configs'])
-    assert sum(map(len, CONFIG_FIELDS.values())) == 118
+    assert set(CONFIG_FIELDS) == set(frozen['groups']['configs']) - {'email_model_mode_transitions'}
+    assert sum(map(len, CONFIG_FIELDS.values())) == 108
     for kind, fields in CONFIG_FIELDS.items():
         assert fields == tuple(c['name'] for c in frozen['actual']['tables'][kind]['columns'])
         assert kind in CONFIG_PROJECTIONS

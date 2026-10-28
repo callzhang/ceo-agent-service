@@ -65,8 +65,6 @@ TABLES = {
 }
 
 INDEXES = {
-    "idx_run_adopted_reviews_consumer":
-        "CREATE INDEX idx_run_adopted_reviews_consumer ON run_adopted_reviews(consumer_run_id,audit_run_id)",
     "idx_run_adopted_supplements_consumer":
         "CREATE INDEX idx_run_adopted_supplements_consumer ON run_adopted_supplements(consumer_run_id,id)",
 }

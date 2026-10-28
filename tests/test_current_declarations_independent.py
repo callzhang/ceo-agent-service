@@ -53,15 +53,27 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
     import hashlib
     import json
     from app.current_schema_manifest import current_objects
+    from app.model_retirement_schema_release import retirement_target_objects
+    from app.model_retirement_schema_source import store26_objects
 
     for email_ledger, count, digest in (
-        (False, 475, '335bb6fe9c5c04a1c6f10849e8c7d4e8e1bee6e037ae070aea28126a506f8575'),
-        (True, 476, '105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754'),
+        (False, 462, 'fb3746526bddae60d66cba8b0c5682d6f41af9bfa3416a0ae96e457598cdf97e'),
+        (True, 463, 'c3631f524450639a4e7124504686218cebf4e7caece3a893b703912d65d2600f'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
         encoded = json.dumps(objects).encode()
         assert hashlib.sha256(encoded).hexdigest() == digest
+        assert objects == tuple(row for row in retirement_target_objects()
+                                if email_ledger or row[1] != 'email_schema_migrations')
+
+    for email_ledger, count, digest in (
+        (False, 475, '335bb6fe9c5c04a1c6f10849e8c7d4e8e1bee6e037ae070aea28126a506f8575'),
+        (True, 476, '105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754'),
+    ):
+        source = store26_objects(email_ledger=email_ledger)
+        assert len(source) == count
+        assert hashlib.sha256(json.dumps(source).encode()).hexdigest() == digest
 
 
 def test_current_field_and_payload_metadata_preserves_frozen_layouts():
@@ -122,13 +134,26 @@ def test_cold_store_import_create_and_open_do_not_run_historical_builders(tmp_pa
 import json, sys
 from pathlib import Path
 hits = []
+original_read_bytes = Path.read_bytes
+original_read_text = Path.read_text
+def checked_read_bytes(path):
+    if path.name == "store26_1_email54_catalog.json":
+        raise AssertionError("historical source catalog loaded by current Store")
+    return original_read_bytes(path)
+def checked_read_text(path, *args, **kwargs):
+    if path.name == "store26_1_email54_catalog.json":
+        raise AssertionError("historical source catalog loaded by current Store")
+    return original_read_text(path, *args, **kwargs)
+Path.read_bytes = checked_read_bytes
+Path.read_text = checked_read_text
 def profile(frame, event, arg):
     if event == "call":
         path = frame.f_code.co_filename.replace("\\\\", "/")
         name = frame.f_code.co_name
         if ((path.endswith("/app/action_storage.py") and name in
              {"_action_definitions", "_build_action_payloads", "action_payloads"}) or
-            (path.endswith("/app/business_definitions.py") and name == "_definitions")):
+            (path.endswith("/app/business_definitions.py") and name == "_definitions") or
+            (path.endswith("/app/model_retirement_schema_source.py") and name == "store26_objects")):
             hits.append((Path(path).name, name))
 sys.setprofile(profile)
 from app.store import AutoReplyStore
@@ -168,5 +193,5 @@ def test_current_assembly_cache_is_isolated_by_role_and_caller(monkeypatch):
     assert paired_again == original_paired
     assert 'email_schema_migrations' not in bare_again
     assert 'email_schema_migrations' in paired_again
-    assert len(bare_again) == 475 and len(paired_again) == 476
+    assert len(bare_again) == 462 and len(paired_again) == 463
     assert len(calls) == 2

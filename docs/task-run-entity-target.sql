@@ -62,8 +62,6 @@ CREATE UNIQUE INDEX idx_okr_review_source_identity ON tasks(CASE WHEN json_type(
 
 CREATE UNIQUE INDEX idx_weekly_analysis_source_identity ON tasks(CASE WHEN json_type(parameters_json,'$.week_end')='object' AND json_extract(parameters_json,'$.week_end.t')='blob' THEN unhex(json_extract(parameters_json,'$.week_end.v')) ELSE jsonb_extract(parameters_json,'$.week_end') END,CASE WHEN json_type(parameters_json,'$.manager_user_id')='object' AND json_extract(parameters_json,'$.manager_user_id.t')='blob' THEN unhex(json_extract(parameters_json,'$.manager_user_id.v')) ELSE jsonb_extract(parameters_json,'$.manager_user_id') END,CASE WHEN json_type(parameters_json,'$.source_digest')='object' AND json_extract(parameters_json,'$.source_digest.t')='blob' THEN unhex(json_extract(parameters_json,'$.source_digest.v')) ELSE jsonb_extract(parameters_json,'$.source_digest') END) WHERE kind='okr_analysis';
 
-CREATE UNIQUE INDEX idx_business_object_tasks_business_key_identity ON task_business_keys(business_key);
-
 CREATE UNIQUE INDEX idx_email_historical_candidates_account_id_folder_model_id_stable_message_identity_identity ON email_historical_candidates(account_id,folder,model_id,stable_message_identity);
 
 CREATE INDEX idx_feedback_iteration_decisions_batch ON feedback_iteration_decisions(batch_id,id);
@@ -72,11 +70,7 @@ CREATE UNIQUE INDEX idx_feedback_processing_batches_batch_id_identity ON feedbac
 
 CREATE INDEX idx_feedback_processing_items_batch ON feedback_processing_items(batch_id);
 
-CREATE UNIQUE INDEX idx_feedback_processing_items_feedback_key_identity ON feedback_processing_items(feedback_key);
-
 CREATE INDEX idx_feedback_processing_rounds_batch ON feedback_processing_rounds(batch_id);
-
-CREATE INDEX idx_feedback_processing_rounds_feedback ON feedback_processing_rounds(feedback_key,round_number);
 
 CREATE UNIQUE INDEX idx_feedback_processing_rounds_feedback_key_batch_id_identity ON feedback_processing_rounds(feedback_key,batch_id);
 
@@ -92,13 +86,9 @@ CREATE INDEX idx_workbench_artifacts_turn_created_id ON workbench_artifacts(work
 
 CREATE INDEX idx_workbench_artifacts_created_id_turn ON workbench_artifacts(created_at,id,workbench_turn_id);
 
-CREATE UNIQUE INDEX idx_workbench_artifacts_id_identity ON workbench_artifacts(id);
-
 CREATE UNIQUE INDEX idx_workbench_attachments_task_request ON workbench_attachments(workbench_task_id,client_request_id);
 
 CREATE INDEX idx_workbench_attachments_task_created_id ON workbench_attachments(workbench_task_id,created_at,id);
-
-CREATE UNIQUE INDEX idx_workbench_attachments_id_identity ON workbench_attachments(id);
 
 CREATE INDEX idx_tasks_email_classification_status ON tasks(status,available_at,lease_expires_at,id) WHERE kind='email_classification';
 

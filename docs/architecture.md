@@ -1,5 +1,25 @@
 # CEO Agent Service Architecture
 
+## 模型退休第二批：Store28.1 / Email54（2026-10-28）
+
+当前代码声明为Store `2026-10-28.1` / Email54，完整配对463对象（bare462）。
+正常constructor只接受空库或精确当前声明，不探测/修补旧结构。显式发布仅支持
+准确Store26.1/Email54前序，发布静默读取使用同一冻结来源；25.2/25.3退出自动
+发布窗口。必要历史工具使用自己的固定声明，不能随current重新生成旧来源。
+
+模型切换的唯一历史owner是既有registry manifest；生产为空的Configs
+email_model_mode_transitions家族、旧DAO及启动扫描退休。promotion config、
+category revision和registry实际切换/历史保留。Configs退休2普通/9虚拟列及
+3trigger/1FK，Run身份map只退休恒NULL allocator_highwater；全部真实身份行保留。
+10个重复索引退出当前声明，保留主键、精确复合FK父键及调度完整领取索引。
+
+显式paired release只重建Configs/Run map并退休指定索引，按原生SQL复制现在的
+普通列和hidden rowid，保留所有现场sqlite_sequence rowid/名称/值/类型。inverse
+从迁移后当前事实重建旧结构，退休中性列恢复NULL，恢复原版本clock；事务中断
+回滚全部DDL与事实。没有业务正文归档或新的运行时兼容分支。已关闭的Configs
+和selection转换专用入口/测试作为必要依赖退休，当前功能与固定来源断言保留。
+本段描述候选代码合同；实际部署状态见[第二批验收](model-retirement-batch2-validation.md)。
+
 ## 模型退休：无 DDL 入口清理（2026-10-28）
 
 当前 Action receipt 写入和 Reviewed 执行只接受 `execution_run_id`，不再通过参数

@@ -2,7 +2,7 @@
 from functools import lru_cache
 import sqlite3
 
-from app.current_schema_manifest import current_objects
+from app.model_retirement_schema_source import store26_objects
 from app.schedules_definitions import SCHEDULE_INDEXES
 
 PREVIOUS_SCHEDULES_DDL = """create table schedules (
@@ -24,7 +24,7 @@ PREVIOUS_SCHEDULES_DDL = """create table schedules (
 @lru_cache(maxsize=2)
 def previous_current_objects(*, email_ledger: bool = False) -> tuple:
     """Build the exact prior declaration, changing only the schedules table."""
-    current = current_objects(email_ledger=email_ledger)
+    current = store26_objects(email_ledger=email_ledger)
     with sqlite3.connect(":memory:") as db:
         db.execute(PREVIOUS_SCHEDULES_DDL)
         for sql in SCHEDULE_INDEXES:

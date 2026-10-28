@@ -96,7 +96,7 @@ TABLES = {
     "run_entity_identity_map": """CREATE TABLE run_entity_identity_map (
  source_kind TEXT NOT NULL, physical_id INTEGER NOT NULL, public_key TEXT,
  public_key_type TEXT NOT NULL, public_key_order INTEGER, target_id INTEGER NOT NULL,
- allocator_highwater INTEGER, PRIMARY KEY(source_kind,physical_id),
+ PRIMARY KEY(source_kind,physical_id),
  UNIQUE(source_kind,target_id),
  CHECK(public_key_type IN ('null','integer','text','blob')))""",
 }
@@ -122,10 +122,7 @@ INDEXES = {
     "idx_workbench_events_type": "CREATE INDEX idx_workbench_events_type ON workbench_events(event_type)",
     "idx_codex_session_source": "CREATE INDEX idx_codex_session_source ON codex_session_search_index(source_type,source_id)",
     "idx_codex_session_source_id": "CREATE INDEX idx_codex_session_source_id ON codex_session_search_index(source_type,source_id,id DESC)",
-    "idx_codex_session_id": "CREATE INDEX idx_codex_session_id ON codex_session_search_index(id DESC)",
-    "idx_email_samples_id": "CREATE INDEX idx_email_samples_id ON email_classifier_runtime_samples(id DESC)",
     "idx_email_samples_model": "CREATE INDEX idx_email_samples_model ON email_classifier_runtime_samples(model_id,id DESC)",
-    "idx_setup_events_id": "CREATE INDEX idx_setup_events_id ON setup_wizard_events(id DESC)",
     "idx_setup_events_step": "CREATE INDEX idx_setup_events_step ON setup_wizard_events(step_id,id)",
 }
 

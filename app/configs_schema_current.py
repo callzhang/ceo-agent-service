@@ -1,11 +1,38 @@
 """Current-declaration check for the Configs content tables."""
 
 import sqlite3
+from contextlib import closing
+from functools import lru_cache
 from app.action_reply_storage import _source_declaration
 from app import action_storage
-from app.configs_schema_transfer import (
-    SOURCE_TABLES, _target_declarations, target_declaration_matches,
-)
+from app.configs_definitions import CONFIG_FIELDS
+from app.configs_storage import create_configs_schema
+from app.schedules_storage import create_schedules_schema
+
+SOURCE_TABLES = (*CONFIG_FIELDS, 'scheduled_tasks',
+                 'managed_skill_export_receipts', 'runtime_skill_load_receipts')
+
+
+@lru_cache(maxsize=1)
+def _target_declarations():
+    with closing(sqlite3.connect(':memory:')) as db:
+        create_schedules_schema(db)
+        create_configs_schema(db)
+        return {kind: _source_declaration(db, kind) for kind in ('configs', 'schedules')}
+
+
+def target_declaration_matches(db: sqlite3.Connection, kind: str, expected: dict) -> bool:
+    actual = _source_declaration(db, kind)
+    if any(actual[key] != expected[key]
+           for key in ('sql', 'columns', 'foreign_keys', 'triggers')):
+        return False
+    actual_indexes = {item['name']: item for item in actual['indexes']}
+    expected_indexes = {item['name']: item for item in expected['indexes']}
+    return (set(actual_indexes) == set(expected_indexes)
+            and all({key: value for key, value in item.items() if key != 'seq'}
+                    == {key: value for key, value in expected_indexes[name].items()
+                        if key != 'seq'}
+                    for name, item in actual_indexes.items()))
 
 
 _OBSERVATIONS = 'email_training_snapshot_observations'

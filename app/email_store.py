@@ -2099,125 +2099,6 @@ class EmailStore:
             )
 
     @staticmethod
-    def _validate_model_mode_transition(payload: Mapping[str, Any]) -> None:
-        for field in (
-            "request_id",
-            "actor",
-            "from_mode",
-            "to_mode",
-            "promotion_config_version",
-            "status",
-        ):
-            if not isinstance(payload[field], str) or not payload[field].strip():
-                raise ValueError(f"{field} must be nonempty text")
-        if not isinstance(payload["reason"], str):
-            raise ValueError("reason must be text")
-        for field in ("from_model_id", "target_model_id"):
-            value = payload[field]
-            if value is not None and (not isinstance(value, str) or not value.strip()):
-                raise ValueError(f"{field} must be nonempty text or null")
-        for field in ("from_mode", "to_mode"):
-            if payload[field] not in ("agent_primary", "model_primary"):
-                raise ValueError(f"invalid {field}")
-        if payload["status"] not in ("applied", "rejected", "failed"):
-            raise ValueError("invalid transition status")
-        if (payload["from_mode"] == "model_primary") != (
-            payload["from_model_id"] is not None
-        ):
-            raise ValueError("from_model_id must match from_mode")
-        if (
-            payload["to_mode"] == "agent_primary"
-            and payload["target_model_id"] is not None
-        ):
-            raise ValueError("agent_primary cannot have a target_model_id")
-        if (
-            payload["to_mode"] == "model_primary"
-            and payload["status"] == "applied"
-            and payload["target_model_id"] is None
-        ):
-            raise ValueError("applied model_primary requires target_model_id")
-
-    def record_model_mode_transition(
-        self,
-        *,
-        request_id: str,
-        actor: str,
-        from_mode: str,
-        to_mode: str,
-        from_model_id: str | None,
-        target_model_id: str | None,
-        promotion_config_version: str,
-        status: str,
-        reason: str,
-    ) -> dict[str, Any]:
-        """Append the mirrored transition receipt; this does not activate a model."""
-        payload = dict(
-            request_id=request_id,
-            actor=actor,
-            from_mode=from_mode,
-            to_mode=to_mode,
-            from_model_id=from_model_id,
-            target_model_id=target_model_id,
-            promotion_config_version=promotion_config_version,
-            status=status,
-            reason=reason,
-        )
-        self._validate_model_mode_transition(payload)
-        with self._connect() as db:
-            db.execute("begin immediate")
-            existing = db.execute(
-                f"select * from ({config_projection('email_model_mode_transitions')}) where request_id=?",
-                (request_id,),
-            ).fetchone()
-            if existing is not None:
-                if any(existing[key] != value for key, value in payload.items()):
-                    raise ValueError("model mode transition request_id conflict")
-                return dict(existing)
-            if (
-                db.execute(
-                    f"select 1 from ({config_projection('email_model_promotion_configs')}) where config_version=?",
-                    (promotion_config_version,),
-                ).fetchone()
-                is None
-            ):
-                raise ValueError("unknown promotion_config_version")
-            result = payload | {
-                "created_at": self._next_model_control_timestamp(
-                    db, f"({config_projection('email_model_mode_transitions')})"
-                )
-            }
-            insert_config(db, "email_model_mode_transitions", result)
-            return result
-
-    def get_model_mode_transition(self, request_id: str) -> dict[str, Any] | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"select * from ({config_projection('email_model_mode_transitions')}) where request_id=?",
-                (request_id,),
-            ).fetchone()
-            return dict(row) if row is not None else None
-
-    def list_model_mode_transitions(self) -> list[dict[str, Any]]:
-        with self._connect() as db:
-            return [
-                dict(row)
-                for row in db.execute(
-                    f"select * from ({config_projection('email_model_mode_transitions')}) order by created_at desc"
-                )
-            ]
-
-
-
-
-
-
-
-
-
-
-
-
-    @staticmethod
     def _now() -> str:
         return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
@@ -2278,7 +2159,6 @@ class EmailStore:
         configs = db.execute(config_projection("email_model_promotion_configs")).fetchall()
         if not configs:
             raise EmailPersistenceCorruption("missing model promotion config")
-        versions = {row["config_version"] for row in configs}
         try:
             for row in configs:
                 self._validate_model_promotion_values(
@@ -2292,10 +2172,6 @@ class EmailStore:
                         )
                     }
                 )
-            for row in db.execute(config_projection("email_model_mode_transitions")):
-                self._validate_model_mode_transition(row)
-                if row["promotion_config_version"] not in versions:
-                    raise ValueError("unknown promotion_config_version")
             for row in db.execute(config_projection("email_category_description_revisions")):
                 config = _json_load(
                     row["config_json"], field="config_json", expected_type=dict

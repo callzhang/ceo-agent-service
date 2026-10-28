@@ -82,87 +82,12 @@ def test_promotion_config_rejects_invalid_values(tmp_path, field, value):
     assert len(store.list_model_promotion_configs()) == 1
 
 
-def _transition(store, **overrides):
-    return (
-        dict(
-            request_id="request-1",
-            actor="derek",
-            from_mode="agent_primary",
-            to_mode="model_primary",
-            from_model_id=None,
-            target_model_id="model-1",
-            promotion_config_version=store.current_model_promotion_config()[
-                "config_version"
-            ],
-            status="applied",
-            reason="validation passed",
-        )
-        | overrides
-    )
 
 
-def test_transition_journal_idempotency_order_restart(tmp_path):
-    store = EmailStore(tmp_path / "email.sqlite3")
-    payload = _transition(store)
-    first = store.record_model_mode_transition(**payload)
-    assert store.record_model_mode_transition(**payload) == first
-    for field, value in dict(
-        actor="other", reason="different", status="failed", target_model_id="model-2"
-    ).items():
-        with pytest.raises(ValueError, match="conflict"):
-            store.record_model_mode_transition(**(payload | {field: value}))
-    second = store.record_model_mode_transition(
-        **_transition(
-            store,
-            request_id="request-2",
-            from_mode="model_primary",
-            from_model_id="model-1",
-            to_mode="agent_primary",
-            target_model_id=None,
-        )
-    )
-    reopened = EmailStore(store.path)
-    assert reopened.get_model_mode_transition("request-1") == first
-    assert reopened.get_model_mode_transition("missing") is None
-    assert reopened.list_model_mode_transitions() == [second, first]
 
 
-@pytest.mark.parametrize(
-    "changes",
-    [
-        {"request_id": " "},
-        {"actor": ""},
-        {"actor": 1},
-        {"reason": None},
-        {"from_mode": "unknown"},
-        {"to_mode": "unknown"},
-        {"status": "pending"},
-        {"from_model_id": "unexpected"},
-        {"from_mode": "model_primary"},
-        {"target_model_id": None},
-        {"to_mode": "agent_primary"},
-        {"promotion_config_version": "missing"},
-    ],
-)
-def test_transition_invalid_payload_is_not_written(tmp_path, changes):
-    store = EmailStore(tmp_path / "email.sqlite3")
-    with pytest.raises(ValueError):
-        store.record_model_mode_transition(**_transition(store, **changes))
-    assert store.list_model_mode_transitions() == []
 
 
-@pytest.mark.parametrize("status", ["rejected", "failed"])
-def test_unsuccessful_transition_can_record_missing_candidate(tmp_path, status):
-    store = EmailStore(tmp_path / "email.sqlite3")
-    result = store.record_model_mode_transition(
-        **_transition(
-            store,
-            status=status,
-            target_model_id=None,
-            reason="no candidate",
-        )
-    )
-    assert result["status"] == status
 
 
 def test_config_cas_serializes_competing_writers(tmp_path):
@@ -201,7 +126,6 @@ def _bump_schema_cookie(db):
     [
         ("promotion_micro_f1_min real generated always", "promotion_micro_f1_min text generated always"),
         ("promotion_micro_f1_min>=0 and promotion_micro_f1_min<=1", "promotion_micro_f1_min>=0"),
-        ("on delete restrict", "on delete cascade"),
     ],
 )
 def test_model_control_schema_contract_is_strict(tmp_path, old, new):
@@ -372,13 +296,11 @@ def test_category_description_version_allows_duplicate_content_snapshots(
     "table",
     [
         "email_model_promotion_configs",
-        "email_model_mode_transitions",
         "email_category_description_revisions",
     ],
 )
 def test_immutable_history_rejects_replace_with_recursive_triggers_off(tmp_path, table):
     store = EmailStore(tmp_path / "email.sqlite3")
-    store.record_model_mode_transition(**_transition(store))
     with sqlite3.connect(store.path) as db:
         db.execute("pragma recursive_triggers=off")
         before = db.execute(
@@ -387,10 +309,9 @@ def test_immutable_history_rejects_replace_with_recursive_triggers_off(tmp_path,
         assert before
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             db.execute(
-                "insert or replace into configs(record_type,legacy_key,payload_json,"
-                "transition_promotion_config_version,transition_promotion_ref) "
-                "select record_type,legacy_key,payload_json,"
-                "transition_promotion_config_version,transition_promotion_ref "
+                "insert or replace into configs(record_type,legacy_key,payload_json) "
+                "select record_type,legacy_key,payload_json"
+                " "
                 "from configs where record_type=? limit 1", (table,)
             )
         assert db.execute(
@@ -402,7 +323,6 @@ def test_immutable_history_rejects_replace_with_recursive_triggers_off(tmp_path,
     "table",
     [
         "email_model_promotion_configs",
-        "email_model_mode_transitions",
         "email_category_description_revisions",
     ],
 )
@@ -411,7 +331,6 @@ def test_duplicate_history_trigger_is_required_at_startup(tmp_path, table):
     with sqlite3.connect(store.path) as db:
         short = {
             "email_model_promotion_configs": "promotion",
-            "email_model_mode_transitions": "transition",
             "email_category_description_revisions": "revision",
         }[table]
         db.execute(f"drop trigger trg_configs_{short}_duplicate")
@@ -423,7 +342,6 @@ def test_duplicate_history_trigger_is_required_at_startup(tmp_path, table):
     "table",
     [
         "email_model_promotion_configs",
-        "email_model_mode_transitions",
         "email_category_description_revisions",
     ],
 )
@@ -432,16 +350,15 @@ def test_immutable_history_cannot_replace_through_physical_alias(
     tmp_path, table, alias
 ):
     store = EmailStore(tmp_path / "email.sqlite3")
-    store.record_model_mode_transition(**_transition(store))
     with sqlite3.connect(store.path) as db:
         db.execute("pragma recursive_triggers=off")
         before = db.execute("select * from configs where record_type=?", (table,)).fetchall()
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             db.execute(
                 f"insert or replace into configs({alias},record_type,legacy_key,"
-                "payload_json,transition_promotion_config_version,transition_promotion_ref) "
-                "select id+100000,record_type,legacy_key,payload_json,"
-                "transition_promotion_config_version,transition_promotion_ref "
+                "payload_json) "
+                "select id+100000,record_type,legacy_key,payload_json"
+                " "
                 "from configs where record_type=? limit 1", (table,)
             )
         assert db.execute("select * from configs where record_type=?", (table,)).fetchall() == before
@@ -451,7 +368,6 @@ def test_immutable_history_cannot_replace_through_physical_alias(
     "table",
     [
         "email_model_promotion_configs",
-        "email_model_mode_transitions",
         "email_category_description_revisions",
     ],
 )
@@ -476,10 +392,6 @@ def test_history_order_survives_frozen_and_backwards_clock(tmp_path, monkeypatch
         category_validation_samples_min=20,
         p95_latency_max_ms=500,
     )
-    first = store.record_model_mode_transition(**_transition(store))
-    second = store.record_model_mode_transition(
-        **_transition(store, request_id="request-2")
-    )
     category = store.get_category_config("work")
     values = {
         key: category[key]
@@ -497,8 +409,6 @@ def test_history_order_survives_frozen_and_backwards_clock(tmp_path, monkeypatch
     reopened = EmailStore(store.path)
     assert reopened.list_model_promotion_configs() == [changed, initial]
     assert changed["created_at"] > initial["created_at"]
-    assert reopened.list_model_mode_transitions() == [second, first]
-    assert second["created_at"] > first["created_at"]
     revisions = reopened.list_category_description_revisions("work")
     assert [row["config_version"] for row in revisions] == [
         "cat-v3",
@@ -638,14 +548,12 @@ def test_restart_rejects_incomplete_category_revision_snapshot(tmp_path):
     "table",
     [
         "email_model_promotion_configs",
-        "email_model_mode_transitions",
         "email_category_description_revisions",
     ],
 )
 @pytest.mark.parametrize("operation", ["update", "delete"])
 def test_model_control_history_is_append_only(tmp_path, table, operation):
     store = EmailStore(tmp_path / "email.sqlite3")
-    store.record_model_mode_transition(**_transition(store))
     with sqlite3.connect(store.path) as db:
         with pytest.raises(sqlite3.IntegrityError, match="immutable"):
             if operation == "delete":
@@ -657,20 +565,6 @@ def test_model_control_history_is_append_only(tmp_path, table, operation):
                 )
 
 
-def test_restart_rejects_invalid_transition_shape(tmp_path):
-    store = EmailStore(tmp_path / "email.sqlite3")
-    store.record_model_mode_transition(**_transition(store))
-    with sqlite3.connect(store.path) as db:
-        db.execute(
-            "insert into configs(record_type,legacy_key,payload_json,"
-            "transition_promotion_config_version,transition_promotion_ref) "
-            "select record_type,?,json_set(payload_json,'$.target_model_id',null),"
-            "transition_promotion_config_version,transition_promotion_ref "
-            "from configs where record_type='email_model_mode_transitions' limit 1",
-            (json.dumps(["bad-request"]),),
-        )
-    with pytest.raises(EmailPersistenceCorruption, match="target_model_id"):
-        EmailStore(store.path)
 
 
 def test_new_category_initial_revision_is_preserved(tmp_path):

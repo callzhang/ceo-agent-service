@@ -6,7 +6,7 @@ Task/Run declaration in ``current_database_schema``.
 from app.business_legacy_fields import current_business_declaration
 from app.current_action_schema import create_source_current_action_schema
 from app.business_schema_helpers import _create_auxiliary
-from app.configs_storage import create_configs_schema
+from app.model_retirement_schema_source import install_store26_table
 from app.scheduled_task_notification_schema_source import PREVIOUS_SCHEDULES_DDL
 from app.schedules_definitions import SCHEDULE_INDEXES
 from app.provider_state_storage import create_provider_state_schema
@@ -37,7 +37,7 @@ def create_store_2026_10_21_1_schema(db):
     db.execute(PREVIOUS_SCHEDULES_DDL)
     for sql in SCHEDULE_INDEXES:
         db.execute(sql)
-    create_configs_schema(db)
+    install_store26_table(db, "configs")
     create_state_schema(db)
     create_provider_state_schema(db)
     create_current_task20_schema(db)

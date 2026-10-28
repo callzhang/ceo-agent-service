@@ -1,24 +1,23 @@
-from pathlib import Path
 from contextlib import closing
 import sqlite3
 
+import pytest
 from app.current_schema_manifest import schema_objects
 from app.signal_source_owner_schema_release import (
     SignalSourceOwnerRelease,
+    prepare_signal_source_owner_release,
     source_objects,
 )
-from app.store_schema_release import prepare_database_schema_release
 from tests.test_signal_source_owner_schema_release import source
 
 
-def test_database_release_selector_uses_exact_signal_transition(tmp_path):
+def test_explicit_historical_signal_release_preserves_its_transition(tmp_path):
     path = tmp_path / "signal-source.sqlite3"
     source(path)
-    root = Path(__file__).resolve().parents[1]
 
     with closing(sqlite3.connect(path)) as db:
         before = schema_objects(db)
-    release = prepare_database_schema_release(root, path)
+    release = prepare_signal_source_owner_release(path)
 
     assert isinstance(release, SignalSourceOwnerRelease)
     with sqlite3.connect(path) as db:
@@ -42,22 +41,24 @@ def test_database_release_selector_uses_exact_signal_transition(tmp_path):
         ).fetchone() == ("2026-10-25.2",)
 
 
-def test_database_release_selector_migrates_notification_column_and_rolls_back(tmp_path):
-    from app.scheduled_task_notification_schema_release import ScheduledNotificationSchemaRelease
+def test_explicit_historical_notification_release_preserves_its_transition(tmp_path):
+    from app.scheduled_task_notification_schema_release import (
+        ScheduledNotificationSchemaRelease, prepare_scheduled_notification_release,
+    )
     from app.current_publication_sources import _version
     from app.schedules_definitions import SCHEDULE_FIELDS
     path = tmp_path / "notification-source.sqlite3"
     source(path)
-    root = Path(__file__).resolve().parents[1]
     with sqlite3.connect(path) as db:
         db.execute("insert into schedules(id,name,prompt,cron_expression,timezone,runtime_id,enabled) values(41,'daily','p','* * * * *','UTC','route',1)")
-    source_release = prepare_database_schema_release(root, path)
+    source_release = prepare_signal_source_owner_release(path)
     source_release.publish()
     source_release.finalize()
 
     with sqlite3.connect(path) as db:
-        assert _version(db) == "2026-10-25.3"
-    release = prepare_database_schema_release(root, path)
+        with pytest.raises(ValueError, match="unsupported current publication declaration"):
+            _version(db)
+    release = prepare_scheduled_notification_release(path)
     assert isinstance(release, ScheduledNotificationSchemaRelease)
     release.publish()
     release.verify_loaded()

@@ -14,8 +14,10 @@ from app.task_source_documents import source_document_key
 @pytest.fixture(params=("actual_no_memory_fk", "fresh_memory_fk"))
 def db(request):
     with sqlite3.connect(":memory:") as connection:
-        from app.configs_definitions import CONFIG_TABLE_DDL
-        from app.configs_definitions import CONFIG_INDEX_DDL
+        from app.model_retirement_schema_source import store26_objects
+        config_objects = [item for item in store26_objects() if item[2] == "configs"]
+        CONFIG_TABLE_DDL = next(item[3] for item in config_objects if item[0] == "table")
+        CONFIG_INDEX_DDL = tuple(item[3] for item in config_objects if item[0] == "index")
         from app.task20_definitions import TASK20_TABLE_DDL, TASK20_INDEX_DDL
         from app.runs11_current_schema import current_run11_objects
         from app.business_definitions import _definitions

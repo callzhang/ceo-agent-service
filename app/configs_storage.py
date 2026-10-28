@@ -167,11 +167,6 @@ def _stored(db: sqlite3.Connection, kind: str, complete: dict,
             db, "email_accounts", complete["account_id"])
         data["binding_category_ref"] = _parent_id(
             db, "email_category_configs", complete["category_key"])
-    if kind == "email_model_mode_transitions":
-        version = complete["promotion_config_version"]
-        data["transition_promotion_config_version"] = version
-        data["transition_promotion_ref"] = _parent_id(
-            db, "email_model_promotion_configs", version)
     if kind == "email_training_snapshots":
         data["snapshot_snapshot_digest"] = complete["snapshot_digest"]
         data["snapshot_frozen"] = complete["frozen"]

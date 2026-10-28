@@ -1,0 +1,308 @@
+{
+  "phase": "candidate_validated_not_deployed",
+  "source_code": "f7a8e16e7",
+  "source_schema": {
+    "store": "2026-10-26.1",
+    "email": 54,
+    "objects": 476,
+    "sha256": "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f"
+  },
+  "target_schema": {
+    "store": "2026-10-28.1",
+    "email": 54,
+    "paired_objects": 463,
+    "bare_objects": 462,
+    "tables": 48,
+    "columns": 1234,
+    "sha256": "d70f359f2076f4ea4842247879d6c0d4ee0a2a5ebedf100f790d362adba4d1d3"
+  },
+  "retirement": {
+    "indexes": 10,
+    "ordinary_columns": 3,
+    "virtual_columns": 9,
+    "triggers": 3,
+    "empty_config_family": "email_model_mode_transitions"
+  },
+  "copy_validation": {
+    "status": "passed",
+    "checked_at": "2026-10-28T08:47:54.248528+00:00",
+    "native_tables_including_sequence": 49,
+    "forward_preserved": true,
+    "inverse_preserved_new_facts": true,
+    "real_old_code_cold_read_write": true,
+    "reforward_preserved": true,
+    "original_rows_unchanged_after_all_cold_writes": true,
+    "same_cohort_allocation_before_new_fixture_rows": {
+      "source": {
+        "page_size": 4096,
+        "page_count": 125725,
+        "freelist_pages": 8408,
+        "allocated_bytes": 480530432
+      },
+      "target": {
+        "page_size": 4096,
+        "page_count": 125725,
+        "freelist_pages": 9227,
+        "allocated_bytes": 477175808
+      },
+      "vacuum_performed": false
+    },
+    "external_network_and_subprocess_from_fixture": "refused",
+    "current_email_store_cold_open_preserved_facts": true
+  },
+  "native_table_hashes": {
+    "schedules": {
+      "rows": 16,
+      "sha256": "391c6c6f1501a30f4af349f48830ea44b90d617da0d78482bf9bf6cb3ec3722e"
+    },
+    "actions": {
+      "rows": 90748,
+      "sha256": "1126612616bcd6ea9cff218e43a4f17a1034e50378216ed79527682a9ab18652"
+    },
+    "action_receipts": {
+      "rows": 21134,
+      "sha256": "16764cf1b6ad8998329b2a3b4fc9c422e32827fb1cbdd863e4aa0a97c6f8dbe7"
+    },
+    "run_execution_progress": {
+      "rows": 609,
+      "sha256": "7c23231ceb62c6e0d72efe9a414ebd017b7711b5b3e12ab038f5a826e5ed2180"
+    },
+    "run_adopted_selections": {
+      "rows": 0,
+      "sha256": "27b0a9dc295aa16ee527ec0fa0dc6f8c07a0de446db90964bf79508985d15c5d"
+    },
+    "run_adopted_reviews": {
+      "rows": 1808,
+      "sha256": "ad0c5b9e36aff001f8930f31d12d85d67f497ade1c41f5a555c693a08bb86f6e"
+    },
+    "run_entity_identity_map": {
+      "rows": 172078,
+      "sha256": "9ed0b7d02373600598a0ca3d513f7b558401ac3269afac4939a428370fd66a53"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "2948e5d46a6c9a6511edda2a22568d3a21b044e09aa51dfb900dd06578955388"
+    },
+    "codex_session_search_index": {
+      "rows": 795,
+      "sha256": "1230908c1afd5eaf66093b6a4b61185e65d6053a38e9bb548412dc560bb7f5fe"
+    },
+    "workbench_events": {
+      "rows": 1397,
+      "sha256": "cf8aff3b2554e5dad72acea4e1d90e4390770d1e219133c16f0fda093a166941"
+    },
+    "run_failures": {
+      "rows": 1164,
+      "sha256": "bfad970f59b122b205e13f18e83eb57c1c4468da2af36e5126115bbcfe5cf6b8"
+    },
+    "runtime_attempts": {
+      "rows": 27474,
+      "sha256": "0b05d7d863abd1af623d7ee532b07e9224c4be5b860b365b07429e337daf0b75"
+    },
+    "run_adopted_supplements": {
+      "rows": 8,
+      "sha256": "d5fe4fb54a369baa980cfddf975f8154bd67db22e15c00214d34710458ced53a"
+    },
+    "run_projections": {
+      "rows": 10802,
+      "sha256": "b80c0941f0241118c3adc7e1049f6792e8743c156bfc3a8bd3da976f40bbf5ff"
+    },
+    "run_provenance": {
+      "rows": 13649,
+      "sha256": "4ef5eed138d18b5f0cc85458a0937d9679733e26de18b6b1ef2f9c00b39ba523"
+    },
+    "configs": {
+      "rows": 7509,
+      "sha256": "0969561d07ff63c916116a468bd4b362f0d7a1ffe60759349ded5f474863b14f"
+    },
+    "action_entity_identity_map": {
+      "rows": 31822,
+      "sha256": "de0624a9eb579f87bc1389fd3ffc31726d2487619794ba4b281f367b3db052f7"
+    },
+    "run_adopted_results": {
+      "rows": 1819,
+      "sha256": "812102c360b345f15a156dd6a4bbc595dfab1ae2d05eae497fbaf688d71a3926"
+    },
+    "tasks": {
+      "rows": 19976,
+      "sha256": "15d7ed90aaf190326c1e79cf5e9e20f0924582ed688029566cd453dc4339e831"
+    },
+    "provider_state": {
+      "rows": 73696,
+      "sha256": "5679380650b4ba2373291a242b5c1d9cbf82230e26bedd624458e80c7ec62281"
+    },
+    "reply_attempt_receipt_refs": {
+      "rows": 62,
+      "sha256": "5491e29df6c149bbb28f5c91cfdd222d532d187b4a7a2f0c621af2977ed74b5c"
+    },
+    "email_schema_migrations": {
+      "rows": 41,
+      "sha256": "1638fc476222fd3972e2d702efa3bed6ae271f32815948e6ce0f5b87fb764929"
+    },
+    "feedback_processing_rounds": {
+      "rows": 9,
+      "sha256": "82141700f0c2a9949c2d285f6ed26eeac13b6f426b890ad5c09e0cb6e31fe6dc"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "44787050357d1fdcda0e3fe54b1e93b6327432a7a55af67ac5c1726ed8d0923f"
+    },
+    "state": {
+      "rows": 24304,
+      "sha256": "d64423d6aaf7e801fc140d6c22d3de5f18652af5ed78bc3e407765963e63a437"
+    },
+    "task_business_keys": {
+      "rows": 8929,
+      "sha256": "6e5b44aa9f7a4459c9d2221fb492e90b5a2ca41473c52279f48ed348e6ef90cc"
+    },
+    "provenance": {
+      "rows": 291,
+      "sha256": "a2b1814a5b2e9d8a60895fbbbe6345f08ff12922460051ab2c78c082bd6dbe72"
+    },
+    "emails": {
+      "rows": 11262,
+      "sha256": "7d67e5e29a6779abf212328c6dbc0f41f06e27b5997094095d59667646dc2716"
+    },
+    "work_summary_inputs": {
+      "rows": 9148,
+      "sha256": "bf1c1f8c9e9c0513af109a7494a54223a35bc207dcad9324741e57f77757e318"
+    },
+    "feedback_processing_items": {
+      "rows": 54,
+      "sha256": "c72bb8fa62241f53327a6a52f1254de306a5c087ca1990ca237392a1e623a4bb"
+    },
+    "task_run_identity_map": {
+      "rows": 19744,
+      "sha256": "e9e6d1b76dbc6e1c46a05c499a34f5968f11aa33525b86adf0e1a176eb9d3ad3"
+    },
+    "business": {
+      "rows": 5303,
+      "sha256": "8ae549e3fc38624843acd2ffb4d50d02c4098eb7527869b34f806cbab3f40a14"
+    },
+    "run_adoption_identity_map": {
+      "rows": 3405,
+      "sha256": "1f1905e4acf211854dbaa78075c547cac5a33916227f1f50841bd07f41130914"
+    },
+    "runs": {
+      "rows": 39095,
+      "sha256": "60ebb8780a87cc919e3000404d509d35f5d3fcbfdf3c569461de5cbf1a197d7a"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "391b5c19a283829f96cd99100f8775c91e6fd6e725d9da1bd8950fd9802d209b"
+    },
+    "email_classification_inputs": {
+      "rows": 1430,
+      "sha256": "fe11866eb6fe9f45dc63458b362f748dc0021961b7f01c0d30dfc3bdd783bdb8"
+    },
+    "task_inputs": {
+      "rows": 9182,
+      "sha256": "08a62013cd18df6381c87d91396351dd6ea12a5022a38ae5a2c4db8168c48d1e"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "e2cba6482203eea19cd1f718f22155d556ce371f430e8698ff0a11ce159c68f7"
+    },
+    "workbench_turns": {
+      "rows": 41,
+      "sha256": "9c31bba88d59ea454aceb6072a29683414e6c1c5ee8cdd22fadf6798bf49d106"
+    },
+    "task_results": {
+      "rows": 2505,
+      "sha256": "22e1d2ad10d563e629d975c545f6662e5c6b53bdb7e6310621c67c79cd8e9dbc"
+    },
+    "schedule_occurrences": {
+      "rows": 118955,
+      "sha256": "497463eb7b9e936c1469e45d5e04a9002b084ac276f974e7dc159d77fdbc3591"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "41e78a5a748f8f223b0ecef995b9a6d66ef9d7a3d9aafe6f75a6d7fb71930998"
+    },
+    "action_observers": {
+      "rows": 637,
+      "sha256": "ddbf1d33181da3313950e26ba7bdc4e1da1d1d675848ca771c93c239c690e15a"
+    },
+    "workbench_tasks": {
+      "rows": 21,
+      "sha256": "c90a1bb3502623f5d777d982fa8da2335920c6014983a6e7b849ed21c247c6a2"
+    },
+    "sqlite_sequence": {
+      "rows": 58,
+      "sha256": "750a81a25e6dc1b64d0c09078113f5a5a3ca70e76556a564d2e2c2956503b321"
+    },
+    "feedback_processing_batches": {
+      "rows": 4,
+      "sha256": "e06bbb6434628bada92f2730db170b82015292a616b080cda1ce5807a8efdba1"
+    },
+    "oa_notification_events": {
+      "rows": 42,
+      "sha256": "1574d656d620266335e329f1a84366e6d5d7c2797e64bc0e2cabe8aa67c96020"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 6,
+      "sha256": "62264cfc67b2e5b3154096e826c6fd3385e982d35ec3eec304fe8ccd9347d2ca"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "c1c8c1dc27d4fa5012b327fe3f68061e14dbc2112877029bcb6a50ff234b9ba0"
+    }
+  },
+  "index_query_plans": {
+    "config_binding": [
+      "SEARCH configs USING INDEX idx_configs_binding_order (skill_binding_config_id=?)"
+    ],
+    "business_key": [
+      "SEARCH task_business_keys USING INDEX sqlite_autoindex_task_business_keys_1 (business_key=?)"
+    ],
+    "feedback_item": [
+      "SEARCH feedback_processing_items USING COVERING INDEX sqlite_autoindex_feedback_processing_items_1 (feedback_key=?)"
+    ],
+    "feedback_round": [
+      "SEARCH feedback_processing_rounds USING COVERING INDEX idx_feedback_processing_rounds_feedback_key_round_number_identity (feedback_key=?)"
+    ],
+    "adopted_review": [
+      "SEARCH run_adopted_reviews USING COVERING INDEX sqlite_autoindex_run_adopted_reviews_2 (consumer_run_id=?)"
+    ],
+    "artifact_id": [
+      "SEARCH workbench_artifacts USING INTEGER PRIMARY KEY (rowid=?)"
+    ],
+    "attachment_id": [
+      "SEARCH workbench_attachments USING INTEGER PRIMARY KEY (rowid=?)"
+    ],
+    "codex_page": [
+      "SCAN codex_session_search_index"
+    ],
+    "email_sample_page": [
+      "SCAN email_classifier_runtime_samples"
+    ],
+    "setup_event_page": [
+      "SCAN setup_wizard_events"
+    ]
+  },
+  "reviews": {
+    "spec": "PASS",
+    "quality": "PASS",
+    "old_archive_app_files_verified": 460
+  },
+  "tests": {
+    "focused_definition_groups": [
+      149,
+      46,
+      12,
+      67,
+      33
+    ],
+    "subsequent_declarations": 7,
+    "frozen_sources": 15,
+    "root_integrated": 31,
+    "root_artifact": 17,
+    "root_final_release": 11,
+    "groups_overlap": true
+  },
+  "production": null,
+  "cleanup": {
+    "status": "pending_acceptance",
+    "owned_temp_root": "/private/tmp/ceo-retirement-schema.dgLgGa"
+  }
+}

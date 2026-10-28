@@ -4,15 +4,19 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 
-from app.current_schema_manifest import EMAIL_VERSION, current_objects, schema_objects
+from app.current_schema_manifest import EMAIL_VERSION, schema_objects
 from app.scheduled_task_notification_schema_source import (
     PREVIOUS_SCHEDULES_DDL,
     previous_current_objects,
 )
-from app.schedules_definitions import SCHEDULE_DDL, SCHEDULE_INDEXES
+from app.model_retirement_schema_source import store26_objects
 from app.state_definitions import state_projection
 from app.state_storage import update_state_rows
 from app.task8_storage import register_task8_functions
+
+_SCHEDULE_OBJECTS = tuple(item for item in store26_objects() if item[2] == "schedules")
+SCHEDULE_DDL = next(item[3] for item in _SCHEDULE_OBJECTS if item[0] == "table")
+SCHEDULE_INDEXES = tuple(item[3] for item in _SCHEDULE_OBJECTS if item[0] == "index")
 
 SOURCE_STORE_VERSION = "2026-10-25.3"
 TARGET_STORE_VERSION = "2026-10-26.1"
@@ -84,7 +88,7 @@ class ScheduledNotificationSchemaRelease:
         self.published = False
 
     def _verify(self, db, *, target):
-        expected = current_objects(email_ledger=True) if target else previous_current_objects(email_ledger=True)
+        expected = store26_objects(email_ledger=True) if target else previous_current_objects(email_ledger=True)
         marker = _marker(db)
         wanted_version = TARGET_STORE_VERSION if target else self.source_marker[0]
         if (marker is None or marker[0] != wanted_version

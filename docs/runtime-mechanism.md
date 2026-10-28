@@ -1,5 +1,20 @@
 # Current Runtime Mechanism
 
+## 模型退休第二批：明确26.1→28.1发布（2026-10-28）
+
+Store28.1/Email54直接构造463对象（bare462）；运行时不读取旧schema catalog。
+部署静默读取和paired release只接收精确26.1/54来源，旧25.2/25.3只保留必要
+显式工具，不再自动分派。原安静等待、备份、账本、停止/重启、健康和回滚顺序不变。
+
+模型切换仍由registry manifest记录，Configs空的并行切换家族和旧启动验证循环
+已移除；promotion/category有效配置与immutable约束保留。Run map的唯一退休列
+为NULL allocator_highwater；身份/provenance不退休。移除10个有准确替代约束的索引。
+迁移检查空家族/NULL列后，在一个FK-off事务中原生复制Configs/Run map，重建
+各自固定目标约束，恢复所有现场序列及rowid。inverse复制当前新增事实，恢复
+原结构/markerclock；失败回滚而不补占位或删不一致记录。
+当前UI/API含义、审查、重试、取消和发送政策不变。副本49表typed-fact验证、
+真实旧代码冷启动及生产发布证据见[验收记录](model-retirement-batch2-validation.md)。
+
 ## 模型退休：无 DDL 入口清理（2026-10-28）
 
 Reviewed/provider receipt 当前 helper 直接使用 `execution_run_id` 与正面字段合同，

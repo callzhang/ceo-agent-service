@@ -15,8 +15,6 @@ CONFIG_FIELDS = {
         "revision_id category_key config_version config_json created_at".split()),
     "email_category_folder_bindings": tuple(
         "account_id category_key provider_folder_id provider_folder_name binding_status last_verified_at".split()),
-    "email_model_mode_transitions": tuple("""request_id actor from_mode to_mode
-        from_model_id target_model_id promotion_config_version status reason created_at""".split()),
     "email_model_promotion_configs": tuple("""config_version micro_f1_min category_precision_min
         category_validation_samples_min p95_latency_max_ms created_at""".split()),
     "email_training_snapshots": tuple("""snapshot_id snapshot_version description_version
@@ -45,7 +43,6 @@ PREFIX = {
     "email_accounts": "account", "email_category_configs": "category",
     "email_category_description_revisions": "revision",
     "email_category_folder_bindings": "binding",
-    "email_model_mode_transitions": "transition",
     "email_model_promotion_configs": "promotion",
     "email_training_snapshots": "snapshot",
 }
@@ -66,13 +63,12 @@ ROWID_KINDS += (
 "scheduled_task_skill_refs", "wechat_reply_scopes",
 )
 WITHOUT_ROWID_KINDS = (
-    "email_category_description_revisions", "email_model_mode_transitions",
+    "email_category_description_revisions",
     "email_model_promotion_configs",
 )
 SCALAR_KEY = {
     "email_accounts": "account_id", "email_category_configs": "category_key",
     "email_category_description_revisions": "revision_id",
-    "email_model_mode_transitions": "request_id",
     "email_model_promotion_configs": "config_version",
     "email_training_snapshots": "snapshot_id",
 }
@@ -86,7 +82,6 @@ PHYSICAL = {
     "email_category_configs": ("category_key",),
     "email_category_description_revisions": (),
     "email_category_folder_bindings": ("account_id", "category_key"),
-    "email_model_mode_transitions": ("promotion_config_version",),
     "email_model_promotion_configs": (),
     "email_training_snapshots": ("snapshot_id", "snapshot_digest", "frozen"),
 }
@@ -146,8 +141,6 @@ REQUIRED = {
     "email_category_configs": set(CONFIG_FIELDS["email_category_configs"]) - {"category_key"},
     "email_category_description_revisions": set(CONFIG_FIELDS["email_category_description_revisions"]),
     "email_category_folder_bindings": set(CONFIG_FIELDS["email_category_folder_bindings"]),
-    "email_model_mode_transitions": set(CONFIG_FIELDS["email_model_mode_transitions"]) -
-                                    {"from_model_id", "target_model_id"},
     "email_model_promotion_configs": set(CONFIG_FIELDS["email_model_promotion_configs"]),
     "email_training_snapshots": set(CONFIG_FIELDS["email_training_snapshots"]) - {"snapshot_id"},
 }
@@ -229,16 +222,6 @@ RULES = {
         "trim(binding_last_verified_at)!=''",
         "binding_binding_status!='active' or binding_provider_folder_id!=''",
     ),
-    "email_model_mode_transitions": (
-        "trim(public_key)!=''", "trim(transition_actor)!=''",
-        "transition_from_mode in ('agent_primary','model_primary')",
-        "transition_to_mode in ('agent_primary','model_primary')",
-        "transition_from_model_id is null or trim(transition_from_model_id)!=''",
-        "transition_target_model_id is null or trim(transition_target_model_id)!=''",
-        "trim(transition_promotion_config_version)!=''",
-        "transition_status in ('applied','rejected','failed')",
-        "trim(transition_created_at)!=''",
-    ),
     "email_model_promotion_configs": (
         "trim(public_key)!=''",
         "promotion_micro_f1_min>=0 and promotion_micro_f1_min<=1",
@@ -307,7 +290,6 @@ def _definitions():
         "source_key text",
         "binding_account_id text", "binding_category_key text",
         "binding_account_ref integer", "binding_category_ref integer",
-        "transition_promotion_config_version text", "transition_promotion_ref integer",
         "snapshot_snapshot_digest text", "snapshot_frozen integer",
         f"public_key text generated always as (case when record_type in ({wr}) "
         f"then {decoded_key} else source_key end) virtual",
@@ -323,9 +305,6 @@ def _definitions():
         "(case when record_type='email_category_folder_bindings' then 'email_accounts' end) virtual",
         "binding_category_kind text generated always as "
         "(case when record_type='email_category_folder_bindings' then 'email_category_configs' end) virtual",
-        "transition_promotion_kind text generated always as "
-        "(case when record_type='email_model_mode_transitions' "
-        "then 'email_model_promotion_configs' end) virtual",
     ]
     checks = [
         "check(case when record_type in (" +
@@ -344,25 +323,16 @@ def _definitions():
         "check(record_type='email_category_folder_bindings' "
         "or (binding_account_id is null and binding_category_key is null "
         "and binding_account_ref is null and binding_category_ref is null))",
-        "check(record_type='email_model_mode_transitions' "
-        "or (transition_promotion_config_version is null "
-        "and transition_promotion_ref is null))",
         "check(record_type='email_training_snapshots' "
         "or (snapshot_snapshot_digest is null and snapshot_frozen is null))",
         "check(record_type<>'email_category_folder_bindings' or "
         "(binding_account_ref is not null and binding_category_ref is not null))",
-        "check(record_type<>'email_model_mode_transitions' "
-        "or transition_promotion_ref is not null)",
         "foreign key(binding_account_ref,binding_account_kind,binding_account_id) "
         "references configs(id,record_type,public_key) "
         "on update no action on delete cascade",
         "foreign key(binding_category_ref,binding_category_kind,binding_category_key) "
         "references configs(id,record_type,public_key) "
         "on update no action on delete cascade",
-        "foreign key(transition_promotion_ref,transition_promotion_kind,"
-        "transition_promotion_config_version) "
-        "references configs(id,record_type,public_key) "
-        "on update no action on delete restrict",
     ]
     for kind in CONFIG_FIELDS:
         for field in config_payload_fields(kind):
@@ -439,7 +409,6 @@ def _definitions():
         "create unique index idx_configs_schedule_snapshot on configs(schedule_config_snapshot_json) where record_type='scheduled_task_config_versions'",
         "create unique index idx_configs_schedule_ref_position on configs(schedule_skill_ref_scheduled_task_id,schedule_skill_ref_position) where record_type='scheduled_task_skill_refs'",
         "create unique index idx_configs_wechat_scope on configs(wechat_scope_account_id,wechat_scope_target_type,wechat_scope_target_id) where record_type='wechat_reply_scopes'",
-        "create index idx_configs_binding_config_order on configs(skill_binding_config_id,skill_binding_load_order) where record_type='runtime_skill_bindings'",
     )
     immutable = WITHOUT_ROWID_KINDS
     triggers = []
