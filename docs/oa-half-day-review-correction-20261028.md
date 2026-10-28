@@ -67,5 +67,35 @@ this sample does not reproduce or measure improvement for that failure.
 Both variants use the same repository default role templates and facts; this is
 bounded synthetic evidence, not a replay of private production records.
 
-Publication and business recovery are pending. Local edits are not live rules,
+At the initial validation checkpoint, publication and business recovery were pending. Local edits are not live rules,
 and completed internal comment tasks do not mean the OA requests are resolved.
+
+
+The repository publisher regression now pins the verified prior attendance
+file independently of the candidate source digest. This is a real version
+transition, so old and new hashes are not required to be equal. The obsolete
+no-op assertion failed before this test-only repair. The unrelated installed
+OKR v21 baseline is synchronized in its own explicitly authorized commit; the
+standard publication gate and final readback were still required at that checkpoint.
+
+
+## Published acceptance
+
+PR 332 contains the business-rule correction. The explicitly authorized installed
+OKR v21 synchronization and separate attendance publication assertion repair
+were merged through PR 333. Standard gated publication succeeded at
+`9f163a678b1a58a9a91e3935066dbfe1e9064623`. All 26 installed assets match their
+repository source and release target hashes; health, Attention and History
+readbacks succeeded. The publisher regression file passes all 30 tests.
+
+The existing OA scheduled task was manually triggered after a complete live
+pending-list read showed only the two authorized corrective cases. Compressed
+historical inputs were retained unchanged; fresh source inputs created normal
+Consumer/Audit revisions. Both cases' actual native Skill-read receipts show
+attendance digest `b026781cc86fa5882035be3dbc566a60e29941965d053a8576a76d8e055d8b30`.
+Both proposals passed Audit and their normal executions completed. Independent
+DingTalk readback confirms both principal-owned nodes are `AGREE` / `COMPLETED`.
+One entire process is complete; the other is still running at a newly created
+node owned by another approver. No action was taken on that person's node.
+The final source reconciliation queued no new work. No new failed Reply Task
+was observed after publication in this bounded readback.

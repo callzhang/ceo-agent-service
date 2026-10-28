@@ -1302,9 +1302,10 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   WeChat 的 `read_wechat_messages` 不接收会话选择参数，只读取已领取 TaskInput 中绑定的会话，
   因此执行期间新输入成为 current 时仍使用本轮 claimed 会话及其 generation。
   已结算输入不另存从 provenance 可生成的精简 JSON；API 按来源摘要投影原有展示形式。
-  微信语音（Derek 2026-10-26）：语音消息的 `kind` 是 `voice`，`text` 是占位 `[语音N秒·未转写，用 save_wechat_voice 取音频再转写]`，因此语音不是空消息，直接聊天里每条入站语音和入站文字一样成为回复触发（群聊仍只认 @）。
+  微信语音（Derek 2026-10-26）：语音消息的 `kind` 是 `voice`，`text` 是占位 `[语音N秒·未转写，用 save_message_audio 取音频再转写]`，因此语音不是空消息，直接聊天里每条入站语音和入站文字一样成为回复触发（群聊仍只认 @）。
   音频不在消息行里：Reader 的 `read_voice` 按 `message_id` 在该会话自己的表里确认它是语音，再按 `server_id` 到 `media_N.db` 的 `VoiceInfo`（最新的分片先查）取 SILK 字节，最大 2 MiB；找不到、过大、不是语音都返回 `voice_unavailable`。
-  `save_wechat_voice(message_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、同样不接收会话参数）在服务环境用 `pilk` 把 SILK 转成 WAV，存成本任务当前执行代的任务文件并返回文件名；读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写走 `ai_services` 的大文件路径，音频不经过模型：Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，再调通用工具 `upload_audio_file(name, upload_url)`（任何来源的音频任务文件都可用，钉钉语音同理）由服务把该文件 POST 到该地址并返回 `job_id`，最后调 `ai_services.get_audio_transcription(job_id)` 直到 `done`。服务里不保存任何转写凭据——令牌就在一次性地址里。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
+  通用工具 `save_message_audio(message_id, resource_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、不接收会话参数，按任务绑定的渠道取音频）把语音存成本任务当前执行代的任务文件并返回文件名：微信在服务环境用 `pilk` 把 SILK 转成 WAV；钉钉按消息里的 `mediaId`（作为 `resource_id`）用 `dws chat +messages-resource-download` 下载并核对消息身份；其他渠道没有语音，直接报错。读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写走 `ai_services` 的大文件路径，音频不经过模型：Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，再调通用工具 `upload_audio_file(name, upload_url)`（任何来源的音频任务文件都可用，钉钉语音同理）由服务把该文件 POST 到该地址并返回 `job_id`，最后调 `ai_services.get_audio_transcription(job_id)` 直到 `done`。服务里不保存任何转写凭据——令牌就在一次性地址里。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
+  自己发的语音是指令（Derek 2026-10-28）：语音无法带 `@磊哥`，所以本人发的语音在两处自成触发，且只限语音——服务自己发出的都是文字，不会自己回自己。钉钉：本人在以 Agent 名字命名的单聊（`chat_bot_names()`）里发的、含 `[语音消息](mediaId=…)` 的消息进入候选，仍排除服务自己的投递；本人发给同事的语音、群里的语音、该单聊里的文字仍是历史。微信：本人在 `filehelper`（文件传输助手）里发的语音（方向为 outbound）成为候选，前提是该会话有启用的回复范围；其他会话里的 outbound 语音、该会话里的文字仍被忽略。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
   `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
   `reply_task` 的当前投影和 `input_version`。只有卡片内容变化、日程仍有效且本人仍待响应时
@@ -4673,3 +4674,16 @@ separate incident-by-incident statement or resolution before leave. This changes
 the shared business Skill used by Consumer and Audit, without changing Audit
 mechanics, task lifecycle or action authority. See
 `oa-half-day-review-correction-20261028.md` for evidence and publication status.
+
+
+### Installed OKR notification contract preserved — 2026-10-28
+
+The independently authorized v21 OKR Skill is synchronized verbatim from the
+installed file into its repository source. Management report pages and personal
+scorecard documents retain their existing workflow. The group notification uses
+a separate `company-message.md` containing verified company-level progress,
+without personal names, individual scores/OKRs, HR evaluations or links exposing
+individual materials. Consumer and Audit compare the proposed message with that
+artifact. Installed-file, repository-source and managed release baselines are
+aligned to the exact same digest; this sync preserves the installed contract.
+The half-day leave correction remains a separate change.

@@ -1,18 +1,19 @@
 ---
 name: ceo-weekly-okr-report
-description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and delivery of the management report and group summary.
+description: Use for scheduled Sunday or explicitly requested CEO-2 manager OKR progress reports, current-quarter evidence scoring, per-person scorecards, and a company-level group notification.
 metadata:
   managed_by: ceo-agent-service
-  version: 20
+  version: 21
 ---
 
 # CEO-2 Manager OKR Progress Report
 
 Produce a current OKR period-to-date management report for every member of the
 current CEO-2 管理群, with a management review page and individual scorecard child
-documents. Use the normal Consumer → Audit → revision lifecycle and existing
-controlled document/message tools. This Skill owns the business workflow and
-local calculations; the service supplies source access and action execution.
+documents. The group notification is a separate company-level summary. Use the
+normal Consumer → Audit → revision lifecycle and existing controlled
+document/message tools. This Skill owns the business workflow and local
+calculations; the service supplies source access and action execution.
 
 Read `dingtang-okr-review` for the full evidence, business/GTM, product,
 engineering, leadership, culture and deadline calibration criteria. Use its
@@ -427,14 +428,21 @@ mapping every userId to its verified appendix URL from document info, then rerun
 `--appendix-links-file appendix-links.json` to produce the final
 main.md with online links. Update the main document with its latest revision.
 After its receipt, run render with that same links file and
-`--document-url <main-url>` to produce summary.md. This final `summary.md` is the
-canonical notification artifact: preserve its text and Markdown verbatim in the
-proposal content. Audit compares the proposal directly with that artifact, not
-with a separately rewritten message draft. Correct analysis inputs and rerender
-to change generated reports; do not hand-edit the generated canonical files.
-After any correction rerenders `summary.md`, read that current artifact and
-replace the proposal content with those exact bytes. Never retain an earlier
-summary in the proposal after the canonical summary changes.
+`--document-url <main-url>` to produce summary.md for the management report.
+The group notification must contain company-level OKR results and business
+progress only. Do not include personal names, individual scores or OKRs, HR
+evaluations, personal appendix details, or links to broadly shared documents or
+attachments that expose individual-level information. Do not modify, move, or
+resend existing personal materials when preparing this message. Create a
+standalone `company-message.md` from verified company-level facts only, with no
+links to individual materials; preserve its exact text and Markdown in the
+message proposal. Audit compares the proposal directly with this artifact.
+Review the complete message and every link before proposal; remove any
+individual-level content or link before the Audit handoff. Correct source
+analysis and rerender generated reports when needed; do not hand-edit generated
+report files. After any correction, regenerate and reread the current
+`company-message.md`, then replace the proposal content with those exact bytes.
+Never retain an earlier message after the canonical artifact changes.
 For every Audit correction, change only the affected member analysis or
 `appendix-links.json`, then rerun the appropriate `render` command. Never write
 `main.md`, `full.md`, `summary.md` or an appendix file with

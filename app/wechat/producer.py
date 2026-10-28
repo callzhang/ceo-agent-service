@@ -15,6 +15,21 @@ from app.skill_features import FeatureRegistry
 
 
 DIRECT_REPLY_SETTLE_WINDOW = timedelta(minutes=5)
+SELF_CHAT_ID = "filehelper"
+
+
+def is_self_voice_command(message: WechatMessage) -> bool:
+    """A voice the principal sends in their own 文件传输助手 chat is an instruction.
+
+    A voice cannot carry an @-mention and nobody else is in that chat (Derek
+    2026-10-28). Only voice: everything the service sends there is text, so this
+    cannot answer itself. The conversation still needs an enabled reply scope.
+    """
+    return (
+        message.kind == "voice" and message.direction == "outbound"
+        and message.conversation_type == "direct"
+        and message.conversation_id == SELF_CHAT_ID
+    )
 
 
 def is_reply_candidate(
@@ -25,6 +40,8 @@ def is_reply_candidate(
 ) -> bool:
     if scope is None or not scope.enabled:
         return False
+    if is_self_voice_command(message):
+        return True
     if message.direction != "inbound" or message.kind not in {"text", "voice"}:
         return False
     if message.conversation_type == "direct":
