@@ -1,6 +1,5 @@
 from app.action_entity_transfer import _source_execution_layout as source_execution_layout
 import sqlite3
-import json
 import hashlib
 from pathlib import Path
 
@@ -123,28 +122,11 @@ def test_run_source_metadata_matches_current_native_factory_oracle():
 
 
 def test_complete_assembly_sql_artifact_is_deterministic():
-    from app.run_adoption_definitions import field_map as adoption_field_map
-    from app.run_entity_definitions import run_entity_field_map
     from app.schema_sql import serialize_schema_sql
-    from app.task_run_entity_definitions import task_run_field_map, task_run_identity_associations
 
     objects = task_run_entity_assembly_objects()
     expected = serialize_schema_sql(objects)
     assert (ROOT / "docs/task-run-entity-assembly-target.sql").read_text() == expected
-    field_map = json.loads((ROOT / "docs/task-run-entity-assembly-field-map.json").read_text())
-    adoption_rows = [
-        {"source_kind": kind, "source_field": field, "target_table": destination[0],
-         "target_field_or_expression": destination[1]}
-        for kind, fields in adoption_field_map().items() for field, destination in fields.items()
-    ]
-    assert field_map == {"task_fields": list(task_run_field_map()),
-                         "task_identity_associations": list(task_run_identity_associations()),
-                         "run_fields": run_entity_field_map(), "adoption_fields": adoption_rows}
-    assert len(field_map["task_fields"]) == 287
-    assert len(field_map["run_fields"]) == 8 * 79
-    assert len(field_map["adoption_fields"]) == 43
-    assert (ROOT / "docs/task-run-entity-assembly-retirement.sql").read_text().startswith(
-        "-- Unactivated Task/Run assembly retirement inventory; not executable migration SQL.\n")
 
 
 def test_committed_assembly_sql_artifact_executes_and_matches_complete_catalog():
@@ -275,9 +257,9 @@ def test_feedback_action_references_actual_task_owned_domain_parents():
     task_id = db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) values('feedback_processing','pending',jsonb('{}'),'now','now') returning id").fetchone()[0]
     db.execute("insert into feedback_processing_batches(batch_id) values('batch')")
     db.execute("insert into feedback_iteration_decisions(id,batch_id,workbench_task_id,workbench_turn_id,decision_json) values(?,'batch','workbench','turn','{}')", (task_id,))
-    db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) values(?, 'feedback','batch','','',0,0,'','{}','{}','{}','','',0)", (task_id,))
+    db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,current_round_id) values(?, 'feedback','batch',0)", (task_id,))
     second_task_id = db.execute("insert into tasks(kind,status,parameters_json,created_at,updated_at) values('feedback_processing','pending',jsonb('{}'),'now','now') returning id").fetchone()[0]
-    db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) values(?, 'feedback2','batch','','',0,0,'','{}','{}','{}','','',0)", (second_task_id,))
+    db.execute("insert into feedback_processing_items(task_id,feedback_key,batch_id,current_round_id) values(?, 'feedback2','batch',0)", (second_task_id,))
     db.execute("insert into feedback_processing_rounds(id,feedback_key,round_number,status) values(?,'feedback',1,'pending')", (task_id,))
     code = current_action_payloads().record_types.code("feedback_iteration_decision_items")
     insert = "insert into actions(_kind,legacy_key,payload_json,fb_decision_id,fb_feedback_key,fb_round_id) values(?,?,jsonb('[]'),?,?,?)"

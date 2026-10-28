@@ -186,7 +186,6 @@ tests/test_signed_url_detection.py
 tests/test_inline_output_schema.py
 tests/test_oa_effective_return_rounds.py
 tests/test_weekly_report_skill_evidence_workflow.py
-tests/test_task_entity_migration.py
 tests/test_store_snapshot_connect_timing.py
 tests/test_consumer_system_release_wait.py
 tests/test_email_classifier_skill_once.py
@@ -226,7 +225,6 @@ tests/test_email_unsubscribe_page_judge.py
 tests/test_email_unsubscribe_direct.py
 tests/test_worker_retry_contract.py
 tests/test_config_runtime_paths.py
-tests/test_task_2d7j_workbench_artifact_routes.py
 tests/test_agent_context_provenance.py
 tests/test_scheduled_occurrence_refs.py
 tests/test_scheduled_error_reconciliation.py
@@ -408,3 +406,4 @@ tests/test_oa_business_attention.py
 tests/test_model_retirement_schema_release.py
 tests/test_conversation_session_schema_release.py
 tests/test_wechat_voice_transcript_cache.py
+tests/test_feedback_owner_schema_release.py

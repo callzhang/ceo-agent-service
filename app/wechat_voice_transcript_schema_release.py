@@ -1,4 +1,4 @@
-"""Paired Store 2026-10-28.2 -> 2026-10-28.3 release adding the WeChat voice transcript table."""
+"""Paired Store 2026-10-28.3 -> 2026-10-28.4 release adding the WeChat voice transcript table."""
 from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -8,8 +8,8 @@ import sqlite3
 from app.current_schema_manifest import current_objects, schema_objects, schema_is_current
 from app.wechat.voice_transcript import DDL, OWNED_OBJECTS
 
-SOURCE_STORE_VERSION = "2026-10-28.2"
-TARGET_STORE_VERSION = "2026-10-28.3"
+SOURCE_STORE_VERSION = "2026-10-28.3"
+TARGET_STORE_VERSION = "2026-10-28.4"
 EMAIL_VERSION = 54
 VERSION_KEY = "store_schema_version"
 
@@ -118,7 +118,7 @@ def prepare_wechat_voice_transcript_release(path: Path):
         if (marker is None or marker[0] != SOURCE_STORE_VERSION
                 or _email_version(db) != EMAIL_VERSION
                 or schema_objects(db) != source_objects()):
-            raise ValueError("unsupported Store 2026-10-28.2 / Email54 source schema")
+            raise ValueError("unsupported Store 2026-10-28.3 / Email54 source schema")
         if db.execute("pragma quick_check").fetchone()[0] != "ok":
             raise ValueError("WeChat voice transcript release source quick_check failed")
         return WechatVoiceTranscriptRelease(path, tuple(marker), _foreign_keys(db))

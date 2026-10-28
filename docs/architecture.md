@@ -1,13 +1,28 @@
 # CEO Agent Service Architecture
 
-## 微信语音转写缓存 Store28.3/Email54（2026-10-28）
+## Feedback 单一事实归属 Store28.3/Email54（2026-10-28）
+
+Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前证据从准确Round
+（id+feedback_key+batch_id）读取，resolved_at从同一来源反馈Action读取；无Round解决事实
+继续可查。创建/领取/关联/patch/解决/重开不双写镜像。移除同源别名间的重复比较，保留
+原有Task/来源/指针/批次/状态/类型及外部回执资格；Round写后检查当前指针条件，竞争仍回滚。
+没有新审查、授权、重试政策。当前正面声明48表/463对象/1222列，不靠旧字段集相减。
+
+显式28.2→28.3 release先验证源镜像逐值/类型匹配真实owner，再移除；inverse由当前owner
+恢复，保留新增事实、身份、当前水位及FK集合。constructor不处理旧结构或自动补建。
+已关闭Task/Run/adoption转换包、其专用工具和测试退出；当前微信/审批/Workbench/反馈测试
+使用原生夹具，实际identity provenance与必要现行paired inverse保留。候选/安装/读回边界见
+[第四批验收](model-retirement-batch4-validation.md)；剩余Business/Email/Workbench和Runner
+转换半部仍是第五批后续范围。
+
+## 微信语音转写缓存 Store28.4/Email54（2026-10-28）
 
 Derek 批准新增表 `wechat_voice_transcripts`（账号／会话／消息主键，音频 SHA-256，转写文字）
 及其配对发布。发布只做加法：正向 `create table`，不碰其他表、不迁移任何数据；
 inverse 直接 `drop table`（缓存可重新转写，不丢业务事实），并恢复发布前的 Store 标记。
-源为 Store28.2/Email54 的“当前声明去掉本表”，发布和 inverse 都验证完整 schema、FK 与 quick_check，
+源为 Store28.3/Email54 的“当前声明去掉本表”，发布和 inverse 都验证完整 schema、FK 与 quick_check，
 `app/wechat_voice_transcript_schema_release.py` 接在 `prepare_database_schema_release` 的
-28.2 分支上（上一版 28.1→28.2 发布不再被选中，模块与固定声明保留）。
+28.3 分支上（上一版 28.2→28.3 Feedback 发布不再被选中，模块与固定声明保留）。
 
 ## 会话唯一归属 Store28.2/Email54（2026-10-28）
 
@@ -146,11 +161,11 @@ Store25.1→25.2 是显式事务迁移，仅删除该触发器并更新版本标
 [触发器退休验收](action-reference-trigger-retirement-validation.md)。
 
 
-### 历史发布阶段记录（均为当时状态，当前状态见本文后续当前合同）
+### 历史发布阶段记录（均为当时状态，当前状态见本文顶部最新合同）
 
 Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、其上一版本（Store `2026-10-19.12` 经 `action_entity` 与 `task_run_entity` 发布）以及仅 Email 变化的发布；面向更旧目标版本的分支和 `prepare_store_schema_release` 里的 Run／Task／Workbench／Action 旧转换已删除，遇到这些版本一律以 `Store schema release needs a verified inverse for this transition` 拒绝。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。生产已于 Store `2026-10-23.1`／Email54，不受影响；回滚到比上一版本更旧的提交不再有自动逆迁。
 
-2026-10-25 第三阶段（Derek 批准）：上一版本发布 `app/task_run_entity_schema_release.py` 已退役，连同 `scripts/inverse_task_run_entity.py`、`tools/validate_task_run_entity_copy.py`、`tests/test_task_run_entity_schema_release.py`、`tests/test_current_publication_sources.py`（该发布期望 Email 53 而当前配对是 Email 54，已无法发布）。`prepare_database_schema_release` 现在只处理当前 Store／Email 版本和仅 Email 变化的发布；标记为 Store `2026-10-21.1` 的数据库一律以 `unsupported current Action source schema; explicit paired release required` 拒绝。生产 `auto-reply.sqlite3.task-run-inverse.json` 逆向交接文件原样保留，但已无命令可以消费它，回滚到 `2026-10-21.1` 不再有自动逆迁。`task_entity_schema`、`run_entity_schema`、`run_adoption_*` 的转换／逆向函数不再被任何应用代码调用，仅剩测试和 `scripts/validate_task_2d*` 引用，留待下一阶段决定。
+2026-10-25 第三阶段（Derek 批准）：上一版本发布 `app/task_run_entity_schema_release.py` 已退役，连同 `scripts/inverse_task_run_entity.py`、`tools/validate_task_run_entity_copy.py`、`tests/test_task_run_entity_schema_release.py`、`tests/test_current_publication_sources.py`（该发布期望 Email 53 而当前配对是 Email 54，已无法发布）。`prepare_database_schema_release` 现在只处理当前 Store／Email 版本和仅 Email 变化的发布；标记为 Store `2026-10-21.1` 的数据库一律以 `unsupported current Action source schema; explicit paired release required` 拒绝。生产 `auto-reply.sqlite3.task-run-inverse.json` 逆向交接文件原样保留，但已无命令可以消费它，回滚到 `2026-10-21.1` 不再有自动逆迁。`task_entity_schema`、`run_entity_schema`、`run_adoption_*` 的转换／逆向函数不再被任何应用代码调用，当时仅剩测试和 `scripts/validate_task_2d*` 引用；本待办已在2026-10-28第四批候选中完成闭包退休，当前范围及发布状态见本文顶部与第四批验收。
 
 2026-10-24 第二阶段：27 个历史 `*_schema_release` 模块（`action_email`、`task20`、`runs11`、`confirmation`、`selection`、`result`、`email_metadata`、`execution_owner`、`sent_result`、`shared_action`、`specialized_action`、`prepared_action`、`logical_run`、`business_legacy_field`、`business`、`configs`、`state`、`provider_state`、`task`、`run`、`workbench`、`action`、`action_delivery`、`action_postfix`、`action_receipt`、`action_reply`、`task_lifecycle`）及其测试、`scripts/validate_*_copy.py` 与 `scripts/retire_verified_email_inputs.py` 已删除。现行存储仍用到的辅助函数迁入 `app/business_schema_helpers.py`、`app/configs_schema_current.py`、`app/provider_state_schema_current.py`、`app/result_schema_helpers.py`、`app/runs11_schema_helpers.py`、`app/state_schema_current.py`，代码逐字复制，没有改行为。部署路径只剩 `store_schema_release`、`action_entity_schema_release`、`task_run_entity_schema_release`、`email_schema_release`、`current_action_schema_release`；`app/email_publication_sources.py` 和 `scheduled_config_storage.publication_scheduled_source` 无运行时调用方，一并删除。
 同日第二阶段补充：只被已删迁移链引用的 13 个历史结构模块也已删除（`business_legacy_field_schema`、`email_metadata_schema`、`email_training_migration`、`execution_owner_schema`、`final_source_migration`、`logical_run_schema`、`model_result_schema`、`prepared_action_schema`、`sent_result_schema`、`shared_action_schema`、`specialized_action_schema`、`task_lifecycle_schema`、`state_publication_sources`），其测试随之退役。
@@ -2974,6 +2989,8 @@ Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板�
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
 默认共同工作原则要求先识别原请求要向谁交付什么、按本轮声明入口取证、交付可核实部分并说明剩余协调责任。消息处理以原始触发为目标；后续排查建议用于补充上下文，不替换原请求。若建议的操作不在当前能力范围内，但已核实信息仍能回答原询问，应回复观察结果、具体限制及继续所需信息，不因该操作不可用而直接失败。日历时区与候选日期偏移规则位于 `ceo-calendar-invite` Skill，只在适用任务按需读取；共同 Developer 不再全量携带该专项流程。两者都不改变已有角色、审核或执行合同。
+
+低信息简短收口与轻量互动优先用原消息 reaction，避免发送重复的“收到”“好的”等文字；明确需要业务判断、承诺、解释、下一步或正式文字确认时仍发送简短文字。已有 principal reaction 通常视为真人已轻量处理。规则由 Consumer/Audit 共用的默认 Developer 提示提供，不改变消息 reaction 的既有 Action、Audit、执行器或回执合同。
 
 配置回执同时记录 Developer 模板原文和渲染后共同原则正文的 SHA；相同模板引用的变量/文件/代码展开改变时，静态契约指纹也改变。静态指纹仍不是 session 身份；历史记录缺正文 SHA 时只显示未记录，不以当前值补造。
 

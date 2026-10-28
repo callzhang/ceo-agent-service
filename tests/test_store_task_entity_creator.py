@@ -13,6 +13,7 @@ from app.store import (
     AgentRunLeaseLostError,
     EmailReplyTaskAuthorizationConflict,
     FEEDBACK_EVENT_SQL,
+    _native_feedback_item_projection,
     ReplyTaskIdentityConflict,
     ReplyTaskSpec,
 )
@@ -363,139 +364,100 @@ def test_native_wechat_task_reader_keeps_task_identity_separate_from_current_inp
 
 @pytest.mark.parametrize("outcome", ["approve", "return"])
 def test_native_wechat_review_reader_and_writer_use_public_action_identity(tmp_path, outcome):
-    from contextlib import contextmanager
-
     from app import run_entity_storage
-    from app.run_adoption_schema import migrate_run_adoptions
-    from tests.test_run_adoption_schema import _populated_source
     from tests.wechat.test_standard_review_gate import IDENTITY, _result, _reviewed, _task
 
-    db, context = _populated_source(
-        remap_tasks=True, remap_runs=True, stop_before_adoption=True,
+    store = _target_store(tmp_path / "native-wechat-review-lock.sqlite3")
+    task = _task(store, trigger=f"public-action-{outcome}")
+    candidate, review = _reviewed(
+        store, task, _result(), decision=outcome,
     )
-    db.row_factory = sqlite3.Row
-
-    @contextmanager
-    def connection():
-        try:
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-
-    @contextmanager
-    def immediate_transaction():
-        db.execute("begin immediate")
-        try:
-            yield db
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-
-    store = AutoReplyStore.__new__(AutoReplyStore)
-    store.path = tmp_path / "native-wechat-review-lock.sqlite3"
-    store._connect = connection
-    store._immediate_write_transaction = immediate_transaction
-
-    try:
-        migrate_run_adoptions(
-            db, context["adoption_source"], task_metadata=context["task_metadata"],
-            run_metadata=context["run_metadata"],
-        )
-        db.commit()
-        task = _task(store, trigger=f"public-action-{outcome}")
-        candidate, review = _reviewed(
-            store, task, _result(), decision=outcome,
-        )
-        with store._immediate_write_transaction() as connection_db:
-            # Make the next WeChat public ID equal an unrelated Action's
-            # physical ID. The delivery must still resolve through legacy_key.
-            collision = create_action(connection_db, values={})
-            collision_id = int(collision["id"])
-            allocator = connection_db.execute(
-                "select rowid from sqlite_sequence where name='actions:wechat_deliveries'"
-            ).fetchall()
-            assert len(allocator) <= 1
-            if allocator:
-                connection_db.execute(
-                    "update sqlite_sequence set seq=? where name='actions:wechat_deliveries'",
-                    (collision_id - 1,),
-                )
-            else:
-                connection_db.execute(
-                    "insert into sqlite_sequence(name,seq) values('actions:wechat_deliveries',?)",
-                    (collision_id - 1,),
-                )
-
-        if outcome == "return":
-            with pytest.raises(
-                ValueError, match="not backed by an approving standard review",
-            ):
-                store.create_standard_wechat_delivery(
-                    candidate_id=candidate["id"], review_id=review["id"],
-                    action_identity=IDENTITY,
-                )
-            assert store.wechat_delivery_review_approved(collision_id) is False
-            return
-
-        expected_digest = candidate["candidate_digest"]
-        with store._immediate_write_transaction() as connection_db:
+    with store._immediate_write_transaction() as connection_db:
+        # Make the next WeChat public ID equal an unrelated Action's
+        # physical ID. The delivery must still resolve through legacy_key.
+        collision = create_action(connection_db, values={})
+        collision_id = int(collision["id"])
+        allocator = connection_db.execute(
+            "select rowid from sqlite_sequence where name='actions:wechat_deliveries'"
+        ).fetchall()
+        assert len(allocator) <= 1
+        if allocator:
             connection_db.execute(
-                "update run_adopted_reviews set candidate_digest=? where id=?",
-                ("0" * 64, review["id"]),
+                "update sqlite_sequence set seq=? where name='actions:wechat_deliveries'",
+                (collision_id - 1,),
             )
-        with pytest.raises(ValueError, match="not backed by an approving standard review"):
+        else:
+            connection_db.execute(
+                "insert into sqlite_sequence(name,seq) values('actions:wechat_deliveries',?)",
+                (collision_id - 1,),
+            )
+
+    if outcome == "return":
+        with pytest.raises(
+            ValueError, match="not backed by an approving standard review",
+        ):
             store.create_standard_wechat_delivery(
                 candidate_id=candidate["id"], review_id=review["id"],
                 action_identity=IDENTITY,
             )
-        with store._immediate_write_transaction() as connection_db:
-            connection_db.execute(
-                "update run_adopted_reviews set candidate_digest=? where id=?",
-                (expected_digest, review["id"]),
-            )
+        assert store.wechat_delivery_review_approved(collision_id) is False
+        return
 
-        delivery_id = store.create_standard_wechat_delivery(
+    expected_digest = candidate["candidate_digest"]
+    # Model a previously persisted corrupt review, independently of normal FK writes.
+    with sqlite3.connect(store.path) as connection_db:
+        connection_db.execute(
+            "update run_adopted_reviews set candidate_digest=? where id=?",
+            ("0" * 64, review["id"]),
+        )
+    with pytest.raises(ValueError, match="not backed by an approving standard review"):
+        store.create_standard_wechat_delivery(
             candidate_id=candidate["id"], review_id=review["id"],
             action_identity=IDENTITY,
         )
-        assert store.create_standard_wechat_delivery(
+    with store._immediate_write_transaction() as connection_db:
+        connection_db.execute(
+            "update run_adopted_reviews set candidate_digest=? where id=?",
+            (expected_digest, review["id"]),
+        )
+
+    delivery_id = store.create_standard_wechat_delivery(
+        candidate_id=candidate["id"], review_id=review["id"],
+        action_identity=IDENTITY,
+    )
+    assert store.create_standard_wechat_delivery(
+        candidate_id=candidate["id"], review_id=review["id"],
+        action_identity=IDENTITY,
+    ) == delivery_id
+    with store._connect() as connection_db:
+        physical_id = int(connection_db.execute(
+            "select id from actions where record_type='wechat_deliveries' "
+            "and cast(legacy_key as integer)=?", (delivery_id,),
+        ).fetchone()[0])
+        assert collision_id == delivery_id
+        assert physical_id != delivery_id
+        assert connection_db.execute(
+            "select 1 from actions where id=? and record_type='wechat_deliveries'",
+            (delivery_id,),
+        ).fetchone() is None
+    assert store.wechat_delivery_review_approved(delivery_id) is True
+
+    audit_id = int(review["audit_run_id"])
+    with store._immediate_write_transaction() as connection_db:
+        audit = connection_db.execute(
+            "select parent_id from runs where id=?", (audit_id,),
+        ).fetchone()
+        assert run_entity_storage.update_run_cas(
+            connection_db, run_id=audit_id,
+            expected={"parent_id": int(audit["parent_id"])},
+            changes={"parent_id": None},
+        ) is not None
+    assert store.wechat_delivery_review_approved(delivery_id) is False
+    with pytest.raises(ValueError, match="not backed by an approving standard review"):
+        store.create_standard_wechat_delivery(
             candidate_id=candidate["id"], review_id=review["id"],
             action_identity=IDENTITY,
-        ) == delivery_id
-        with store._connect() as connection_db:
-            physical_id = int(connection_db.execute(
-                "select id from actions where record_type='wechat_deliveries' "
-                "and cast(legacy_key as integer)=?", (delivery_id,),
-            ).fetchone()[0])
-            assert collision_id == delivery_id
-            assert physical_id != delivery_id
-            assert connection_db.execute(
-                "select 1 from actions where id=? and record_type='wechat_deliveries'",
-                (delivery_id,),
-            ).fetchone() is None
-        assert store.wechat_delivery_review_approved(delivery_id) is True
-
-        audit_id = int(review["audit_run_id"])
-        with store._immediate_write_transaction() as connection_db:
-            audit = connection_db.execute(
-                "select parent_id from runs where id=?", (audit_id,),
-            ).fetchone()
-            assert run_entity_storage.update_run_cas(
-                connection_db, run_id=audit_id,
-                expected={"parent_id": int(audit["parent_id"])},
-                changes={"parent_id": None},
-            ) is not None
-        assert store.wechat_delivery_review_approved(delivery_id) is False
-        with pytest.raises(ValueError, match="not backed by an approving standard review"):
-            store.create_standard_wechat_delivery(
-                candidate_id=candidate["id"], review_id=review["id"],
-                action_identity=IDENTITY,
-            )
-    finally:
-        db.close()
+        )
 
 
 def test_native_settled_reply_compaction_retires_task_input_bodies(tmp_path):
@@ -942,215 +904,6 @@ def test_native_requeue_reply_task_fails_only_stale_unprovenanced_current_genera
         assert db.execute("select status from runs where id=?", (unscoped,)).fetchone()[0] == "running"
 
 
-def test_native_reply_failure_result_and_receipt_survive_composed_portable_cycles():
-    from contextlib import contextmanager
-    from copy import deepcopy
-    import sqlite3
-
-    from app.run_adoption_inverse import restore_run_adoptions
-    from app.run_adoption_schema import capture_run_adoptions, migrate_run_adoptions
-    from app.run_entity_schema import capture_run_entities, migrate_run_entities, restore_run_entities
-    from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
-    from tests.test_run_adoption_schema import _populated_source
-
-    db, context = _populated_source(remap_tasks=True, remap_runs=True, stop_before_adoption=True)
-    db.row_factory = sqlite3.Row
-    try:
-        adoption_forward = migrate_run_adoptions(
-            db, context["adoption_source"], task_metadata=context["task_metadata"],
-            run_metadata=context["run_metadata"],
-        )
-        # This retained owner was published after the frozen predecessor used
-        # by _populated_source. Install its exact current assembly declarations
-        # after the explicit Task/Run/Action forwards, never in the old source.
-        current_assembly = task_run_entity_assembly_objects()
-        receipt_reference_objects = (
-            "reply_attempt_receipt_refs",
-            "idx_reply_attempt_receipt_refs_receipt",
-            "trg_reply_attempt_receipt_ref_insert",
-            "trg_reply_attempt_receipt_ref_update",
-        )
-        assert db.execute(
-            "select name from sqlite_schema where name='reply_attempt_receipt_refs'"
-        ).fetchone() is None
-        for name in receipt_reference_objects:
-            db.execute(current_assembly[name])
-        db.commit()
-        task_id = next(
-            edge["target_id"] for edge in context["task_metadata"]["identity_edges"]
-            if edge["source_kind"] == "reply_tasks" and edge["physical_id"] == 201
-        )
-        consumer_run_id = next(
-            edge["target_id"] for edge in context["run_metadata"]["identity_edges"]
-            if edge["source_kind"] == "agent_runs" and edge["physical_id"] == 9006
-        )
-        task_entity_storage.update_task_cas(
-            db, task_id=task_id, expected={"status": "pending"},
-            changes={"status": "processing", "attempts": 1,
-                     "claimed_input_id": task_entity_storage.get_task(db, task_id)["current_input_id"],
-                     "claimed_input_version": 1},
-        )
-        db.commit()
-        store = AutoReplyStore.__new__(AutoReplyStore)
-
-        @contextmanager
-        def connection():
-            yield db
-
-        @contextmanager
-        def immediate_transaction():
-            db.execute("begin immediate")
-            try:
-                yield db
-                db.commit()
-            except BaseException:
-                db.rollback()
-                raise
-
-        store._connect = connection
-        store._immediate_write_transaction = immediate_transaction
-        task = task_entity_storage.get_task_with_inputs(db, task_id)
-        generation = str(task["execution_generation"])
-        current_input = task["current_input"]
-        attempt_id = store.finalize_orchestrated_reply_task(
-            task_id=task_id, expected_execution_generation=generation,
-            run_id=consumer_run_id, task_status="failed", task_error="codex_result_invalid",
-            available_at="", conversation_id=current_input["conversation_id"],
-            conversation_title=current_input["conversation_title"],
-            trigger_message_id=current_input["trigger_message_id"],
-            trigger_sender=current_input["trigger_sender"],
-            trigger_text=current_input["trigger_text"],
-            codex_reason="native composed result", codex_session_id="",
-            codex_transcript_start_line=0, codex_transcript_end_line=0,
-            audit_tool_events_json="[]", audit_summary="native composed result",
-            send_status="failed", send_error="codex_result_invalid",
-            channel=current_input["channel"],
-        )
-        _native_sent_action(
-            db, external_key="cycle-receipt:reply-201",
-            business_key=current_input["business_object_key"],
-            channel=current_input["channel"],
-            conversation_id=current_input["conversation_id"],
-            trigger_message_id=current_input["trigger_message_id"],
-            agent_run_id=consumer_run_id,
-        )
-        db.commit()
-        assert store.reconcile_failed_reply_tasks_with_recorded_deliveries() == 1
-
-        expected_candidate = db.execute(
-            "select candidate_json,candidate_digest from run_adopted_results "
-                "where consumer_run_id=?", (consumer_run_id,),
-        ).fetchone()
-        from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
-        expected_receipt = db.execute(
-            f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) "
-            "where external_action_key='cycle-receipt:reply-201'",
-        ).fetchall()
-        expected_task = task_entity_storage.get_task_with_inputs(db, task_id)
-        from app.store import REPLY_ATTEMPT_COMMON_SQL
-        attempt = db.execute(
-            f"select id,agent_run_id,send_status,send_error from ({REPLY_ATTEMPT_COMMON_SQL}) "
-            "where id=?", (attempt_id,),
-        ).fetchone()
-        assert expected_task["status"] == "done"
-        assert expected_task["error"] == ""
-        assert expected_task["attempts"] == 1
-        assert expected_task["current_input"]["business_object_key"] == "object"
-        assert expected_candidate["candidate_json"]
-        assert expected_receipt and expected_receipt[0]["result_digest"] == "receipt-digest"
-        assert attempt["agent_run_id"] == consumer_run_id
-        assert attempt["send_status"] == "failed"
-        assert attempt["send_error"] == "codex_result_invalid"
-
-        task_source = context["task_source_metadata"]
-        run_source = context["run_source_metadata"]
-        adoption_source = context["adoption_source"]
-        task_forward = context["task_metadata"]
-        run_forward = context["run_metadata"]
-        db.execute("pragma foreign_keys=off")
-        db.execute("begin immediate")
-        for cycle in range(2):
-            task_inverse = restore_task_entities(db, task_source, task_forward)
-            run_inverse = restore_run_entities(
-                db, run_source, run_forward, task_metadata=task_forward,
-                task_inverse_metadata=task_inverse,
-            )
-            restore_run_adoptions(
-                db, adoption_source, adoption_forward, task_metadata=task_forward,
-                task_inverse_metadata=task_inverse, run_inverse_metadata=run_inverse,
-            )
-            from app.task20_definitions import task20_projection
-            source_task = db.execute(
-                "select status,error,attempts,execution_generation from ("
-                + task20_projection("reply_tasks") + ") where id=201",
-            ).fetchone()
-            from app.action_storage import REVIEW_CANDIDATE_SQL
-            source_candidate = db.execute(
-                f"select candidate_json,candidate_digest from ({REVIEW_CANDIDATE_SQL}) "
-                "where task_id=201 order by id limit 1",
-            ).fetchone()
-            from app.action_storage import EXTERNAL_ACTION_RESULT_SQL
-            source_receipt = db.execute(
-                f"select * from ({EXTERNAL_ACTION_RESULT_SQL}) "
-                "where external_action_key='cycle-receipt:reply-201'",
-            ).fetchall()
-            assert source_task["status"] == "done"
-            assert source_task["error"] == ""
-            assert source_task["attempts"] == 1
-            source_input = db.execute(
-                "select business_object_key from (" + task20_projection("reply_task_inputs")
-                + ") where reply_task_id=201 and input_revision_key='' order by id limit 1",
-            ).fetchone()
-            assert source_input["business_object_key"] == "object"
-            assert tuple(source_candidate) == tuple(expected_candidate)
-            assert source_receipt
-            source_receipt_row = list(source_receipt[0])
-            native_receipt_row = list(expected_receipt[0])
-            assert source_receipt_row[7] == 9006
-            assert native_receipt_row[7] == consumer_run_id
-            source_receipt_row[7] = native_receipt_row[7]
-            assert source_receipt_row == native_receipt_row
-            task_source = capture_task_entities(db)
-            run_source = capture_run_entities(db)
-            adoption_source = capture_run_adoptions(db)
-            task_forward = migrate_task_entities(
-                db, task_source, source_context=task_inverse["source_context"],
-                inverse_identity=deepcopy(task_inverse["inverse_identity"]),
-            )
-            run_forward = migrate_run_entities(
-                db, run_source, task_metadata=task_forward,
-                run_handoff=deepcopy(run_inverse["run_handoff"]),
-            )
-            adoption_forward = migrate_run_adoptions(
-                db, adoption_source, task_metadata=task_forward, run_metadata=run_forward,
-            )
-            task_id = next(
-                edge["target_id"] for edge in task_forward["identity_edges"]
-                if edge["source_kind"] == "reply_tasks" and edge["physical_id"] == 201
-            )
-            assert task_entity_storage.get_task_with_inputs(db, task_id)["status"] == "done"
-            assert db.execute(
-                "select candidate_digest from run_adopted_results where consumer_run_id=("
-                "select id from runs where task_id=? and role='consumer' order by id limit 1)",
-                (task_id,),
-            ).fetchone()[0] == expected_candidate["candidate_digest"]
-            from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
-            roundtrip_receipt = db.execute(
-                f"select * from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) "
-                "where external_action_key='cycle-receipt:reply-201'",
-            ).fetchone()
-            assert roundtrip_receipt is not None
-            assert roundtrip_receipt["result_digest"] == "receipt-digest"
-        roundtrip_task = task_entity_storage.get_task_with_inputs(db, task_id)
-        assert roundtrip_task["status"] == "done"
-        assert roundtrip_task["current_input"]["business_object_key"] == "object"
-        assert db.execute(
-            "select candidate_digest from run_adopted_results where consumer_run_id=("
-            "select id from runs where task_id=? and role='consumer' order by id limit 1)",
-            (task_id,),
-        ).fetchone()[0] == expected_candidate["candidate_digest"]
-    finally:
-        db.close()
 
 
 @pytest.mark.parametrize(
@@ -1609,7 +1362,7 @@ def test_feedback_event_upsert_creates_one_native_task_and_preserves_processing_
     )
     with store._connect() as db:
         created = db.execute(
-            "select task.id,task.kind,task.status,item.feedback_key,item.resolved_at "
+            "select task.id,task.kind,task.status,item.feedback_key,'' as resolved_at "
             "from tasks task join feedback_processing_items item on item.task_id=task.id "
             "where item.feedback_key=?",
             ("feedback:one",),
@@ -1623,11 +1376,12 @@ def test_feedback_event_upsert_creates_one_native_task_and_preserves_processing_
             (task_id,),
         )
         db.execute(
-            "update feedback_processing_items set workbench_task_id='wb-task',"
-            "workbench_turn_id='wb-turn',attempt_id=7,agent_run_id=11,"
-            "test_evidence_json=?,note='kept' where task_id=?",
-            ('{"passed":true}', task_id),
+            "insert into feedback_processing_rounds(feedback_key,round_number,batch_id,status,"
+            "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,test_evidence_json,note) "
+            "values('feedback:one',1,'batch','processing','wb-task','wb-turn',7,11,?,'kept')",
+            ('{"passed":true}',),
         )
+        db.execute("update feedback_processing_items set current_round_id=last_insert_rowid() where task_id=?", (task_id,))
 
     store.upsert_feedback_event(
         key="feedback:one", feedback_token="token-one", comment="updated",
@@ -1635,9 +1389,10 @@ def test_feedback_event_upsert_creates_one_native_task_and_preserves_processing_
 
     with store._connect() as db:
         rows = db.execute(
-            "select task.id,task.status,item.workbench_task_id,item.workbench_turn_id,"
-            "item.attempt_id,item.agent_run_id,item.test_evidence_json,item.note,task.updated_at "
+            "select task.id,task.status,round.workbench_task_id,round.workbench_turn_id,"
+            "round.attempt_id,round.agent_run_id,round.test_evidence_json,round.note,task.updated_at "
             "from tasks task join feedback_processing_items item on item.task_id=task.id "
+            "join feedback_processing_rounds round on round.id=item.current_round_id "
             "where item.feedback_key=?",
             ("feedback:one",),
         ).fetchall()
@@ -1692,21 +1447,21 @@ def test_feedback_event_repeat_projects_resolved_source_and_preserves_blank_sour
             (task_id,),
         )
         db.execute(
-            "update feedback_processing_items set workbench_task_id='workbench-task',"
-            "workbench_turn_id='workbench-turn',attempt_id=31,agent_run_id=32,note='keep note',"
-            "test_evidence_json=? where task_id=?",
-            ('{"passed":true}', task_id),
+            "insert into feedback_processing_rounds(feedback_key,round_number,batch_id,status,"
+            "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,note,test_evidence_json) "
+            "values(?,1,'batch','processing','workbench-task','workbench-turn',31,32,'keep note',?)",
+            (key, '{"passed":true}'),
         )
+        db.execute("update feedback_processing_items set batch_id='batch',current_round_id=last_insert_rowid() where task_id=?", (task_id,))
         assert resolve_feedback_events(db, [key], "source-resolved-at") == 1
 
     store.upsert_feedback_event(key=key, feedback_token="token-resolution", comment="resolved")
     with store._connect() as db:
         resolved = db.execute(
-            "select task.status,item.resolved_at,item.workbench_task_id,item.workbench_turn_id,"
-            "item.attempt_id,item.agent_run_id,item.note,item.test_evidence_json "
-            "from tasks task join feedback_processing_items item on item.task_id=task.id "
-            "where task.id=?",
-            (task_id,),
+            f"select status,resolved_at,workbench_task_id,workbench_turn_id,"
+            f"attempt_id,agent_run_id,note,test_evidence_json from ({_native_feedback_item_projection()}) "
+            "where feedback_key=?",
+            (key,),
         ).fetchone()
         assert tuple(resolved) == (
             "resolved", "source-resolved-at", "workbench-task", "workbench-turn", 31, 32,
@@ -1721,24 +1476,18 @@ def test_feedback_event_repeat_projects_resolved_source_and_preserves_blank_sour
             "update tasks set status='processing' where id=?",
             (task_id,),
         )
-        db.execute(
-            "update feedback_processing_items set resolved_at='native-current-resolution' "
-            "where task_id=?",
-            (task_id,),
-        )
         assert reopen_feedback_event(db, key) == 1
 
     store.upsert_feedback_event(key=key, feedback_token="token-resolution", comment="reopened")
     with store._connect() as db:
         reopened = db.execute(
-            "select task.status,item.resolved_at,item.workbench_task_id,item.workbench_turn_id,"
-            "item.attempt_id,item.agent_run_id,item.note,item.test_evidence_json "
-            "from tasks task join feedback_processing_items item on item.task_id=task.id "
-            "where task.id=?",
-            (task_id,),
+            f"select status,resolved_at,workbench_task_id,workbench_turn_id,"
+            f"attempt_id,agent_run_id,note,test_evidence_json from ({_native_feedback_item_projection()}) "
+            "where feedback_key=?",
+            (key,),
         ).fetchone()
         assert tuple(reopened) == (
-            "processing", "native-current-resolution", "workbench-task", "workbench-turn", 31, 32,
+            "processing", "", "workbench-task", "workbench-turn", 31, 32,
             "keep note", '{"passed":true}',
         )
     assert store.list_user_feedback_items_by_keys([key])[0].processing_status == "processing"
@@ -1768,10 +1517,6 @@ def test_feedback_event_intake_preserves_source_resolved_value_and_sqlite_classi
                 "select task_id from feedback_processing_items where feedback_key=?", (key,),
             ).fetchone()[0]
             db.execute("update tasks set status='processing' where id=?", (task_id,))
-            db.execute(
-                "update feedback_processing_items set resolved_at='native-resolution' where task_id=?",
-                (task_id,),
-            )
             source_rowid = db.execute(
                 "select cast(legacy_key as integer) from actions where fb_event_key=?", (key,),
             ).fetchone()[0]
@@ -1789,7 +1534,7 @@ def test_feedback_event_intake_preserves_source_resolved_value_and_sqlite_classi
         if existing:
             source_expected = _source_feedback_upsert_projection(
                 db, key, current_status="processing",
-                current_resolved_at="native-resolution",
+                current_resolved_at=source_value,
             )
         else:
             source_expected = _source_feedback_upsert_projection(db, key)
@@ -1797,9 +1542,8 @@ def test_feedback_event_intake_preserves_source_resolved_value_and_sqlite_classi
     store.upsert_feedback_event(key=key, feedback_token="token-raw", comment="updated")
     with store._connect() as db:
         projected = db.execute(
-            "select task.status,typeof(item.resolved_at),item.resolved_at "
-            "from tasks task join feedback_processing_items item on item.task_id=task.id "
-            "where item.feedback_key=?",
+            f"select status,typeof(resolved_at),resolved_at from ({_native_feedback_item_projection()}) "
+            "where feedback_key=?",
             (key,),
         ).fetchone()
         expected_status, expected_resolved_at = source_expected
@@ -2784,8 +2528,8 @@ def test_native_feedback_competing_connections_have_one_claim_winner(tmp_path, m
                         "updated_at": "2026-10-23 12:00:00"},
         )
         db.execute(
-            "insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) "
-            "values(?,'race','', '', '',0,0,'','{}','{}','{}','','',0)",
+            "insert into feedback_processing_items(task_id,feedback_key,batch_id,current_round_id) "
+            "values(?,'race','',0)",
             (task["id"],),
         )
 
@@ -2887,8 +2631,8 @@ def test_native_feedback_reopened_history_claims_next_round(tmp_path, monkeypatc
                         "updated_at": "2026-10-23 12:00:00"},
         )
         db.execute(
-            "insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) "
-            "values(?,'reopened','', '', '',0,0,'','{}','{}','{}','','',0)",
+            "insert into feedback_processing_items(task_id,feedback_key,batch_id,current_round_id) "
+            "values(?,'reopened','',0)",
             (task["id"],),
         )
         db.execute(

@@ -197,12 +197,12 @@ def _native_predecessor_case(test):
 
 def test_native_feedback_receipts_survive_full_paired_selection(tmp_path: Path):
     """Current public receipts survive the exact immediately-previous release."""
-    from app.conversation_session_schema_release import prepare_conversation_session_release
-    from tests.support.store28_session_source import create_store28_1_source
+    from app.feedback_owner_schema_release import prepare_feedback_owner_release
+    from tests.support.store28_session_source import create_store28_2_source
     db_path = tmp_path / "native-paired.sqlite3"
     with sqlite3.connect(db_path) as db:
-        create_store28_1_source(db)
-    initial = prepare_conversation_session_release(db_path)
+        create_store28_2_source(db)
+    initial = prepare_feedback_owner_release(db_path)
     initial.publish()
     store = AutoReplyStore(db_path)
     store.upsert_feedback_event(key='feedback-native', feedback_token='token-native',
@@ -1740,8 +1740,8 @@ def test_legacy_text_processing_ids_are_read_as_integers(tmp_path: Path):
     store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
     assert store.claim_feedback_processing_items("batch-1", ["feedback-1"])
     with store._connect() as db:
-        _update_feedback_owner(db, "feedback_processing_items",
-                      _feedback_item_source_rowid(db, "feedback-1"),
+        _update_feedback_owner(db, "feedback_processing_rounds",
+                      store.get_feedback_processing_item("feedback-1").current_round_id,
                       {"attempt_id": "12", "agent_run_id": "34"})
     item = store.get_feedback_processing_item("feedback-1")
     assert item is not None
@@ -1952,10 +1952,7 @@ def _seed_resolved_feedback_round(
         assert item_row is not None
         _update_feedback_owner(db, "feedback_processing_items", item_row[0], {
             "current_round_id": round_id, "batch_id": batch_id,
-            "status": "resolved", "workbench_task_id": "task-old",
-            "workbench_turn_id": "turn-old", "attempt_id": 12,
-            "agent_run_id": 34, **evidence, "note": "old note",
-            "resolved_at": "2026-08-30 01:02:03",
+            "status": "resolved",
             "updated_at": "2026-08-30 01:02:03",
         })
         event_row = db.execute(
@@ -2352,9 +2349,9 @@ def test_stale_or_ambiguous_current_round_cannot_be_mutated(
             f"select * from ({_feedback_owner_projection('feedback_processing_items')}) "
             "where feedback_key='feedback-1'"
         ).fetchone())
-    assert {key: value for key, value in after.items() if key != "current_round_id"} == {
-        key: value for key, value in item_before.items() if key != "current_round_id"
-    }
+    for key in ("feedback_key", "batch_id", "status", "created_at", "updated_at", "resolved_at"):
+        assert after[key] == item_before[key]
+    assert after["workbench_task_id"] is None  # stale pointer must not project old evidence
 
 
 def test_resolution_evidence_requires_zero_backlog_and_prevalidated_commit():
@@ -3317,7 +3314,7 @@ def test_resolved_v2_batch_idempotency_requires_exact_completion_transition(
     assert _feedback_processing_snapshot(store) == before
 
 
-@pytest.mark.parametrize("damage", ("source-timestamp", "item-note"))
+@pytest.mark.parametrize("damage", ("source-timestamp",))
 def test_current_resolved_batch_idempotency_requires_exact_terminal_projection(
     tmp_path: Path,
     damage: str,
@@ -3351,16 +3348,6 @@ def test_current_resolved_batch_idempotency_requires_exact_terminal_projection(
     ("field", "value"),
     (
         ("batch_id", "old-batch"),
-        ("workbench_task_id", "old-task"),
-        ("workbench_turn_id", "old-turn"),
-        ("attempt_id", 12),
-        ("agent_run_id", 34),
-        ("commit_sha", "a" * 40),
-        ("test_evidence_json", '{"pytest":{"exit_code":0}}'),
-        ("restart_evidence_json", '{"launchd_label":"old"}'),
-        ("health_evidence_json", '{"status_code":200}'),
-        ("note", "old-note"),
-        ("resolved_at", "1999-01-01 00:00:00"),
     ),
 )
 def test_reopened_resolved_batch_idempotency_requires_cleared_pending_projection(
@@ -3378,27 +3365,6 @@ def test_reopened_resolved_batch_idempotency_requires_cleared_pending_projection
         _update_feedback_owner(db, "feedback_processing_items",
                       _feedback_item_source_rowid(db, "feedback-1"),
                       {field: value})
-    before = _feedback_processing_snapshot(store)
-
-    with pytest.raises(ValueError):
-        store.resolve_feedback_processing_batch(
-            "batch-1", receipt, commit_is_ancestor=True
-        )
-
-    assert _feedback_processing_snapshot(store) == before
-
-
-def test_old_resolved_batch_idempotency_validates_newer_processing_lineage(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "resolved-newer-processing-lineage.sqlite3")
-    receipt = _prepare_resolved_v2_batch(store)
-    store.reopen_feedback_processing_item("feedback-1", reason="needs another round")
-    store.claim_feedback_processing_items("batch-2", ["feedback-1"])
-    with store._connect() as db:
-        _update_feedback_owner(db, "feedback_processing_items",
-                      _feedback_item_source_rowid(db, "feedback-1"),
-                      {"note": "projection-only-corruption"})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -3599,10 +3565,6 @@ def test_resolved_newer_batch_requires_one_common_member_receipt(
         assert round_row is not None
         _update_feedback_owner(db, "feedback_processing_rounds", round_row[0],
                       {field: round_value})
-        if item_value is not None:
-            _update_feedback_owner(db, "feedback_processing_items",
-                          _feedback_item_source_rowid(db, "feedback-2"),
-                          {field: item_value})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError, match="resolved batch newer lineage is incomplete"):
@@ -4103,9 +4065,6 @@ def _corrupt_resolved_batch_sibling(
             _update_feedback_owner(db, "feedback_processing_rounds",
                           int(sibling_round["id"]),
                           {"commit_sha": different_commit})
-            _update_feedback_owner(db, "feedback_processing_items",
-                          _feedback_item_source_rowid(db, "feedback-2"),
-                          {"commit_sha": different_commit})
 
 
 @pytest.mark.parametrize(
@@ -4186,10 +4145,6 @@ def test_resolved_batch_no_evidence_retry_requires_common_persisted_receipt(
         assert round_row is not None
         _update_feedback_owner(db, "feedback_processing_rounds", round_row[0],
                       {column: different_value})
-        if receipt_field != "backlog":
-            _update_feedback_owner(db, "feedback_processing_items",
-                          _feedback_item_source_rowid(db, "feedback-2"),
-                          {column: different_value})
     before = _feedback_processing_snapshot(store)
 
     with pytest.raises(ValueError):
@@ -4704,3 +4659,54 @@ def test_resolved_transition_multiset_rejects_alternate_reopen_reason(
         )
 
     assert _feedback_processing_snapshot(store) == before
+
+
+def test_feedback_item_physical_schema_has_only_identity_and_current_pointer():
+    from app.task_run_entity_definitions import _task_run_entity_objects_base
+
+    ddl = _task_run_entity_objects_base()["feedback_processing_items"]
+    db = sqlite3.connect(":memory:")
+    db.execute(ddl)
+    assert [row[1] for row in db.execute("pragma table_info(feedback_processing_items)")] == [
+        "task_id", "feedback_key", "batch_id", "current_round_id"
+    ]
+
+
+def test_resolved_source_without_round_is_projected_from_exact_event(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "source-without-round.sqlite3")
+    store.upsert_feedback_event(key="one", feedback_token="token-one")
+    store.upsert_feedback_event(key="two", feedback_token="token-two")
+    with store._connect() as db:
+        event = db.execute(
+            f"select _source_rowid from ({feedback_projection('feedback_events', with_rowid=True)}) where key=?",
+            ("one",),
+        ).fetchone()
+        set_feedback_action(db, "feedback_events", event[0], {"resolved_at": "2026-01-02 03:04:05"})
+    store.upsert_feedback_event(key="one", feedback_token="token-one")
+    one = store.get_feedback_processing_item("one")
+    two = store.get_feedback_processing_item("two")
+    assert one.status == "resolved" and one.current_round_id == 0
+    assert one.resolved_at == "2026-01-02 03:04:05"
+    assert one.workbench_task_id == "" and one.test_evidence == {}
+    assert two.resolved_at == "" and two.status == "pending"
+
+
+@pytest.mark.parametrize("operation", ["associate", "patch"])
+def test_round_write_rejects_pointer_changed_by_trigger(tmp_path: Path, operation: str):
+    store = AutoReplyStore(tmp_path / f"round-pointer-{operation}.sqlite3")
+    store.upsert_feedback_event(key="feedback-1", feedback_token="token-1")
+    store.claim_feedback_processing_items("batch-1", ["feedback-1"])
+    before = store.get_feedback_processing_item("feedback-1")
+    with store._connect() as db:
+        db.execute("""create trigger change_feedback_pointer after update on feedback_processing_rounds
+                   begin update feedback_processing_items set current_round_id=0
+                   where feedback_key=new.feedback_key; end""")
+    with pytest.raises(ValueError, match="exact current processing round"):
+        if operation == "associate":
+            store.associate_feedback_processing_turn(
+                "feedback-1", workbench_task_id="task", workbench_turn_id="turn",
+                attempt_id=1, agent_run_id=2,
+            )
+        else:
+            store.patch_feedback_processing_item_evidence("feedback-1", note="changed")
+    assert store.get_feedback_processing_item("feedback-1") == before

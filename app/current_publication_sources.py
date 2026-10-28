@@ -7,7 +7,7 @@ remain in their versioned release modules and are not runtime fallbacks.
 from app.current_schema_manifest import STORE_VERSION as TARGET_STORE_VERSION, EMAIL_VERSION as TARGET_EMAIL_VERSION, schema_is_current, schema_objects
 from app.state_definitions import state_projection
 
-PREVIOUS_STORE_VERSION = '2026-10-28.2'
+PREVIOUS_STORE_VERSION = '2026-10-28.3'
 PREVIOUS_STORE_VERSIONS = (PREVIOUS_STORE_VERSION,)
 
 

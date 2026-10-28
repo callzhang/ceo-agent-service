@@ -185,6 +185,16 @@ def test_default_developer_template_contains_shared_principles_without_role_sche
     assert "{{task_context}}" not in template
 
 
+def test_default_developer_template_prefers_reactions_for_low_information_replies():
+    template = read_developer_prompt_template()
+
+    assert "低信息简短收口优先使用消息 reaction" in template
+    assert "输出 no_reply，并通过 `dws_message_reaction` 以 emoji 轻量表达收到或认可" in template
+    assert "贴合上下文的 `dws_message_reaction`" in template
+    assert "涉及执行责任、交付边界、时间安排、权限、费用、审批或明确业务决策时，使用必要的简短文字回复" in template
+    assert "已有 principal reaction 通常表示真人已轻量处理" in template
+
+
 def _sha256_for_test(text: str) -> str:
     return hashlib.sha256(text.encode("utf-8")).hexdigest()
 

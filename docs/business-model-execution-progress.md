@@ -7,8 +7,8 @@
 | 无 DDL 入口/当前 helper 清理 | c5f39aa8e标准部署；PID82581/health200；API/UI/native/回执读回及本轮目录/备份清理完成 | 476完整SQL/FK[]不变；19条History失败身份无增减；既有未解决反馈健康项仍独立存在 |
 | 重复索引/空 Configs 家族/NULL 元数据列 | 44c13bc91标准部署；PID25260/health200；精确schema/功能读回及备份/目录清理通过 | Store28.1/Email54、463对象/FK[]；内部占用少3.20MiB，文件大小不变，见[第二批验收](model-retirement-batch2-validation.md) |
 | Conversation session 唯一 owner | af24bc485标准部署；PID71305/health200；精确schema及API/UI/native/回执读回、备份/目录清理完成 | Store28.2/Email54、镜像两键/两列消失、463项SQL/FK[]；inverse权威重建，见[第三批验收](model-retirement-batch3-validation.md) |
-| Feedback Item 镜像退休 | 独立隔离worktree候选开发中，207项主反馈测试/6项迁移测试通过，未上线 | 准确 current_round_id 与来源事件各自持有事实，保留无 Round 已解决记录 |
-| 关闭历史转换包/专用夹具 | 已计划，未实施 | 保留唯一身份 provenance 与必要现行显式发布/inverse |
+| Feedback Item 镜像退休 | 候选实现/四列DDL/完整副本循环/真实旧代码冷写/SPEC及QUALITY通过，未上线 | 准确 current_round_id 与来源事件各自持有事实，保留无 Round 已解决记录 |
+| 关闭历史转换包/专用夹具 | Task/Run/adoption闭包已在第四批候选退休；Business/Email/Workbench及Runner旧分支继续 | 保留唯一身份 provenance 与必要现行显式发布/inverse |
 
 本轮范围和字段/索引清单见[审计](database-simplification-audit-20261027.md)，
 第一批部署与读回证据见[验收记录](model-retirement-batch1-validation.md)。下方

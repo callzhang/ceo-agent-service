@@ -253,14 +253,24 @@ FEEDBACK_TRANSITION_SQL = feedback_projection("feedback_processing_transitions")
 
 def _native_feedback_item_projection() -> str:
     """Read Feedback item fields from their native Task and domain owners."""
-    return """select item.feedback_key, item.batch_id, item.workbench_task_id,
-                     item.workbench_turn_id, item.attempt_id, item.agent_run_id,
-                     item.commit_sha, item.test_evidence_json,
-                     item.restart_evidence_json, item.health_evidence_json,
-                     item.note, item.resolved_at, item.current_round_id,
+    return """select item.feedback_key, item.batch_id,
+                     case when item.current_round_id=0 then '' else round.workbench_task_id end as workbench_task_id,
+                     case when item.current_round_id=0 then '' else round.workbench_turn_id end as workbench_turn_id,
+                     case when item.current_round_id=0 then 0 else round.attempt_id end as attempt_id,
+                     case when item.current_round_id=0 then 0 else round.agent_run_id end as agent_run_id,
+                     case when item.current_round_id=0 then '' else round.commit_sha end as commit_sha,
+                     case when item.current_round_id=0 then '{}' else round.test_evidence_json end as test_evidence_json,
+                     case when item.current_round_id=0 then '{}' else round.restart_evidence_json end as restart_evidence_json,
+                     case when item.current_round_id=0 then '{}' else round.health_evidence_json end as health_evidence_json,
+                     case when item.current_round_id=0 then '' else round.note end as note,
+                     event.fb_event_resolved_at as resolved_at, item.current_round_id,
                      task.status, task.created_at, task.updated_at
                 from feedback_processing_items item
                 join tasks task on task.id=item.task_id
+                left join feedback_processing_rounds round on round.id=item.current_round_id
+                    and round.feedback_key=item.feedback_key and round.batch_id=item.batch_id
+                left join actions event on event.record_type='feedback_events'
+                    and event.fb_event_key=item.feedback_key
                where task.kind='feedback_processing'"""
 
 
@@ -519,7 +529,7 @@ CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
 CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-28.3"
+STORE_SCHEMA_VERSION = "2026-10-28.4"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -16719,10 +16729,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     (key,),
                 ).fetchone()
                 status = "resolved" if event and event["is_resolved"] else "pending"
-                resolved_at = (
-                    event["resolved_at"]
-                    if event and event["resolved_at"] is not None else ""
-                )
                 task_timestamp = str(db.execute("select current_timestamp").fetchone()[0])
                 task = task_entity_storage.create_task(
                     db,
@@ -16734,11 +16740,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     },
                 )
                 db.execute(
-                    "insert into feedback_processing_items(task_id,feedback_key,batch_id,"
-                    "workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,"
-                    "test_evidence_json,restart_evidence_json,health_evidence_json,note,"
-                    "resolved_at,current_round_id) values(?,?,?,'','',0,0,'','{}','{}','{}','',?,0)",
-                    (task["id"], key, "", resolved_at),
+                    "insert into feedback_processing_items(task_id,feedback_key,batch_id,current_round_id) values(?,?,?,0)",
+                    (task["id"], key, ""),
                 )
             else:
                 event = db.execute(
@@ -16746,16 +16749,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     f"from ({FEEDBACK_EVENT_SQL}) where key=?",
                     (key,),
                 ).fetchone()
-                resolved_at = event["resolved_at"] if event else ""
                 if event and event["is_resolved"]:
                     db.execute(
                         "update tasks set status='resolved',updated_at=current_timestamp "
                         "where id=? and kind='feedback_processing'",
                         (existing["task_id"],),
-                    )
-                    db.execute(
-                        "update feedback_processing_items set resolved_at=? where task_id=?",
-                        (resolved_at, existing["task_id"]),
                     )
                 else:
                     db.execute(
@@ -16855,37 +16853,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         item: sqlite3.Row,
         current_round: sqlite3.Row,
     ) -> None:
-        evidence = AutoReplyStore._resolved_feedback_processing_round_evidence(
-            current_round
-        )
-        association_fields = (
-            "workbench_task_id",
-            "workbench_turn_id",
-            "attempt_id",
-            "agent_run_id",
-        )
+        AutoReplyStore._resolved_feedback_processing_round_evidence(current_round)
         if (
             not str(current_round["resolved_at"] or "").strip()
             or str(item["resolved_at"] or "") != str(current_round["resolved_at"] or "")
-            or any(item[field] != current_round[field] for field in association_fields)
             or not str(current_round["workbench_task_id"] or "").strip()
             or not str(current_round["workbench_turn_id"] or "").strip()
             or type(current_round["attempt_id"]) is not int
             or int(current_round["attempt_id"]) <= 0
             or type(current_round["agent_run_id"]) is not int
             or int(current_round["agent_run_id"]) <= 0
-            or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
-            or str(item["note"] or "") != str(current_round["note"] or "")
         ):
             raise ValueError("resolved feedback processing round is incomplete")
-        for name, persisted in (
-            ("test_evidence", evidence.test_evidence),
-            ("restart_evidence", evidence.restart_evidence),
-            ("health_evidence", evidence.health_evidence),
-        ):
-            if json.loads(item[f"{name}_json"] or "{}") != persisted:
-                raise ValueError("resolved feedback projection does not match round")
-
     @staticmethod
     def _resolved_feedback_processing_round_evidence(
         current_round: sqlite3.Row,
@@ -17123,9 +17102,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                     "created_at": item_timestamp, "updated_at": item_timestamp},
                     )
                     db.execute(
-                        "insert into feedback_processing_items(task_id,feedback_key,batch_id,workbench_task_id,workbench_turn_id,attempt_id,agent_run_id,commit_sha,test_evidence_json,restart_evidence_json,health_evidence_json,note,resolved_at,current_round_id) "
-                        "values(?,?,?,?,?,0,0,'','{}','{}','{}','','',0)",
-                        (task["id"], key, cleaned_batch_id, "", ""),
+                        "insert into feedback_processing_items(task_id,feedback_key,batch_id,current_round_id) "
+                        "values(?,?,?,0)",
+                        (task["id"], key, cleaned_batch_id),
                     )
                 else:
                     db.execute(
@@ -17256,7 +17235,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 if update.rowcount != 1:
                     raise FeedbackProcessingClaimError(FEEDBACK_PROCESSING_CLAIM_ERROR)
                 update = db.execute(
-                    "update feedback_processing_items set current_round_id=?,batch_id=?,workbench_task_id='',workbench_turn_id='',attempt_id=0,agent_run_id=0,commit_sha='',test_evidence_json='{}',restart_evidence_json='{}',health_evidence_json='{}',note='',resolved_at='' "
+                    "update feedback_processing_items set current_round_id=?,batch_id=? "
                     "where feedback_key=? and current_round_id=0",
                     (round_id, cleaned_batch_id, key),
                 )
@@ -17406,10 +17385,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "created_at": reopen_timestamp,
             })
             cursor = db.execute(
-                "update feedback_processing_items set current_round_id=0,batch_id='',"
-                "workbench_task_id='',workbench_turn_id='',attempt_id=0,agent_run_id=0,"
-                "commit_sha='',test_evidence_json='{}',restart_evidence_json='{}',"
-                "health_evidence_json='{}',note='',resolved_at='' "
+                "update feedback_processing_items set current_round_id=0,batch_id='' "
                 "where feedback_key=? and current_round_id=? and task_id in "
                 "(select id from tasks where kind='feedback_processing' and status='resolved')",
                 (cleaned_key, round_id),
@@ -17543,23 +17519,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     batch_id,
                 ),
             )
-            item_cursor = db.execute(
-                "update feedback_processing_items set workbench_task_id=?,"
-                "workbench_turn_id=?,attempt_id=?,agent_run_id=? "
+            item_current = db.execute(
+                "select 1 from feedback_processing_items "
                 "where feedback_key=? and current_round_id=? and batch_id=? "
-                "and task_id in (select id from tasks where kind='feedback_processing' "
-                "and status='processing')",
-                (
-                    workbench_task_id,
-                    workbench_turn_id,
-                    attempt_id,
-                    agent_run_id,
-                    cleaned_key,
-                    round_id,
-                    batch_id,
-                ),
-            )
-            if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                "and task_id in (select id from tasks where kind='feedback_processing' and status='processing')",
+                (cleaned_key, round_id, batch_id),
+            ).fetchone()
+            if round_cursor.rowcount != 1 or item_current is None:
                 raise ValueError("feedback association requires the exact current processing round")
             db.execute(
                 "update tasks set updated_at=current_timestamp where kind='feedback_processing' "
@@ -17664,17 +17630,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 ("health_evidence_json", health_evidence),
             ):
                 if value is not None:
-                    old = json.loads(current[field] or "{}")
                     round_old = json.loads(current_round[field] or "{}")
                     serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
                     if (
-                        json.dumps(old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != serialized
-                        or json.dumps(round_old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != serialized
+                        json.dumps(round_old, ensure_ascii=False, sort_keys=True, separators=(",", ":")) != serialized
                     ):
                         changed = True
             for field, value in (("commit_sha", commit_sha), ("note", note), ("status", status)):
                 if value is not None and (
-                    str(current[field] or "") != str(value)
+                    (field == "status" and str(current[field] or "") != str(value))
                     or str(current_round[field] or "") != str(value)
                 ):
                     changed = True
@@ -17682,23 +17646,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 return self._feedback_processing_item_from_row(current)
             round_sql = ",".join(f"{field}={expression}"
                                   for field, expression in assignments.items())
-            item_assignments = {field: expression for field, expression in assignments.items()
-                                if field != "updated_at"}
-            item_sql = ",".join(f"{field}={expression}"
-                                 for field, expression in item_assignments.items())
             round_cursor = db.execute(
                 f"update feedback_processing_rounds set {round_sql} "
                 "where id=? and feedback_key=? and batch_id=? and status='processing'",
                 [*args, round_id, cleaned_key, batch_id],
             )
-            item_cursor = db.execute(
-                f"update feedback_processing_items set {item_sql} "
+            item_current = db.execute(
+                "select 1 from feedback_processing_items "
                 "where feedback_key=? and current_round_id=? and batch_id=? "
-                "and task_id in (select id from tasks where kind='feedback_processing' "
-                "and status='processing')",
-                [*args, cleaned_key, round_id, batch_id],
-            )
-            if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                "and task_id in (select id from tasks where kind='feedback_processing' and status='processing')",
+                (cleaned_key, round_id, batch_id),
+            ).fetchone()
+            if round_cursor.rowcount != 1 or item_current is None:
                 raise ValueError("evidence patch requires the exact current processing round")
             db.execute(
                 "update tasks set updated_at=current_timestamp where kind='feedback_processing' "
@@ -17808,20 +17767,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             str(item["status"] or "") != "processing"
             or str(current_round["status"] or "") != "processing"
             or str(item["batch_id"] or "") != str(current_round["batch_id"] or "")
-            or str(item["workbench_task_id"] or "")
-            != str(current_round["workbench_task_id"] or "")
-            or str(item["workbench_turn_id"] or "")
-            != str(current_round["workbench_turn_id"] or "")
-            or type(item["attempt_id"]) is not int
             or type(current_round["attempt_id"]) is not int
-            or item["attempt_id"] < 0
-            or item["attempt_id"] != current_round["attempt_id"]
-            or type(item["agent_run_id"]) is not int
+            or current_round["attempt_id"] < 0
             or type(current_round["agent_run_id"]) is not int
-            or item["agent_run_id"] < 0
-            or item["agent_run_id"] != current_round["agent_run_id"]
-            or str(item["commit_sha"] or "") != str(current_round["commit_sha"] or "")
-            or str(item["note"] or "") != str(current_round["note"] or "")
+            or current_round["agent_run_id"] < 0
             or str(item["resolved_at"] or "")
             or str(current_round["resolved_at"] or "")
         ):
@@ -17831,13 +17780,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             "restart_evidence_json",
             "health_evidence_json",
         ):
-            item_evidence = json.loads(item[field] or "{}")
             round_evidence = json.loads(current_round[field] or "{}")
-            if (
-                not isinstance(item_evidence, dict)
-                or not isinstance(round_evidence, dict)
-                or item_evidence != round_evidence
-            ):
+            if not isinstance(round_evidence, dict):
                 raise ValueError(
                     "resolved batch current processing evidence is incomplete"
                 )
@@ -18652,11 +18596,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "attempt_id",
                     "agent_run_id",
                 )
-                if any(
-                    item[field] != current_round[field]
-                    for field in association_fields
-                ):
-                    raise ValueError("resolution item association does not match current round")
                 if (
                     not str(current_round["workbench_task_id"] or "").strip()
                     or not str(current_round["workbench_turn_id"] or "").strip()
@@ -18676,10 +18615,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         )
                 item_commit = str(current_round["commit_sha"] or "").strip()
                 if requires_commit and (
-                    str(item["commit_sha"] or "").strip().lower()
-                    != item_commit.lower()
-                    or item_commit.lower()
-                    != normalized_evidence.commit_sha.strip().lower()
+                    item_commit.lower() != normalized_evidence.commit_sha.strip().lower()
                 ):
                     raise ValueError("resolution item commit does not match receipt")
                 test_json = json.loads(current_round["test_evidence_json"] or "{}")
@@ -18687,23 +18623,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     current_round["restart_evidence_json"] or "{}"
                 )
                 health_json = json.loads(current_round["health_evidence_json"] or "{}")
-                for field, parsed, receipt_value in (
-                    ("test_evidence_json", test_json, normalized_evidence.test_evidence),
+                for parsed, receipt_value in (
+                    (test_json, normalized_evidence.test_evidence),
                     (
-                        "restart_evidence_json",
                         restart_json,
                         normalized_evidence.restart_evidence,
                     ),
                     (
-                        "health_evidence_json",
                         health_json,
                         normalized_evidence.health_evidence,
                     ),
                 ):
-                    if (
-                        json.loads(item[field] or "{}") != parsed
-                        or parsed != receipt_value
-                    ):
+                    if parsed != receipt_value:
                         raise ValueError(
                             "resolution item evidence does not match current round receipt"
                         )
@@ -18785,18 +18716,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         cleaned_batch_id,
                     ),
                 )
-                item_cursor = db.execute(
-                    "update feedback_processing_items set resolved_at=? where feedback_key=? "
-                    "and batch_id=? and current_round_id=? and task_id in "
-                    "(select id from tasks where kind='feedback_processing' and status='processing')",
-                    (
-                        resolution_timestamp,
-                        str(item["feedback_key"]),
-                        cleaned_batch_id,
-                        int(current_round["id"]),
-                    ),
-                )
-                if round_cursor.rowcount != 1 or item_cursor.rowcount != 1:
+                if round_cursor.rowcount != 1:
                     raise ValueError("resolution current round changed during update")
                 task_cursor = db.execute(
                     "update tasks set status='resolved',updated_at=? where kind='feedback_processing' "

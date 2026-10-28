@@ -25,48 +25,26 @@ def test_current_declarations_do_not_call_historical_builders(monkeypatch):
         assert row[3:6] == ("fixture", "evidence", "clock")
 
 
-def test_field_map_artifact_matches_current_definitions():
-    import json
-    from pathlib import Path
-    from app.run_adoption_definitions import field_map as adoption_field_map
-    from app.run_entity_definitions import run_entity_field_map
-    from app.task_run_entity_definitions import task_run_field_map, task_run_identity_associations
-
-    root = Path(__file__).resolve().parents[1]
-    field_map = json.loads((root / 'docs/task-run-entity-assembly-field-map.json').read_text())
-    adoption = [
-        {'source_kind': kind, 'source_field': field, 'target_table': destination[0],
-         'target_field_or_expression': destination[1]}
-        for kind, fields in adoption_field_map().items() for field, destination in fields.items()
-    ]
-    assert field_map == {'task_fields': list(task_run_field_map()),
-                         'task_identity_associations': list(task_run_identity_associations()),
-                         'run_fields': run_entity_field_map(), 'adoption_fields': adoption}
-    assert len(field_map['task_fields']) == 287
-    assert len(field_map['run_fields']) == 8 * 79
-    assert len(field_map['adoption_fields']) == 43
-    assert (root / 'docs/task-run-entity-assembly-retirement.sql').read_text().startswith(
-        '-- Unactivated Task/Run assembly retirement inventory; not executable migration SQL.\n')
 
 
 def test_both_current_schema_roles_preserve_exact_catalogs():
     import hashlib
     import json
     from app.current_schema_manifest import current_objects
-    from app.conversation_session_schema_release import session_target_objects
+    from app.feedback_owner_schema_release import feedback_target_objects
     from app.model_retirement_schema_source import store26_objects
 
     for email_ledger, count, digest in (
-        (False, 463, '3c5bd51a6e80bd2e0cbc00b17cbcbd16f20af3590e9e70a4c083f93c5c1e0cd9'),
-        (True, 464, '2624de7172677c8fe5644178d7c29c882f0eceeaf7c39014101b7653c490be3d'),
+        (False, 463, '147d3ac4553e6e54ff7183f582f1fae80e3f6e1b3653028a31a3415f6ce00d11'),
+        (True, 464, 'b912b9a1beac8e601ec644010936968d5ca3f5fe930c2453458916763ddbe88b'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
         encoded = json.dumps(objects).encode()
         assert hashlib.sha256(encoded).hexdigest() == digest
-        # Store28.3 only adds the WeChat voice transcript table to the frozen Store28.2 catalog.
+        # Store28.4 only adds the WeChat voice transcript table to the frozen Store28.3 catalog.
         assert tuple(row for row in objects if row[1] != 'wechat_voice_transcripts') == tuple(
-            row for row in session_target_objects()
+            row for row in feedback_target_objects()
             if email_ledger or row[1] != 'email_schema_migrations')
 
     for email_ledger, count, digest in (

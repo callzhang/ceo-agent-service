@@ -48,7 +48,7 @@
 
 ## 2026-10-28 — 微信语音只转写一次
 
-- 新表 `wechat_voice_transcripts`（账号＋会话＋消息主键、音频 SHA-256、转写文字），随 Store 28.2→28.3 配对发布上线（只加表，inverse 删表）。
+- 新表 `wechat_voice_transcripts`（账号＋会话＋消息主键、音频 SHA-256、转写文字），随 Store 28.3→28.4 配对发布上线（只加表，inverse 删表）。
 - `save_message_audio` 命中缓存时直接返回 `transcript`（不再存音频、不再转写）；Consumer 新工具 `save_voice_transcript(message_id, transcript)` 在转写成功后写缓存，音频摘要由服务对任务里已存的文件重算。空转写、读不到的音频、非微信任务不会写缓存；音频变了不会命中旧转写；Audit 仍只读。
 
 ## 2026-10-28 — 微信语音转写改走一次性上传地址
