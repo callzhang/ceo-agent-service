@@ -412,3 +412,10 @@ def test_ordinary_group_content_needs_neither_discussion_timestamps_nor_send_sta
     assert "Do not require discussion timestamps or proof that the group can be sent to" in contract
     assert "the service checks send status at delivery and fails without redirecting" in contract
     assert "recent group discussion covers the same work line" not in contract
+
+
+def test_audit_wrapper_forbids_refetching_what_consumer_already_obtained():
+    from app.audit_rules import AUDIT_RULE_WRAPPER
+
+    assert "Do not fetch again what Consumer already obtained" in AUDIT_RULE_WRAPPER
+    assert "error or failure" in AUDIT_RULE_WRAPPER and "staleness" in AUDIT_RULE_WRAPPER

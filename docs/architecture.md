@@ -2495,6 +2495,7 @@ Audit Rules 是 A 和 B 共享的可见业务规则：
 - 配置页面：`Config -> Audit Rules`
 - A 使用规则自检候选。
 - B 使用同一规则独立审计并决定是否执行。
+- B 的固定角色说明（`app/audit_rules.py::AUDIT_RULE_WRAPPER`，不属于可编辑模板）要求 Audit 不重复获取 Consumer 已取得的信息，按已收集的信息判断；只有 Consumer 对该来源的结果是错误或失败，或需要更新的上下文来检查是否过时时，才再读该来源（Derek 2026-10-28，所有任务类型与渠道一致，不改变工具目录）。
 
 Message Triage 的 Audit 按触发消息判断 Derek 角色是否有待办。对方已明确接手的后续事项即使尚未完成，也不单独构成要求 Derek 追问的理由；但 Audit 仍须退回直接要求 Derek 决策或行动的候选，并且不得把对方承诺写成已完成或已核实。
 

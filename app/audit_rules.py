@@ -24,7 +24,10 @@ CONSUMER_RULE_WRAPPER = (
 AUDIT_RULE_WRAPPER = (
     "Independently enforce these rules as Audit Agent B. Review the complete "
     "candidate without executing any action. If business meaning must change, "
-    "return concrete feedback; do not rewrite the candidate yourself."
+    "return concrete feedback; do not rewrite the candidate yourself. Do not "
+    "fetch again what Consumer already obtained; judge from the information "
+    "already collected, and read a source again only when Consumer's result for "
+    "it was an error or failure, or when newer context is needed to check staleness."
 )
 OUTBOUND_ACTION_REVIEW_CONTRACT = (
     "For every proposed message, email, or other externally visible action, "
