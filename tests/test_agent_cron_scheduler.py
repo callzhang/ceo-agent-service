@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.scheduled_claim_fixture import claim_scheduled_occurrence
 
 from app.action_error_definitions import error_projection
 
@@ -299,7 +300,7 @@ def test_missed_trigger_waits_for_prior_execution_to_settle_before_catch_up(
         scheduled_for=prior_at,
         now=prior_at,
     )
-    claimed = store.claim_scheduled_task_run(
+    claimed = claim_scheduled_occurrence(store,
         prior.id,
         owner="dispatcher",
         lease_seconds=60,
@@ -461,7 +462,7 @@ def test_active_previous_execution_skips_without_creating_business_execution(
         scheduled_for=NOW,
         now=NOW,
     )
-    claimed = store.claim_scheduled_task_run(
+    claimed = claim_scheduled_occurrence(store,
         prior.id,
         owner="dispatcher",
         lease_seconds=60,
@@ -887,7 +888,7 @@ def test_completed_command_run_is_terminal_so_the_next_minute_is_not_skipped(
     assert [run.dispatch_status for run in runs] == ["pending", "skipped"]
     assert runs[1].skip_or_error_reason == PREVIOUS_EXECUTION_ACTIVE
 
-    claimed = store.claim_scheduled_task_run(
+    claimed = claim_scheduled_occurrence(store,
         first.id, owner="trigger", lease_seconds=60, now=NOW + timedelta(minutes=2)
     )
     assert claimed is not None

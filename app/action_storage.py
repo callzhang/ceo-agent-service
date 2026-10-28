@@ -990,18 +990,6 @@ CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = _projection("candidate_selections", selection_references=True)
 CANDIDATE_SUPPLEMENT_SQL = ACTION_PROJECTIONS["candidate_supplements"]
 CANDIDATE_EXECUTION_SQL = execution_projection()
-CANDIDATE_ACTION_ATTEMPT_SQL = """select r.id,a.id as action_owner_id,r.execution_id,r.action_index,
-       a.action_external_action_key as external_action_key,r.status,
-       coalesce(r.outcome_json,p.provider_result_json,'{}') as result_json,
-       r.agent_run_id,r.provider_receipt_id,r.target,
-       r.created_at,r.updated_at
-from action_receipts r join actions a on a.id=r.action_id
-left join action_receipts p on p.id=r.provider_receipt_id and p.action_id=r.action_id
-where a.record_type='action' and a.action_external_action_key is not null
-  and r.execution_id is not null and r.action_index is not null
-  and r.id=(select max(latest.id) from action_receipts latest
-            where latest.action_id=r.action_id and latest.execution_id=r.execution_id
-              and latest.action_index=r.action_index)"""
 NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL = """select r.id,a.id as action_owner_id,
        r.execution_run_id as execution_id,r.action_index,
        a.action_external_action_key as external_action_key,r.status,
@@ -1031,9 +1019,6 @@ def candidate_action_attempt_row(row):
     return result
 
 
-def preserve_candidate_result_references(db, external_action_key, provider_result_json):
-    """Action receipt bodies are immutable and need no denormalized copies."""
-    return None
 
 CANONICAL_PROVIDER_RECEIPT_SQL = """select a.id as action_id,metadata.id as binding_id,
        body.id as receipt_id,coalesce(metadata.operation,a.action_operation) as operation,

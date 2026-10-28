@@ -193,9 +193,9 @@ def test_meeting_job_claim_requires_both_eligibility_and_availability(tmp_path):
         eligible_at="2026-07-14 02:20:00",
     )
     future_available = seed_job(store, meeting_id="future-available")
-    store.schedule_meeting_alignment_job_retry(
+    store.update_meeting_alignment_job(
         future_available,
-        error="temporary failure",
+        status="retry", locked_at=None, error="temporary failure",
         available_at="2026-07-14 02:30:00",
     )
 
@@ -276,9 +276,9 @@ def test_meeting_job_retry_and_startup_recovery_preserve_attempts(tmp_path):
     )
     assert [job.id for job in claimed] == [first_id, second_id]
 
-    store.schedule_meeting_alignment_job_retry(
+    store.update_meeting_alignment_job(
         first_id,
-        error="minutes incomplete",
+        status="retry", locked_at=None, error="minutes incomplete",
         available_at="2026-07-14 02:20:00",
     )
     reset = store.reset_processing_meeting_alignment_jobs()

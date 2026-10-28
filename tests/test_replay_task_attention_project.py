@@ -7,7 +7,6 @@ from pathlib import Path
 import pytest
 
 from app.action_business_definitions import business_action_projection
-from app.action_business_storage import delete_business_action
 from app.business_source_reader import (
     AvailableSource, SourceUnavailableReason, UnavailableSource,
 )
@@ -76,7 +75,8 @@ def _delete_project_evidence(store, project_id):
             ) + ") where project_id=?", (project_id,),
         ).fetchall()
         for (source_rowid,) in rows:
-            delete_business_action(db, "business_project_evidence", source_rowid)
+            db.execute("delete from actions where record_type=? and legacy_key=?",
+                       ("business_project_evidence", str(source_rowid)))
 
 
 _TASK_FIELDS = frozenset({"status"})

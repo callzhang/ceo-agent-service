@@ -1,3 +1,4 @@
+from tests.scheduled_claim_fixture import claim_scheduled_occurrence
 from pathlib import Path
 import json
 from app.store import REPLY_TASK_SQL, WORK_SUMMARY_INPUT_SQL
@@ -488,7 +489,7 @@ def test_attention_counts_only_the_latest_dispatched_run_of_a_scheduled_task(
             business_object_key=f"scheduled-task-run:{scheduled_run.id}",
         )
         owner = f"dispatcher-{run_number}"
-        assert store.claim_scheduled_task_run(
+        assert claim_scheduled_occurrence(store,
             scheduled_run.id, owner=owner, lease_seconds=600, now=now,
         ) is not None
         store.link_scheduled_task_run_execution(

@@ -1,10 +1,11 @@
+from tests.task_input_fixtures import bind_claimed_input
 import sqlite3
 
 import pytest
 
 from app import action_storage, task8_storage
 from app.task_entity_storage import (
-    append_task_input, associate_business_key, bind_claimed_input,
+    append_task_input, associate_business_key,
     bind_current_input, create_task, get_task, get_task_with_inputs,
     list_task_business_keys, update_task_cas,
 )

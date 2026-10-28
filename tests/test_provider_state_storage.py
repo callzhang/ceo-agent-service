@@ -8,12 +8,12 @@ import pytest
 
 from app.provider_state_definitions import OBSERVATION_FIELDS, GENERATION_FIELDS
 from app.provider_state_storage import (
-    create_provider_state_schema, get_observation, get_folder_generation,
-    insert_observation, insert_folder_generation, delete_observation,
-    delete_folder_generation, upsert_observations, upsert_folder_generations,
+    create_provider_state_schema, upsert_observations, upsert_folder_generations,
     mark_authoritative_missing, mark_unavailable_folder, mark_inactive_accounts,
     update_important_signals,
 )
+from tests.provider_state_fixtures import (get_observation, get_folder_generation, insert_observation,
+    insert_folder_generation, delete_observation, delete_folder_generation)
 from test_provider_state_source import source_db, OBS, GEN, T1, T2
 
 

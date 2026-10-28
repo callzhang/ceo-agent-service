@@ -344,7 +344,7 @@ from pathlib import Path
 from app.agent_cron.models import ScheduledTaskSkillRef
 from app.email_store import EmailFolderBindingConflict, EmailStore
 from app.store import AutoReplyStore
-from app.scheduled_config_storage import intern_scheduled_config, migrate_scheduled_configs
+from app.scheduled_config_storage import intern_scheduled_config
 from app.wechat.models import WechatReplyScope
 p = Path(sys.argv[1]); email = EmailStore(p); store = AutoReplyStore(p)
 with sqlite3.connect(p) as db:
@@ -414,15 +414,6 @@ with sqlite3.connect(p) as db:
         assert "UNIQUE constraint failed" in str(exc)
     else:
         raise AssertionError("duplicate scheduled Skill position was accepted")
-    old_snapshot = intern_scheduled_config(db, '{"name":"old"}')
-    db.execute("update runs set snapshot_id=? where id=?", (old_snapshot, first.id))
-    migrate_scheduled_configs(db)
-    repointed = db.execute("select snapshot_id from runs where id=?", (first.id,)).fetchone()[0]
-    assert repointed != old_snapshot
-    assert db.execute("select count(*) from scheduled_task_config_versions where id=?", (old_snapshot,)).fetchone() == (0,)
-    normalized = db.execute("select snapshot_json from scheduled_task_config_versions where id=?", (repointed,)).fetchone()[0]
-    assert json.loads(normalized) == {"name": "old", "description": "old",
-                                      "required_runtime_capabilities": [], "command": ""}
     assert db.execute("pragma foreign_key_check").fetchall() == []
 with sqlite3.connect(p) as db:
     db.execute("pragma foreign_keys=on")

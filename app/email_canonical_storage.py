@@ -322,7 +322,7 @@ def _write_email_message(db, values, *, mode):
               for field, value in values.items() if field != "id"}
     mapped = {"id": _physical_id(db, message_id), "message_id": message_id, **mapped}
     columns = tuple(mapped)
-    sql = ("insert " + ("or ignore " if mode == "ignore" else "") + "into emails("
+    sql = ("insert into emails("
            + ",".join(map(_quote, columns)) + ") values("
            + ",".join("?" for _ in columns) + ")")
     if mode == "upsert":
@@ -348,9 +348,6 @@ def upsert_email_message(db: sqlite3.Connection, values: dict) -> int:
     return _write_email_message(db, values, mode="upsert")
 
 
-def ignore_email_message(db: sqlite3.Connection, values: dict) -> int | None:
-    """Match native INSERT OR IGNORE, including consumed AUTO identities."""
-    return _write_email_message(db, values, mode="ignore")
 
 
 def insert_email_classification(db: sqlite3.Connection, values: dict) -> int:

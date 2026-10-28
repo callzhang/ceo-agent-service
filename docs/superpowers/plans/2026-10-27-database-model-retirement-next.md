@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite JSONB/生成列/复合 FK、pytest/Ruff、现有 Store/EmailStore、现有标准 app.deploy 和 console 前端。
 
-**Status:** Derek 已于 2026-10-28 确认实施。执行第一批无 DDL 清理，之后各批独立验收、发布和读回。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
+**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 实施、相关测试和独立 SPEC/QUALITY 已通过；标准发布和生产读回进行中。之后各批独立验收、发布和读回。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
 
 **Audit baseline:** production `d1efdbc28ddbc9ea847036c9f8ba3a597b354e88`，本地 `c866d4fbd051044f1ba86e846ab14b70706ba741`，检查时 main `0ef0a929565248a51ea5a9e8fd43d1abfe575d37`；48 表/476 对象。精确字段、调用方与索引证据见 [审计](../../database-simplification-audit-20261027.md) 和三个 CSV。实施先刷新基线，不硬编码本次 PID 或把本次行数当作未来迁移前置常量。
 
@@ -29,15 +29,15 @@
 
 **Delete when callers migrated:** app/runs11_storage.py、tests/test_runs11_storage.py。其他文件按审计 §3 的符号粒度删除，不能整包误删。
 
-- [ ] 重新检索审计 §3 每个符号的直接调用、别名 import、字符串注册及脚本。若主线新增真实调用，切换到已存在的当前入口；不得用兼容包装保持旧名字。
-- [ ] 分三个小提交执行：纯无调用/无用参数；测试专用 DAO 与旧写入夹具；执行身份参数和发布选择器。每次只 stage 自己的 hunks。
-- [ ] 删除 preserve_candidate_result_references、ACTION_LAYOUT、transition.expected/receipt、旧 email_action_attempts allocator 分支、finish_logical_run/recover_logical_runs/get_run_failures、latest_runtime_route_for_agent_run、旧训练读取、未用 Email builder、Workbench executor helper、ignore_email_message 及两项未用退订 redactor。清独占 import，不动有效脱敏。
-- [ ] 将 bind_claimed_input、get_run_projection、旧 schedule/attempt/weekly OKR 包装、Provider 六个单行 helper 及 business create/delete 测试切到实际 native owner/当前调用。保留 claim/current-vs-claimed、原生结果可用/不可用、receipt、去重等有效断言；退休 runs11 专用测试和 gate 行。
-- [ ] 删除 current_publication_sources 的七个不可达 else/fallthrough，保留当前/受支持 predecessor 的严格版本验证和真实静默等待调用。
-- [ ] Reviewed/provider receipt helper 固定 execution_run_id：删除 owner_column/execution_owner_column 参数和旧列名选择。先将 action_entity_transfer 等显式旧工具对 append_action_receipt 的依赖移到冻结工具 helper，再清当前入口。保留 CAS、lineage、ACK 后恢复合同，不加入新 policy。
-- [ ] `CANDIDATE_ACTION_ATTEMPT_SQL` 只供旧来源夹具则移到测试；当前始终保留 NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL。
-- [ ] 分进程运行受影响测试：tests/test_shared_action_lifecycle.py、test_provider_state_storage.py、test_task_entity_storage.py、test_run_entity_storage.py、test_logical_run_owner.py、test_scheduled_task_store.py、test_repository_updater_publication.py、test_configs_source_contract.py；涉及业务夹具再跑 test_business_storage.py、test_business_schema_release.py、test_replay_task_attention_project.py。不因列在计划中就把所有文件拼成一个大进程。
-- [ ] 符号复扫无调用/动态注册/兼容别名；Ruff/差异审查通过。constructor 与生产 schema 的完整 SQL/字段/索引/FK 指纹逐项不变；记录“代码简化，0 字节容量收益”。
+- [x] 重新检索审计 §3 每个符号的直接调用、别名 import、字符串注册及脚本。若主线新增真实调用，切换到已存在的当前入口；不得用兼容包装保持旧名字。
+- [x] 分三个小提交执行：纯无调用/无用参数；测试专用 DAO 与旧写入夹具；执行身份参数和发布选择器。每次只 stage 自己的 hunks。
+- [x] 删除 preserve_candidate_result_references、ACTION_LAYOUT、transition.expected/receipt、旧 email_action_attempts allocator 分支、finish_logical_run/recover_logical_runs/get_run_failures、latest_runtime_route_for_agent_run、旧训练读取、未用 Email builder、Workbench executor helper、ignore_email_message 及两项未用退订 redactor。清独占 import，不动有效脱敏。
+- [x] 将 bind_claimed_input、get_run_projection、旧 schedule/attempt/weekly OKR 包装、Provider 六个单行 helper 及 business create/delete 测试切到实际 native owner/当前调用。保留 claim/current-vs-claimed、原生结果可用/不可用、receipt、去重等有效断言；退休 runs11 专用测试和 gate 行。
+- [x] 删除 current_publication_sources 的七个不可达 else/fallthrough，保留当前/受支持 predecessor 的严格版本验证和真实静默等待调用。
+- [x] Reviewed/provider receipt helper 固定 execution_run_id：删除 owner_column/execution_owner_column 参数和旧列名选择。先将 action_entity_transfer 等显式旧工具对 append_action_receipt 的依赖移到冻结工具 helper，再清当前入口。保留 CAS、lineage、ACK 后恢复合同，不加入新 policy。
+- [x] `CANDIDATE_ACTION_ATTEMPT_SQL` 只供旧来源夹具则移到测试；当前始终保留 NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL。
+- [x] 分进程运行受影响测试：tests/test_shared_action_lifecycle.py、test_provider_state_storage.py、test_task_entity_storage.py、test_run_entity_storage.py、test_logical_run_owner.py、test_scheduled_task_store.py、test_repository_updater_publication.py、test_configs_source_contract.py；涉及业务夹具再跑 test_business_storage.py、test_business_schema_release.py、test_replay_task_attention_project.py。不因列在计划中就把所有文件拼成一个大进程。
+- [x] 符号复扫无调用/动态注册/兼容别名；Ruff/差异审查通过。constructor 与生产 schema 的完整 SQL/字段/索引/FK 指纹逐项不变；记录“代码简化，0 字节容量收益”。
 
 ## Task 2 — 独立退休 10 个结构重复索引
 

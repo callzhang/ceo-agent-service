@@ -114,7 +114,7 @@ def test_typed_children_failure_projection_and_caller_rollback(db):
     run = storage.create_run(db, values={"task_id": task["id"], "status": "failed"})
     storage.set_run_provenance(db, run_id=run["id"], source_type="task_agent_runs")
     storage.set_run_projection(db, run_id=run["id"], projection_json='{"summary":"brief"}')
-    assert storage.get_run_projection(db, run["id"]) == '{"summary":"brief"}'
+    assert db.execute("select projection_json from run_projections where run_id=?", (run["id"],)).fetchone()[0] == '{"summary":"brief"}'
     storage.append_run_failure(db, run_id=run["id"], phase="execute", structured_error_json='{"code":"x"}', created_at="now")
     attempt_values = {
         "parent_id": run["id"], "workload_kind": "agent_run", "workload_key": str(run["id"]),
@@ -250,11 +250,11 @@ def test_projection_getter_preserves_source_sqlite_storage_class_and_value(db):
         "select projection_json,typeof(projection_json) from run_projections where run_id=?", (run["id"],)
     ).fetchone()
     assert (native_projection, native_type) == (source_projection, source_type)
-    assert storage.get_run_projection(db, run["id"]) == source_projection
-    assert storage.get_run_projection(db, run["id"]) == b'{"adopted":1}'
+    assert db.execute("select projection_json from run_projections where run_id=?", (run["id"],)).fetchone()[0] == source_projection
+    assert db.execute("select projection_json from run_projections where run_id=?", (run["id"],)).fetchone()[0] == b'{"adopted":1}'
 
     text_run = storage.create_run(db, values={"task_id": task["id"], "status": "completed"})
     text_projection = '{"summary":"brief"}'
     storage.set_run_projection(db, run_id=text_run["id"], projection_json=text_projection)
-    assert storage.get_run_projection(db, text_run["id"]) == text_projection
+    assert db.execute("select projection_json from run_projections where run_id=?", (text_run["id"],)).fetchone()[0] == text_projection
     source.close()

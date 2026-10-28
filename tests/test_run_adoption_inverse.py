@@ -1,3 +1,4 @@
+from tests.task_input_fixtures import bind_claimed_input
 import pytest
 
 from app.run_adoption_inverse import plan_run_adoption_inverse
@@ -527,7 +528,7 @@ def test_reply_provenance_task_and_input_references_survive_two_portable_cycles(
                     db, task_id=int(survivor["id"]), business_key="message:portable-alias",
                     created_at="2026-10-22T10:01:00Z", updated_at="2026-10-22T10:01:00Z",
                 )
-                task_entity_storage.bind_claimed_input(
+                bind_claimed_input(
                     db, task_id=int(survivor["id"]), input_id=int(survivor_input["id"]),
                     claimed_input_version=1,
                 )

@@ -10,7 +10,6 @@ from app.action_storage import (
 )
 from app.business_definitions import (
     BUSINESS_COMMON, BUSINESS_DEFAULTS, BUSINESS_REFERENCES,
-    _definitions,
 )
 
 from app.business_legacy_fields import (
@@ -26,11 +25,6 @@ class BusinessWriteResult:
     rowcount: int
 
 
-def create_business_schema(db: sqlite3.Connection, *, include_candidates: bool = False):
-    """Install declarations only; caller owns BEGIN/commit/rollback."""
-    table, indexes, triggers = _definitions(include_candidates=include_candidates)
-    for sql in (table, *indexes, *triggers):
-        db.execute(sql)
 
 
 def _check_values(kind, values):

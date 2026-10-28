@@ -1,5 +1,19 @@
 # CEO Agent Service Architecture
 
+## 模型退休：无 DDL 入口清理（2026-10-28）
+
+当前 Action receipt 写入和 Reviewed 执行只接受 `execution_run_id`，不再通过参数
+选择旧 `execution_id` 列；允许字段按当前结构正面声明。显式历史转换器使用自己
+冻结的来源 receipt 写入，不让来源结构进入当前业务 helper。
+发布静默读取仍严格验证当前及已支持的前一声明，只读取原生 Task/Run/调度 owner，
+不存在到旧表的不可达 fallback。发布等待、回滚、CAS、回执及审查政策不变。
+
+无调用入口和仅测试维持的旧 Store/Run/Provider 包装已退出应用；当前功能测试走
+现有 dispatcher、native owner 和测试目录中的窄造数夹具。旧 runs11 写入器及其
+专用测试退休，实际 session 搜索、性能样本和 setup 事件仍由各自当前 owner 持有。
+本批没有 DDL 或业务行变更；会话、反馈和 Configs 字段归一属于后续独立批次。
+版本、测试与部署读回见[第一批验收记录](model-retirement-batch1-validation.md)。
+
 ## History 慢请求与 SQL 工件验收收口（2026-10-27）
 
 History 可见页面仍按10秒间隔检查刷新；已有列表请求未完成时不发起下一次自动

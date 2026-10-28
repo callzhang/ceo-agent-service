@@ -7088,9 +7088,9 @@ def test_retrying_meeting_shows_persisted_plan_without_manager_actions(
         now="2026-08-11T05:00:00+00:00",
     )
     retry_at = "2026-08-11T05:14:00+00:00"
-    store.schedule_meeting_alignment_job_retry(
+    store.update_meeting_alignment_job(
         job_id,
-        "Meeting provider unavailable",
+        status="retry", locked_at=None, error="Meeting provider unavailable",
         available_at=retry_at,
     )
     run_id = store.create_professional_run(job_id, session_id="meeting-retry-session", status="retry", error="Meeting provider unavailable")

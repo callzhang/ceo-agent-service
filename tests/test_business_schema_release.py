@@ -1,4 +1,5 @@
 """Finite seven-kind Business schema release against native SQLite."""
+from tests.business_schema_fixture import create_business_schema
 
 from contextlib import closing
 import json
@@ -8,7 +9,6 @@ import sqlite3
 
 import pytest
 
-from app.business_storage import create_business_schema
 
 FRESH_DECLARATIONS = Path(__file__).parent / "fixtures/business_four_kind_fresh_declarations.json"
 WORK_SOURCE_DECLARATIONS = Path(__file__).parent / "fixtures/business_work_projects_source_declarations.json"

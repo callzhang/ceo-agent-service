@@ -499,15 +499,6 @@ class WorkbenchStore(AutoReplyStore):
             )
             return str(row["resume_context"] or "")
 
-    def execution_run_id_for_executor(self, turn_id: str, *, owner: str) -> str:
-        owner = owner.strip()
-        if not owner:
-            raise ValueError("owner must be non-empty")
-        with self._connect() as db:
-            turn = self._require_turn(db, turn_id)
-            if turn["lease_owner"] != owner:
-                raise ValueError("executor does not own runtime run")
-            return str(turn["execution_run_id"] or "")
 
     def recover_expired_turns(
         self, *, now: str | datetime | None = None

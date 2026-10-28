@@ -117,7 +117,6 @@ tests/test_repository_upgrade_web.py
 tests/test_reviewed_candidates.py
 tests/test_run_storage_manifest.py
 tests/test_runs11_definitions.py
-tests/test_runs11_storage.py
 tests/test_runtime_status.py
 tests/test_sales_weekly_report_skill.py
 tests/test_schema_objects_cache.py

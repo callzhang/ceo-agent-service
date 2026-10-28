@@ -7,7 +7,25 @@ import sqlite3
 from typing import Iterable, Mapping
 
 from app import action_storage
-from app.action_entity_storage import append_action_receipt, create_action, add_action_observer
+from app.action_entity_storage import create_action, add_action_observer
+from app.action_entity_definitions import RECEIPT_ALLOWED_FIELDS
+from app.action_entity_storage import _mapping
+
+
+def _append_source_action_receipt(db, action_id, *, values):
+    """Write the frozen source-tool receipt with its predecessor owner column."""
+    receipt = _mapping(values, RECEIPT_ALLOWED_FIELDS, "Action receipt")
+    names = ("action_id", *receipt)
+    placeholders = ",".join("?" for _ in names)
+    row = db.execute(
+        f"insert into action_receipts({','.join(names)}) "
+        f"select {placeholders} where exists("
+        "select 1 from actions where id=? and record_type='action') returning id",
+        (action_id, *receipt.values(), action_id),
+    ).fetchone()
+    if row is None:
+        raise sqlite3.IntegrityError("missing Action receipt owner")
+    return row[0]
 
 
 def _projected_rows(db: sqlite3.Connection, record_type: str) -> list[dict]:
@@ -155,13 +173,13 @@ def _transfer_external_results(db: sqlite3.Connection, rows: Iterable[dict], own
             "business_object_key": source["business_object_key"],
             "action_identity": source["action_identity"],
         })["id"]
-        receipt_id = append_action_receipt(db, action_id, values={
+        receipt_id = _append_source_action_receipt(db, action_id, values={
             "operation": source["operation"], "target": source["target_identifiers_json"],
             "provider_result_json": source["provider_result_json"],
             "result_digest": source["result_digest"], "agent_run_id": source["first_agent_run_id"],
             "observed_at": source["created_at"],
         })
-        binding_id = append_action_receipt(db, action_id, values={
+        binding_id = _append_source_action_receipt(db, action_id, values={
             "provider_receipt_id": receipt_id, "operation": source["operation"],
             "target": source["target_identifiers_json"],
             "result_digest": source["result_digest"],
@@ -283,7 +301,7 @@ def _transfer_candidates(db: sqlite3.Connection, rows: Iterable[dict], owners: d
             receipt_values.update({"operation": operation, "target": target})
         if source["result_json"] is None and key in result_receipts:
             receipt_values["provider_receipt_id"] = result_receipts[key]
-        receipt_id = append_action_receipt(db, action_id, values=receipt_values)
+        receipt_id = _append_source_action_receipt(db, action_id, values=receipt_values)
         _map(db, "candidate_action_attempts", source["id"], action_id, receipt_id)
         from app.task20_definitions import task20_projection
         task = db.execute(f"select channel,business_object_key from ({task20_projection('reply_tasks')}) "
@@ -350,7 +368,7 @@ def _transfer_postfixes(db: sqlite3.Connection, facts: dict[str, list[dict]], ow
                                       observed_at=prepared["created_at"])
             if dispatch is not None:
                 receipt_values["dispatched_at"] = dispatch["created_at"]
-            receipt_id = append_action_receipt(db, action_id, values=receipt_values)
+            receipt_id = _append_source_action_receipt(db, action_id, values=receipt_values)
             if prepared is not None and prepared["provider_result_json"] is not None:
                 db.execute("update actions set action_data=jsonb_set(action_data,'$.prepared_receipt_id',json(?)) where id=?",
                            (json.dumps(receipt_id), action_id))
@@ -394,7 +412,7 @@ def _transfer_sent(db: sqlite3.Connection, rows: Iterable[dict], owners: dict[st
         receipt_values = {"observed_at": source["sent_at"], "agent_run_id": source["agent_run_id"]}
         if source["send_result_json"] is not None:
             receipt_values["provider_result_json"] = source["send_result_json"]
-        receipt_id = append_action_receipt(db, action_id, values=receipt_values)
+        receipt_id = _append_source_action_receipt(db, action_id, values=receipt_values)
         if source["send_result_json"] is None and key:
             canonical_id = result_receipts.get(key)
             if canonical_id is not None:
@@ -433,7 +451,7 @@ def _transfer_email(db: sqlite3.Connection, facts: dict[str, list[dict]]) -> Non
         action_id = owners.get(source["action_id"])
         if action_id is None:
             raise ValueError("Email attempt has no exact direct Action owner")
-        receipt_id = append_action_receipt(db, action_id, values={
+        receipt_id = _append_source_action_receipt(db, action_id, values={
             "attempt_number": source["attempt_number"], "status": source["status"],
             "operation": source["provider_operation"], "target": source["provider_target"],
             "provider_result_id": source["provider_result_id"], "error_text": source["error"],

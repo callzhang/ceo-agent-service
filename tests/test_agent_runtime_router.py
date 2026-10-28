@@ -1,3 +1,4 @@
+from tests.runtime_attempt_fixtures import seed_effect_started
 from datetime import UTC, datetime
 
 import pytest
@@ -303,7 +304,7 @@ def test_operation_failover_ignores_effect_evidence_and_honors_route_pause(store
         "gpt-5.5",
     )
     store.mark_agent_runtime_attempt_running_once(claimed.id)
-    store.note_runtime_attempt_effect_started(claimed.id, at=NOW)
+    seed_effect_started(store, claimed.id, at=NOW)
     failed = store.fail_agent_runtime_attempt(
         claimed.id, failure.failure_class.value, failure.code, True
     )
@@ -439,7 +440,7 @@ def running_attempt(store: AutoReplyStore):
     attempt = store.claim_agent_runtime_attempt(
         run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
-    return store.mark_agent_runtime_attempt_running(attempt.id)
+    return store.mark_agent_runtime_attempt_running_once(attempt.id)
 
 
 @pytest.fixture
@@ -473,7 +474,7 @@ def next_route(
 
 
 def test_effect_start_blocks_failover(router, store, running_attempt):
-    store.note_runtime_attempt_effect_started(running_attempt.id)
+    seed_effect_started(store, running_attempt.id)
 
     decision = next_route(router, store, running_attempt)
 
@@ -519,7 +520,7 @@ def test_infrastructure_failure_can_failover_after_effect_started(
     router, store, running_attempt
 ):
     """Effect counters do not veto infrastructure route failover."""
-    store.note_runtime_attempt_effect_started(running_attempt.id)
+    seed_effect_started(store, running_attempt.id)
     failure = RuntimeFailure(
         failure_class=RuntimeFailureClass.UNCLASSIFIED,
         code="runtime_unclassified",
@@ -1052,7 +1053,7 @@ def test_claude_session_retry_does_not_depend_on_effect_counters(
         source_session_id="claude-session-1",
     )
     resumed = store.mark_agent_runtime_attempt_running_once(resumed.id)
-    store.note_runtime_attempt_effect_started(resumed.id)
+    seed_effect_started(store, resumed.id)
 
     effect = next_route(
         make_router(store, routes=(claude,)),

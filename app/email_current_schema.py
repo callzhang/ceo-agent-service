@@ -422,35 +422,6 @@ def create_current_email_non_action_schema(db: sqlite3.Connection) -> None:
         _create_missing(db, "trigger", name, _REQUIRED_TRIGGER_SQL[name])
 
 
-def create_current_email_runtime_schema(db: sqlite3.Connection) -> None:
-    """Install Email-owned retained tables for a fresh current config target."""
-    from app.configs_definitions import CONFIG_FIELDS
-    from app.state_definitions import STATE_FIELDS
-    from app.task20_definitions import TASK20_NEW_KINDS
-    from app.runs11_definitions import RUN11_NEW_KINDS
-    from app.email_schema_history import _REQUIRED_TRIGGER_SQL, _REQUIRED_TRIGGER_TABLES
-    from app.provider_state_storage import create_provider_state_schema
-
-    retired = {*CONFIG_FIELDS, *STATE_FIELDS, *TASK20_NEW_KINDS, *RUN11_NEW_KINDS,
-               "email_training_snapshot_observations",
-               "email_historical_classification_history", "email_historical_operations"}
-    create_current_email_classifications(db)
-    for name, sql in _CURRENT_TABLE_SQL:
-        if name not in retired:
-            _create_missing(db, "table", name, sql)
-    create_provider_state_schema(db)
-    retired_indexes = {
-        "idx_email_agent_classification_tasks_status",
-        "idx_email_training_observations_split",
-        "idx_email_training_observations_provider_truth",
-        "idx_email_classifier_runtime_model_id",
-    }
-    for name, sql in _CURRENT_INDEX_SQL:
-        if name not in retired_indexes:
-            _create_missing(db, "index", name, sql)
-    for name in _CURRENT_TRIGGER_NAMES:
-        if _REQUIRED_TRIGGER_TABLES.get(name, "email_classifications") not in retired:
-            _create_missing(db, "trigger", name, _REQUIRED_TRIGGER_SQL[name])
 
 
 def create_current_email_migration_ledger(db: sqlite3.Connection) -> None:

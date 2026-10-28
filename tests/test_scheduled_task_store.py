@@ -1,10 +1,9 @@
 from __future__ import annotations
+from tests.scheduled_claim_fixture import claim_scheduled_occurrence
 from app.configs_definitions import config_projection
-from app.schedules_storage import update_schedule
 
 import json
 import sqlite3
-import threading
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -232,113 +231,8 @@ def test_task_and_run_snapshot_preserve_required_runtime_capabilities(
     )
 
 
-def test_capability_backfill_is_atomic_across_concurrent_store_instances(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "concurrent-capability-backfill.sqlite3"
-    first_store = AutoReplyStore(path)
-    task = _create_task(
-        first_store,
-        migration_key="legacy-local-producer-v1",
-    )
-    second_store = AutoReplyStore(path)
-    barrier = threading.Barrier(2)
-    results = []
-    errors: list[BaseException] = []
-
-    def migrate(store: AutoReplyStore) -> None:
-        try:
-            barrier.wait()
-            results.append(
-                store.backfill_scheduled_task_runtime_capabilities(
-                    migration_key="legacy-local-producer-v1",
-                    required_capabilities=LOCAL_SERVICE_RUNTIME_CAPABILITIES,
-                    eligible_runtime_ids=frozenset({"codex_oauth"}),
-                    now=NOW + timedelta(minutes=1),
-                )
-            )
-        except BaseException as exc:  # pragma: no cover - asserted below
-            errors.append(exc)
-
-    threads = (
-        threading.Thread(target=migrate, args=(first_store,)),
-        threading.Thread(target=migrate, args=(second_store,)),
-    )
-    for thread in threads:
-        thread.start()
-    for thread in threads:
-        thread.join(timeout=5)
-
-    assert all(not thread.is_alive() for thread in threads)
-    assert errors == []
-    assert len(results) == 2
-    updated = first_store.get_scheduled_task(task.id)
-    assert updated is not None
-    assert updated.version == task.version + 1
-    assert all(result == updated for result in results)
-    assert frozenset(updated.required_runtime_capabilities) == (
-        LOCAL_SERVICE_RUNTIME_CAPABILITIES
-    )
 
 
-def test_capability_backfill_reads_latest_user_fields_inside_write_transaction(
-    tmp_path: Path,
-) -> None:
-    path = tmp_path / "competing-capability-backfill.sqlite3"
-    user_store = AutoReplyStore(path)
-    task = _create_task(
-        user_store,
-        migration_key="edited-local-producer-v1",
-    )
-    latest_ref = _managed_ref(user_store, skill_name="ceo-latest-user-skill")
-    migration_store = AutoReplyStore(path)
-    started = threading.Event()
-    results = []
-
-    def migrate() -> None:
-        started.set()
-        results.append(
-            migration_store.backfill_scheduled_task_runtime_capabilities(
-                migration_key="edited-local-producer-v1",
-                required_capabilities=LOCAL_SERVICE_RUNTIME_CAPABILITIES,
-                eligible_runtime_ids=frozenset({"latest-user-runtime"}),
-                now=NOW + timedelta(minutes=2),
-            )
-        )
-
-    with user_store._immediate_write_transaction() as db:
-        assert update_schedule(db, task.id, task.version, {
-            "name": "最新用户名称",
-            "prompt": "最新用户 Prompt",
-            "cron_expression": "0 15 * * * *",
-            "runtime_id": "latest-user-runtime",
-            "runtime_options_json": '{"model":"latest-user-model"}',
-            "working_directory": "/latest/user/workspace",
-            "updated_at": (NOW + timedelta(minutes=1)).isoformat(),
-        }) == 1
-        user_store._replace_scheduled_task_skill_refs(db, task.id, (latest_ref,))
-        thread = threading.Thread(target=migrate)
-        thread.start()
-        assert started.wait(timeout=1)
-    thread.join(timeout=5)
-
-    assert not thread.is_alive()
-    assert len(results) == 1
-    updated = results[0]
-    assert updated is not None
-    assert updated.version == task.version + 2
-    assert updated.name == "最新用户名称"
-    assert updated.prompt == "最新用户 Prompt"
-    assert updated.cron_expression == "0 15 * * * *"
-    assert updated.runtime_id == "latest-user-runtime"
-    assert updated.runtime_options == {"model": "latest-user-model"}
-    assert updated.working_directory == "/latest/user/workspace"
-    assert tuple(ref.skill_name for ref in updated.skill_refs) == (
-        "ceo-latest-user-skill",
-    )
-    assert frozenset(updated.required_runtime_capabilities) == (
-        LOCAL_SERVICE_RUNTIME_CAPABILITIES
-    )
 
 
 
@@ -748,7 +642,7 @@ def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
         now=NOW,
     )
 
-    claimed = store.claim_scheduled_task_run(
+    claimed = claim_scheduled_occurrence(store,
         run.id,
         owner="dispatcher-1",
         lease_seconds=60,
@@ -756,12 +650,27 @@ def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
     )
     assert claimed is not None
     assert claimed.lease_owner == "dispatcher-1"
-    assert store.claim_scheduled_task_run(
+    with store._connect() as db:
+        source_before = tuple(db.execute(
+            "select lease_owner,lease_expires_at from schedule_occurrences where id=?", (run.id,),
+        ).fetchone())
+        ledger_before = tuple(db.execute(
+            "select owner,generation,lease_expires_at from state "
+            "where record_type='dispatcher_claim_leases' and adapter_name='scheduled' and source_id=?",
+            (str(run.id),),
+        ).fetchone())
+    assert source_before[0] == ledger_before[0] == "dispatcher-1"
+    assert source_before[1] == ledger_before[2]
+    assert ledger_before[1] == 1
+    assert claim_scheduled_occurrence(store,
         run.id,
         owner="dispatcher-2",
         lease_seconds=60,
         now=NOW,
     ) is None
+    with store._connect() as db:
+        assert tuple(db.execute("select lease_owner,lease_expires_at from schedule_occurrences where id=?", (run.id,)).fetchone()) == source_before
+        assert tuple(db.execute("select owner,generation,lease_expires_at from state where record_type='dispatcher_claim_leases' and adapter_name='scheduled' and source_id=?", (str(run.id),)).fetchone()) == ledger_before
 
     with pytest.raises(ValueError, match="lease owner"):
         store.link_scheduled_task_run_execution(
@@ -791,7 +700,7 @@ def test_claim_link_and_finish_are_owner_guarded_atomic_transitions(
     assert finished.dispatch_status == "dispatched"
     assert finished.dispatched_at == NOW + timedelta(seconds=5)
     assert finished.lease_owner == ""
-    assert store.claim_scheduled_task_run(
+    assert claim_scheduled_occurrence(store,
         run.id,
         owner="dispatcher-2",
         lease_seconds=60,
@@ -810,7 +719,7 @@ def test_expired_owner_cannot_link_or_finish_and_reclaimer_owns_writes(
         scheduled_for=NOW,
         now=NOW,
     )
-    assert store.claim_scheduled_task_run(
+    assert claim_scheduled_occurrence(store,
         run.id,
         owner="old-owner",
         lease_seconds=30,
@@ -825,11 +734,17 @@ def test_expired_owner_cannot_link_or_finish_and_reclaimer_owns_writes(
             execution_id="exec-1",
             now=NOW + timedelta(seconds=31),
         )
-    reclaimed = store.claim_scheduled_task_run(
+    # A live process retains the dispatcher claim even after its source lease expires.
+    assert claim_scheduled_occurrence(store,
+        run.id, owner="new-owner", lease_seconds=30,
+        now=NOW + timedelta(seconds=31), owner_alive=True,
+    ) is None
+    reclaimed = claim_scheduled_occurrence(store,
         run.id,
         owner="new-owner",
         lease_seconds=30,
         now=NOW + timedelta(seconds=31),
+        owner_alive=False,
     )
     assert reclaimed is not None
     assert reclaimed.lease_owner == "new-owner"
@@ -875,7 +790,7 @@ def test_expired_owner_cannot_finish_even_before_another_owner_reclaims(
         scheduled_for=NOW,
         now=NOW,
     )
-    store.claim_scheduled_task_run(
+    claim_scheduled_occurrence(store,
         run.id,
         owner="old-owner",
         lease_seconds=30,
@@ -1291,14 +1206,14 @@ def test_adopting_service_command_backfills_only_placeholder_description(
     backfilled = store.adopt_scheduled_task_service_command(
         migration_key="placeholder-v1",
         command="sync-minutes-once",
-       
+
         seed_description="增量同步听记到本地归档。",
         now=NOW + timedelta(minutes=1),
     )
     preserved = store.adopt_scheduled_task_service_command(
         migration_key="custom-v1",
         command="sync-minutes-once",
-       
+
         seed_description="仓库默认说明。",
         now=NOW + timedelta(minutes=1),
     )

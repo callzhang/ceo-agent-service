@@ -1,3 +1,4 @@
+from tests.scheduled_claim_fixture import claim_scheduled_occurrence
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -47,7 +48,7 @@ def test_occurrence_crud_and_dispatch_use_native_owner(tmp_path):
     assert store.get_scheduled_task_run(run.id) == run
     assert store.list_scheduled_task_runs(task.id) == (run,)
 
-    claimed = store.claim_scheduled_task_run(
+    claimed = claim_scheduled_occurrence(store,
         run.id, owner="worker-a", lease_seconds=30, now=instant
     )
     assert claimed is not None
@@ -182,7 +183,7 @@ def test_scheduled_occurrence_claims_serialize_on_native_owner(tmp_path):
         task.id, trigger_kind="scheduled", scheduled_for=instant, now=instant
     )
     def claim(owner):
-        return store.claim_scheduled_task_run(
+        return claim_scheduled_occurrence(store,
             run.id, owner=owner, lease_seconds=30, now=instant
         )
 

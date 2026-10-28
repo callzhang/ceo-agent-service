@@ -333,7 +333,6 @@ TERMINAL_OA_SOURCE_SKIP_SQL = """
     and json_extract(case when json_valid(reply_attempts.resolution)
                           then reply_attempts.resolution else '{}' end, '$.historical_chat_delivery') like 'unverified%'
 """
-WEEKLY_OKR_REPORT_RUN_STATE_KEY = "weekly_okr_report:run_lease"
 TERMINAL_NO_ACTION_RUN_FAILURE_CODES = frozenset(
     {
         "historical_reconciliation_superseded",
@@ -3877,72 +3876,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchall()
             return tuple(self._business_task_from_row(row) for row in rows)
 
-    def backfill_scheduled_task_runtime_capabilities(
-        self,
-        *,
-        migration_key: str,
-        required_capabilities: Collection[str],
-        eligible_runtime_ids: Collection[str],
-        now: datetime | None = None,
-    ) -> ScheduledTask | None:
-        """Atomically backfill legacy seed requirements without replacing edits."""
-        migration_key = self._require_scheduled_task_text(
-            migration_key,
-            field="scheduled task migration key",
-        )
-        required_json = canonical_capabilities_json(
-            required_capabilities,
-            field="scheduled task required runtime capabilities",
-        )
-        required = frozenset(
-            decode_capabilities_json(
-                required_json,
-                field="scheduled task required runtime capabilities",
-            )
-        )
-        eligible = frozenset(
-            self._require_scheduled_task_text(
-                runtime_id,
-                field="eligible scheduled task runtime id",
-            )
-            for runtime_id in eligible_runtime_ids
-        )
-        now_text = self._scheduled_task_time_text(
-            now or datetime.now(timezone.utc),
-            field="scheduled task now",
-        )
-        with self._immediate_write_transaction() as db:
-            row = db.execute(
-                f"select {self._scheduled_task_columns()} "
-                f"from ({schedule_projection()}) where migration_key=?",
-                (migration_key,),
-            ).fetchone()
-            if row is None:
-                return None
-            current = self._scheduled_task_from_row(db, row)
-            if current.deleted_at is not None:
-                return current
-            current_required = frozenset(current.required_runtime_capabilities)
-            missing = required - current_required
-            must_disable = current.enabled and current.runtime_id not in eligible
-            if not missing and not must_disable:
-                return current
-            merged_json = canonical_capabilities_json(
-                current_required | required,
-                field="scheduled task required runtime capabilities",
-            )
-            enabled = current.enabled and not must_disable
-            update_schedule(db, current.id, current.version, {
-                "required_runtime_capabilities_json": merged_json,
-                "enabled": int(enabled), "updated_at": now_text,
-            })
-            updated_row = db.execute(
-                f"select {self._scheduled_task_columns()} "
-                f"from ({schedule_projection()}) where id=?",
-                (current.id,),
-            ).fetchone()
-            assert updated_row is not None
-            return self._scheduled_task_from_row(db, updated_row)
 
     def update_scheduled_task(
         self,
@@ -4705,62 +4638,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             assert row is not None
             return self._scheduled_task_run_from_row(row), True
 
-    def claim_scheduled_task_run(
-        self,
-        run_id: int | None = None,
-        *,
-        owner: str,
-        lease_seconds: int,
-        now: datetime | None = None,
-    ) -> ScheduledTaskRun | None:
-        owner = self._require_scheduled_task_text(
-            owner, field="scheduled task run lease owner"
-        )
-        if not isinstance(lease_seconds, int) or lease_seconds <= 0:
-            raise ValueError("scheduled task run lease must be positive")
-        now_value = ensure_utc_datetime(
-            now or datetime.now(timezone.utc),
-            field="scheduled task run claim time",
-        )
-        now_text = now_value.isoformat(timespec="seconds")
-        lease_text = (now_value + timedelta(seconds=lease_seconds)).isoformat(
-            timespec="seconds"
-        )
-        with self._immediate_write_transaction() as db:
-            if run_id is None:
-                candidate = db.execute(
-                    """
-                    select id from schedule_occurrences as scheduled_task_runs
-                     where dispatch_status='pending'
-                       and scheduled_for <= ?
-                       and (lease_owner='' or lease_expires_at <= ?)
-                     order by scheduled_for, id
-                     limit 1
-                    """,
-                    (now_text, now_text),
-                ).fetchone()
-                if candidate is None:
-                    return None
-                run_id = int(candidate["id"])
-            cursor = db.execute(
-                """
-                update schedule_occurrences
-                   set lease_owner=?, lease_expires_at=?
-                 where id=? and dispatch_status='pending'
-                   and scheduled_for <= ?
-                   and (lease_owner='' or lease_expires_at <= ?)
-                """,
-                (owner, lease_text, run_id, now_text, now_text),
-            )
-            if cursor.rowcount != 1:
-                return None
-            row = db.execute(
-                f"select {self._scheduled_task_run_columns()} "
-                f"from schedule_occurrences as scheduled_task_runs where id=?",
-                (run_id,),
-            ).fetchone()
-            assert row is not None
-            return self._scheduled_task_run_from_row(row)
 
     def link_scheduled_task_run_execution(
         self,
@@ -8203,31 +8080,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"runtime attempt lease lost: {row['id']}"
             )
 
-    def mark_agent_runtime_attempt_running(
-        self,
-        attempt_id: int,
-    ) -> AgentRuntimeAttempt:
-        with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            row = self._runtime_attempt_for_transition(db, attempt_id)
-            if row["status"] == "running":
-                return self._agent_runtime_attempt_from_row(row)
-            if row["status"] == "completed":
-                raise ValueError("cannot transition from completed runtime attempt")
-            if row["status"] in {"failed", "superseded"}:
-                raise ValueError("cannot transition terminal runtime attempt to running")
-            cursor = db.execute(
-                """
-                update runtime_attempts as agent_runtime_attempts
-                set status='running', updated_at=?
-                where agent_runtime_attempts.id=? and status='starting'
-                """,
-                (now_text, attempt_id),
-            )
-            if cursor.rowcount != 1:
-                raise ValueError("runtime attempt transition conflict")
-            return self._agent_runtime_attempt_from_row(
-                self._runtime_attempt_for_transition(db, attempt_id)
-            )
 
     def mark_agent_runtime_attempt_running_once(
         self,
@@ -8648,40 +8500,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 + cursor.rowcount
             )
 
-    def recover_unstarted_runtime_operation_attempts(
-        self,
-        *,
-        stale_after_seconds: int,
-        now: str | datetime | None = None,
-    ) -> int:
-        """Release a generalized runtime claim that never produced execution evidence.
-
-        A fresh runtime lease is intentionally longer than the short period in
-        which a local process must report its session.  When that report never
-        arrives, retaining the full lease turns a failed launch into a false
-        concurrent-execution conflict for the next queue pass.
-        """
-        if stale_after_seconds <= 0:
-            raise ValueError("stale_after_seconds must be positive")
-        with self._agent_run_write_transaction(now) as (db, (now_value, now_text)):
-            stale_before = (
-                now_value - timedelta(seconds=stale_after_seconds)
-            ).strftime("%Y-%m-%d %H:%M:%S")
-            cursor = db.execute(
-                """
-                update runtime_attempts as agent_runtime_attempts
-                set status='failed', failure_class='process',
-                    failure_code='runtime_start_stalled', failover_permitted=1,
-                    lease_owner='', lease_expires_at='', finished_at=?, updated_at=?
-                where workload_kind<>'agent_run'
-                  and status in ('starting', 'running')
-                  and session_id=''
-                  and transcript_reference=''
-                  and updated_at<=?
-                """,
-                (now_text, now_text, stale_before),
-            )
-            return cursor.rowcount
 
     def set_agent_runtime_attempt_session(
         self,
@@ -8984,33 +8802,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return None if row is None else self._agent_runtime_attempt_from_row(row)
 
-    def note_runtime_attempt_effect_started(
-        self,
-        attempt_id: int,
-        at: str | datetime | None = None,
-        *,
-        owner: str = "legacy-runtime-owner",
-    ) -> AgentRuntimeAttempt:
-        _, effect_started_at = _utc_store_time(at)
-        with self._agent_run_write_transaction(at) as (db, (_, now_text)):
-            row = self._runtime_attempt_for_transition(db, attempt_id)
-            if row["status"] == "completed":
-                raise ValueError("cannot mutate completed runtime attempt")
-            if row["status"] in {"failed", "superseded"}:
-                raise ValueError("cannot mutate terminal runtime attempt")
-            self._require_runtime_attempt_owner(row, owner=owner, now_text=now_text)
-            if row["first_effect_started_at"]:
-                return self._agent_runtime_attempt_from_row(row)
-            from app.run_entity_storage import update_runtime_attempt_cas
-            if update_runtime_attempt_cas(
-                db, attempt_id=attempt_id,
-                expected={"status": row["status"], "first_effect_started_at": ""},
-                changes={"first_effect_started_at": effect_started_at, "updated_at": now_text},
-            ) is None:
-                raise ValueError("runtime attempt transition conflict")
-            return self._agent_runtime_attempt_from_row(
-                self._runtime_attempt_for_transition(db, attempt_id)
-            )
 
     @staticmethod
     def _require_current_agent_run_write_access(
@@ -13417,16 +13208,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             for row in rows
         ]
 
-    @staticmethod
-    def latest_runtime_route_for_agent_run(self, agent_run_id: int) -> tuple[str, str]:
-        """The route and model of an Agent run's last runtime attempt."""
-        with self._connect() as db:
-            row = db.execute(
-                "select route_name, model from runtime_attempts "
-                "where parent_id=? and workload_kind='agent_run' order by id desc limit 1",
-                (agent_run_id,),
-            ).fetchone()
-        return (row["route_name"], row["model"]) if row is not None else ("", "")
 
     def claim_meeting_alignment_jobs(
         self,
@@ -13598,20 +13379,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         compacted = sum(self.compact_meeting_consumer_input(job_id) for job_id in ids)
         return {"examined": len(ids), "compacted": compacted}
 
-    def schedule_meeting_alignment_job_retry(
-        self,
-        job_id: int,
-        error: str,
-        *,
-        available_at: str,
-    ) -> None:
-        self.update_meeting_alignment_job(
-            job_id,
-            status="retry",
-            locked_at=None,
-            available_at=available_at,
-            error=error,
-        )
 
     def claim_ready_to_send_meeting_alignment_jobs(
         self,
@@ -25953,103 +25720,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 time.sleep(STORE_WRITE_LOCK_RETRY_DELAY_SECONDS * (attempt + 1))
         raise RuntimeError("service state write retry loop exhausted")
 
-    def claim_weekly_okr_report_run(
-        self,
-        *,
-        owner: str,
-        now: datetime,
-        lease_seconds: int,
-    ) -> bool:
-        """Atomically claim the singleton weekly report run lease."""
-        normalized_owner = owner.strip()
-        if not normalized_owner:
-            raise ValueError("weekly OKR report lease owner must be non-empty")
-        if lease_seconds <= 0:
-            raise ValueError("weekly OKR report lease seconds must be positive")
-        current = self._as_utc(now)
-        expires_at = current + timedelta(seconds=lease_seconds)
-        with self._immediate_write_transaction() as db:
-            row = db.execute(
-                f"select value from ({state_projection('service_state')}) where key=?",
-                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
-            ).fetchone()
-            active_owner, active_until = self._weekly_okr_report_run_lease(
-                row["value"] if row else None
-            )
-            if active_owner and active_until is not None and active_until > current:
-                return False
-            upsert_state(
-                db, 'service_state',
-                {'key': WEEKLY_OKR_REPORT_RUN_STATE_KEY,
-                 'value': json.dumps(
-                     {'owner': normalized_owner, 'lease_expires_at': expires_at.isoformat()},
-                     ensure_ascii=False, sort_keys=True,
-                 )},
-                {'value': state_json_field('value'),
-                 'updated_at': 'json_quote(current_timestamp)'},
-            )
-            return True
 
-    def renew_weekly_okr_report_run(
-        self,
-        *,
-        owner: str,
-        now: datetime,
-        lease_seconds: int,
-    ) -> bool:
-        """Renew the weekly report lease only while its current owner holds it."""
-        normalized_owner = owner.strip()
-        if not normalized_owner:
-            raise ValueError("weekly OKR report lease owner must be non-empty")
-        if lease_seconds <= 0:
-            raise ValueError("weekly OKR report lease seconds must be positive")
-        current = self._as_utc(now)
-        expires_at = current + timedelta(seconds=lease_seconds)
-        with self._immediate_write_transaction() as db:
-            row = db.execute(
-                f"select value from ({state_projection('service_state')}) where key=?",
-                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
-            ).fetchone()
-            active_owner, active_until = self._weekly_okr_report_run_lease(
-                row["value"] if row else None
-            )
-            if (
-                active_owner != normalized_owner
-                or active_until is None
-                or active_until <= current
-            ):
-                return False
-            update_state_rows(
-                db, 'service_state',
-                {'value': json.dumps(
-                    {'owner': normalized_owner, 'lease_expires_at': expires_at.isoformat()},
-                    ensure_ascii=False, sort_keys=True,
-                )},
-                update_json={'updated_at': 'json_quote(current_timestamp)'},
-                where_sql='key=?', parameters=(WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
-            )
-            return True
 
-    def release_weekly_okr_report_run(self, *, owner: str) -> bool:
-        """Release the singleton weekly report lease when owned by ``owner``."""
-        normalized_owner = owner.strip()
-        if not normalized_owner:
-            raise ValueError("weekly OKR report lease owner must be non-empty")
-        with self._immediate_write_transaction() as db:
-            row = db.execute(
-                f"select value from ({state_projection('service_state')}) where key=?",
-                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
-            ).fetchone()
-            active_owner, _ = self._weekly_okr_report_run_lease(
-                row["value"] if row else None
-            )
-            if active_owner != normalized_owner:
-                return False
-            db.execute(
-                "delete from state where record_type='service_state' and key=?",
-                (WEEKLY_OKR_REPORT_RUN_STATE_KEY,),
-            )
-            return True
 
     @staticmethod
     def _as_utc(value: datetime) -> datetime:
@@ -26057,23 +25729,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             value = value.replace(tzinfo=timezone.utc)
         return value.astimezone(timezone.utc)
 
-    @staticmethod
-    def _weekly_okr_report_run_lease(
-        raw: str | None,
-    ) -> tuple[str, datetime | None]:
-        if not raw:
-            return "", None
-        try:
-            value = json.loads(raw)
-            owner = str(value.get("owner") or "").strip()
-            expires_at = datetime.fromisoformat(
-                str(value.get("lease_expires_at") or "")
-            )
-        except (AttributeError, TypeError, ValueError, json.JSONDecodeError):
-            return "", None
-        if expires_at.tzinfo is None:
-            expires_at = expires_at.replace(tzinfo=timezone.utc)
-        return owner, expires_at.astimezone(timezone.utc)
 
     def active_codex_capacity_pause(self, *, now: datetime) -> str:
         """Return the shared retry timestamp while a Codex capacity pause is active."""

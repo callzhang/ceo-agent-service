@@ -70,6 +70,19 @@ def source_path(old_source, tmp_path):
     return original, path
 
 
+CANDIDATE_ACTION_ATTEMPT_SQL = """select r.id,a.id as action_owner_id,r.execution_id,r.action_index,
+       a.action_external_action_key as external_action_key,r.status,
+       coalesce(r.outcome_json,p.provider_result_json,'{}') as result_json,
+       r.agent_run_id,r.provider_receipt_id,r.target,
+       r.created_at,r.updated_at
+from action_receipts r join actions a on a.id=r.action_id
+left join action_receipts p on p.id=r.provider_receipt_id and p.action_id=r.action_id
+where a.record_type='action' and a.action_external_action_key is not null
+  and r.execution_id is not null and r.action_index is not null
+  and r.id=(select max(latest.id) from action_receipts latest
+            where latest.action_id=r.action_id and latest.execution_id=r.execution_id
+              and latest.action_index=r.action_index)"""
+
 def _facts(path, *, shared):
     from app.action_email_definitions import email_action_projection
     projection = email_projection if shared else email_action_projection
@@ -84,7 +97,7 @@ def _facts(path, *, shared):
             attempts=scalar(projection('email_action_attempts') + ' order by id'),
             plans=scalar(projection('email_action_plans', include_rowid=True) + ' order by rowid'),
             reviewed=scalar(actions.REVIEW_CANDIDATE_SQL + ' order by id'),
-            reviewed_attempts=scalar(actions.CANDIDATE_ACTION_ATTEMPT_SQL + ' order by id'),
+            reviewed_attempts=scalar(CANDIDATE_ACTION_ATTEMPT_SQL + ' order by id'),
             executions=scalar(actions.CANDIDATE_EXECUTION_SQL + ' order by id'),
             ids=scalar('select id,legacy_key,record_type from actions order by id'),
             waters=scalar('select rowid,name,seq from sqlite_sequence order by rowid'),

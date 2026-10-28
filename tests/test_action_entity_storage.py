@@ -212,3 +212,12 @@ def test_null_text_null_and_empty_json_remain_distinct():
         (null_receipt, text_receipt, empty_receipt),
     )]
     assert values == [("null", None), ("text", "null"), ("text", "{}")]
+
+
+def test_current_receipt_accepts_run_owner_and_rejects_predecessor_owner():
+    db = entity_db()
+    action = create_action(db, values={"operation": "send"})
+    receipt_id = append_action_receipt(db, action["id"], values={"execution_run_id": None})
+    assert db.execute("select execution_run_id from action_receipts where id=?", (receipt_id,)).fetchone()[0] is None
+    with pytest.raises(ValueError, match="execution_id"):
+        append_action_receipt(db, action["id"], values={"execution_id": None})

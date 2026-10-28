@@ -8,8 +8,14 @@ from app.action_entity_definitions import (
     ACTION_ALLOWED_FIELDS,
     ACTION_FIELDS,
     ACTION_KIND_CODE,
-    RECEIPT_ALLOWED_FIELDS,
 )
+
+_CURRENT_RECEIPT_FIELDS = frozenset({
+    "attempt_number", "status", "operation", "target", "provider_result_id",
+    "provider_result_json", "result_digest", "agent_run_id", "observed_at", "error_text",
+    "dispatched_at", "started_at", "finished_at", "execution_run_id", "action_index",
+    "outcome_json", "created_at", "updated_at", "provider_receipt_id",
+})
 
 _PUBLIC_FIELDS = ("id", *ACTION_FIELDS)
 
@@ -95,7 +101,7 @@ def add_action_observer(db: sqlite3.Connection, action_id: int, *, agent_run_id:
 
 def append_action_receipt(db: sqlite3.Connection, action_id: int, *,
                           values: Mapping[str, object]) -> int:
-    receipt = _mapping(values, RECEIPT_ALLOWED_FIELDS | {"execution_run_id"}, "Action receipt")
+    receipt = _mapping(values, _CURRENT_RECEIPT_FIELDS, "Action receipt")
     names = ("action_id", *receipt)
     bound = (action_id, *receipt.values())
     placeholders = ",".join("?" for _ in names)
@@ -112,8 +118,7 @@ def append_action_receipt(db: sqlite3.Connection, action_id: int, *,
 
 def update_sent_receipt(db: sqlite3.Connection, action_id: int, *,
                         receipt_id: int, expected: Mapping[str, object],
-                        changes: Mapping[str, object],
-                        execution_owner_column: str = "execution_id") -> int | None:
+                        changes: Mapping[str, object]) -> int | None:
     """CAS mutable reference and initially-unknown canonical facts on Sent receipt."""
     mutable = {"provider_receipt_id", "operation", "target", "result_digest",
                "agent_run_id", "created_at", "updated_at"}
@@ -121,21 +126,18 @@ def update_sent_receipt(db: sqlite3.Connection, action_id: int, *,
     new = _mapping(changes, mutable, "Sent receipt changes")
     if not old or not new:
         raise ValueError("Sent receipt update requires expected values and changes")
-    if execution_owner_column not in ("execution_id", "execution_run_id"):
-        raise ValueError("invalid Sent receipt execution owner column")
     assignments = ",".join(f"{field}=?" for field in new)
     predicates = " and ".join(f"{field} is ?" for field in old)
     row = db.execute(
         f"update action_receipts set {assignments} where id=? and action_id=? "
-        f"and {execution_owner_column} is null and action_index is null and {predicates} returning id",
+        f"and execution_run_id is null and action_index is null and {predicates} returning id",
         (*new.values(), receipt_id, action_id, *old.values()),
     ).fetchone()
     return None if row is None else int(row[0])
 
 
 def update_action_observation(db: sqlite3.Connection, action_id: int, *,
-                              execution_id: int | None = None,
-                              execution_run_id: int | None = None,
+                              execution_run_id: int,
                               action_index: int,
                               expected: Mapping[str, object],
                               changes: Mapping[str, object]) -> int | None:
@@ -148,13 +150,9 @@ def update_action_observation(db: sqlite3.Connection, action_id: int, *,
         raise ValueError("Action observation update requires expected values and changes")
     assignments = ",".join(f"{field}=?" for field in new)
     predicates = " and ".join(f"{field} is ?" for field in old)
-    if (execution_id is None) == (execution_run_id is None):
-        raise ValueError("Action observation requires exactly one execution owner")
-    owner_column, owner_id = (("execution_id", execution_id) if execution_id is not None
-                              else ("execution_run_id", execution_run_id))
     row = db.execute(
-        f"update action_receipts set {assignments} where action_id=? and {owner_column}=? "
+        f"update action_receipts set {assignments} where action_id=? and execution_run_id=? "
         f"and action_index=? and {predicates} returning id",
-        (*new.values(), action_id, owner_id, action_index, *old.values()),
+        (*new.values(), action_id, execution_run_id, action_index, *old.values()),
     ).fetchone()
     return None if row is None else int(row[0])

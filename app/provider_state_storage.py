@@ -4,8 +4,8 @@ from collections.abc import Mapping, Sequence
 import sqlite3
 
 from app.provider_state_definitions import (
-    GENERATION_FIELDS, GENERATION_PROJECTION, OBSERVATION_FIELDS,
-    OBSERVATION_PROJECTION, PROVIDER_STATE_DDL,
+    GENERATION_FIELDS, OBSERVATION_FIELDS,
+    PROVIDER_STATE_DDL,
     PROVIDER_STATE_INDEXES,
 )
 
@@ -38,70 +38,18 @@ def _generation_bind(values):
     return tuple(values.get(field) for field in GENERATION_FIELDS)
 
 
-def _row_dict(cursor):
-    row = cursor.fetchone()
-    return dict(zip((col[0] for col in cursor.description), row)) if row is not None else None
 
 
-def get_observation(db: sqlite3.Connection, account_id, stable_message_identity) -> dict | None:
-    return _row_dict(db.execute(
-        f"SELECT {OBSERVATION_PROJECTION} FROM provider_state "
-        "WHERE record_type='observation' AND account_id=? AND stable_message_identity=?",
-        (account_id, stable_message_identity),
-    ))
 
 
-def get_folder_generation(db: sqlite3.Connection, account_id, provider_folder_id) -> dict | None:
-    return _row_dict(db.execute(
-        f"SELECT {GENERATION_PROJECTION} FROM provider_state "
-        "WHERE record_type='folder_generation' AND account_id=? AND provider_folder_id=?",
-        (account_id, provider_folder_id),
-    ))
 
 
-def insert_observation(
-    db: sqlite3.Connection, values: Mapping[str, object], *, ignore: bool = False,
-) -> int:
-    _write_transaction(db)
-    action = "INSERT OR IGNORE" if ignore else "INSERT"
-    return db.execute(
-        f"{action} INTO provider_state "
-        "(record_type,account_id,stable_message_identity,state,provider_folder_id,"
-        "provider_folder_name,category_key,important,observed_at,important_signals_json) "
-        "VALUES('observation',?,?,?,?,?,?,?,?,?)",
-        _observation_bind(values),
-    ).rowcount
 
 
-def insert_folder_generation(
-    db: sqlite3.Connection, values: Mapping[str, object], *, ignore: bool = False,
-) -> int:
-    _write_transaction(db)
-    action = "INSERT OR IGNORE" if ignore else "INSERT"
-    return db.execute(
-        f"{action} INTO provider_state "
-        "(record_type,account_id,provider_folder_id,observed_at) "
-        "VALUES('folder_generation',?,?,?)",
-        _generation_bind(values),
-    ).rowcount
 
 
-def delete_observation(db: sqlite3.Connection, account_id, stable_message_identity) -> int:
-    _write_transaction(db)
-    return db.execute(
-        "DELETE FROM provider_state WHERE record_type='observation' "
-        "AND account_id=? AND stable_message_identity=?",
-        (account_id, stable_message_identity),
-    ).rowcount
 
 
-def delete_folder_generation(db: sqlite3.Connection, account_id, provider_folder_id) -> int:
-    _write_transaction(db)
-    return db.execute(
-        "DELETE FROM provider_state WHERE record_type='folder_generation' "
-        "AND account_id=? AND provider_folder_id=?",
-        (account_id, provider_folder_id),
-    ).rowcount
 
 _OBSERVATION_UPSERT = """
 INSERT INTO provider_state

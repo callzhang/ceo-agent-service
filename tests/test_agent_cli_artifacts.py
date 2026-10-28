@@ -1,4 +1,5 @@
 """Task-bound ordinary files for Consumer, with read-only Audit access."""
+from tests.task_input_fixtures import bind_claimed_input
 
 import hashlib
 import sqlite3
@@ -10,7 +11,6 @@ from app import task_artifacts
 from app.current_database_schema import create_current_database_schema
 from app.task_entity_storage import (
     append_task_input,
-    bind_claimed_input,
     bind_current_input,
     update_task_cas,
 )

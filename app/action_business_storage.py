@@ -207,11 +207,3 @@ def update_business_action(db: sqlite3.Connection, kind: str, source_rowid: int,
                         "where record_type=? and legacy_key=?",
                         (str(new_id), actions._action_payload(db, kind, current), kind, str(source_rowid)))
     return cursor.rowcount
-
-
-def delete_business_action(db: sqlite3.Connection, kind: str, source_rowid: int) -> int:
-    """Delete the exact source row subject to existing FK and immutable triggers."""
-    _validate_fields(kind, {})
-    actions._email_lock(db)
-    return db.execute("delete from main.actions where record_type=? and legacy_key=?",
-                      (kind, str(source_rowid))).rowcount

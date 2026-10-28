@@ -1,3 +1,4 @@
+from tests.runtime_attempt_fixtures import seed_effect_started
 import contextlib
 import hashlib
 import json
@@ -116,7 +117,7 @@ def test_runtime_attempt_claim_and_agent_history_use_native_parent_owner(monkeyp
         started.id, "native-session", "transcript://native", transcript_start=4,
         now="2026-10-23 12:00:01",
     )
-    effected = store.note_runtime_attempt_effect_started(
+    effected = seed_effect_started(store,
         sessioned.id, "2026-10-23 12:00:02",
     )
     assert (effected.status, effected.session_id, effected.transcript_start,

@@ -124,7 +124,7 @@ def _native_wechat_run(tmp_path, monkeypatch, *, probe_writer=False, with_attemp
     store.set_agent_run_session(run.id, "fixture-wechat", owner="contract")
     if with_attempt:
         attempt = store.claim_agent_runtime_attempt(run.id, "fixture", "codex_cli", "local_oauth", "fixture")
-        store.mark_agent_runtime_attempt_running(attempt.id)
+        store.mark_agent_runtime_attempt_running_once(attempt.id)
         store.complete_agent_runtime_attempt(
             attempt.id, "fixture-wechat", "codex_session:fixture-wechat", 0, len(records), owner="contract",
         )

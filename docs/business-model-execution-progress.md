@@ -1,5 +1,19 @@
 # Business model simplification: current completion and closeout
 
+## 模型退休执行进度 — 2026-10-28
+
+| 批次 | 当前状态 | 验收边界 |
+| --- | --- | --- |
+| 无 DDL 入口/当前 helper 清理 | 实施、分组测试、独立SPEC/QUALITY通过；发布未完成 | 当前 constructor 与生产476对象逐项相等；不代表代码已上线 |
+| 重复索引/空 Configs 家族/NULL 元数据列 | 已计划，未实施 | 需要显式正反迁移和当前数据副本演练 |
+| Conversation session 唯一 owner | 已计划，未实施 | Derek 已确认 inverse 从权威记录重建完整旧副本，不保存旧空 hash |
+| Feedback Item 镜像退休 | 已计划，未实施 | 准确 current_round_id 与来源事件各自持有事实，保留无 Round 已解决记录 |
+| 关闭历史转换包/专用夹具 | 已计划，未实施 | 保留唯一身份 provenance 与必要现行显式发布/inverse |
+
+本轮范围和字段/索引清单见[审计](database-simplification-audit-20261027.md)，
+第一批候选与读回证据见[验收记录](model-retirement-batch1-validation.md)。下方
+2026-10-27 closeout 是已完成的历史发布，不把本轮候选冒充已部署。
+
 ## Current status — 2026-10-27, 15:19 America/Los_Angeles
 
 | Scope | Verified status | Remaining boundary |

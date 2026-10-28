@@ -125,9 +125,6 @@ def set_run_projection(db: sqlite3.Connection, *, run_id: int,
     return _row(row)  # type: ignore[return-value]
 
 
-def get_run_projection(db: sqlite3.Connection, run_id: int) -> object | None:
-    row = db.execute("select projection_json from run_projections where run_id=?", (run_id,)).fetchone()
-    return None if row is None else row[0]
 
 
 def append_run_failure(db: sqlite3.Connection, *, run_id: int, phase: str,
@@ -137,9 +134,3 @@ def append_run_failure(db: sqlite3.Connection, *, run_id: int, phase: str,
         "run_id": run_id, "phase": phase, "structured_error_json": structured_error_json,
         "created_at": created_at,
     })
-
-
-def get_run_failures(db: sqlite3.Connection, run_id: int) -> list[dict[str, object]]:
-    return [dict(row) for row in db.execute(
-        "select * from run_failures where run_id=? order by id", (run_id,)
-    ).fetchall()]

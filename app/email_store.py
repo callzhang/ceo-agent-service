@@ -31,7 +31,6 @@ from pathlib import Path
 from types import MappingProxyType
 from time import monotonic
 from typing import Any, ClassVar
-from urllib.parse import unquote, unquote_plus, urlsplit
 from uuid import uuid4
 
 from app.email_classifier_contracts import (
@@ -95,7 +94,7 @@ from app.configs_definitions import config_projection
 from app.configs_storage import insert_config, update_config, delete_config
 from app.email_html_text import html_to_text, visible_email_text
 from app.email_provider_folders import FolderRole
-from app.leak_check import assert_no_credentials, is_sensitive_url_component_name
+from app.leak_check import assert_no_credentials
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.action_storage import (
     ActionWriteResult, EMAIL_ACTION_PROJECTIONS, insert_action, insert_email_action, update_action,
@@ -664,43 +663,8 @@ def _historical_candidate_list_item(row: sqlite3.Row) -> dict[str, Any]:
     }
 
 
-def _legacy_unsubscribe_private_values(url: object) -> tuple[str, ...]:
-    """Return exact legacy URL/token values that must not survive migration."""
-
-    candidate = str(url)
-    values = {candidate, unquote(candidate)}
-    parsed = urlsplit(candidate)
-    encoded_components = parsed.query.split("&")
-    if parsed.fragment:
-        encoded_components.extend(parsed.fragment.split("&"))
-    for component in encoded_components:
-        name, separator, private_value = component.partition("=")
-        if not separator or not is_sensitive_url_component_name(name):
-            continue
-        for decoded in (private_value, unquote_plus(private_value)):
-            if decoded:
-                values.add(decoded)
-    return tuple(sorted((value for value in values if value), key=len, reverse=True))
 
 
-def _redact_legacy_unsubscribe_json(
-    value: object,
-    replacements: Sequence[tuple[str, str]],
-) -> object:
-    """Redact legacy private values in decoded JSON, including nested fields."""
-
-    if isinstance(value, str):
-        for private_value, reference in replacements:
-            value = value.replace(private_value, reference)
-        return value
-    if isinstance(value, list):
-        return [_redact_legacy_unsubscribe_json(item, replacements) for item in value]
-    if isinstance(value, dict):
-        return {
-            key: _redact_legacy_unsubscribe_json(item, replacements)
-            for key, item in value.items()
-        }
-    return value
 
 
 def _freeze_action_value(value: object) -> object:
@@ -9480,23 +9444,6 @@ class EmailStore:
                 (MAX_CLASSIFIER_RUNTIME_SAMPLES,),
             )
 
-    def record_classifier_runtime_fallback(
-        self, *, model_id: str, fallback_code: str
-    ) -> None:
-        """Persist a zero-time fallback when no model timing sample exists."""
-
-        self.record_classifier_runtime_sample(
-            model_id=model_id,
-            outcome="rejected",
-            fallback_code=fallback_code,
-            cache_hit=False,
-            runtime_warm=True,
-            queue_ms=0.0,
-            http_ms=0.0,
-            embedding_ms=0.0,
-            head_ms=0.0,
-            total_ms=0.0,
-        )
 
     def model_scan_progress(self) -> dict[str, object] | None:
         """Sum how far the model's sweep has got across every account and folder.
@@ -10503,67 +10450,6 @@ class EmailStore:
         result["important_label_watermark"] = int(snapshot["important_label_watermark"])
         return result
 
-    @staticmethod
-    def _get_legacy_training_snapshot(
-        db: sqlite3.Connection, snapshot_id: str
-    ) -> dict[str, object] | None:
-        snapshot = db.execute(
-            "select * from email_training_snapshots where snapshot_id=?",
-            (snapshot_id,),
-        ).fetchone()
-        if snapshot is None:
-            return None
-        if snapshot["frozen"] != 1:
-            raise EmailPersistenceCorruption("training snapshot is not frozen")
-        rows = db.execute(
-            """
-            select * from email_training_snapshot_observations
-            where snapshot_id=?
-            order by stable_message_identity
-            """,
-            (snapshot_id,),
-        ).fetchall()
-        observation_values = []
-        for row in rows:
-            value = dict(row)
-            value["important"] = bool(value["important"])
-            value["selected_for_training"] = bool(value["selected_for_training"])
-            observation_values.append(value)
-        try:
-            from app.email_training_snapshot import (
-                FolderTrainingSnapshot,
-                TrainingSnapshotObservation,
-                validate_folder_training_snapshot,
-            )
-
-            restored = FolderTrainingSnapshot(
-                snapshot_id=snapshot["snapshot_id"],
-                snapshot_version=snapshot["snapshot_version"],
-                description_version=snapshot["description_version"],
-                input_schema_version=snapshot["input_schema_version"],
-                seed=snapshot["seed"],
-                observed_at=snapshot["observed_at"],
-                observations=tuple(
-                    TrainingSnapshotObservation(**value) for value in observation_values
-                ),
-                snapshot_digest=snapshot["snapshot_digest"],
-                _manifest_json=snapshot["manifest_json"],
-            )
-            validate_folder_training_snapshot(
-                restored, restored=True, allow_legacy_manifest=True
-            )
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise EmailPersistenceCorruption(
-                "persisted training snapshot does not match its manifest"
-            ) from exc
-        result = restored.to_dict()
-        result["folder_label_watermark"] = int(
-            snapshot["folder_label_watermark"]
-        )
-        result["important_label_watermark"] = int(
-            snapshot["important_label_watermark"]
-        )
-        return result
 
 
 

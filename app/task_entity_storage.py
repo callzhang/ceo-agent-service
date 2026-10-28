@@ -187,17 +187,6 @@ def bind_current_input(
     return _task_row(db, row)
 
 
-def bind_claimed_input(
-    db: sqlite3.Connection, *, task_id: int, input_id: int,
-    claimed_input_version: int | None,
-) -> dict[str, object] | None:
-    """Bind the execution snapshot independently from the current input."""
-    row = db.execute(
-        "update tasks set claimed_input_id=?,claimed_input_version=? where id=? "
-        "and exists(select 1 from task_inputs where id=? and task_id=tasks.id) returning *",
-        (input_id, claimed_input_version, task_id, input_id),
-    ).fetchone()
-    return _task_row(db, row)
 
 
 def get_task_with_inputs(db: sqlite3.Connection, task_id: int) -> dict[str, object] | None:

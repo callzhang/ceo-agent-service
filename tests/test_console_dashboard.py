@@ -1,4 +1,5 @@
 """Dashboard uses current persisted execution facts, without changing them."""
+from tests.scheduled_claim_fixture import claim_scheduled_occurrence
 
 from datetime import UTC, datetime
 from fastapi import FastAPI
@@ -305,7 +306,7 @@ def test_independent_okr_and_wechat_runtime_metadata(tmp_path):
 
 def test_scheduled_command_shows_saved_name_and_first_claim_clock(tmp_path):
     from datetime import timedelta
-    from app.state_storage import insert_state
+    from app.state_storage import update_state
     from app.web_api.dashboard import read_dashboard_queues
 
     store = AutoReplyStore(tmp_path / "scheduled.db")
@@ -313,13 +314,18 @@ def test_scheduled_command_shows_saved_name_and_first_claim_clock(tmp_path):
         cron_expression="10 * * * * *", timezone_name="UTC", enabled=True, now=NOW)
     run = store.create_scheduled_task_run(task.id, trigger_kind="scheduled", scheduled_for=NOW - timedelta(minutes=10),
         now=NOW - timedelta(minutes=10))
-    store.claim_scheduled_task_run(run.id, owner="worker", lease_seconds=600,
+    claim_scheduled_occurrence(store, run.id, owner="worker", lease_seconds=600,
         now=NOW - timedelta(minutes=2))
     with store._connect() as db:
         db.execute("begin immediate")
-        insert_state(db, "dispatcher_claim_leases", dict(adapter_name="scheduled", source_id=str(run.id),
-            owner="worker", owner_pid=123, generation=3, lease_expires_at="2026-10-20T17:08:00+00:00",
-            created_at="2026-10-20 16:58:00", updated_at="2026-10-20 16:59:55", terminal_at="", last_error=""))
+        source_rowid = db.execute(
+            "select cast(legacy_key as integer) from state where record_type='dispatcher_claim_leases' "
+            "and adapter_name='scheduled' and source_id=?", (str(run.id),),
+        ).fetchone()[0]
+        update_state(db, "dispatcher_claim_leases", source_rowid, {
+            "owner_pid": 123, "generation": 3, "created_at": "2026-10-20 16:58:00",
+            "updated_at": "2026-10-20 16:59:55",
+        })
         before = db.total_changes
         [row] = read_dashboard_queues(db, now=NOW)["active"]
         assert db.total_changes == before

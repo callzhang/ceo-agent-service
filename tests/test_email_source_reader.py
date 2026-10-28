@@ -8,7 +8,7 @@ import pytest
 
 from app.email_store import EmailStore
 from app.email_canonical_storage import upsert_email_message
-from app.provider_state_storage import insert_observation
+from tests.provider_state_fixtures import insert_observation
 from tests.test_email_canonical_storage import _message
 from tests.test_email_exact_source import source, LOCATOR
 

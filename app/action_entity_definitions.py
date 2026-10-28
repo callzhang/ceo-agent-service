@@ -1,6 +1,6 @@
 """Fixed runtime declaration for the common external Action entity."""
 
-from app.storage_payload import ACTION_RECORD_TYPES, PayloadLayout
+from app.storage_payload import ACTION_RECORD_TYPES
 
 ACTION_KIND = "action"
 ACTION_KIND_CODE = ACTION_RECORD_TYPES.code(ACTION_KIND)
@@ -12,7 +12,6 @@ ACTION_FIELDS = (
     "prepared_receipt_id", "recall_status", "recall_error", "recalled_at", "agent_run_id", "business_object_key",
     "action_identity",
 )
-ACTION_LAYOUT = PayloadLayout(ACTION_FIELDS)
 ACTION_INTEGER_FIELDS = frozenset({"classification_id", "agent_run_id", "delivery_receipt_id", "prepared_receipt_id"})
 ACTION_ALLOWED_FIELDS = frozenset(ACTION_FIELDS)
 

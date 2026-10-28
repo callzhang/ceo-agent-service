@@ -1,0 +1,261 @@
+{
+  "phase": "candidate",
+  "created_at": "2026-10-28T07:46:44.156304+00:00",
+  "source_baseline": "9742c0fd5",
+  "implementation": "batch1_no_ddl",
+  "production_baseline": {
+    "checked_at": "2026-10-28T07:31:50.309414+00:00",
+    "schema_hash": "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f",
+    "foreign_keys": [],
+    "installed_commit": "bb9f51b13cb9ccb9bfe6b9369dec3543422f6850"
+  },
+  "schema": {
+    "objects": 476,
+    "candidate_array_equals_production_baseline": true,
+    "ddl_changed": false
+  },
+  "removed_functions_and_methods": [
+    [
+      "app/action_business_storage.py",
+      "delete_business_action"
+    ],
+    [
+      "app/action_storage.py",
+      "preserve_candidate_result_references"
+    ],
+    [
+      "app/business_storage.py",
+      "create_business_schema"
+    ],
+    [
+      "app/email_canonical_storage.py",
+      "ignore_email_message"
+    ],
+    [
+      "app/email_current_schema.py",
+      "create_current_email_runtime_schema"
+    ],
+    [
+      "app/email_store.py",
+      "EmailStore._get_legacy_training_snapshot"
+    ],
+    [
+      "app/email_store.py",
+      "EmailStore.record_classifier_runtime_fallback"
+    ],
+    [
+      "app/email_store.py",
+      "_legacy_unsubscribe_private_values"
+    ],
+    [
+      "app/email_store.py",
+      "_redact_legacy_unsubscribe_json"
+    ],
+    [
+      "app/logical_run_storage.py",
+      "finish_logical_run"
+    ],
+    [
+      "app/logical_run_storage.py",
+      "recover_logical_runs"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "_row_dict"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "delete_folder_generation"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "delete_observation"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "get_folder_generation"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "get_observation"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "insert_folder_generation"
+    ],
+    [
+      "app/provider_state_storage.py",
+      "insert_observation"
+    ],
+    [
+      "app/run_entity_storage.py",
+      "get_run_failures"
+    ],
+    [
+      "app/run_entity_storage.py",
+      "get_run_projection"
+    ],
+    [
+      "app/runs11_storage.py",
+      "_physical_next"
+    ],
+    [
+      "app/runs11_storage.py",
+      "_public_next"
+    ],
+    [
+      "app/runs11_storage.py",
+      "_quote"
+    ],
+    [
+      "app/runs11_storage.py",
+      "insert_run11_fact"
+    ],
+    [
+      "app/scheduled_config_storage.py",
+      "migrate_scheduled_configs"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore._weekly_okr_report_run_lease"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.backfill_scheduled_task_runtime_capabilities"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.claim_scheduled_task_run"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.claim_weekly_okr_report_run"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.latest_runtime_route_for_agent_run"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.mark_agent_runtime_attempt_running"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.note_runtime_attempt_effect_started"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.recover_unstarted_runtime_operation_attempts"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.release_weekly_okr_report_run"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.renew_weekly_okr_report_run"
+    ],
+    [
+      "app/store.py",
+      "AutoReplyStore.schedule_meeting_alignment_job_retry"
+    ],
+    [
+      "app/task_entity_storage.py",
+      "bind_claimed_input"
+    ],
+    [
+      "app/workbench/store.py",
+      "WorkbenchStore.execution_run_id_for_executor"
+    ]
+  ],
+  "tests": {
+    "invocations_overlap": true,
+    "implementation": [
+      {
+        "command": "python3 -m pytest -q tests/test_current_declarations_independent.py tests/test_repository_updater_publication.py tests/test_shared_action_lifecycle.py tests/test_provider_state_storage.py tests/test_run_entity_storage.py tests/test_logical_run_owner.py tests/test_configs_source_contract.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests15",
+        "result": "67 passed in 30.52s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_scheduled_task_store.py tests/test_scheduled_occurrence_native.py tests/test_agent_cron_scheduler.py tests/test_attention_query_plan.py tests/test_console_dashboard.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests8f",
+        "result": "125 passed in 46.70s. The added source/ledger and live-owner assertions were separately checked by the following invocation.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_scheduled_task_store.py::test_claim_link_and_finish_are_owner_guarded_atomic_transitions tests/test_scheduled_task_store.py::test_expired_owner_cannot_link_or_finish_and_reclaimer_owns_writes tests/test_scheduled_occurrence_native.py::test_scheduled_occurrence_claims_serialize_on_native_owner --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests14",
+        "result": "3 passed in 2.64s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_store_task_entity_creator.py tests/test_run_adoption_inverse.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests10c",
+        "result": "110 passed in 90.08s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_run_adoption_schema.py tests/test_run_adoption_inverse_rows.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests12",
+        "result": "28 passed in 69.51s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_business_storage.py tests/test_business_schema_release.py tests/test_replay_task_attention_project.py tests/test_meeting_alignment_store.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests6",
+        "result": "476 passed in 28.07s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_email_learning.py tests/test_email_classification_source_failures.py tests/test_email_source_reader.py tests/test_task_entity_schema.py tests/test_run_entity_schema.py tests/test_shared_action_release.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests5",
+        "result": "146 passed in 95.75s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_shared_action_lifecycle.py tests/test_native_reviewed_candidate_store.py tests/test_dingtalk_delivery_repair.py tests/test_task_entity_storage.py tests/test_agent_cli_artifacts.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests4",
+        "result": "92 passed in 38.42s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_action_entity_schema_release.py tests/test_task_run_entity_assembly.py tests/test_action_entity_storage.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests11",
+        "result": "43 passed in 68.40s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_action_entity_storage.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests7",
+        "result": "12 passed in 3.15s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_agent_runtime_router.py tests/test_native_reviewed_candidate_store.py tests/test_wechat_import_native.py tests/test_database_copy_lifecycle_acceptance.py tests/test_reviewed_candidate_store.py tests/test_store.py -k 'runtime_attempt' --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests9",
+        "result": "51 passed, 492 deselected in 8.01s.",
+        "status": "passed"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_logical_run_owner.py tests/test_configs_source_contract.py tests/test_email_canonical_storage.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests2",
+        "result": "26 passed in 5.40s; this invocation preceded later retirement edits and is historical evidence only.",
+        "status": "historical"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_current_declarations_independent.py tests/test_repository_updater_publication.py tests/test_shared_action_lifecycle.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests",
+        "result": "25 passed in 21.41s; superseded for those files by impl-tests15.",
+        "status": "historical"
+      },
+      {
+        "command": "python3 -m pytest -q tests/test_provider_state_storage.py tests/test_run_entity_storage.py tests/test_logical_run_owner.py tests/test_configs_source_contract.py --basetemp=/private/tmp/ceo-model-retirement.qWbIiJ/impl-tests3",
+        "result": "42 passed in 7.16s; superseded by impl-tests15.",
+        "status": "historical"
+      }
+    ],
+    "root_baseline": "16 passed in 11.11s",
+    "root_final_native": "19 passed in 4.31s",
+    "default_ruff": "57 changed/new Python files passed",
+    "diff_check": "passed"
+  },
+  "review": {
+    "spec": "passed",
+    "quality": "passed"
+  },
+  "deployment": {
+    "status": "not_started"
+  },
+  "cleanup": {
+    "status": "pending",
+    "owned_temp_root": "/private/tmp/ceo-model-retirement.qWbIiJ"
+  }
+}

@@ -1,5 +1,20 @@
 # Current Runtime Mechanism
 
+## 模型退休：无 DDL 入口清理（2026-10-28）
+
+Reviewed/provider receipt 当前 helper 直接使用 `execution_run_id` 与正面字段合同，
+没有旧列名参数、默认值或双结构写入。历史转换所需的前一结构 receipt writer
+只在显式来源工具中，普通任务不调用它。
+发布静默检查先做严格版本声明验证，再读取当前 Task/Run/RuntimeAttempt/调度
+owner；已删除不可达旧表分支，静默等待与失败回滚含义不变。
+
+调度测试通过实际 `ScheduledTaskQueueAdapter` 领取；source lease 和 dispatcher
+claim ledger 的 CAS/代次/进程存活规则保留。测试显式控制进程存活事实，不用租约
+是否到期推断进程已死。RuntimeAttempt 当前 running-once/恢复路径保留，测试
+造数不再要求应用暴露旧 setter、周报单例租约或旧通用写入器。
+本批不修改 schema、业务状态、重试、Audit 或发送规则。后续 schema 迁移另行
+验证、回退演练和发布；本批部署状态见[验收记录](model-retirement-batch1-validation.md)。
+
 ## History 慢请求与 SQL 工件验收收口（2026-10-27）
 
 History 可见页面仍按10秒间隔检查刷新；已有列表请求未完成时不发起下一次自动

@@ -40,65 +40,44 @@ def current_email_actions_available(db):
 
 
 def publication_run_sources(db, *, release_source_email_version=None):
-    version = _version(db, release_source_email_version=release_source_email_version)
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        from app.store import NATIVE_AGENT_RUN_SQL
-        return NATIVE_AGENT_RUN_SQL, (
-            "select runtime_attempts.*,runtime_attempts.parent_id as agent_run_id "
-            "from runtime_attempts"
-        )
-    from app.logical_run_storage import AGENT_RUN_SQL
-    from app.run_storage import RUNTIME_ATTEMPT_SQL
-    return AGENT_RUN_SQL, RUNTIME_ATTEMPT_SQL
+    _version(db, release_source_email_version=release_source_email_version)
+    from app.store import NATIVE_AGENT_RUN_SQL
+    return NATIVE_AGENT_RUN_SQL, (
+        "select runtime_attempts.*,runtime_attempts.parent_id as agent_run_id "
+        "from runtime_attempts"
+    )
 
 
 def publication_task_sources(db, *, release_source_email_version=None):
-    version = _version(db, release_source_email_version=release_source_email_version)
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        from app.store import NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
-        return NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
-    from app.task20_definitions import task20_projection
-    return task20_projection('reply_tasks'), task20_projection('work_summary_inputs')
+    _version(db, release_source_email_version=release_source_email_version)
+    from app.store import NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
+    return NATIVE_REPLY_TASK_CURRENT_SQL, WORK_SUMMARY_INPUT_SQL
 
 
 def publication_deployment_task_sources(db, *, release_source_email_version=None):
     """Select quiet-window task sources for the declared Store release."""
-    version = _version(db, release_source_email_version=release_source_email_version)
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        return (
-            "select id,status,lease_owner,lease_expires_at from tasks where kind='workbench_turn'",
-            "select id,status,lease_owner,lease_expires_at from tasks where kind='okr_analysis'",
-            "select id,status,lease_owner,lease_expires_at from tasks where kind='email_classification'",
-        )
-    from app.task20_definitions import task20_projection
-    email_classification_projection = task20_projection('email_agent_classification_tasks')
-    return (task20_projection('workbench_turns'),
-            task20_projection('weekly_okr_analysis_jobs'),
-            "select task_id as id,status,owner as lease_owner,lease_expires_at "
-            "from (" + email_classification_projection + ")")
+    _version(db, release_source_email_version=release_source_email_version)
+    return (
+        "select id,status,lease_owner,lease_expires_at from tasks where kind='workbench_turn'",
+        "select id,status,lease_owner,lease_expires_at from tasks where kind='okr_analysis'",
+        "select id,status,lease_owner,lease_expires_at from tasks where kind='email_classification'",
+    )
 
 
 def publication_meeting_sources(db, *, release_source_email_version=None):
-    version = _version(db, release_source_email_version=release_source_email_version)
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        from app.store import NATIVE_MEETING_RUN_SQL
-        return (
-            "select tasks.* from tasks "
-            "where tasks.kind='meeting_alignment'",
-            NATIVE_MEETING_RUN_SQL,
-        )
-    from app.task20_definitions import task20_projection
-    from app.logical_run_storage import logical_run_projection
-    return task20_projection('meeting_alignment_jobs'), logical_run_projection('meeting_alignment_runs')
+    _version(db, release_source_email_version=release_source_email_version)
+    from app.store import NATIVE_MEETING_RUN_SQL
+    return (
+        "select tasks.* from tasks "
+        "where tasks.kind='meeting_alignment'",
+        NATIVE_MEETING_RUN_SQL,
+    )
 
 
 def publication_scheduled_source(db, *, release_source_email_version=None):
-    version = _version(db, release_source_email_version=release_source_email_version)
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        from app.scheduled_occurrence_storage import occurrence_query
-        return occurrence_query()
-    from app.run_storage import SCHEDULED_RUN_SQL
-    return SCHEDULED_RUN_SQL
+    _version(db, release_source_email_version=release_source_email_version)
+    from app.scheduled_occurrence_storage import occurrence_query
+    return occurrence_query()
 
 
 def publication_dispatcher_source(db, **_publication_options):
@@ -118,21 +97,15 @@ def publication_dispatcher_source(db, **_publication_options):
 
 
 def publication_candidate_source(db):
-    version = _version(db)
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        from app.store import NATIVE_REVIEW_CANDIDATE_SQL
-        return NATIVE_REVIEW_CANDIDATE_SQL
-    from app.action_storage import REVIEW_CANDIDATE_SQL
-    return REVIEW_CANDIDATE_SQL
+    _version(db)
+    from app.store import NATIVE_REVIEW_CANDIDATE_SQL
+    return NATIVE_REVIEW_CANDIDATE_SQL
 
 
 def publication_receipt_sources(db):
-    version = _version(db)
-    from app.action_storage import ACTION_PROJECTIONS, EXTERNAL_ACTION_RESULT_SQL, RECEIPT_ACTION_TYPES
-    external_result = EXTERNAL_ACTION_RESULT_SQL
-    if version in (TARGET_STORE_VERSION, PREVIOUS_STORE_VERSION):
-        from app.action_storage import NATIVE_EXTERNAL_ACTION_RESULT_SQL
-        external_result = NATIVE_EXTERNAL_ACTION_RESULT_SQL
+    _version(db)
+    from app.action_storage import ACTION_PROJECTIONS, NATIVE_EXTERNAL_ACTION_RESULT_SQL, RECEIPT_ACTION_TYPES
+    external_result = NATIVE_EXTERNAL_ACTION_RESULT_SQL
     return {
         kind: (external_result if kind == 'external_action_results'
                else ACTION_PROJECTIONS[kind])

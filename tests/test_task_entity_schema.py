@@ -1,3 +1,4 @@
+from tests.task_input_fixtures import bind_claimed_input
 from contextlib import closing
 from contextvars import ContextVar
 import json
@@ -909,7 +910,7 @@ def test_current_fact_inverse_reads_mutated_native_owners_and_reforwards_them():
 
 
 def test_native_input_new_fact_below_global_water_keeps_canonical_id_on_reforward():
-    from app.task_entity_storage import append_task_input, bind_claimed_input, bind_current_input
+    from app.task_entity_storage import append_task_input, bind_current_input
 
     with closing(_source()) as db:
         # This is a valid predecessor TaskInput with a high per-kind ID below
@@ -1035,7 +1036,7 @@ def test_native_input_below_kind_highwater_but_in_source_gap_gets_new_source_ide
 
 def test_native_business_key_collision_uses_predecessor_hidden_rowid_allocator():
     from app.task_entity_storage import (
-        append_task_input, associate_business_key, bind_claimed_input,
+        append_task_input, associate_business_key,
         bind_current_input, create_task,
     )
     from app.task12_storage import insert_task12, update_task12

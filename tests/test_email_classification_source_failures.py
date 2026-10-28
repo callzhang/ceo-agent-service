@@ -4,7 +4,7 @@ import pytest
 
 from app.email_account_connector import ConnectorPriority
 from app.email_worker import _build_email_connector_registry, _build_registry_source_factory
-from app.provider_state_storage import insert_observation, delete_observation
+from tests.provider_state_fixtures import insert_observation, delete_observation
 from tests.test_email_body_source import body_store as body_store
 from tests.test_email_model_input_lifecycle import _model_fixture, _reader
 from tests.test_email_exact_source import source, LOCATOR

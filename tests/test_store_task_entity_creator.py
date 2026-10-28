@@ -1,3 +1,4 @@
+from tests.task_input_fixtures import bind_claimed_input
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
 import hashlib
@@ -140,7 +141,7 @@ def test_pending_single_chat_merge_moves_native_inputs_and_keys_before_retiring_
             db, task_id=second.id, business_key="message:newer-alias",
         )
         target_input = task_entity_storage.get_task_with_inputs(db, second.id)["current_input"]
-        task_entity_storage.bind_claimed_input(
+        bind_claimed_input(
             db, task_id=second.id, input_id=int(target_input["id"]),
             claimed_input_version=1,
         )
@@ -577,7 +578,7 @@ def test_native_reply_compaction_matches_each_input_hash_and_keeps_zero_sentinel
             input_version=int(first_task_version) + 1,
         )
         assert bound is not None
-        assert task_entity_storage.bind_claimed_input(
+        assert bind_claimed_input(
             db, task_id=task.id, input_id=int(second["id"]), claimed_input_version=2,
         ) is not None
         for body in (str(first["trigger_text"]), "not-an-input-body"):
@@ -1887,7 +1888,7 @@ def test_business_key_reuses_task_and_advances_current_without_moving_claimed_in
         task_entity_storage.associate_business_key(
             db, task_id=first.id, business_key="business-alias",
         )
-        task_entity_storage.bind_claimed_input(
+        bind_claimed_input(
             db, task_id=first.id, input_id=first.current_input_id,
             claimed_input_version=first.input_version,
         )
@@ -2185,7 +2186,7 @@ def test_oa_refinement_updates_claimed_context_key_but_keeps_claimed_source_byte
         provisional.id, provisional.execution_generation,
     ) is None
     with store._immediate_write_transaction() as db:
-        task_entity_storage.bind_claimed_input(
+        bind_claimed_input(
             db, task_id=provisional.id,
             input_id=provisional.current_input_id,
             claimed_input_version=provisional.input_version,

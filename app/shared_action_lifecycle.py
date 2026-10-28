@@ -33,16 +33,7 @@ def _allocate(db, kind, supplied=None):
     if supplied is not None:
         return storage._native_integer_primary_key(supplied)
     maximum = db.execute('select max(cast(legacy_key as integer)) from actions where record_type=? and ' + EMAIL_NUMERIC_SCOPE, (kind,)).fetchone()[0]
-    if kind == 'email_action_attempts':
-        waters = db.execute('select seq from sqlite_sequence where name=?', ('actions:' + kind,)).fetchall()
-        if len(waters) > 1 or any(type(row[0]) is not int or row[0] < 0 for row in waters):
-            raise ValueError('invalid email_action_attempts allocator metadata')
-        maximum = max(maximum or 0, waters[0][0] if waters else 0)
-        if maximum == 2**63 - 1:
-            if db.in_transaction:
-                db.execute('rollback')
-            storage._raise_autoincrement_full()
-    elif maximum == 2**63 - 1:
+    if maximum == 2**63 - 1:
         with closing(sqlite3.connect(':memory:')) as allocator:
             allocator.execute('create table ids(id integer primary key)')
             allocator.executemany('insert into ids values(?)', db.execute(
@@ -386,8 +377,7 @@ def record_sent_action(db, *, operation=None, target_json=None, provider_json, r
 
 def _bind_provider_receipt_metadata(db, *, action_id, provider_receipt_id,
                                     operation, target_json, result_digest,
-                                    agent_run_id, observed_at, created_at,
-                                    execution_owner_column='execution_run_id'):
+                                    agent_run_id, observed_at, created_at):
     """Record canonical source metadata as a reference to an immutable body."""
     if any(value is None for value in (operation, target_json, result_digest, agent_run_id)):
         return None
@@ -395,13 +385,11 @@ def _bind_provider_receipt_metadata(db, *, action_id, provider_receipt_id,
     action = get_action(db, action_id)
     if action is None:
         raise ValueError('canonical provider Action is missing')
-    if execution_owner_column != 'execution_run_id':
-        raise ValueError('invalid provider receipt execution owner column')
     metadata = db.execute(
         'select id,provider_receipt_id,operation,target,result_digest,agent_run_id,created_at,observed_at '
         'from action_receipts where action_id=? and provider_result_json is null '
         'and provider_receipt_id is not null and status is null and attempt_number is null '
-        f'and {execution_owner_column} is null and action_index is null '
+        'and execution_run_id is null and action_index is null '
         'and target is not null and agent_run_id is not null and created_at is not null '
         'and id not in (select coalesce(action_delivery_receipt_id,-1) from actions where id=?) '
         'and id not in (select coalesce(action_prepared_receipt_id,-1) from actions where id=?)',
@@ -422,7 +410,7 @@ def _bind_provider_receipt_metadata(db, *, action_id, provider_receipt_id,
         if changes and update_sent_receipt(
             db, action_id=action_id, receipt_id=int(existing['id']),
             expected={'operation': existing['operation']},
-            changes=changes, execution_owner_column=execution_owner_column,
+            changes=changes,
         ) is None:
             raise ValueError('canonical provider metadata changed during binding')
         return int(existing['id'])
@@ -435,17 +423,14 @@ def _bind_provider_receipt_metadata(db, *, action_id, provider_receipt_id,
     })
 
 
-def advance_canonical_provider_reference(db, *, action_id, provider_receipt_id,
-                                         execution_owner_column='execution_run_id'):
+def advance_canonical_provider_reference(db, *, action_id, provider_receipt_id):
     """Move the stable canonical binding for one explicit corrected result."""
     from app.action_entity_storage import update_sent_receipt
 
-    if execution_owner_column != 'execution_run_id':
-        raise ValueError('invalid provider receipt execution owner column')
     metadata = db.execute(
         'select id,provider_receipt_id from action_receipts where action_id=? '
         'and provider_result_json is null and provider_receipt_id is not null '
-        f'and status is null and attempt_number is null and {execution_owner_column} is null '
+        'and status is null and attempt_number is null and execution_run_id is null '
         'and action_index is null and target is not null and agent_run_id is not null '
         'and created_at is not null '
         'and id not in (select coalesce(action_delivery_receipt_id,-1) from actions where id=?) '
@@ -459,7 +444,6 @@ def advance_canonical_provider_reference(db, *, action_id, provider_receipt_id,
         db, action_id=action_id, receipt_id=int(binding['id']),
         expected={'provider_receipt_id': binding['provider_receipt_id']},
         changes={'provider_receipt_id': provider_receipt_id},
-        execution_owner_column=execution_owner_column,
     ) is None:
         raise ValueError('canonical provider reference changed during correction')
     return int(binding['id'])
@@ -509,7 +493,6 @@ def advance_sent_provider_reference(db, *, external_action_key, provider_receipt
         db, action['id'], receipt_id=action['delivery_receipt_id'],
         expected={'provider_receipt_id': fact['provider_receipt_id']},
         changes={'provider_receipt_id': provider_receipt_id},
-        execution_owner_column='execution_run_id',
     ) is None:
         raise ValueError('Sent provider reference changed during explicit repair')
     return True
@@ -627,11 +610,9 @@ def _reviewed_action_by_key(db, external_action_key):
     return None if row is None else get_action(db, int(row['id']))
 
 
-def _reviewed_attempt(db, action_id, execution_id, action_index, *, owner_column='execution_run_id'):
+def _reviewed_attempt(db, action_id, execution_id, action_index):
     from app.action_storage import NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL, candidate_action_attempt_row
 
-    if owner_column != 'execution_run_id':
-        raise ValueError('invalid reviewed execution owner column')
     projection = NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL
     return candidate_action_attempt_row(_fetch(db,
         'select * from (' + projection + ') '
@@ -641,15 +622,12 @@ def _reviewed_attempt(db, action_id, execution_id, action_index, *, owner_column
 
 def _reviewed_action_receipt(db, action_id, execution_id, action_index, status, *,
                              result_json, provider_receipt_id, agent_run_id,
-                             target_json, created_at, updated_at,
-                             owner_column='execution_run_id'):
+                             target_json, created_at, updated_at):
     from app.action_entity_storage import append_action_receipt, update_action_observation
 
-    if owner_column != 'execution_run_id':
-        raise ValueError('invalid reviewed execution owner column')
     current = db.execute(
         'select id,status,outcome_json,provider_receipt_id,agent_run_id,target,observed_at,updated_at '
-        f'from action_receipts where action_id=? and {owner_column}=? and action_index=?',
+        'from action_receipts where action_id=? and execution_run_id=? and action_index=?',
         (action_id, execution_id, action_index),
     ).fetchone()
     if current is not None:
@@ -661,7 +639,7 @@ def _reviewed_action_receipt(db, action_id, execution_id, action_index, status, 
         if provider_receipt_id is not None:
             changes['provider_receipt_id'] = provider_receipt_id
         receipt_id = update_action_observation(db, action_id,
-            **{owner_column: execution_id}, action_index=action_index,
+            execution_run_id=execution_id, action_index=action_index,
             expected={key: current[key] for key in (
                 'status', 'outcome_json', 'provider_receipt_id', 'agent_run_id',
                 'observed_at', 'updated_at')}, changes=changes)
@@ -669,15 +647,15 @@ def _reviewed_action_receipt(db, action_id, execution_id, action_index, status, 
             raise ValueError('reviewed Action observation compare-and-set failed')
     else:
         receipt_id = append_action_receipt(db, action_id, values={
-        'status': status, owner_column: execution_id, 'action_index': action_index,
+        'status': status, 'execution_run_id': execution_id, 'action_index': action_index,
         'target': target_json,
         'outcome_json': result_json, 'provider_receipt_id': provider_receipt_id,
         'agent_run_id': agent_run_id, 'created_at': created_at, 'updated_at': updated_at,
         })
     from app.action_entity_storage import get_action, record_action_result
     latest = db.execute(
-        f'select status from action_receipts where action_id=? and {owner_column} is not null '
-        f'and action_index is not null order by updated_at desc,{owner_column} desc,action_index desc,id desc limit 1',
+        'select status from action_receipts where action_id=? and execution_run_id is not null '
+        'and action_index is not null order by updated_at desc,execution_run_id desc,action_index desc,id desc limit 1',
         (action_id,),
     ).fetchone()
     action = get_action(db, action_id)
@@ -689,7 +667,7 @@ def _reviewed_action_receipt(db, action_id, execution_id, action_index, status, 
 
 def begin_reviewed_action(db, *, execution_id, action_index, external_action_key,
                           action, candidate, preparation_owner=None,
-                          created_at, updated_at, owner_column='execution_run_id'):
+                          created_at, updated_at):
     """Claim one reviewed effect and append its per-execution observation."""
     from app.action_entity_storage import claim_action, create_action, get_action
     from app.action_storage import NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL
@@ -749,8 +727,7 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
         }.items()
     ):
         raise ValueError('prepared Action conflicts with reviewed identity')
-    current = _reviewed_attempt(db, existing['id'], execution_id, action_index,
-                                owner_column=owner_column)
+    current = _reviewed_attempt(db, existing['id'], execution_id, action_index)
     if current is not None:
         if current['external_action_key'] != external_action_key:
             raise ValueError('action key conflict')
@@ -760,9 +737,8 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
             _reviewed_action_receipt(db, existing['id'], execution_id, action_index,
                 next_status, result_json=current['result_json'], provider_receipt_id=None,
                 agent_run_id=candidate['consumer_run_id'], target_json=target_json, created_at=created_at,
-                updated_at=updated_at, owner_column=owner_column)
-            current = _reviewed_attempt(db, existing['id'], execution_id, action_index,
-                                        owner_column=owner_column)
+                updated_at=updated_at)
+            current = _reviewed_attempt(db, existing['id'], execution_id, action_index)
         return current
 
     attempt_projection = NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL
@@ -780,9 +756,8 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
         _reviewed_action_receipt(db, existing['id'], execution_id, action_index, status,
             result_json=None, provider_receipt_id=provider['provider_receipt_id'],
             agent_run_id=candidate['consumer_run_id'], target_json=target_json, created_at=created_at,
-            updated_at=updated_at, owner_column=owner_column)
-        return _reviewed_attempt(db, existing['id'], execution_id, action_index,
-                                 owner_column=owner_column)
+            updated_at=updated_at)
+        return _reviewed_attempt(db, existing['id'], execution_id, action_index)
     if prior is not None and prior['status'] != 'confirmed_no_effect':
         raise ValueError('action_key_requires_reconciliation')
     parent = get_action(db, existing['id'])
@@ -800,14 +775,12 @@ def begin_reviewed_action(db, *, execution_id, action_index, external_action_key
     _reviewed_action_receipt(db, existing['id'], execution_id, action_index,
         'dispatched', result_json='{}', provider_receipt_id=None,
         agent_run_id=candidate['consumer_run_id'], target_json=target_json, created_at=created_at,
-        updated_at=updated_at, owner_column=owner_column)
-    return _reviewed_attempt(db, existing['id'], execution_id, action_index,
-                             owner_column=owner_column)
+        updated_at=updated_at)
+    return _reviewed_attempt(db, existing['id'], execution_id, action_index)
 
 
 def record_reviewed_action_outcome(db, *, attempt, status, result_json,
-                                   provider_receipt_id, agent_run_id, updated_at,
-                                   owner_column='execution_run_id'):
+                                   provider_receipt_id, agent_run_id, updated_at):
     """Update the current execution observation and common Action phase."""
     if not db.in_transaction:
         raise ValueError('reviewed Action result requires caller-owned transaction')
@@ -819,14 +792,13 @@ def record_reviewed_action_outcome(db, *, attempt, status, result_json,
     _reviewed_action_receipt(db, action['id'], attempt['execution_id'],
         attempt['action_index'], status, result_json=result_json,
         provider_receipt_id=provider_receipt_id, agent_run_id=agent_run_id,
-        target_json=attempt['target'], owner_column=owner_column,
+        target_json=attempt['target'],
         created_at=updated_at, updated_at=updated_at)
 
 
 def record_reviewed_provider_receipt(db, *, external_action_key, operation,
                                      target_json, provider_json, result_digest,
-                                     agent_run_id, observed_at, status='verified',
-                                     execution_owner_column='execution_run_id'):
+                                     agent_run_id, observed_at, status='verified'):
     """Append one canonical provider receipt version to the common Action."""
     from app.action_entity_storage import append_action_receipt, get_action
 
@@ -847,8 +819,7 @@ def record_reviewed_provider_receipt(db, *, external_action_key, operation,
             db, action_id=action['id'], provider_receipt_id=receipt_id,
             operation=operation, target_json=target_json, result_digest=result_digest,
             agent_run_id=agent_run_id, observed_at=observed_at, created_at=observed_at,
-            execution_owner_column=execution_owner_column,
-        )
+            )
     return receipt_id
 
 
@@ -918,7 +889,7 @@ def adopt_verified_sent_action(db, *, external_action_key, business_object_key,
     return action['id']
 
 
-def transition(db, origin, event, *, identity=None, values=None, expected=None, receipt=None,
+def transition(db, origin, event, *, identity=None, values=None,
                where_sql='', parameters=()):
     """Apply one existing claim/outcome/schedule transition under its caller lock.
 
@@ -928,7 +899,7 @@ def transition(db, origin, event, *, identity=None, values=None, expected=None, 
     """
     if not db.in_transaction:
         raise ValueError('shared action transition requires caller-owned transaction')
-    values, expected = values or {}, expected or {}
+    values = values or {}
     if origin in STEP_KINDS:
         # Specialized callers retain proof validation; allocation, CAS, state
         # and receipt writes are owned here, under the same transaction as the

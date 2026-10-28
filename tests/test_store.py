@@ -1,3 +1,4 @@
+from tests.runtime_attempt_fixtures import seed_effect_started
 from app.run_entity_storage import get_run
 from tests.support.reply_action_snapshot import reply_action_snapshot
 from tests.support.session_search import seed_session_search_metadata
@@ -13,7 +14,7 @@ import sqlite3
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from multiprocessing import get_context
 from pathlib import Path
 from queue import Queue
@@ -1336,39 +1337,8 @@ def test_task_memory_backfill_parent_is_work_project_not_summary_input(tmp_path:
 
 
 
-def test_weekly_okr_report_run_lease_is_single_owner_and_recoverable(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-report-lease.sqlite3")
-    started = datetime(2026, 9, 8, 6, 0, tzinfo=timezone.utc)
-
-    assert store.claim_weekly_okr_report_run(
-        owner="owner-a", now=started, lease_seconds=120
-    )
-    assert not store.claim_weekly_okr_report_run(
-        owner="owner-b", now=started + timedelta(seconds=1), lease_seconds=120
-    )
-    assert store.renew_weekly_okr_report_run(
-        owner="owner-a", now=started + timedelta(seconds=60), lease_seconds=120
-    )
-    assert not store.release_weekly_okr_report_run(owner="owner-b")
-    assert store.release_weekly_okr_report_run(owner="owner-a")
-    assert store.claim_weekly_okr_report_run(
-        owner="owner-b", now=started + timedelta(seconds=61), lease_seconds=120
-    )
 
 
-def test_weekly_okr_report_run_lease_can_be_reclaimed_after_expiry(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "weekly-report-expired-lease.sqlite3")
-    started = datetime(2026, 9, 8, 6, 0, tzinfo=timezone.utc)
-
-    assert store.claim_weekly_okr_report_run(
-        owner="crashed-owner", now=started, lease_seconds=60
-    )
-
-    assert store.claim_weekly_okr_report_run(
-        owner="recovery-owner",
-        now=started + timedelta(seconds=61),
-        lease_seconds=60,
-    )
 
 
 
@@ -1794,7 +1764,7 @@ def test_runtime_attempt_transitions_are_terminal_safe(tmp_path: Path):
         run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
     )
 
-    running = store.mark_agent_runtime_attempt_running(attempt.id)
+    running = store.mark_agent_runtime_attempt_running_once(attempt.id)
     completed = store.complete_agent_runtime_attempt(
         running.id,
         session_id="session-1",
@@ -1890,22 +1860,6 @@ def test_runtime_attempt_rejects_conflicting_terminal_rewrites(tmp_path: Path):
         )
 
 
-def test_runtime_attempt_effect_started_timestamp_is_idempotent(tmp_path: Path):
-    store = AutoReplyStore(tmp_path / "runtime-attempt.sqlite3")
-    run = _claimed_runtime_agent_run(store)
-    attempt = store.claim_agent_runtime_attempt(
-        run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5"
-    )
-
-    first = store.note_runtime_attempt_effect_started(
-        attempt.id, at="2026-08-20 10:00:00"
-    )
-    repeated = store.note_runtime_attempt_effect_started(
-        attempt.id, at="2026-08-20 10:01:00"
-    )
-
-    assert first.first_effect_started_at == "2026-08-20 10:00:00"
-    assert repeated.first_effect_started_at == first.first_effect_started_at
 
 
 def test_route_sessions_do_not_overwrite_other_routes(tmp_path: Path):
@@ -2094,7 +2048,7 @@ def test_runtime_attempt_readback_reflects_effect_start(tmp_path: Path):
     attempt = store.claim_agent_runtime_attempt(run.id, "codex_oauth", "codex_cli", "local_oauth", "gpt-5.5")
     assert store.get_agent_runtime_attempt(attempt.id) == attempt
     assert store.get_agent_runtime_attempt(999999) is None
-    store.note_runtime_attempt_effect_started(attempt.id, at="2026-08-20 10:00:00")
+    seed_effect_started(store, attempt.id, at="2026-08-20 10:00:00")
     assert store.get_agent_runtime_attempt(attempt.id).first_effect_started_at == "2026-08-20 10:00:00"
 
 
@@ -11055,79 +11009,8 @@ def test_recover_stale_runtime_attempts_closes_terminal_parent_and_expired_lease
     ]
 
 
-def test_recover_unstarted_runtime_operation_attempts_releases_short_stale_claim(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "unstarted-runtime-attempt.sqlite3")
-    workload_key = "wechat_memory_import_job:51"
-    _seed_runtime_operation_parent(store, "memory", workload_key)
-    claimed = store.claim_runtime_operation_attempt(
-        "memory",
-        workload_key,
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.6-sol",
-        owner="routed-codex-owner",
-        lease_seconds=1800,
-        now="2026-09-14T23:00:00+00:00",
-    )
-    store.mark_agent_runtime_attempt_running_once(
-        claimed.id,
-        owner="routed-codex-owner",
-        lease_seconds=1800,
-        now="2026-09-14T23:00:00+00:00",
-    )
-
-    assert store.recover_unstarted_runtime_operation_attempts(
-        stale_after_seconds=60,
-        now="2026-09-14T23:01:01+00:00",
-    ) == 1
-
-    recovered = store.get_agent_runtime_attempt(claimed.id)
-    assert recovered is not None
-    assert recovered.status == "failed"
-    assert recovered.failure_code == "runtime_start_stalled"
-    assert recovered.lease_owner == ""
-    assert recovered.lease_expires_at == ""
 
 
-def test_recover_unstarted_runtime_operation_attempts_keeps_session_evidence(
-    tmp_path: Path,
-):
-    store = AutoReplyStore(tmp_path / "started-runtime-attempt.sqlite3")
-    workload_key = "wechat_memory_import_job:52"
-    _seed_runtime_operation_parent(store, "memory", workload_key)
-    claimed = store.claim_runtime_operation_attempt(
-        "memory",
-        workload_key,
-        "codex_oauth",
-        "codex_cli",
-        "local_oauth",
-        "gpt-5.6-sol",
-        owner="routed-codex-owner",
-        lease_seconds=1800,
-        now="2026-09-14T23:00:00+00:00",
-    )
-    store.mark_agent_runtime_attempt_running_once(
-        claimed.id,
-        owner="routed-codex-owner",
-        lease_seconds=1800,
-        now="2026-09-14T23:00:00+00:00",
-    )
-    store.set_agent_runtime_attempt_session(
-        claimed.id,
-        "session-52",
-        "codex_session:session-52",
-        owner="routed-codex-owner",
-        now="2026-09-14T23:00:01+00:00",
-    )
-
-    assert store.recover_unstarted_runtime_operation_attempts(
-        stale_after_seconds=60,
-        now="2026-09-14T23:01:01+00:00",
-    ) == 0
-    assert store.get_agent_runtime_attempt(claimed.id).status == "running"
 
 
 def test_recover_stale_runtime_attempts_immediately_closes_terminal_meeting_parent(

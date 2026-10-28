@@ -96,7 +96,8 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     import hashlib
     import json
 
-    from app.action_entity_storage import add_action_observer, append_action_receipt, create_action
+    from app.action_entity_storage import add_action_observer, create_action
+    from app.action_entity_transfer import _append_source_action_receipt
     from app.action_storage import insert_action
     from app.predecessor_database_schema import create_store_2026_10_21_1_schema as create_current_database_schema
     from app.execution_owner_storage import create_plan_execution
@@ -240,7 +241,7 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     })
     if generic_action_task_id is not None:
         db.execute("update actions set task_id=? where id=?", (generic_action_task_id, action["id"]))
-    append_action_receipt(db, action["id"], values={
+    _append_source_action_receipt(db, action["id"], values={
         "execution_id": execution_id, "operation": "send_group_message",
         "target": '{"conversation_id":"chat"}', "provider_result_json": '{"ok":true}',
         "result_digest": "receipt-digest", "created_at": "receipt-clock",
@@ -261,7 +262,7 @@ def _populated_source(*, remap_runs=False, feedback=False, pre_capture_unknown=F
     })
     second_execution_id = create_plan_execution(db, candidate_id=41, review_id=9,
         selection_id=None, status="done", lease_owner="", lease_expires_at="")
-    append_action_receipt(db, action["id"], values={
+    _append_source_action_receipt(db, action["id"], values={
         "execution_id": second_execution_id, "operation": "send_group_message",
         "target": '{"conversation_id":"chat-2"}', "provider_result_json": '{"ok":true}',
         "result_digest": "receipt-digest-2", "created_at": "receipt-clock-2",

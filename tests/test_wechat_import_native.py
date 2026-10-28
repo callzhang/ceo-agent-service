@@ -106,7 +106,7 @@ def test_wechat_import_terminal_write_is_native_and_idempotent(store):
     assert independent.workload_key == f"wechat_memory_import_job:{second}"
     assert independent.id != attempt.id
     assert attempt.parent_id is None
-    store.mark_agent_runtime_attempt_running(attempt.id)
+    store.mark_agent_runtime_attempt_running_once(attempt.id)
     store.complete_agent_runtime_attempt(attempt.id, "session", "", 0, 0)
     store.finish_wechat_memory_import_job(first, status="completed")
     prior = tuple(store.db.execute(

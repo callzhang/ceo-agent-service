@@ -1,4 +1,5 @@
 """Compare unselected four-kind Business storage to accepted native SQLite SQL."""
+from tests.business_schema_fixture import create_business_schema
 
 from contextlib import ExitStack, closing
 import json
@@ -12,7 +13,7 @@ from app.business_definitions import (
     BUSINESS_SOURCE_TABLES,
 )
 from app.business_storage import (
-    create_business_schema, delete_business, insert_business, update_business,
+    delete_business, insert_business, update_business,
 )
 
 CAPTURE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-15-database-redesign-business-core-native-source.json").read_text())

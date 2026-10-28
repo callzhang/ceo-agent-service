@@ -1,3 +1,4 @@
+from tests.task_input_fixtures import bind_claimed_input
 import sqlite3
 import json
 import re
@@ -1620,7 +1621,7 @@ def test_task_first_new_run_facts_survive_old_write_and_two_json_cycles():
     import struct
     from app.task_entity_schema import capture_task_entities, migrate_task_entities, restore_task_entities
     from app.task20_definitions import task20_projection
-    from app.task_entity_storage import create_task, append_task_input, bind_claimed_input, bind_current_input
+    from app.task_entity_storage import create_task, append_task_input, bind_current_input
     from app.run_entity_storage import create_run, set_run_provenance, set_run_projection
     from app.logical_run_storage import create_logical_run, logical_run_projection
 

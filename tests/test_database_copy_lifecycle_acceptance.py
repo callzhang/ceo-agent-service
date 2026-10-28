@@ -79,7 +79,7 @@ def copied_store(tmp_path, monkeypatch):
         _append_session_path_index(native_home, session_id, native, line_count=len(records))
         store.set_agent_run_session(run_id, session_id, owner=owner)
         attempt = store.claim_agent_runtime_attempt(run_id, "copy-scripted", "codex_cli", "local_oauth", "scripted-output")
-        store.mark_agent_runtime_attempt_running(attempt.id)
+        store.mark_agent_runtime_attempt_running_once(attempt.id)
         store.complete_agent_runtime_attempt(attempt.id, session_id, "codex_session:" + session_id,
             0, len(records), owner=owner)
         return original_complete(run_id, result, owner=owner)

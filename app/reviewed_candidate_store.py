@@ -556,7 +556,7 @@ class ReviewedCandidateStoreMixin:
                 external_action_key=external_action_key, action=actions[action_index],
                 candidate=candidate, preparation_owner=preparation_owner,
                 created_at=created_at,
-                updated_at=_db_timestamp(db), owner_column="execution_run_id",
+                updated_at=_db_timestamp(db),
             )
 
     def get_prior_candidate_action_attempt(
@@ -646,7 +646,7 @@ class ReviewedCandidateStoreMixin:
                 db, attempt=prior, status=status, result_json=result_json,
                 provider_receipt_id=provider_receipt_id,
                 agent_run_id=prior_candidate["consumer_run_id"],
-                updated_at=_db_timestamp(db), owner_column="execution_run_id",
+                updated_at=_db_timestamp(db),
             )
             return candidate_action_attempt_row(db.execute(
                 f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?",
@@ -680,7 +680,7 @@ class ReviewedCandidateStoreMixin:
                 db, attempt=attempt, status=status, result_json=body,
                 provider_receipt_id=provider_receipt_id,
                 agent_run_id=candidate["consumer_run_id"],
-                updated_at=_db_timestamp(db), owner_column="execution_run_id",
+                updated_at=_db_timestamp(db),
             )
             return candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (attempt["id"],)).fetchone())
 
@@ -723,18 +723,15 @@ class ReviewedCandidateStoreMixin:
                     target_json=target_json, provider_json=provider_json,
                     result_digest=hashlib.sha256(provider_json.encode()).hexdigest(),
                     agent_run_id=candidate["consumer_run_id"], observed_at=_db_timestamp(db),
-                    execution_owner_column="execution_run_id",
                 )
                 shared_action_lifecycle.advance_canonical_provider_reference(
                     db, action_id=attempt['action_owner_id'],
                     provider_receipt_id=provider_receipt_id,
-                    execution_owner_column="execution_run_id",
                 )
             shared_action_lifecycle.record_reviewed_action_outcome(
                 db, attempt=attempt, status="verified", result_json=None,
                 provider_receipt_id=provider_receipt_id,
                 agent_run_id=candidate["consumer_run_id"], updated_at=_db_timestamp(db),
-                owner_column="execution_run_id",
             )
             if replaced_provider_json is not None:
                 shared_action_lifecycle.retire_unreferenced_provider_receipt(

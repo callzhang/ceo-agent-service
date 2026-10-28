@@ -109,9 +109,10 @@ def test_runtime_observability_persists_safe_bounded_samples_across_processes(
         head_ms=3.0,
         total_ms=7.0,
     )
-    writer.record_classifier_runtime_fallback(
-        model_id="email-embedding-mlp-live",
-        fallback_code="model_rejected",
+    writer.record_classifier_runtime_sample(
+        model_id="email-embedding-mlp-live", outcome="rejected",
+        fallback_code="model_rejected", cache_hit=False, runtime_warm=True,
+        queue_ms=0.0, http_ms=0.0, embedding_ms=0.0, head_ms=0.0, total_ms=0.0,
     )
 
     reader = EmailStore(database)

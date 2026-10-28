@@ -470,7 +470,6 @@ def test_legacy_native_readback_requires_unreviewed_exact_historical_facts(tmp_p
             assert update_sent_receipt(
                 db, action_id, receipt_id=binding["id"],
                 expected={"target": binding["target"]}, changes={"target": "{}"},
-                execution_owner_column="execution_run_id",
             ) == binding["id"]
 
     with store._connect() as db:
