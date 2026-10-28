@@ -66,6 +66,8 @@ def main() -> int:
     parser.add_argument("--baseline-ref", action="append", required=True)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--case", action="append")
+    parser.add_argument("--with-audit", action="store_true")
+    parser.add_argument("--model", help="Use the same explicit model for both variants")
     args = parser.parse_args()
     manifest = json.loads(CASES.read_text(encoding="utf-8"))
     settings = manifest["settings"]
@@ -82,15 +84,33 @@ def main() -> int:
                 for repeat in range(args.repeats):
                     run = business.run_role(
                         command=business.native_command(
-                            model=settings["model"], effort=settings["reasoning_effort"],
+                            model=args.model or settings["model"], effort=settings["reasoning_effort"],
                             developer_instructions=instructions["consumer"], workdir=Path(raw)),
                         prompt=business._consumer_prompt({**case, "skill_excerpt": skill_text}, schema),
                         timeout=settings["timeout_seconds_per_case"])
                     ops = operations(run.get("result"))
                     bad = [op for op in ops if op in case["expect_not"]]
+                    audit = None
+                    if args.with_audit and run["ok"]:
+                        normalized = business.normalize_role_result(ROOT, "consumer", run["result"])
+                        if normalized["ok"]:
+                            audit = business.run_role(
+                                command=business.native_command(
+                                    model=args.model or settings["model"],
+                                    effort=settings["reasoning_effort"],
+                                    developer_instructions=instructions["audit"], workdir=Path(raw)),
+                                prompt=business._audit_prompt(
+                                    {**case, "skill_excerpt": skill_text}, normalized["result"],
+                                    normalized["digest"], instructions["wire_schemas"]["audit"]),
+                                timeout=settings["timeout_seconds_per_case"])
+                        else:
+                            audit = {"ok": False, "error": normalized["error"]}
                     rows.append({"case": case["id"], "variant": name, "repeat": repeat,
                                  "ok": run["ok"], "operations": ops, "violates": bad,
                                  "error": run.get("error", ""),
+                                 "audit_ok": audit["ok"] if audit else None,
+                                 "audit_outcome": (audit.get("result") or {}).get("outcome") if audit else None,
+                                 "audit_summary": str((audit.get("result") or {}).get("summary", ""))[:500] if audit else None,
                                  "summary": str((run.get("result") or {}).get("summary", ""))[:300]})
                     print(json.dumps(rows[-1], ensure_ascii=False), flush=True)
     print(json.dumps({"rows": len(rows)}, ensure_ascii=False))

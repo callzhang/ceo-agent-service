@@ -2228,7 +2228,7 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
 WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
 执行期间 current 指针更新不会改写已领取的会话范围。
-微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，微信任务的 Codex 回合与 OA 一样在同一个 CodeMode 调用里把它交给 `mcp__ai_services__transcribe_audio`，base64 不经模型；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
+微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `save_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 存为任务文件；Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，用通用工具 `upload_audio_file(name, upload_url)` 把该任务文件 POST 过去（音频不经过模型，服务不存凭据），再调 `ai_services.get_audio_transcription(job_id)` 取文字；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
@@ -5752,3 +5752,17 @@ The gated two-turn regression uses the real Store and substituted native CLI.
 ### 会议无合适群时的收件人（2026-10-28）
 
 业务会议总结优先发到合适的业务群。完整搜索后没有合适群时，从来源明确的参会人中选择一人单聊；只有一位非当前用户参会人时发给该人，多人时优先选与讨论最相关者。不要求会议明确指派该人负责某项决定或行动。目标仍须绑定稳定 user_id，且不能是当前用户；敏感内容继续按单独的职责和披露授权规则处理。
+
+
+### Leave review proportionality — 2026-10-28
+
+The attendance Skill applies its decision-relevant eligibility/balance rule to
+compensatory leave as well as personal leave. A leave label or absent balance
+field alone does not require the applicant to supply a policy or prove that no
+additional condition applies. An applicable balance rule or concrete conflict
+still requires resolution. Operational handover is evaluated by the accepted
+responsibility scope; an open incident within that scope does not require a
+separate incident-by-incident statement or resolution before leave. This changes
+the shared business Skill used by Consumer and Audit, without changing Audit
+mechanics, task lifecycle or action authority. See
+`oa-half-day-review-correction-20261028.md` for evidence and publication status.

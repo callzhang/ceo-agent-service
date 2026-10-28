@@ -175,8 +175,3 @@ def purpose_for_context(context, task=None) -> str:
             or context.required_proposal_action.get('capability') == 'dingtalk-oa'):
         return 'oa'
     return 'general'
-
-
-def code_mode_handoff_for_task(task) -> bool:
-    """WeChat turns read a voice and transcribe it inside one CodeMode call."""
-    return task is not None and task.channel == 'wechat'

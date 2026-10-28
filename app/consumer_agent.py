@@ -20,7 +20,7 @@ from app.agent_contracts import (
     dingtalk_chat_delivery,
 )
 from app.prompt_schema import _compact_prompt_schema
-from app.consumer_purpose import code_mode_handoff_for_task, purpose_for_context
+from app.consumer_purpose import purpose_for_context
 from app.agent_result import ResultParseError
 from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -441,18 +441,6 @@ AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
     _CAPABILITY_COMMON_HEAD, _DIRECT_SOURCE_READ_INSTRUCTIONS,
     _CAPABILITY_COMMON_TAIL,
 )) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
-_WECHAT_VOICE_HANDOFF_INSTRUCTIONS = """
-In Codex WeChat turns, use `functions.exec` to call the declared `mcp__agent_cli`
-tools. A voice message ("[语音…]") is read with `mcp__agent_cli__read_wechat_voice`;
-pass its `filename` and `audio_base64` to `mcp__ai_services__transcribe_audio` in
-the same JS cell and print only the transcript. Never print or retype the
-base64. If the transcription call itself fails, keep its concrete tool/provider
-error as the technical read failure; do not answer a voice you could not read.
-""".strip()
-WECHAT_AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
-    _CAPABILITY_COMMON_HEAD, _WECHAT_VOICE_HANDOFF_INSTRUCTIONS,
-    _CAPABILITY_COMMON_TAIL,
-)) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
 OA_AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
     _CAPABILITY_COMMON_HEAD, _OA_OCR_HANDOFF_INSTRUCTIONS,
     _CAPABILITY_COMMON_TAIL,
@@ -539,16 +527,11 @@ def consumer_selected_skill_session_contract_hash(
     return "selected-skills:" + sha256(encoded.encode("utf-8")).hexdigest()
 
 
-def consumer_task_session_contract_hash(
-    selected_skills_hash: str, *, purpose_name: str, code_mode_handoff: bool = False,
-) -> str:
-    if purpose_name == "oa":
-        payload = selected_skills_hash + "\n" + OA_AGENT_CAPABILITY_INSTRUCTIONS
-        return "selected-skills:oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
-    if code_mode_handoff:
-        payload = selected_skills_hash + "\n" + WECHAT_AGENT_CAPABILITY_INSTRUCTIONS
-        return "selected-skills:wechat-voice-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
-    return selected_skills_hash
+def consumer_task_session_contract_hash(selected_skills_hash: str, *, purpose_name: str) -> str:
+    if purpose_name != "oa":
+        return selected_skills_hash
+    payload = selected_skills_hash + "\n" + OA_AGENT_CAPABILITY_INSTRUCTIONS
+    return "selected-skills:oa-ocr-handoff:" + sha256(payload.encode("utf-8")).hexdigest()
 
 CONSUMER_ROLE_BOUNDARY = f"""
 You are Consumer Agent A. Complete the business preparation using the task's
@@ -806,13 +789,11 @@ class ConsumerAgentRunner:
             prompt_configuration=configuration,
         )
         purpose_name = purpose_for_context(context, task)
-        code_mode_handoff = code_mode_handoff_for_task(task)
         skill_session_contract_hash = consumer_task_session_contract_hash(
             consumer_selected_skill_session_contract_hash(
                 selected_skill_source_fingerprints
             ),
             purpose_name=purpose_name,
-            code_mode_handoff=code_mode_handoff,
         )
         expected_wire_schema = json.loads(_schema_json(consumer_wire_model(purpose_name)))
         expected_native_schema = {
@@ -927,7 +908,6 @@ class ConsumerAgentRunner:
             )
             make_consumer_agent_command(
                 command, task_workspace=str(task_workspace), purpose_name=purpose_name,
-                code_mode_handoff=code_mode_handoff,
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=("-m", "app.agent_cli", "--role", "consumer", "--task-id",
@@ -941,13 +921,11 @@ class ConsumerAgentRunner:
             runtime_context="",
             prompt_configuration=configuration,
             purpose_name=purpose_name,
-            code_mode_handoff=code_mode_handoff,
         )
         developer_sections = consumer_developer_sections(
             runtime_context="",
             prompt_configuration=configuration,
             purpose_name=purpose_name,
-            code_mode_handoff=code_mode_handoff,
         )
         developer_instructions_by_runtime = {
             runtime_kind: render_prompt_sections(sections, placement="developer")
@@ -1440,7 +1418,6 @@ def consumer_developer_sections(
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
     include_wire_contract: bool = True,
 ) -> tuple[PromptSection, ...]:
     # Retain the legacy argument for caller compatibility, but never expose
@@ -1457,9 +1434,7 @@ def consumer_developer_sections(
     sections = _role_developer_sections(
         core,
         capability_instructions=(OA_AGENT_CAPABILITY_INSTRUCTIONS
-                                 if purpose_name == "oa"
-                                 else WECHAT_AGENT_CAPABILITY_INSTRUCTIONS
-                                 if code_mode_handoff else AGENT_CAPABILITY_INSTRUCTIONS),
+                                 if purpose_name == "oa" else AGENT_CAPABILITY_INSTRUCTIONS),
         role_boundary=CONSUMER_ROLE_BOUNDARY,
     )
     return sections + (
@@ -1488,7 +1463,6 @@ def consumer_developer_sections_by_runtime(
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
 ) -> dict[str, tuple[PromptSection, ...]]:
     """Return the matching Developer sections for each Consumer runtime."""
     native_schema_runtimes = {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}
@@ -1501,7 +1475,6 @@ def consumer_developer_sections_by_runtime(
             work_profile=work_profile,
             prompt_configuration=prompt_configuration,
             purpose_name=purpose_name,
-            code_mode_handoff=code_mode_handoff,
             include_wire_contract=runtime not in native_schema_runtimes,
         )
         if runtime is RuntimeKind.CODEX_CLI:
@@ -1597,7 +1570,6 @@ def audit_developer_instructions(
     *, runtime_context: str | None = None, work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
 ) -> str:
     """Render the Audit contract; provider policy belongs to the runtime."""
     return render_prompt_sections(
@@ -1607,7 +1579,6 @@ def audit_developer_instructions(
             work_profile=work_profile,
             prompt_configuration=prompt_configuration,
             purpose_name=purpose_name,
-            code_mode_handoff=code_mode_handoff,
         ),
         placement="developer",
         omit_empty=False,
@@ -1621,7 +1592,6 @@ def audit_developer_sections(
     work_profile: str | None = None,
     prompt_configuration: PromptConfiguration | None = None,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
 ) -> tuple[PromptSection, ...]:
     configuration = prompt_configuration or load_prompt_configuration(role="audit")
     core = _developer_instruction_sections(
@@ -1634,7 +1604,6 @@ def audit_developer_sections(
         capability_instructions=(
             "Use the capabilities available to the calling Agent.\n"
             + (_OA_OCR_HANDOFF_INSTRUCTIONS if purpose_name == "oa"
-               else _WECHAT_VOICE_HANDOFF_INSTRUCTIONS if code_mode_handoff
                else _DIRECT_SOURCE_READ_INSTRUCTIONS)
             + "\nApply the applicable business and operation Skills to the typed candidate. "
             "The application does "

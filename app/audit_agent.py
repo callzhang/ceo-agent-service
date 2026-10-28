@@ -15,7 +15,7 @@ from app.agent_contracts import (
     ConsumerOutcome,
     json_value_type,
 )
-from app.consumer_purpose import code_mode_handoff_for_task, purpose_for_context
+from app.consumer_purpose import purpose_for_context
 from app.agent_effects import LEASE_SECONDS
 from app.agent_result import ResultParseError
 from app.agent_runtime_config import AgentRuntimeConfig
@@ -300,13 +300,11 @@ class AuditAgentRunner:
 
         configuration = load_prompt_configuration(role="audit")
         purpose_name = purpose_for_context(context.task, task)
-        code_mode_handoff = code_mode_handoff_for_task(task)
         developer_sections = audit_developer_sections(
             rendered_rules,
             runtime_context="",
             prompt_configuration=configuration,
             purpose_name=purpose_name,
-            code_mode_handoff=code_mode_handoff,
         )
         # These exact files are trusted service instructions. Load them here so
         # Audit does not depend on a constrained tool read outside task roots.
@@ -478,7 +476,6 @@ class AuditAgentRunner:
             configure_command=lambda command: make_audit_agent_command(
                 command,
                 purpose_name=purpose_name,
-                code_mode_handoff=code_mode_handoff,
                 controlled_cli=ControlledCliConfig(
                     command=sys.executable,
                     args=(

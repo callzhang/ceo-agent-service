@@ -77,7 +77,8 @@ AGENT_CLI_READ_TOOLS = (
     "search_dingtalk_documents",
     "read_dingtalk_messages",
     "read_wechat_messages",
-    "read_wechat_voice",
+    "save_wechat_voice",
+    "upload_audio_file",
     "search_dingtalk_messages",
     "read_dingtalk_thread_replies",
     "search_dingtalk_conversations",
@@ -103,7 +104,9 @@ AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
 # Exact tools from the service's reviewed MCP effect registry. New provider
 # operations stay unavailable until their effect is reviewed and named here.
 ROLE_MCP_READ_TOOLS = {
-    "ai_services": ("ocr_document", "transcribe_audio"),
+    "ai_services": (
+        "ocr_document", "transcribe_audio", "create_audio_upload", "get_audio_transcription",
+    ),
     "memory_connector": (
         "user_get", "memory_recall", "memory_get", "timeline_get",
     ),
@@ -257,7 +260,6 @@ def make_role_agent_command(
     *,
     role: str,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
     task_workspace: str | None = None,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
@@ -269,10 +271,7 @@ def make_role_agent_command(
     while CODEX_BYPASS_APPROVALS_AND_SANDBOX in command:
         command.remove(CODEX_BYPASS_APPROVALS_AND_SANDBOX)
     configured_names = set(configured_transport_server_names(command))
-    # OA turns and WeChat voice turns hand tool results to another tool inside
-    # one CodeMode call, so the bytes never pass through the model.
-    handoff = purpose_name == "oa" or code_mode_handoff
-    oa_audit_ocr = role == "audit" and handoff
+    oa_audit_ocr = role == "audit" and purpose_name == "oa"
     _remove_config_options(
         command,
         prefixes=(
@@ -311,7 +310,7 @@ def make_role_agent_command(
         "-c", "features.code_mode.direct_only_tool_namespaces="
         + json.dumps(
             [f"mcp__{name}" for name in sorted(configured_names - {"agent_cli", "ai_services"})]
-            if oa_audit_ocr else [] if role == "consumer" and handoff
+            if oa_audit_ocr else [] if role == "consumer" and purpose_name == "oa"
             else ["mcp__agent_cli", "mcp__ai_services"]
         ),
         "-c",
@@ -420,11 +419,9 @@ def make_consumer_agent_command(
     *,
     task_workspace: str,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     make_role_agent_command(command, role="consumer", purpose_name=purpose_name,
-                            code_mode_handoff=code_mode_handoff,
                             task_workspace=task_workspace,
                             controlled_cli=controlled_cli)
 
@@ -433,14 +430,12 @@ def make_audit_agent_command(
     command: list[str],
     *,
     purpose_name: str = "general",
-    code_mode_handoff: bool = False,
     controlled_cli: ControlledCliConfig | None = None,
 ) -> None:
     make_role_agent_command(
         command,
         role="audit",
         purpose_name=purpose_name,
-        code_mode_handoff=code_mode_handoff,
         controlled_cli=controlled_cli,
     )
 

@@ -8,7 +8,6 @@ from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.audit_rules import render_audit_rules
 from app.config import workspace_path
-from app.consumer_purpose import code_mode_handoff_for_task
 from app.consumer_agent import (consumer_developer_sections_by_runtime, audit_developer_sections,
     default_task_skill_catalog)
 from app.business_skills import frozen_task_skill_binding, frozen_task_skill_names, render_task_skill_discovery
@@ -159,18 +158,16 @@ def current_prompt_preview(
             task.oa_url or "dingtalk-oa-approval" in (facts.get("skill_names") or ())
         ) else "general"
     )
-    code_mode_handoff = code_mode_handoff_for_task(task)
     configuration = load_prompt_configuration(create_missing=False, role=role)
     fingerprints = configuration.fingerprints()
     profile = configuration.work_profile
     if role == "consumer":
         developer_sections = consumer_developer_sections_by_runtime(
             runtime_context="", work_profile=profile, prompt_configuration=configuration,
-            code_mode_handoff=code_mode_handoff,
         )[route.runtime_kind.value]
     else:
         rules = render_audit_rules(AgentRole.AUDIT, create_missing=False)
-        developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration, purpose_name=audit_purpose_name, code_mode_handoff=code_mode_handoff)
+        developer_sections = audit_developer_sections(rules, runtime_context="", work_profile=profile, prompt_configuration=configuration, purpose_name=audit_purpose_name)
     developer = render_prompt_sections(developer_sections, placement="developer", omit_empty=role == "consumer")
     prompt = source_snapshot["task_prompt"] if source_snapshot else "未绑定任务和候选：仅预览当前角色公共指令与环境。"
     if task and source_snapshot is None:
@@ -201,7 +198,7 @@ def current_prompt_preview(
         command = CodexRuntimeAdapter(workspace=workspace, config=config).build_command(
             route=route, prompt=prompt, session_id=None, image_paths=None, output_schema_path=None,
             use_output_schema=False, approval_policy="on-failure", developer_instructions=developer, use_approval_bypass=False)
-        make_role_agent_command(command, role=role, purpose_name=audit_purpose_name if role == "audit" else "general", code_mode_handoff=code_mode_handoff, task_workspace=str(cwd) if role == "consumer" else None,
+        make_role_agent_command(command, role=role, purpose_name=audit_purpose_name if role == "audit" else "general", task_workspace=str(cwd) if role == "consumer" else None,
             controlled_cli=ControlledCliConfig(command=sys.executable, args=("-m", "app.agent_cli", "--role", role), cwd=str(Path(__file__).resolve().parent.parent)))
     else:
         command = ClaudeRuntimeAdapter(config=config, workspace=workspace).build_command(

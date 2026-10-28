@@ -1,15 +1,17 @@
 """A WeChat task reads only its own conversation, through the standard agent tools."""
 
-import base64
+import json
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
 import math
 import sqlite3
 import struct
 import wave
-from io import BytesIO
 
 import pilk
 import pytest
 
+from app import task_artifacts
 from app.agent_cli import build_role_server
 from app.store import AutoReplyStore, REPLY_TASK_SQL
 from app.wechat import service
@@ -167,7 +169,7 @@ def test_wechat_read_needs_a_ready_account(tmp_path, monkeypatch):
 def _voice_tool(role, db_path, task_id, generation="generation-one"):
     return build_role_server(
         role, task_id=task_id, db_path=db_path, execution_generation=generation,
-    )._tool_manager.get_tool("read_wechat_voice").fn
+    )._tool_manager.get_tool("save_wechat_voice").fn
 
 
 def _silk(tmp_path):
@@ -190,18 +192,28 @@ class VoiceReader:
         return self.result
 
 
+@pytest.fixture(autouse=True)
+def _task_artifacts(tmp_path, monkeypatch):
+    from app import task_artifacts
+
+    monkeypatch.setattr(task_artifacts, "TASK_ARTIFACT_ROOT", tmp_path / "task-artifacts")
+    monkeypatch.setattr("app.agent_cli.migrate_legacy_task_artifacts", lambda _task_id: None)
+
+
 @pytest.mark.parametrize("role", ["consumer", "audit"])
-def test_wechat_voice_returns_a_wav_for_the_transcription_tool(tmp_path, monkeypatch, role):
+def test_wechat_voice_is_saved_as_a_wav_task_file(tmp_path, monkeypatch, role):
     db_path, task_id = _bound_task(tmp_path)
     reader = VoiceReader(_silk(tmp_path))
     monkeypatch.setattr(service, "build_reader", lambda **_kw: reader)
 
     result = _voice_tool(role, db_path, task_id)("m7")
 
-    assert result["filename"] == "wechat-voice-m7.wav"
+    assert result["name"] == "wechat-voice-m7.wav"
     assert result["message_id"] == "m7"
     assert result["duration_seconds"] == pytest.approx(1, abs=0.1)
-    with wave.open(BytesIO(base64.b64decode(result["audio_base64"]))) as audio:
+    assert "audio_base64" not in result
+    saved = task_artifacts.TASK_ARTIFACT_ROOT / str(task_id) / "generation-one" / result["name"]
+    with wave.open(str(saved)) as audio:
         assert audio.getframerate() == 24000
     account, kwargs = reader.calls[0]
     assert account.account_id == "acct-1"
@@ -245,3 +257,82 @@ def test_wechat_voice_refuses_a_non_wechat_task(tmp_path, monkeypatch):
 
     with pytest.raises(ValueError, match="not a WeChat conversation"):
         _voice_tool("consumer", db_path, task_id)("m7")
+
+
+def _upload_tool(role, db_path, task_id):
+    return build_role_server(
+        role, task_id=task_id, db_path=db_path, execution_generation="generation-one",
+    )._tool_manager.get_tool("upload_audio_file").fn
+
+
+class _UploadServer:
+    """A stand-in for a transcription service's one-time upload URL."""
+
+    def __init__(self, status=202, answer=b'{"job_id": "job-1", "status": "running"}'):
+        outer = self
+        outer.received = []
+
+        class Handler(BaseHTTPRequestHandler):
+            def do_POST(self):
+                length = int(self.headers["Content-Length"])
+                outer.received.append((self.headers["Content-Type"], self.rfile.read(length)))
+                self.send_response(status)
+                self.end_headers()
+                self.wfile.write(answer)
+
+            def log_message(self, *_args):
+                pass
+
+        self.httpd = HTTPServer(("127.0.0.1", 0), Handler)
+        self.url = f"http://127.0.0.1:{self.httpd.server_port}/asr/upload?ticket=once"
+        threading.Thread(target=self.httpd.serve_forever, daemon=True).start()
+
+    def close(self):
+        self.httpd.shutdown()
+
+
+def _task_file(task_id, name, data):
+    root = task_artifacts.TASK_ARTIFACT_ROOT / str(task_id) / "generation-one"
+    root.mkdir(parents=True)
+    (root / name).write_bytes(data)
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_audio_file_is_posted_as_multipart_to_the_one_time_url(tmp_path, role):
+    db_path, task_id = _bound_task(tmp_path)
+    _task_file(task_id, "clip.wav", b"RIFF-audio-bytes")
+    server = _UploadServer()
+    try:
+        result = _upload_tool(role, db_path, task_id)("clip.wav", server.url)
+    finally:
+        server.close()
+
+    assert result == {"job_id": "job-1", "status": "running"}
+    content_type, body = server.received[0]
+    assert content_type.startswith("multipart/form-data; boundary=")
+    assert b'name="file"; filename="clip.wav"' in body
+    assert b"RIFF-audio-bytes" in body
+
+
+def test_upload_failure_names_the_status_and_the_service_answer(tmp_path):
+    db_path, task_id = _bound_task(tmp_path)
+    _task_file(task_id, "clip.wav", b"x")
+    server = _UploadServer(status=410, answer=b'{"error": "ticket used"}')
+    try:
+        with pytest.raises(ValueError, match="HTTP 410.*ticket used"):
+            _upload_tool("consumer", db_path, task_id)("clip.wav", server.url)
+    finally:
+        server.close()
+
+
+def test_upload_needs_an_existing_task_file_and_a_web_url(tmp_path):
+    db_path, task_id = _bound_task(tmp_path)
+    _task_file(task_id, "clip.wav", b"x")
+    tool = _upload_tool("consumer", db_path, task_id)
+
+    with pytest.raises(ValueError, match="task file is unavailable"):
+        tool("missing.wav", "https://example.test/u")
+    with pytest.raises(ValueError, match="upload url is invalid"):
+        tool("clip.wav", "file:///etc/passwd")
+    with pytest.raises(ValueError, match="task file name is invalid"):
+        tool("../clip.wav", "https://example.test/u")
