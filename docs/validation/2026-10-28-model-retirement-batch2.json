@@ -1,5 +1,5 @@
 {
-  "phase": "candidate_validated_not_deployed",
+  "phase": "deployed_accepted_cleaned",
   "source_code": "f7a8e16e7",
   "source_schema": {
     "store": "2026-10-26.1",
@@ -298,11 +298,174 @@
     "root_integrated": 31,
     "root_artifact": 17,
     "root_final_release": 11,
-    "groups_overlap": true
+    "groups_overlap": true,
+    "post_merge_schema_and_skill": 46
   },
-  "production": null,
+  "production": {
+    "checked_at": 1793179264.815197,
+    "installed": "44c13bc91f975c87a8a6f8e60cd5c1b1a05320b4",
+    "api": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "seconds": 0.067,
+        "total": null,
+        "count": 0
+      },
+      {
+        "path": "/api/console/status",
+        "http": 200,
+        "seconds": 4.696,
+        "total": null,
+        "count": 0
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "seconds": 0.589,
+        "total": 0,
+        "count": 0
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=2&include_chart=false",
+        "http": 200,
+        "seconds": 1.766,
+        "total": 39121,
+        "count": 2
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=2&include_chart=false",
+        "http": 200,
+        "seconds": 4.269,
+        "total": 39121,
+        "count": 2
+      },
+      {
+        "path": "/api/console/history?status=done&page_size=2&include_chart=false",
+        "http": 200,
+        "seconds": 2.075,
+        "total": 22897,
+        "count": 2
+      },
+      {
+        "path": "/api/console/history?status=failed&page_size=100&include_chart=false",
+        "http": 200,
+        "seconds": 2.242,
+        "total": 19,
+        "count": 19
+      },
+      {
+        "path": "/api/console/history/16220",
+        "http": 200,
+        "seconds": 3.626,
+        "total": null,
+        "count": 0
+      },
+      {
+        "path": "/api/console/codex/sessions",
+        "http": 200,
+        "seconds": 0.046,
+        "total": 371,
+        "count": 371
+      }
+    ],
+    "summary": {
+      "queue_count": 11,
+      "pending": 13,
+      "processing": 2,
+      "failed": 28,
+      "retryable": 0,
+      "attention": 0
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "25260",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 400; unavailable: 0.",
+      "checked_at": "2026-10-28T09:19:47.482618+00:00",
+      "violations": 1,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 400,
+        "unavailable": 0
+      }
+    },
+    "failure_ids": [
+      "15544",
+      "15545",
+      "15546",
+      "15547",
+      "15592",
+      "15593",
+      "15868",
+      "15871",
+      "15898",
+      "15910",
+      "15921",
+      "15949",
+      "15984",
+      "16010",
+      "16118",
+      "16152",
+      "16175",
+      "16195",
+      "16262"
+    ],
+    "schema": {
+      "objects": 463,
+      "hash": "d70f359f2076f4ea4842247879d6c0d4ee0a2a5ebedf100f790d362adba4d1d3",
+      "fk": []
+    },
+    "frontend_stamp_equals_tree": true,
+    "new_failure_ids": [],
+    "removed_failure_ids": [],
+    "ui": {
+      "history_page2": "21-40 page2",
+      "done_filter": "selected completed,22897records",
+      "attempt16220": "All approved actions verified; receipt20893 readable",
+      "email_current_page": "loaded current classification list and tabs",
+      "owned_browser_tab": "closed",
+      "production_test_tasks_or_sends": 0
+    }
+  },
   "cleanup": {
-    "status": "pending_acceptance",
-    "owned_temp_root": "/private/tmp/ceo-retirement-schema.dgLgGa"
+    "backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3",
+    "temp_root": "/private/tmp/ceo-retirement-schema.dgLgGa",
+    "checked_at": "2026-10-28T09:24:40.818949+00:00",
+    "inode": 831639265,
+    "mtime_ns": 1793179233748454289,
+    "backup_bytes": 514969600,
+    "integrity": "ok",
+    "completion_marker": true,
+    "exact_schema": true,
+    "foreign_keys": [],
+    "workflow_matches": true,
+    "no_open_references": true,
+    "temp_regular_files": 3380,
+    "temp_bytes": 1228015575,
+    "backup_absent": true,
+    "temp_root_absent": true,
+    "gate_root_absent": true,
+    "status": "completed"
+  },
+  "deployment": {
+    "operation_id": "deploy-b731a646-e249-4c6e-8eda-baddcea3e60c",
+    "status": "succeeded",
+    "original_commit": "a88cf87aa8dc5c42db1387323403cded832a2538",
+    "target_commit": "44c13bc91f975c87a8a6f8e60cd5c1b1a05320b4",
+    "installed_commit": "44c13bc91f975c87a8a6f8e60cd5c1b1a05320b4",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-b731a646-e249-4c6e-8eda-baddcea3e60c.sqlite3",
+    "updated_at": "2026-10-28T09:18:45.422082+00:00",
+    "gate": "mandatory exact-target gate passed, normal quiet wait, no bypass"
   }
 }

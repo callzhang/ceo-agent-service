@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite JSONB/生成列/复合 FK、pytest/Ruff、现有 Store/EmailStore、现有标准 app.deploy 和 console 前端。
 
-**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。其余批次继续执行；第二批实现前依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
+**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，会话/反馈/剩余历史闭包继续；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
 
 **Audit baseline:** production `d1efdbc28ddbc9ea847036c9f8ba3a597b354e88`，本地 `c866d4fbd051044f1ba86e846ab14b70706ba741`，检查时 main `0ef0a929565248a51ea5a9e8fd43d1abfe575d37`；48 表/476 对象。精确字段、调用方与索引证据见 [审计](../../database-simplification-audit-20261027.md) 和三个 CSV。实施先刷新基线，不硬编码本次 PID 或把本次行数当作未来迁移前置常量。
 
@@ -43,8 +43,8 @@
 
 **Modify:** app/current_schema_declarations.py、app/current_schema_manifest.py、app/task_run_entity_definitions.py、app/run_adoption_definitions.py、app/configs_definitions.py 及实际生成候选索引的当前声明；app/store_schema_release.py 和本单元明确认领的显式 release/inverse；tests/test_current_declarations_independent.py、tests/test_store_schema_release.py 与一个新专用 release 测试文件。旧冻结来源 SQL 不随当前目标改写。
 
-- [ ] 在最新生产元数据上复核 CSV 中键序、collation、ASC/DESC、predicate、UNIQUE、FK 父键和所有 INDEXED BY。无法重现证明的索引移出本单元，不能靠猜测补齐数量。
-- [ ] 冻结正向退休 SQL，必须与声明/manifest 一同升版，不能保留旧 marker 后直接 DROP：
+- [x] 在最新生产元数据上复核 CSV 中键序、collation、ASC/DESC、predicate、UNIQUE、FK 父键和所有 INDEXED BY。无法重现证明的索引移出本单元，不能靠猜测补齐数量。
+- [x] 冻结正向退休 SQL，必须与声明/manifest 一同升版，不能保留旧 marker 后直接 DROP：
 
 ```sql
 DROP INDEX idx_configs_binding_config_order;
@@ -59,7 +59,7 @@ DROP INDEX idx_email_samples_id;
 DROP INDEX idx_setup_events_id;
 ```
 
-- [ ] 冻结精确 inverse SQL（原始显式定义），不写 IF NOT EXISTS 掩盖声明不匹配：
+- [x] 冻结精确 inverse SQL（原始显式定义），不写 IF NOT EXISTS 掩盖声明不匹配：
 
 ```sql
 CREATE INDEX idx_configs_binding_config_order on configs(skill_binding_config_id,skill_binding_load_order) where record_type='runtime_skill_bindings';
@@ -74,20 +74,20 @@ CREATE INDEX idx_email_samples_id ON email_classifier_runtime_samples(id DESC);
 CREATE INDEX idx_setup_events_id ON setup_wizard_events(id DESC);
 ```
 
-- [ ] 保留对应 UNIQUE 自动索引和主键；保留精确复合 FK 父键、schedule 全状态 claim 和 pending dispatch 的不同合同。
-- [ ] 当前生产派生副本正向、写入新的相关父子事实、inverse、真实旧代码冷启动读写、reforward。比较值/SQLite 类型/身份/序列/FK 异常集合；EXPLAIN 验证相关 join/唯一查找/倒序分页无明显退化。不能只比对象数量。
-- [ ] 同 page size/同数据测量；本次 301 页/1,232,896 字节仅作为索引 B-tree 机会，记录迁移后实际结果和文件空闲页，不能宣称文件立刻减少 1.18 MiB。
+- [x] 保留对应 UNIQUE 自动索引和主键；保留精确复合 FK 父键、schedule 全状态 claim 和 pending dispatch 的不同合同。
+- [x] 当前生产派生副本正向、写入新的相关父子事实、inverse、真实旧代码冷启动读写、reforward。比较值/SQLite 类型/身份/序列/FK 异常集合；EXPLAIN 验证相关 join/唯一查找/倒序分页无明显退化。不能只比对象数量。
+- [x] 同 page size/同数据测量；本次 301 页/1,232,896 字节仅作为索引 B-tree 机会，记录迁移后实际结果和文件空闲页，不能宣称文件立刻减少 1.18 MiB。
 
 ## Task 3 — 退休空的 Configs 并行历史与 NULL 元数据列
 
 **Modify:** app/current_schema_declarations.py、app/current_schema_metadata.py、app/current_schema_manifest.py、app/configs_definitions.py、app/configs_storage.py、app/email_store.py、app/run_entity_definitions.py；明确的 paired release/inverse 与专用测试。保留 registry 当前控制实现 app/email_classifier_runtime.py 的现有业务语义。
 
-- [ ] 复核 `email_model_mode_transitions` 当前生产行数为 0；`allocator_highwater IS NOT NULL` 行数为 0。未来如非零，阻止这一预定迁移并补证据，不自动清空或放进 JSON。
-- [ ] 删除 Configs 该家族的 2 普通列、9 VIRTUAL 列、3 个触发器、一个三列自 FK 和所有独占 family/check/存储规则，清理精确 old DAO/startup validator。保留共享键/index及 `_next_model_control_timestamp`。
-- [ ] 新目标用正面固定声明；对需要 rebuild 的 Configs 使用显式列映射，逐列保留其他所有家族、JSON 编码/SQLite 类型、旧主键和水位；触发器、FK、引用目标随精确新声明创建，不运行自动修补。
-- [ ] 删除 run_entity_identity_map.allocator_highwater 这一空列；保留其他 6 个列及全部 map 行。inverse 恢复 NULL；不能推断原 allocator 水位或删除其他 identity provenance。
-- [ ] 专用当前数据副本演练包含：新 promotion config、现有 registry 切换替身/历史读取、其他 Configs 家族新数据、inverse 旧代码读写、reforward。0 行旧 transition 家族 inverse 恢复为空，不把新 registry 历史复制回旧 DAO。
-- [ ] 相关测试：test_email_model_controls.py、test_configs_storage.py、test_configs_source_contract.py、test_current_declarations_independent.py、test_store_schema_release.py 及新 release 测试；验证共享约束未被删。保留当前 registry activation/history 与必要回执断言。
+- [x] 复核 `email_model_mode_transitions` 当前生产行数为 0；`allocator_highwater IS NOT NULL` 行数为 0。未来如非零，阻止这一预定迁移并补证据，不自动清空或放进 JSON。
+- [x] 删除 Configs 该家族的 2 普通列、9 VIRTUAL 列、3 个触发器、一个三列自 FK 和所有独占 family/check/存储规则，清理精确 old DAO/startup validator。保留共享键/index及 `_next_model_control_timestamp`。
+- [x] 新目标用正面固定声明；对需要 rebuild 的 Configs 使用显式列映射，逐列保留其他所有家族、JSON 编码/SQLite 类型、旧主键和水位；触发器、FK、引用目标随精确新声明创建，不运行自动修补。
+- [x] 删除 run_entity_identity_map.allocator_highwater 这一空列；保留其他 6 个列及全部 map 行。inverse 恢复 NULL；不能推断原 allocator 水位或删除其他 identity provenance。
+- [x] 专用当前数据副本演练包含：新 promotion config、现有 registry 切换替身/历史读取、其他 Configs 家族新数据、inverse 旧代码读写、reforward。0 行旧 transition 家族 inverse 恢复为空，不把新 registry 历史复制回旧 DAO。
+- [x] 相关测试：test_email_model_controls.py、test_configs_storage.py、test_configs_source_contract.py、test_current_declarations_independent.py、test_store_schema_release.py 及新 release 测试；验证共享约束未被删。保留当前 registry activation/history 与必要回执断言。
 
 ## Task 4 — Conversation session 归属到唯一现有 owner
 

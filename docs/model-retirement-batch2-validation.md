@@ -1,6 +1,6 @@
 # 模型退休第二批：schema 与当前数据 inverse 验收
 
-状态：候选实现、相关测试、当前数据副本和独立SPEC/QUALITY通过；未上线。
+状态：第二批已标准部署、生产读回、精确归属备份/临时目录清理完成。
 第一批c5f39验收独立完成，本批不复述其上线结果。源码基线f7a8e16e7；
 Store26.1/Email54→Store28.1/Email54，目标463paired/462bare。
 
@@ -49,8 +49,24 @@ SQL工件/声明/release17通过。分组有重叠，不宣称相加后的唯一
 480530432→477175808，少3354624字节（819页，约3.20MiB）。文件仍125725页，
 freelist8408→9227；没有VACUUM，不宣称文件变小。临时副本删除不计容量收益。
 
-## 发布与清理待办
+## 标准部署、读回与清理
 
-需完成最新主线集成、精确目标标准gate/备份/部署、生产schema/版本/功能读回，
-随后验证并清理本轮备份、两个测试副本、旧代码归档和测试目录。生产数据迁移
-尚未执行；下一批会话和反馈owner仍未退休。最终证据见同名structured JSON。
+正常合并主线后46项schema/Skill定向测试通过。精确提交
+44c13bc91f975c87a8a6f8e60cd5c1b1a05320b4通过完整强制gate、默认安静等待、
+验证备份/paired发布/重启，09:18:45Z账本succeeded，operation
+`deploy-b731a646-e249-4c6e-8eda-baddcea3e60c`；PID25260/health200。
+前端stamp与安装提交frontend tree一致；实际完整463项SQL/hash d70f359f…/FK[]
+与冻结目标逐项相同。API状态/Attention/History1、2页/done/历史Attempt/session均200。
+实际UI翻页21-40、done筛选22897条、Attempt16220及receipt20893、Email当前列表通过。
+19条历史failed身份集合无增减；summary failed28/Attention0，pending/processing
+随真实工作变动，不要求固定。既有未解决反馈健康项仍为degraded1，native读取400/
+不可用0。本批验收没有生产测试任务或真实发送。
+
+发布原备份已被同workflow的daily替换；持目录锁重新验证最新代次CEOB完成标记、
+integrity_check ok、精确463项schema/FK[]、内嵌operation对应本批并检查无打开引用，
+以inode831639265/mtime1793179233748454289/514969600字节护栏删除并确认缺失。
+明确归属临时根3380文件/1228015575字节及标准gate根均确认不存在，原生trajectory
+和生产库保留。第三批独立副本不属于本批清理，不把临时清理计为数据库空间收益。
+
+第三批会话候选已开始开发，尚未部署；反馈owner及剩余历史闭包仍未退休。
+精确证据见[结构化验收](validation/2026-10-28-model-retirement-batch2.json)。
