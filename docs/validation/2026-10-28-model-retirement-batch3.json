@@ -1,5 +1,5 @@
 {
-  "phase": "candidate_validated_not_deployed",
+  "phase": "deployed_accepted_cleaned",
   "target_schema": {
     "store": "2026-10-28.2",
     "email": 54,
@@ -275,16 +275,180 @@
     "old_baseline_failed_three_contract_fixtures": 3,
     "repaired_three_current_contract_fixtures": 3,
     "scoped_ruff": "passed",
-    "current_copy_and_old_code": "passed"
+    "current_copy_and_old_code": "passed",
+    "post_merge_report_and_session": 17
   },
   "reviews": {
     "spec": "PASS, including exact-selector and actual-copy script/report recheck",
     "quality": "PASS after route-neutral metadata fix; no Important/Critical finding",
     "old_archive_app_files_verified": 463
   },
-  "production": null,
+  "production": {
+    "checked_at": 1793181011.420116,
+    "installed": "af24bc48595c0f3eb0edd80d9730f10fb37a45c6",
+    "api": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "seconds": 0.012,
+        "total": null,
+        "count": 0
+      },
+      {
+        "path": "/api/console/status",
+        "http": 200,
+        "seconds": 0.851,
+        "total": null,
+        "count": 0
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "seconds": 0.372,
+        "total": 0,
+        "count": 0
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=2&include_chart=false",
+        "http": 200,
+        "seconds": 0.509,
+        "total": 39124,
+        "count": 2
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=2&include_chart=false",
+        "http": 200,
+        "seconds": 0.869,
+        "total": 39124,
+        "count": 2
+      },
+      {
+        "path": "/api/console/history?status=done&page_size=2&include_chart=false",
+        "http": 200,
+        "seconds": 0.841,
+        "total": 22902,
+        "count": 2
+      },
+      {
+        "path": "/api/console/history?status=failed&page_size=100&include_chart=false",
+        "http": 200,
+        "seconds": 0.727,
+        "total": 18,
+        "count": 18
+      },
+      {
+        "path": "/api/console/history/16220",
+        "http": 200,
+        "seconds": 1.115,
+        "total": null,
+        "count": 0
+      },
+      {
+        "path": "/api/console/codex/sessions",
+        "http": 200,
+        "seconds": 0.027,
+        "total": 488,
+        "count": 488
+      }
+    ],
+    "summary": {
+      "queue_count": 11,
+      "pending": 5,
+      "processing": 0,
+      "failed": 26,
+      "retryable": 0,
+      "attention": 0
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "71305",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 401; unavailable: 0.",
+      "checked_at": "2026-10-28T09:49:41.242659+00:00",
+      "violations": 1,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 401,
+        "unavailable": 0
+      }
+    },
+    "failure_ids": [
+      "15544",
+      "15545",
+      "15546",
+      "15547",
+      "15592",
+      "15593",
+      "15868",
+      "15871",
+      "15898",
+      "15910",
+      "15921",
+      "15949",
+      "15984",
+      "16010",
+      "16152",
+      "16175",
+      "16195",
+      "16262"
+    ],
+    "session_count": 488,
+    "schema": {
+      "objects": 463,
+      "hash": "8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a",
+      "fk": []
+    },
+    "mirror_payloads_and_columns_absent": true,
+    "frontend_stamp_equals_tree": true,
+    "new_failure_ids": [],
+    "removed_failure_ids": [],
+    "ui": {
+      "session_list": "loaded canonical list",
+      "history_next_page": "21-40 page2",
+      "history_done_filter": "selected completed; API results loaded",
+      "native_session": "existing native page readable",
+      "attempt16220": "All approved actions verified; receipt20893 readable",
+      "owned_tab_closed": true,
+      "production_test_tasks_or_sends": 0
+    }
+  },
   "cleanup": {
-    "status": "pending_acceptance",
-    "owned_root": "/private/tmp/ceo-retirement-session-copy.zJHPWm"
+    "backup": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3",
+    "temp_root": "/private/tmp/ceo-retirement-session-copy.zJHPWm",
+    "checked_at": "2026-10-28T09:54:29.697796+00:00",
+    "inode": 831847485,
+    "mtime_ns": 1793180909597007210,
+    "backup_bytes": 514969600,
+    "integrity": "ok",
+    "completion_marker": true,
+    "exact_schema": true,
+    "foreign_keys": [],
+    "workflow_matches": true,
+    "no_open_references": true,
+    "temp_regular_files": 3578,
+    "temp_bytes": 716702531,
+    "backup_absent": true,
+    "temp_root_absent": true,
+    "status": "completed"
+  },
+  "deployment": {
+    "operation_id": "deploy-1e77f697-9fdb-4c30-a83a-792ecf3b349c",
+    "status": "succeeded",
+    "original_commit": "e20e61c9184e65aca7f331ece07ab76674a446b1",
+    "target_commit": "af24bc48595c0f3eb0edd80d9730f10fb37a45c6",
+    "installed_commit": "af24bc48595c0f3eb0edd80d9730f10fb37a45c6",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-1e77f697-9fdb-4c30-a83a-792ecf3b349c.sqlite3",
+    "updated_at": "2026-10-28T09:47:41.069867+00:00",
+    "gate": "mandatory exact-target gate passed; standard quiet wait; no bypass"
   }
 }

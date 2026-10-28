@@ -119,7 +119,7 @@ def test_external_unsubscribe_page_failure_does_not_become_manager_attention():
     assert state is None
 
 
-def test_internal_unsubscribe_reconciliation_failure_is_not_a_business_decision():
+def test_internal_unsubscribe_reconciliation_failure_stays_failed_without_attention():
     error = "unsubscribe_operation_rejected:ValueError: unsubscribe execution requires reconciliation"
     attempt = _attempt(
         action="direct_unsubscribe",
@@ -134,9 +134,7 @@ def test_internal_unsubscribe_reconciliation_failure_is_not_a_business_decision(
         decision_options=(),
     )
 
-    assert state is not None
-    assert state.kind == "failed"
-    assert [action.key for action in state.actions] == ["retry", "details"]
+    assert state is None
 
 
 def test_internal_retry_code_is_rendered_as_readable_failure_reason():
