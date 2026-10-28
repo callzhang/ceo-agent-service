@@ -892,7 +892,7 @@ or parsing. Return values retain that written metadata snapshot and the existing
 native event/result projection. File I/O never extends these writer leases.
 
 Consumer 和只读 Audit 可通过精确节点读取 DingTalk Drive 附件。PDF 下载上限为 64 MiB，其他附件为 20 MiB；扫描 PDF 超过 700 KiB 的内联 MCP 输入上限时，工具返回原始一基页码，之后按页渲染为受限 JPEG，由 `ai_services.ocr_document` 读取。源文件仅在当前 MCP 进程临时目录中保留，技术读取或 OCR 失败继续保持真实技术故障。
-Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 这一项 AI Services 工具；其他 AI Services 工具不随角色注入。普通 Consumer 和非 OA Audit 仍把 `mcp__agent_cli`、`mcp__ai_services` 列为 direct-only 命名空间。OA Consumer 与 OA Audit 将两者交给同一个 CodeMode JS 调用；OA Audit 的其他 MCP 保持 direct-only，内建命名空间不进入该调用：附件读取结果中的 base64 在工具内存中直接传给 OCR，模型只接收 OCR 文本与来源信息。只声明 direct-only 工具并不能避免原生运行时截断超长附件输出；工具审批与业务动作边界不因此改变。
+Codex Consumer/Audit 的角色工具清单只开放 `ai_services.ocr_document` 与 `ai_services.transcribe_audio`（微信语音转写）两项 AI Services 工具；其他 AI Services 工具不随角色注入。普通 Consumer 和非 OA Audit 仍把 `mcp__agent_cli`、`mcp__ai_services` 列为 direct-only 命名空间。OA Consumer 与 OA Audit 将两者交给同一个 CodeMode JS 调用；OA Audit 的其他 MCP 保持 direct-only，内建命名空间不进入该调用：附件读取结果中的 base64 在工具内存中直接传给 OCR，模型只接收 OCR 文本与来源信息。只声明 direct-only 工具并不能避免原生运行时截断超长附件输出；工具审批与业务动作边界不因此改变。
 
 本文档默认描述当前 Consumer Agent A / Audit Agent B 运行架构；明确标注为“已批准的
 生命周期政策”的段落描述后续实现必须达到的目标，不表示对应代码已经切换、部署或在生产
@@ -1268,7 +1268,7 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   已结算输入不另存从 provenance 可生成的精简 JSON；API 按来源摘要投影原有展示形式。
   微信语音（Derek 2026-10-26）：语音消息的 `kind` 是 `voice`，`text` 是占位 `[语音N秒·未转写，用 read_wechat_voice 取音频再转写]`，因此语音不是空消息，直接聊天里每条入站语音和入站文字一样成为回复触发（群聊仍只认 @）。
   音频不在消息行里：Reader 的 `read_voice` 按 `message_id` 在该会话自己的表里确认它是语音，再按 `server_id` 到 `media_N.db` 的 `VoiceInfo`（最新的分片先查）取 SILK 字节，最大 2 MiB；找不到、过大、不是语音都返回 `voice_unavailable`。
-  `read_wechat_voice(message_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、同样不接收会话参数）在服务环境用 `pilk` 把 SILK 转成 WAV，返回 base64，由 Agent 调用原生 `ai_services.transcribe_audio`；读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
+  `read_wechat_voice(message_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、同样不接收会话参数）在服务环境用 `pilk` 把 SILK 转成 WAV，返回 base64。微信任务（`task.channel == wechat`）的 Codex Consumer/Audit 回合与 OA 回合一样把 `mcp__agent_cli` 与 `mcp__ai_services` 放进同一个 CodeMode 调用，Agent 在同一段 JS 里把 `read_wechat_voice` 的 `filename`/`audio_base64` 交给 `mcp__ai_services__transcribe_audio`，只打印转写文字，base64 不经模型（Derek 2026-10-27：此前 Agent 要把约 116 KB 的 base64 抄进调用而卡住至空闲超时）；会话契约哈希随之区分微信交接。读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
   `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
   `reply_task` 的当前投影和 `input_version`。只有卡片内容变化、日程仍有效且本人仍待响应时
@@ -1665,6 +1665,8 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
 候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
 搜索结果按会议标题/摘要与群名筛选并读取完整群成员。成员匹配统一使用准确率 `member_precision = 匹配参会人数 / 完整群成员数`（3/N），不再使用参会人召回率或原有“至少两人且覆盖60%参会人”的过滤条件。业务讨论和主题仍先于成员准确率排序，准确率用于同等业务证据的候选比较，不能覆盖实际业务归属或替代披露权限。候选保留完整成员 IDs、群人数、匹配人数、准确率及参考参会名单是否完整；历史投递只记录次数，不标记为已验证受众。平台中立的发现服务只返回候选及证据，不决定最终目标或发送；近期消息截取和历史送达只是发现线索，Agent 仍需核验完整相关讨论与当前受众，不得按搜索顺序截断候选或仅凭词项匹配判断披露范围。
+
+群发现对保留候选的完整成员读取和近期消息读取分别使用固定最多 4 个并行只读调用，每次最多提交 4 项；按原候选顺序消费结果后再执行原筛选与稳定排序。候选范围、阈值、成员完整性、每项证据、读取计数及错误分类保持原合同。并发完成顺序不改变同分候选顺序或首个失败的归属；失败时不提交后续批次，等待已启动的只读调用结束，不增加重试、缓存或外部写入。 DWS 执行边界仅允许原生 `chat group members` 与 `chat message list` 共享固定 4 个读取槽；其余命令及隔离进程命令仍全局排他，须等待已启动读取结束，所有命令继续使用同一启动间隔和原超时、错误处理。
 
 DWS 明确的保密群历史拒绝由适配器转换为候选级 `GroupHistoryReadDenied`，保留该群 ID、成员证据、代码及原因，讨论内容/分数保持未知，并继续核验其他候选。全部拒绝仍为明确 `history_read_denied`，不变成无群、空历史、可发送或自动私聊依据。拒绝证据到达 Agent 不解除权限；无法核实受众或内容时仍保留真实失败。临时及未知 provider 故障保持原失败/重试语义。
 多个合理群不是人工选择条件，由 Agent 按本次议题和行动归属排序，不能用宽泛群凑数，也不能把敏感内容送给无授权受众。

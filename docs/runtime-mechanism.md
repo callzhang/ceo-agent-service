@@ -2213,7 +2213,7 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
 WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
 执行期间 current 指针更新不会改写已领取的会话范围。
-微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，Agent 调原生 `ai_services.transcribe_audio` 转写；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
+微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。Agent 工具 `read_wechat_voice(message_id)` 用 `pilk==0.2.4` 转成 24 kHz 单声道 WAV 后以 base64 返回，微信任务的 Codex 回合与 OA 一样在同一个 CodeMode 调用里把它交给 `mcp__ai_services__transcribe_audio`，base64 不经模型；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
@@ -3932,6 +3932,7 @@ Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `need
 独立会议路径复用共享消息受众合同。候选级保密历史拒绝保留为明确未知证据，继续读取其他
 候选；不当作空讨论、无群或发送许可。群成员完整性和真实群人数独立于会议参会人数。
 Agent 依据实际讨论、完整当前名册、稳定身份、当前职责和内容披露范围决定群或明确私聊。
+共享群发现对每阶段保留候选的完整成员和近期消息采用固定最多 4 个并行只读调用、每批最多 4 项，按原输入顺序消费结果后执行原筛选与稳定排序；不缩小候选集或改变阈值、完整性、逐项证据、读取计数及错误分类。并发完成顺序不影响同分候选顺序或首个失败；失败后不提交后续批次，等待已启动读取结束，不额外重试、缓存或发送。 DWS 执行边界仅允许原生 `chat group members` 与 `chat message list` 共享固定 4 个读取槽；其余命令及隔离进程命令仍全局排他，须等待已启动读取结束，所有命令继续使用同一启动间隔和原超时、错误处理。
 仅有转写参会人而无完整日历名册时，群发现先按原发送可用性和标题规则预选，再读取保留群的完整成员；无标题匹配时仍保留原候选范围。完整日历名册仍先检查参会覆盖再筛标题，不能让不符合覆盖的同名群遮蔽合格群。该读取顺序优化不降低所选群的身份、完整名册和讨论证据要求，不缓存受众，也不赋予发送许可。
 业务私聊只接受来源中唯一的稳定参会人身份或日历证明的组织者；拒绝本人和已核验别名。
 个人私聊仍要求完整日历两人名册。正文同一私聊受众合并发送，不凭 HR 职务扩大披露范围。

@@ -1,4 +1,5 @@
 from dataclasses import dataclass
+from threading import Barrier, BrokenBarrierError, Lock
 
 import pytest
 
@@ -155,8 +156,8 @@ def test_complete_audience_still_filters_coverage_before_title():
         GroupDiscoveryRequest(scope, "Business", audience=audience, audience_is_complete=True)
     )
     assert [candidate.group.external_group_id for candidate in result.candidates] == ["covered"]
-    assert [call for call in provider.calls if call[0] == "members"] == [
-        ("members", "named"), ("members", "covered"),
+    assert sorted(call for call in provider.calls if call[0] == "members") == [
+        ("members", "covered"), ("members", "named"),
     ]
 
 
@@ -263,7 +264,7 @@ def test_candidate_history_denial_preserves_roster_and_remaining_reads(platform,
     assert denied.evidence.history_read_denial.reason == "Access denied"
     assert denied.evidence.discussion is None
     assert denied.evidence.sendability.allowed is None
-    assert [c for c in provider.calls if c[0] == "messages"] == [("messages", "denied"), ("messages", "next")]
+    assert sorted(c for c in provider.calls if c[0] == "messages") == [("messages", "denied"), ("messages", "next")]
 
 
 @pytest.mark.parametrize("failure", [RetryableProviderError("transport interrupted"), ValueError("unknown provider failure")])
@@ -312,3 +313,105 @@ def test_dingtalk_unknown_message_read_failure_remains_retryable(code, message):
     adapter = DingTalkGroupDiscoveryProvider(Dws())
     with pytest.raises(RetryableProviderError):
         adapter.read_recent_group_messages(GroupRef(adapter.scope, "cid", "Group"), limit=30)
+
+
+def test_large_discovery_bounds_parallel_reads_without_changing_candidates_or_evidence():
+    scope = ProviderScope("dingtalk", "workspace-a")
+    groups = tuple(GroupRef(scope, str(i), "Topic") for i in range(460))
+    audience = (MemberRef(scope, "u1"), MemberRef(scope, "u2"))
+
+    class ConcurrentProvider(FakeProvider):
+        def __init__(self):
+            super().__init__(scope, groups, {}, {})
+            self.lock = Lock()
+            self.barriers = {stage: Barrier(4, timeout=1) for stage in ("members", "messages")}
+            self.active = dict.fromkeys(self.barriers, 0)
+            self.peak = dict.fromkeys(self.barriers, 0)
+
+        def rendezvous(self, stage):
+            with self.lock:
+                self.active[stage] += 1
+                self.peak[stage] = max(self.peak[stage], self.active[stage])
+            try:
+                self.barriers[stage].wait()
+            except BrokenBarrierError:
+                # Serial code reaches this timeout once and completes, so RED
+                # reports the missing concurrency rather than hanging a test.
+                pass
+            finally:
+                with self.lock:
+                    self.active[stage] -= 1
+
+        def list_group_members(self, group):
+            self.rendezvous("members")
+            return (*audience, MemberRef(scope, "member-" + group.external_group_id), audience[0])
+
+        def read_recent_group_messages(self, group, *, limit):
+            assert limit == 30
+            self.rendezvous("messages")
+            return (Message("Topic " + group.external_group_id),)
+
+    class RankedPolicy(FakePolicy):
+        def discussion_score(self, request, messages):
+            return DiscussionEvidence(float(int(messages[0].text_excerpt.split()[-1]) % 3))
+
+        def accepts(self, request, candidate):
+            return True
+
+    provider = ConcurrentProvider()
+    result = GroupDiscoveryService(provider, RankedPolicy()).discover(
+        GroupDiscoveryRequest(scope, "Topic", audience=audience)
+    )
+    assert provider.peak == {"members": 4, "messages": 4}
+    assert provider.active == {"members": 0, "messages": 0}
+    assert result.outcome == GroupDiscoveryOutcome.AMBIGUOUS
+    expected = sorted(range(460), key=lambda i: i % 3, reverse=True)
+    assert [c.group.external_group_id for c in result.candidates] == [str(i) for i in expected]
+    assert [c.rank for c in result.candidates] == list(range(1, 461))
+    assert result.reads == 4 * len(groups)
+    for candidate in result.candidates:
+        evidence = candidate.evidence
+        assert evidence.members == (*audience, MemberRef(scope, "member-" + candidate.group.external_group_id))
+        assert evidence.member_precision == MemberPrecisionEvidence(2, 3, "eligible")
+        assert evidence.discussion.score == int(candidate.group.external_group_id) % 3
+        assert evidence.sendability == Sendability(True)
+
+
+@pytest.mark.parametrize("stage", ["members", "messages"])
+def test_parallel_discovery_preserves_first_input_order_provider_failure(stage):
+    scope = ProviderScope("dingtalk", "workspace-a")
+    groups = tuple(GroupRef(scope, key, "Topic") for key in (
+        "first", "second", "third", "fourth", "later-1", "later-2", "later-3", "later-4",
+    ))
+
+    class FailingProvider(FakeProvider):
+        def __init__(self):
+            super().__init__(scope, groups, {}, {})
+            self.barrier = Barrier(4, timeout=1)
+            self.failed_groups = []
+
+        def fail(self, group):
+            self.failed_groups.append(group.external_group_id)
+            try:
+                self.barrier.wait()
+            except BrokenBarrierError:
+                pass
+            raise RetryableProviderError(group.external_group_id + " unavailable")
+
+        def list_group_members(self, group):
+            if stage == "members":
+                self.fail(group)
+            return ()
+
+        def read_recent_group_messages(self, group, *, limit):
+            self.fail(group)
+
+    provider = FailingProvider()
+    result = GroupDiscoveryService(provider, FakePolicy()).discover(
+        GroupDiscoveryRequest(scope, "Topic")
+    )
+    assert result.outcome == GroupDiscoveryOutcome.RETRYABLE_FAILURE
+    assert result.provider_error == "first unavailable"
+    assert result.candidates == ()
+    assert result.reads == (16 if stage == "members" else 25)
+    assert set(provider.failed_groups) == {"first", "second", "third", "fourth"}

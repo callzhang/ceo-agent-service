@@ -119,12 +119,8 @@
     },
     "current_task_created_disposable_files": false
   },
-  "pending": [
-    "Newer9ed55b9c7 standard deployment completion and exact gate summary",
-    "Report417666 final business result/publication receipt",
-    "Peer backup and temporary-file ownership/cleanup confirmation"
-  ],
-  "completion": "production readback and A5 documentation verified; report outcome and peer cleanup remain pending",
+  "pending": [],
+  "completion": "Scoped release/report acceptance and owned workflow cleanup complete; unrelated OA recovery-state approval and unresolved-feedback business health remain separately tracked.",
   "owner_reconciliation": {
     "installed_commit_confirmed": "758083c100ef57ddf07f1718f756ba2d6e825241",
     "newer_target": "9ed55b9c7",
@@ -138,5 +134,209 @@
     "attention_class": "external_action_uncertain",
     "reply_queue_failed": 16
   },
-  "schema_sha256_serialization": "UTF-8 JSON array of (type,name,tbl_name,sql), ordered by type,name; ensure_ascii=False; compact separators=comma/colon"
+  "schema_sha256_serialization": "UTF-8 JSON array of (type,name,tbl_name,sql), ordered by type,name; ensure_ascii=False; compact separators=comma/colon",
+  "final_production_readback": {
+    "checked_at": "2026-10-27T22:11:13.894603+00:00",
+    "installed_commit": "d1efdbc28ddbc9ea847036c9f8ba3a597b354e88",
+    "frontend_needs_build": false,
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "service": {
+      "pid": "11030",
+      "state": "running"
+    },
+    "business_health": {
+      "state": "degraded",
+      "violations": 1,
+      "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 385; unavailable: 0."
+    },
+    "attention": {
+      "items": 1,
+      "meta": {
+        "snapshot_at": "2026-10-27T22:11:16.009057Z",
+        "page": null,
+        "page_size": null,
+        "total": 1,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    "history": {
+      "items": 20,
+      "seconds": 0.577,
+      "meta": {
+        "snapshot_at": "2026-10-27T22:11:16.585974Z",
+        "page": 2,
+        "page_size": 20,
+        "total": 38929,
+        "next_cursor": "3",
+        "has_more": true
+      }
+    },
+    "report": {
+      "task": {
+        "id": 417666,
+        "status": "done",
+        "error": "",
+        "updated_at": "2026-10-27 21:56:30"
+      },
+      "attempts": [
+        {
+          "id": 16220,
+          "agent_run_id": 400032,
+          "action": "agent_run",
+          "status": "completed",
+          "updated_at": "2026-10-27 21:56:30",
+          "summary": "All approved actions verified",
+          "detail_url": "/attempts/16220"
+        }
+      ]
+    },
+    "schema": {
+      "count": 476,
+      "exact_current": true,
+      "sha256": "105891b5280133fa10cf3fbfc66c93570cfcdb7928c7f3be8edbf47810686754",
+      "foreign_keys": []
+    },
+    "deployment": {
+      "operation_id": "deploy-9245916b-93d3-4deb-93fa-1d17c5aa7cf7",
+      "status": "succeeded",
+      "target_commit": "d1efdbc28ddbc9ea847036c9f8ba3a597b354e88",
+      "installed_commit": "d1efdbc28ddbc9ea847036c9f8ba3a597b354e88",
+      "updated_at": "2026-10-27T22:08:55.987981+00:00",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-9245916b-93d3-4deb-93fa-1d17c5aa7cf7.sqlite3",
+      "error": ""
+    },
+    "active_skill_config": [
+      400,
+      "active"
+    ],
+    "weekly_skill": [
+      [
+        279,
+        "75d246f20d87a9b13e147715cb36f2737759664501130fa30db5465ee2fe2a44",
+        1
+      ]
+    ],
+    "report_reviews": [
+      [
+        1732,
+        400028,
+        400026,
+        "return"
+      ],
+      [
+        1733,
+        400030,
+        400029,
+        "return"
+      ],
+      [
+        1734,
+        400032,
+        400031,
+        "approve"
+      ]
+    ],
+    "report_execution": [
+      [
+        400031,
+        400032,
+        "done"
+      ]
+    ],
+    "report_receipts": [
+      [
+        20891,
+        125572,
+        null,
+        "verified",
+        20893
+      ],
+      [
+        20893,
+        125572,
+        "send_group_message",
+        "verified",
+        null
+      ]
+    ],
+    "system_files": {
+      "total": 26,
+      "matching": 26
+    },
+    "backups": [
+      {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-27.sqlite3",
+        "size": 514969600,
+        "inode": 829590894,
+        "mtime_ns": "1793138984807880655"
+      }
+    ]
+  },
+  "final_ui": {
+    "history_page2_loaded": true,
+    "page2_to3_distinct_rows": true,
+    "done_filter_returns_records": true,
+    "filter_resets_page1": true,
+    "report_task417666_done": true,
+    "attempt16220_action125572_receipt20893_visible": true,
+    "no_mutating_controls_clicked": true,
+    "verification_tab_closed": true
+  },
+  "published_report": {
+    "node_id": "NZQYprEoWoEOXajDiXx9vlwdJ1waOeDk",
+    "url": "https://alidocs.dingtalk.com/i/nodes/NZQYprEoWoEOXajDiXx9vlwdJ1waOeDk",
+    "inspect_status": "success",
+    "fetch_contract": "doc.content.v1",
+    "fetch_status": "success",
+    "fetch_complete": true,
+    "markdown_characters": 391,
+    "markdown_sha256": "a24eeef914e5389df9958903aafad30e8251de27cb3b5da1f4642a1d9e6e99cb",
+    "body_copy_retained": false
+  },
+  "final_cleanup": {
+    "checked_at": "2026-10-27T22:18:52.115015+00:00",
+    "authorization": "Derek explicitly authorized clearing verified workflow backup and test temporary artifacts after acceptance.",
+    "backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-27.sqlite3",
+      "inode": 829590894,
+      "mtime_ns": "1793138984807880655",
+      "bytes": 514969600,
+      "integrity": "ok",
+      "application_id": 1128615746,
+      "schema_count": 476,
+      "no_open_files": true,
+      "absent": true
+    },
+    "failed_gate": {
+      "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.v068rthe",
+      "source_commit": "ec6b8a93fa3568f671e613528fee5e5e274908c5",
+      "log_sha256": "a2c40aaad26203caec2300240da38ee4108d475f2f0fe3d9e9948c73cf8c1fb9",
+      "summary": "9 failed, 7526 passed, 2 skipped, 1 deselected in 250.63s (0:04:10)",
+      "files": 4232,
+      "bytes": 205540403,
+      "symlinks_not_followed": 0,
+      "no_open_files": true,
+      "absent": true
+    },
+    "prior_owned_root_absent": true,
+    "completed_at": "2026-10-27T22:19:04.526707+00:00",
+    "identity_serialization": "nanosecond timestamps are strings to preserve exact Python/SQLite filesystem integer values through JSON consumers"
+  },
+  "final_gate": {
+    "standard_exact_target_deploy_succeeded": true,
+    "installed_test_gate_enabled": true,
+    "budget_seconds": 600,
+    "memory_bytes": 2147483648,
+    "successful_gate_test_count": "not retained; no full-repository-suite pass claimed",
+    "evidence": "Installed app/deploy.py requires green exact-target manifest gate before operation; succeeded deployment ledger recorded."
+  },
+  "remaining_separate_work": [
+    "Task417641/Attempt16198 external action recovery-state change awaits its separately scoped decision/workflow; no replay by this task.",
+    "One unresolved-feedback business-health finding remains.",
+    "Global field/index optimality and runtime compatibility audit remain a separate future task."
+  ]
 }
