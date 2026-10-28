@@ -178,6 +178,7 @@ def test_release_adds_only_the_table_and_the_inverse_restores_the_exact_source(t
         db.execute("insert into wechat_voice_transcripts"
                    "(account_id,conversation_id,message_id,audio_sha256,transcript) "
                    "values('a','c','m',?,'text')", ("0" * 64,))
+    release.verify_loaded()
     release.finalize()
 
     release.rollback()
