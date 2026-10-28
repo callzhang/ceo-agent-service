@@ -15,7 +15,7 @@ personal names, individual scores/OKRs, HR evaluations and links exposing
 individual materials. No new business rule is authored in this sync.
 
 The exact installed-baseline regression failed against the prior source and
-passes after the sync. The publisher file has 29 passing tests and one stale
+passes after the sync. At the initial sync checkpoint, the publisher file had 29 passing tests and one stale
 attendance no-op assertion introduced by the separate leave-version transition;
 that assertion is repaired in a separate leave test commit. Static checks pass.
-Full standard deployment and actual loaded Skill readback remain required.
+Subsequent verification passes all 30 publisher tests. PR 333 is merged and standard gated publication at `9f163a678b1a58a9a91e3935066dbfe1e9064623` completed; all 26 assets match installed/source/target digests. The installed OKR v21 bytes remain unchanged.
