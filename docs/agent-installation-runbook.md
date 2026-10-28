@@ -53,13 +53,13 @@ Write chosen values to `.env` from `.env.example`. Keep user-specific values in
 1. Read the canonical machine rules:
 
    ```sh
-   sed -n '1,240p' ~/.agents/AGENT.md
+   sed -n '1,240p' ~/.agents/AGENTS.md
    ```
 
 2. Inspect repository state and avoid unrelated changes:
 
    ```sh
-   cd ~/Services/ceo-agent-service
+   cd <your development clone>   # never ~/Services/ceo-agent-service: nobody edits or builds the production checkout
    git status --short --branch
    ```
 
@@ -87,7 +87,9 @@ Write chosen values to `.env` from `.env.example`. Keep user-specific values in
 
    The build must create `app/static/workbench/index.html` plus every referenced
    file under `/workbench-assets/`. Generated files remain untracked. Do not let
-   the installer download dependencies or build implicitly.
+   the installer download dependencies or build implicitly. Steps 4 and 5 run in
+   the development clone; the production checkout is built only by
+   `python -m app.deploy`.
 
 If any dependency download is blocked by network, package registry, or missing
 credentials, report the exact failed command and error.
@@ -327,7 +329,7 @@ tools; B is the only task-driven writer.
 Review the shared rules at **Config -> Audit Rules** before enabling live sends.
 They apply to both roles and can refine business review requirements, but cannot
 change the read/write boundary, exact-revision dedupe, unknown-result readback, or
-two-cycle content-feedback limit. A missing fact that the sender can answer
+content-feedback cycle limit (currently ten). A missing fact that the sender can answer
 becomes one concrete clarification message candidate; it is not an operator choice.
 
 ### macOS Notifications
@@ -489,7 +491,6 @@ permission, fix `dws` before continuing.
    "$HOME/miniforge3/bin/pytest" \
      tests/test_work_profile.py \
      tests/test_prompt.py \
-     tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content \
      -q
    ```
 
@@ -565,9 +566,10 @@ deployment boundary.
    Workbench state is authoritative in SQLite. Server-sent events stream
    replayable progress but do not replace persisted state. Tool calls that need
    approval stop at a persisted confirmation and resume only after that exact
-   confirmation is accepted. Codex is the first production runtime; Claude and
-   Pi do not have dedicated adapters yet and may be added only by implementing
-   the same event, stop, recovery, and confirmation contract.
+   confirmation is accepted. Codex is the first production runtime; Claude
+   also has an adapter (`app/claude_runtime_adapter.py`); any other runtime may be
+   added only by implementing the same event, stop, recovery, and confirmation
+   contract.
 
 5. Run one dry-run pass:
 
@@ -604,8 +606,10 @@ Install launchd only after dry-run behavior and configuration are reviewed.
    `ceo-agent-service`; the macOS toggle for it stays the user's to set.
 
 2. If launchd should start in dry-run, edit the plist or environment before
-   installation. The current template sets `CEO_NOT_SEND_MESSAGE=0`, so do not
-   install it blindly on a fresh machine.
+   installation. `scripts/ceo-agent-service` unconditionally exports
+   `CEO_NOT_SEND_MESSAGE=0` and `CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1`, so values in
+   `.env` do not make a dry run; edit that script first and do not install it
+   blindly on a fresh machine.
 
 3. Install:
 
@@ -640,17 +644,19 @@ Only after reviewing dry-run attempts with the user:
 
 1. Confirm the exact live scope: which chats, which aliases, which actions, and
    whether OA/calendar/task follow-up actions are allowed.
-2. Set:
+2. Live sending is controlled by two values that `scripts/ceo-agent-service`
+   exports unconditionally; changing them means editing that script and deploying:
 
    ```text
    CEO_NOT_SEND_MESSAGE=0
    CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1
    ```
 
-3. Restart launchd if runtime service behavior changed:
+3. Deploy or restart through the service lifecycle (`python -m app.deploy`, or
+   `python -m app.deploy --restart` when only settings changed); never run
+   `launchctl kickstart` by hand. Then read back the new PID:
 
    ```sh
-   launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main
    launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
    ```
 
@@ -661,11 +667,11 @@ Only after reviewing dry-run attempts with the user:
      "$HOME/miniforge3/bin/ceo-agent" send-attempt --attempt-id <reviewed-attempt-id>
    ```
 
-5. Re-check `/attempts/{id}`, `/errors`, and recent DingTalk state.
+5. Re-check `/attempts/{id}`, `/history` (`/errors` redirects there), and recent DingTalk state.
 
 ## Completion Checklist
 
-- Shared rules read from `~/.agents/AGENT.md`.
+- Shared rules read from `~/.agents/AGENTS.md`.
 - Worktree inspected and unrelated changes preserved.
 - Python environment installed and tests for touched behavior pass.
 - `npm run test:workbench` and `npm run build:workbench` pass, with all index

@@ -1320,9 +1320,9 @@ AgentRun 的终态重复完成先在写事务外读取准确原生引用。独�
 用户配置。Status 为每个实际 adapter 展示 pending、oldest、running 和 latest error；scheduler
 进程/扫描健康与 scheduled run 的业务结果分别展示，空队列不会制造 Agent run。
 
-默认业务生产任务通过稳定 migration key 幂等 seed，共十个：邮件、钉钉消息、钉钉日历邀请、每小时
-`:30` 的“恢复近期 DingTalk 消息”、会议、微信 reader、OA、会议行动项、每周 OKR，以及每天
-`20:00`（`Asia/Shanghai`）的 AI 听记同步。十个任务全部是服务命令，旧的 producer timing loops
+默认业务生产任务通过稳定 migration key 幂等 seed，共 14 个（11 个服务命令；CEO 日报、CEO 管理周报和 OKR 管理周报是 Agent 任务）：邮件、钉钉消息、钉钉日历邀请、每小时
+`:30` 的“恢复近期 DingTalk 消息”、会议、微信 reader、OA、会议行动项、Chrome 登录态同步、听记权限申请、CEO 日报、CEO 管理周报、每周 OKR，以及每天
+`20:00`（`Asia/Shanghai`）的 AI 听记同步；清单以 `app/agent_cron/seeds.py` 为准。服务命令任务不创建 Agent run，旧的 producer timing loops
 已移除。以 Agent 形式创建的旧 `dingtalk-message-check-v1`、`wechat-message-check-v1`、会议、OA、工作来源和
 `ceo-minutes-sync-daily-v1` 在启动时原地转换为命令形式（保留名称、Cron、时区和启用状态，已删除的不动）。
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带

@@ -18,7 +18,7 @@ only from the registered handler's persisted dispatch and verification.
 The Consumer proposes `ConsumerProposal.actions`; the Audit reviews the exact
 candidate digest, and the service executes only its approved plan or selected
 option. An action has `description`, a stable `action_identity`, `capability`,
-`operation`, `target`, `payload`, and `effect: "external"`. Use a new
+`operation`, `target`, `payload`, and `effect` (`external` or `none`, default `external`; an action carrying a message body must be `external`). Use a new
 `action_identity` for a materially different intended external outcome. The
 identity is stable across a revision that merely clarifies the same outcome.
 The service refuses to reuse a completed action's receipt when its approved

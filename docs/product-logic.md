@@ -24,7 +24,7 @@ MCP allowlist，也没有为 A/B 建立两阶段 MCP permission profile；继承
 业务解释层。Service 可以验证材料来源、文件类型、大小、路径和完整性，但“哪个材料相关、应展开
 哪一层、材料说明了什么”由 Agent 决定。系统也不维护单独的 Skill audit DB；详细 Skill 调用以 Codex session JSONL 为准，SQLite 只保存任务状态和 provider 去重事实，不保存 Skill receipt。
 
-## 七个业务 Skill
+## 八个业务 Skill
 
 - `ceo-message-triage`：判断回复、reaction、具体追问或 `no_action`。
 - `ceo-calendar-invite`：根据日程目的、参与价值、冲突和所需输入决定接受、拒绝或向邀请人追问。
@@ -33,6 +33,7 @@ MCP allowlist，也没有为 A/B 建立两阶段 MCP permission profile；继承
 - `ceo-mail-review`：读取完整线程后回复邮件，避免脱离上下文处理单封邮件。
 - `ceo-personnel-communication`：判断人事信息的接收人、可见性、最小披露和沟通方式。
 - `ceo-work-tracking`：贯通任务提取、项目/TODO、跟进、完成验证和关闭。
+- `ceo-sales-weekly-report`：仅在明确请求时读取目标与纷享销客数据并生成销售周报评分，不创建定时任务。
 
 这些 Skill 不复制 DWS/Lark 命令目录。A 根据业务 Skill 的指引继续加载 `dingtalk-chat`、
 `dingtalk-calendar`、`dingtalk-doc`、`dingtalk-minutes`、`dingtalk-mail`、`dingtalk-todo` 或对应
@@ -55,7 +56,7 @@ OA、候选人面试和 OKR 不重新写进 CEO 通用 Skill：
 每个业务 `conversation_id` 复用一个 Consumer A session，新消息使用 `codex exec resume` 追加。
 已确认的事实必须复用，不能重复追问。材料缺失但对话参与者可以回答时，A 生成一个具体澄清候选，
 由 B 审阅后发回来源会话；不得让 Derek 在“继续处理”和“先追问”之间作无意义选择。
-`needs_human` 只用于无法通过读取或交流消除、确实需要 Derek 作管理判断的情况。
+`needs_human` 只在完整的 Consumer 规则问题已通过 Audit、等待 Derek 对“适用于一类任务”的 2–4 个规则选项作出反馈时使用；不用来让他决定某一件具体事项，也不用于技术失败或可由 Agent 自己读取、追问解决的情况。
 
 ## Task Extraction 与 Follow-up
 
@@ -99,8 +100,8 @@ Follow-up 候选继续走 A/B 执行链；完全相同且已送达的 revision �
 
 - `executed`：B 已执行且外部系统读回确认。
 - `no_action`：当前 trigger 不需要外部动作。
-- `revision_required`：B 的反馈已返回 A，等待新 revision。
-- `needs_human`：需要 Derek 的不可约判断。
+- `needs_feedback`：B 要求修改，反馈写入 Audit 结果，等待 A 生成新 revision。
+- `needs_human`：规则缺口或反馈周期用尽，等待 Derek 对一类任务的规则作出反馈。
 - `failed`：当前 run 失败并记录是否可重试。
 - `quarantined`：历史数据中的旧投影标签，仅用于历史展示；新执行不得写入。
 
@@ -110,7 +111,7 @@ revision 的同一动作不会发送两次；不同正文或参数的新 revisio
 ## 安装者与其他使用者
 
 每位安装者部署自己的 service、SQLite、workspace、Codex/DWS/Lark 登录和可选反馈服务。安装流程
-把七个受管业务 Skill 写入该用户的 `~/.agents/skills`；不会写入 `~/.codex/skills`，也不会覆盖
+把八个受管业务 Skill 写入该用户的 `~/.agents/skills`；不会写入 `~/.codex/skills`，也不会覆盖
 同名的用户自有 Skill。普通同事、HR、审批申请人和项目 owner 不安装服务，只在原工作会话中与
 Agent 交互。详细步骤见 [README](../README.md) 和
 [agent installation runbook](agent-installation-runbook.md)。

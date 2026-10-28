@@ -42,18 +42,16 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | 错误码 | 解释 | 默认处理 |
 | --- | --- | --- |
 | `codex_process_failed` | Codex 进程异常退出 | 可重试 |
-| `codex_process_timeout` | Codex 执行超时 | 可重试 |
+| `codex_total_timeout` | Codex 总执行时长超时 | 可重试 |
+| `codex_idle_timeout` | Codex 长时间无输出 | 可重试 |
+| `codex_process_timeout` | 旧路径的进程超时（仅 worker 兜底使用） | 可重试 |
 | `codex_result_missing` | 运行结束但没有可解析的结构化结果 | 可重试 |
 | `codex_result_invalid` | 有输出但不符合当前 typed-result schema | 可重试，修复契约后重跑 |
 | `codex_stream_invalid` | 流式事件无法解析为合法执行事件 | 可重试 |
-| `agent_result_failed` | Agent 返回正式 `failed` 结果 | 按服务对该错误码的政策决定 |
 | `agent_reported_failure` | Agent 报告了服务不认识的失败码；原文保存在 `source_code` | 有上限的普通重试，耗尽后失败 |
 | `dependency_read_unavailable` | 必需来源读取因 DWS/MCP/外部依赖本身不可用而未完成 | 持久队列退避重试，不消耗任务重试额度；不当作业务结论 |
 | `agent_context_refresh_failed` | 服务在 Consumer/Audit turn 间刷新当前外部上下文失败 | 外部依赖等待，退避重试并归还任务额度 |
-| `agent_feedback_missing` | 修订流程缺少必要反馈 | 终止当前轮并记录失败 |
-| `consumer_retry_deferred` | Consumer 尚未达到下一次重试时间 | 调度等待 |
 | `consumer_retry_exhausted` | Consumer 已达到重试上限 | 终态失败 |
-| `audit_retry_deferred` | Audit 尚未达到下一次重试时间 | 调度等待 |
 | `audit_retry_exhausted` | Audit 已达到重试上限 | 终态失败 |
 | `audit_revision_exhausted` | 内容反馈周期已达到上限 | 技术性终态失败，不升级为人工业务决策 |
 
@@ -69,7 +67,6 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `stale_before_agent_start` | 任务在 Agent 启动前失去租约 | 可重试 |
 | `service_restart_interrupted` | 服务在 Agent 本轮执行完成前重启；不按命令或 effect 类型分流 | 可继续原 session，并以新 agent run 重试同一业务 task |
 | `service_restart_after_completed_turn` | 服务重启发生在结果完成后、任务投影更新前 | 可重试；不得创建新的业务 attempt |
-| `reply_task_lease_exhausted` | 任务租约/接管尝试达到上限 | 终态失败 |
 
 ## Runtime 路由
 
@@ -84,12 +81,13 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `runtime_result_validation_failed` | runtime 结果校验失败 | 终态失败或按 provider retryable 重试 |
 | `runtime_post_start_failed` | runtime 已启动但后续阶段失败 | 按同一 run 的基础设施策略重试 |
 | `codex_provider_auth_failed` | Codex provider 认证失败 | 修复认证后重试 |
+| `external_action_uncertain` | 外部动作或投递结果仍未确认，已保存原始回执 | 终态 failed，保留 Attention，不自动重跑不可逆动作 |
+| `external_action_failed` | 外部动作执行或投递失败，已完成动作的记录保留 | 终态 failed，保留 Attention |
 | `codex_capacity_pause` | provider 容量不足，任务进入延迟队列 | 到 retry_at 后自动重试 |
 | `codex_provider_overloaded` | provider 已满（429、模型容量不足） | 同路由退避重试 3 次，仍失败则暂停路由并切换 |
 | `codex_provider_capacity_exhausted` | provider 额度用完 | 不在同路由重试，暂停路由并切换 |
 | `claude_credentials_unavailable` | Claude 本机登录态不可用，含 token 缺少 `user:inference` scope | 终端重新登录或改用 `claude_api` |
 | `claude_runtime_unavailable` | 已选择 Claude 路由但 adapter 未配置 | 终态失败，修复服务配置 |
-| `runtime_command_build_failed` | 执行循环无法为所选路由构建命令 | 终态失败，修复路由与 adapter 接线 |
 
 ## 业务数据与 provider
 
@@ -98,7 +96,6 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `provider_read_failed` | 业务 provider 读取失败；保留 provider 原始 code 和 reason，例如 `imap.uid_lookup_missing`、`imap.uid_lookup_ambiguous`、`imap.uidvalidity_changed` | 按 provider retryable 重试；不得把不同 provider 原因压成单一服务错误码 |
 | `provider_target_failed` | provider 或 Skill 无法完成目标选择；具体原因保存在 `source_code` | 按 provider 的 retryable 处理 |
 | `delivery_failed` | 外部发送请求或 provider 结果失败；具体原因保存在 `source_code` | 按 provider retryable 重试 |
-| `oa_skill_workflow_incomplete` | OA Skill 流程未完成 | 按当前业务能力重试或失败 |
 
 provider 还可能返回自身的 `server_error_code`、HTTP 错误或 DWS/Friday 原始码；这些值
 属于 provider 诊断，不在应用层重新分类。查看具体 provider 的错误含义时，应同时查阅其
@@ -149,8 +146,7 @@ trigger 自身的跳过原因写在 `scheduled_task_runs.skip_or_error_reason`�
 ## 历史错误码
 
 历史数据库可能包含已经废弃的 `unknown`、`reconciled`、旧恢复状态或早期命令审核错误。
-schema 升级会删除这些旧投影字段，把旧 `unknown` run 的当前状态迁移为 `failed`，并追加
-`legacy_unknown_migrated` state event。原始错误事件、session、runtime attempt、tool event 和
+schema 升级会删除这些旧投影字段，把旧 `unknown` run 的当前状态迁移为 `failed`。原始错误事件、session、runtime attempt、tool event 和
 provider 结果保持不变；当前业务投影归入 `failed`、`done` 或 `needs_human` 的现行语义。
 
 `runtime_effect_policy_violation`、`agoal_live_read_unreviewed`、`audit_recovery_ambiguous`、

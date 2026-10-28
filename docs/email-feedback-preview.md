@@ -1,6 +1,6 @@
 # Pending email reading and classification evidence
 
-The list response contains a redacted, 280-character summary, not the message
+The list response contains a 1000-character plain-text preview, not the message
 body. The selected email now loads `message_text` from the classification detail
 response, sourced from the existing `email_messages.normalized_text` snapshot.
 The list remains lightweight. The reader preserves line breaks, renders plain
@@ -16,9 +16,9 @@ Missing snapshots and failed requests have explicit
 states; changing selection aborts the previous request. Attachment contents are
 not read. No messages are marked read or classified by opening the reader.
 
-Classification evidence is always expanded: one stacked horizontal probability
-bar, category-colored legend with numeric probabilities, margin and model/config
-identifiers. This is model evidence, not an explanation generated after the fact.
+Classification evidence is always expanded: a “候选分布” list with one bar per
+category (top five plus a “其余 N 类合计” line), numeric probabilities, and the
+model and description version. This is model evidence, not an explanation generated after the fact.
 
 Verification: email API attachment/detail regression verifies full text is only
 included in the detail response; frontend tests verify non-collapsed evidence,

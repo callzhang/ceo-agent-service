@@ -8,7 +8,7 @@
 1. Producer 只发现触发并把精确 source revision 入队。
 2. A 代表 Derek 读取上下文、理解业务并提出候选；B 独立审阅并执行 accepted action。
 3. 同一业务对话复用一个 A session；每个候选 revision 使用独立 B session。
-4. 同一任务最多两个内容反馈周期，基础设施重试不计入该上限。
+4. 同一任务最多十个内容反馈周期（`MAX_CONTENT_FEEDBACK_CYCLES`），基础设施重试不计入该上限。
 5. 完全相同的 source/generation/revision 不重复执行；反馈改变业务内容后形成新 revision。
 6. 运行、依赖、解析和 provider 错误统一记录为 `failed`，按统一退避重试或进入明确终态。
 7. Codex session JSONL 保留详细执行记录；SQLite 只保存任务投影和去重所需的 provider 事实。
@@ -106,10 +106,10 @@ identifiers。旧失败记录不会被删除；后续成功只更新当前 proje
 
 ## 终态
 
-- `executed`：B 返回合法结果，且其业务流程确认动作完成。
-- `no_action`：A 判断当前 trigger 无需外部动作。
-- `revision_required`：B 提供规则、观察和修改要求，等待 A 生成新 revision。
-- `needs_human`：现有 Skill 没有覆盖且确需 Derek 决定的规则缺口。
+- `done`：动作经 B 确认完成，或经审核确认无需外部动作。
+- `skipped`：有意不执行。
+- `needs_feedback`：B 提供规则、观察和修改要求，等待 A 生成新 revision。
+- `needs_human`：规则缺口或反馈周期用尽，等待 Derek 对一类任务的规则作出反馈。
 - `failed`：当前 run 未完成，保留根因、阶段和重试条件。
 
 新代码不得写入 `unknown`、`reconciled`、`pending_reconciliation` 或 `side_effect_state`。这些旧值只在历史详情
@@ -117,10 +117,9 @@ identifiers。旧失败记录不会被删除；后续成功只更新当前 proje
 
 ## 运行检查
 
-运行代码或配置更新后，应重启并验证 supervisor：
+代码推送后运行 `python -m app.deploy`；只有设置变化时运行 `python -m app.deploy --restart`。不要手工 `launchctl kickstart` 或 `kill`。部署后读回新 PID、healthz、队列、Attention 和 History：
 
 ```bash
-launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main
 launchctl print gui/$(id -u)/com.ceo-agent-service.main | sed -n '1,80p'
 curl -fsS http://127.0.0.1:8765/ >/dev/null
 ```

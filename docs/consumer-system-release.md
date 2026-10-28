@@ -24,8 +24,8 @@ stops publication before replacement.
 
 The publisher records exact previous file bytes and the original scheduled
 Skill references in a release receipt under the database's `release-receipts`
-directory. It creates or reuses the six target managed revisions, updates only
-scheduled managed references to those six Skills using task versions, and
+directory. It creates or reuses the seven target managed revisions, updates only
+scheduled managed references to those seven Skills using task versions, and
 creates an immutable next-start runtime configuration from all existing
 bindings. The generic OA Skill remains an operation Skill reference, which
 the scheduler reads from its installed file for each execution. Other files,

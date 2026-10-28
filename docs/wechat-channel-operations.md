@@ -19,7 +19,7 @@ Accessibility send (verified live to 文件传输助手, including background qu
 | `cipher.py` / `schema.py` / `backend.py` | SQLCipher-4 decrypt (passphrase→PBKDF2), zstd, `Msg_<md5>`/`Name2Id`/`contact.db` parsing, decrypted mirror |
 | `reader.py` | Capability-gated normalized reads |
 | `producer.py` | Eligible-message → channel-isolated reply task (exact group @-gate) |
-| `prompt.py` / `consumer.py` | WeChat-specific prompt + Codex decision → fail-closed delivery; the schema-validated reply transport marker maps to WeChat delivery, while every other system action is rejected |
+| `standard_context.py` / `standard_review.py` | Build the standard Consumer context for a WeChat task; delivery is released only by standard Audit evidence (`standard_candidate_id`, `review_id`, `action_identity`) |
 | `accessibility.py` | Exact-once delivery state machine + real AX runner |
 | `sender_ipc.py` / `sender_helper.py` | Owner-only IPC client/server and dedicated signed Sender app entrypoint |
 | `memory_import.py` / `memory_writer.py` | Bounded extraction + deterministic cleanup; claimed, approved-only Memory writer (`memory.py` keeps public imports) |
@@ -33,22 +33,7 @@ column (default `dingtalk`); claims are channel-filtered so the DingTalk worker
 never claims WeChat work. New tables: `wechat_read_state`,
 `wechat_reply_scopes`, `wechat_deliveries`, `wechat_memory_candidates`.
 
-### Decision dependency retry
-
-The WeChat consumer treats a structured `external_dependency_failed` decision as
-a pre-action infrastructure failure. It records the failed decision attempt,
-then returns the same reply task to `pending` with `available_at`; no delivery
-row is created and no message can be sent by that retry. The task reaches
-`failed` only after the configured attempt limit. Other `stop_with_error`
-results remain terminal because the consumer has no evidence that retrying is
-safe or useful.
-`available_at` uses the SQLite queue timestamp format, so due retries are
-claimable by the normal channel worker.
-
-Durable-memory reads are optional. The decision command exposes their fixed
-read-only tool list only when the service manifest provides a complete
-`memory_connector` transport; otherwise it decides from the supplied WeChat
-context without adding an invalid empty MCP configuration.
+WeChat reply tasks follow the generic Consumer → Audit flow and its retry rules (see `docs/architecture.md`); there is no WeChat-specific consumer.
 
 ## One-time key capture (SIP stays on, real app untouched)
 
@@ -386,12 +371,12 @@ least 15 minutes.
    Direct chats use `every_inbound_text`; groups are fixed to
    `mention_current_account`. The page does not expose DB paths or raw messages.
 3. ✅ **`app/cli.py`** (done 2026-07-18):
-   - `ceo-agent wechat <status|read-recent|produce-once|consume-once>` passes
+   - `ceo-agent wechat <status|read-recent|produce-once|pending|approve|reject|retry-absent|import-memory>` passes
      through (argparse REMAINDER) to `app.wechat.cli`. `wechat status`
      auto-detects+persists `self_user_id` and reports `ready`.
    - `run_service()` starts no producer or consumer thread. Production is the
-     `检查微信消息` scheduled task (`wechat-message-check-v1`, service command
-     `wechat-produce-once`, every 15 s, seeded enabled): the Dispatcher runs the
+     “处理已授权会话的新微信消息” scheduled task (`wechat-message-check-v1`, service command
+     `wechat-produce-once`, every 5 minutes, created disabled): the Dispatcher runs the
      producer pass in-process inside the trigger claim, and the trigger links
      `service_command` without creating a reply task or Agent run. The pass
      returns a skipped summary while `CEO_WECHAT_READER_ENABLED` is off or no
@@ -399,8 +384,9 @@ least 15 minutes.
      tasks it enqueues are consumed by the unified Dispatcher's `wechat` reply
      consumer. Only the `wechat-sender` loop starts, and only when
      `CEO_WECHAT_SENDER_ENABLED=1` and the reader gate above holds
-     (`_wechat_service_components`). Auto-send stays gated — the consumer produces
-     `ready_to_send` deliveries but does not send.
+     (`_wechat_service_components`). Auto-send stays gated — an Audit-approved
+     `wechat / send_message` action creates a delivery only when
+     `CEO_WECHAT_SENDER_ENABLED=1` and `CEO_WECHAT_SEND_MODE=auto`.
    - If macOS denies access to another app's data (`EACCES`/`EPERM`), the
      producer command records one `wechat_data_permission_required` error and
      keeps returning a paused summary; the sender loop records one and stops
@@ -408,8 +394,8 @@ least 15 minutes.
 
 ## History review
 
-The main History page (`/`) exposes four object checkboxes: `replay`, `wechat`,
-`task`, and `meeting`. All are selected by default. Selecting only `wechat`
+The History page (`/history`) has a multi-select “任务类型” filter (default: all types) whose
+values include `wechat`. Selecting only `wechat`
 filters the SQL query, count, search, and pagination to WeChat reply attempts;
 selecting only `replay` shows non-WeChat reply attempts. WeChat rows carry a
 green channel badge. In confirm mode, an unambiguous `ready_to_send` delivery
@@ -421,7 +407,7 @@ pending.
 
 ## Controlled verification (before any live send)
 
-1. `"$HOME/miniforge3/bin/python" -m pytest -q` — full suite green.
+1. `"$HOME/miniforge3/bin/python" -m pytest -q tests/wechat` plus the other WeChat test files you touched (or the gate suite, `tests/gate_files.txt`); do not run the full suite in the live tree.
 2. `wechat status` → the account reports `ready`; `read-recent --include-text` on
    File Transfer Helper — compare count/order/direction/timestamp/sender/text;
    run twice, confirm `produce-once` enqueues zero duplicates on the second scan.
@@ -443,13 +429,13 @@ pending.
 
 ## Send confirmation & recall (2026-07-18)
 
-- **Confirm vs auto** (`CEO_WECHAT_SEND_MODE`, default `confirm`): the consumer
-  always produces a `ready_to_send` delivery. In **confirm** mode the sender loop
-  sends **nothing** — deliveries wait for explicit approval
-  (`ceo-agent wechat pending` / `approve --id N` / `reject --id N`, or
-  `service.approve_wechat_delivery`/`reject_wechat_delivery`). In **auto** mode the
-  `wechat-sender` loop sends them (only when `CEO_WECHAT_SENDER_ENABLED=1`). This is
-  the primary guard against a wrong/awkward send.
+- **Confirm vs auto** (`CEO_WECHAT_SEND_MODE`, default `confirm`): the standard
+  `wechat / send_message` action creates a delivery only in **auto** mode with
+  `CEO_WECHAT_SENDER_ENABLED=1`; otherwise it ends `failed` with
+  `wechat_sending_not_enabled` and no delivery exists. `ceo-agent wechat pending` /
+  `approve --id N` / `reject --id N` (or `service.approve_wechat_delivery`/
+  `reject_wechat_delivery`) only handle `ready_to_send` deliveries that already
+  exist (for example retries). This is the primary guard against a wrong/awkward send.
 - **New inbound context supersedes stale unsent drafts.** Creating a delivery for
   a newer trigger in the same account and conversation atomically marks older
   `ready_to_send` or recoverable `failed` deliveries as `superseded`; their
@@ -490,8 +476,8 @@ pending.
 
 - `CEO_WECHAT_READER_ENABLED=0`, `CEO_WECHAT_SENDER_ENABLED=0` (defaults) — the
   sender loop never starts and the scheduled `wechat-produce-once` pass returns
-  a skipped summary without touching the Reader. Pause the `检查微信消息` task on
-  the Agent Cron page to stop the 15-second trigger itself.
+  a skipped summary without touching the Reader. Pause the “处理已授权会话的新微信消息” task on
+  the scheduled-tasks page to stop the trigger itself.
 - Purge the decrypted mirror (`CEO_WECHAT_MIRROR_DIR`, default
   `~/wx_plain`, also used by the local WeChat DB toolkit) and the passphrase
   file to remove all plaintext. The Reader keeps the directory at mode 700 and
@@ -500,22 +486,25 @@ pending.
 
 ## Known residual risks / TODO
 
-- **Sender** (pure-AX, reverified 2026-07-21): composes via `AXValue` set on `chat_input_field`
-  and sends by posting Return to WeChat's pid (`CGEventPostToPid`) — **no focus
-  steal, no synthetic typing into the frontmost app**. Selecting the target chat
+- **Sender** (pure-AX): types the reply character by character as keyboard events
+  posted to WeChat's pid (`CGEventPostToPid`), then posts Return — **no focus
+  steal, no typing into the frontmost app**. `AXValue` is used only to clear the
+  composer and read it back. Selecting the target chat
   is the one step that needs WeChat briefly key: on 4.1.10 the session list rows
   are static text with empty AX action lists, background clicks don't register,
   and background keystrokes land text in the search box but WeChat won't *run* the
   search unless its window is active — so full-background nav is not possible.
-  Mitigation: the sender **waits until the user has been idle** (`idle_seconds`,
-  no keyboard/mouse via `CGEventSourceSecondsSinceLastEventType`) before the ~1s
+  Mitigation: the sender **waits until the user has been idle for 30 quiet seconds**
+  (`CEO_WECHAT_SEND_IDLE_SECONDS`, no keyboard/mouse via
+  `CGEventSourceSecondsSinceLastEventType`; gives up after 120 s with `user_active`) before the ~1s
   foreground, then **restores the previously-frontmost app** (`restore_focus`) —
   so it never interrupts mid-typing. Residual: needs Accessibility permission
   (cached at process launch — grant then relaunch the dedicated Sender app).
   Duplicate direct-chat display names are navigated with their stable target ID
   and then corroborated against the visible composer title; groups remain
   fail-closed on unique verified names. If the user set
-  "Enter=newline", Return won't send (composer-not-cleared → fall back to ⌘Return).
+  "Enter=newline", Return won't send and the composer stays non-empty; the result
+  then carries no visible confirmation (there is no ⌘Return fallback).
 - **Exact `@self` group detection** ✅ (done 2026-07-18): mentions are stored as a
   comma-separated wxid list in the message `source` column's
   `<msgsource><atuserlist>` (NOT `packed_info_data`, which is only flags). The
@@ -528,7 +517,7 @@ pending.
   until `self_username` is populated. The diagnostic CLI now requires a resolved
   self-wxid before reading, so it cannot silently label every row inbound.
   The scheduled producer pass returns a skipped summary and the sender loop does
-  not start without it, and one-shot produce/consume commands build their
+  not start without it, and one-shot produce commands build their
   reader with that persisted id.
 - **Activation watermark**: each selected scope starts at its activation time;
   historical messages are never fed into auto-reply. The producer advances that

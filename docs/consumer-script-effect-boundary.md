@@ -6,14 +6,15 @@ score submission, or other action directly affecting another person remains a
 structured candidate for Audit and the reviewed SystemExecutor. Neither the
 Consumer nor Audit role MCP catalog exposes those dispatch operations.
 
-Codex Consumer shell execution runs in its task workspace with network access
-disabled. Claude role turns expose only the read-only built-in tools. The
+Both routes give the Consumer a sandboxed shell (writes limited to the task
+directory and `~/.dws`; network is open so `dws` can run). The Audit is read-only
+and has no shell. The
 `consumer_run_skill_script` MCP tool runs outside those native sandboxes, so a
 selected Skill alone is insufficient permission to run every Python file in
 its package. In particular, `ceo-wechat/scripts/sender.py` can invoke sender
 approval and must not be callable by Consumer.
 
-The tool now requires a `consumer-scripts.json` manifest in the service-managed
+The tool requires a `consumer-scripts.json` manifest in the service-managed
 Skill source. The manifest names reviewed entrypoints and pins the SHA-256 of
 the complete `scripts/` tree and Python helpers elsewhere in the package
 (excluding tests). At invocation, the

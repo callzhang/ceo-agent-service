@@ -14,9 +14,9 @@ persisted task to resume. Nonzero Codex exits retain a redacted stderr summary
 in the Agent run's structured error; prompts, command arguments, and
 credentials are not stored in that diagnostic field.
 
-Consumer and Audit results are validated locally after Codex exits. The Agent
-commands do not use Codex `--output-schema`: that upstream mode can reject a
-request before the Agent can execute the task. Audit B's OA receipts must place
+Consumer and Audit results are validated locally after Codex exits. Codex-route Consumer and Audit
+commands use the native output schema (Claude uses its JSON schema option) and the
+result is still validated locally. Audit B's OA receipts must place
 the verified read-back payload in `oa_action_receipt.result` so the completed
 action can be persisted and reconciled.
 

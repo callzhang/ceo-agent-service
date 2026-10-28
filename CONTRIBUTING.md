@@ -7,7 +7,8 @@ Thanks for considering a contribution.
 ```bash
 "$HOME/miniforge3/bin/python" -m pip install -e '.[dev]'
 cd /path/to/ceo-agent-service
-"$HOME/miniforge3/bin/python" -m pytest -q
+# 只运行覆盖你改动的测试文件；不要在开发树跑全量（门禁集见 tests/gate_files.txt）
+"$HOME/miniforge3/bin/python" -m pytest -q tests/test_<你改动的模块>.py
 ```
 
 The repository does not create or depend on a private `.venv`; every Python

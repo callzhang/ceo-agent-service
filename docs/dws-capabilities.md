@@ -5,7 +5,7 @@ This project uses the `dws` CLI as the only DingTalk integration surface.
 ## Read
 
 - `dws chat message list-unread-conversations --format json`
-- `dws chat message list --group <openConversationId> --time <time> --forward <true|false> --limit <n> --format json`
+- `dws chat message list --group <openConversationId> --time <time> --direction <newer|older> --limit <n> --format json`
 - `dws doc read --node <alidocs-url> --format json`
 - `dws contact user get-self --format json`
 - `dws contact user get --ids <ids> --format json`
@@ -14,9 +14,10 @@ This project uses the `dws` CLI as the only DingTalk integration surface.
 
 ## Write
 
-- `dws chat message send --group <openConversationId> --text <text> --format json --yes`
-- `dws ding message send --users <userId> --type app --content <text> --format json`
-- `dws chat message recall-by-bot --keys <processQueryKey> --format json --yes`
+- `dws chat +messages-send --as user (--group <openConversationId> | --user <userId> | --open-dingtalk-id <id>) --title <title> --markdown <text> --format json --yes`
+- `dws chat message send-by-bot --robot-code <code> ...`
+- `dws ding message send --robot-code <code> --users <userId> --type app --content <text> --format json`
+- `dws chat message recall-by-bot --robot-code <code> [--group <openConversationId>] --keys <processQueryKey> --format json --yes`
 
 ## Operational Notes
 

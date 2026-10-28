@@ -8,7 +8,7 @@ CEO Agent Service 会从钉钉读取私聊、群聊、在线文档、OA 审批�
 
 > 这个项目的目标不是替人“随便自动回复”，而是把企业 IM 中可结构化处理的信息流接入一个可审计、可回滚、可人工接管的本地 agent 工作流。
 
-Consumer 的通用输出字段、OA `return` 语义和权限申请后最多 10 次／72 小时的重试规则，见
+Consumer 的通用输出字段、OA `return` 语义和权限申请后最多 3 次重读、每次间隔 12 小时、72 小时截止的重试规则，见
 [Consumer purpose 输出与权限重试](docs/consumer-purpose-output.md)。
 
 ## 适用场景
@@ -29,7 +29,7 @@ Consumer 的通用输出字段、OA `return` 语义和权限申请后最多 10 �
 - **Skill-first 材料处理**：服务只传递材料引用、原始 ID、链接和精确读取命令；A 动态读取业务 Skill 和操作 Skill，自行决定展开哪些材料，B 按 verified Skill receipt 重读相同 Skill 并在写入前核对实时状态。
 - **安全和质量检查**：服务校验严格 A/B 结构化 result、队列 generation 和精确 revision 去重；B 的外部动作必须有实时读回。DingTalk 和 Lark 使用显式通道 gate；Codex 直接沿用本地 App/CLI 登录状态，认证失败立即落为可见失败。写入结果未知时只在原 B session 中核对，不能盲目重放。
 - **人工接管**：对需要本人处理的消息发送 handoff，并暂停该会话的自动回复直到检测到真人回复。
-- **Task 总结**：从已处理对话、AI 听记和 `CEO_WORKSPACE` 新增文件里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
+- **Task 总结**：从已处理对话、AI 听记和会议行动项里抽取公司管理事项、业务项目和重要 TODO，归档到 work project 并生成下一步和跟进草稿。
 - **会后对齐 Agent**：发现 Derek 参会且已结束至少十分钟的会议；根据实际内容、相关讨论、完整当前成员、稳定身份和当前职责核验群或明确业务私聊受众。相同适当受众合并一条，不同受众才拆分，禁止向本人私聊回退；个人、非业务私聊仍要求完整日历两人名单。
 - **会议结论不再由服务写入 Memory**（Derek 2026-10-24）：服务没有会议结论的 Memory 队列、Worker 或自己的 OAuth 凭据；需要时由人工或 Agent 通过 Memory Connector 补写。
 - **审计 Web UI**：本地 FastAPI 页面查看历史、attempt 详情、Codex session、错误、Prompt 模板和路由配置。
@@ -96,7 +96,7 @@ DWS 可能同时返回通用错误码和更具体的服务端错误码；服务�
 
 一次 reply task generation 对应一个或多个 A/B run：同一 `conversation_id` 的 A run 复用 `conversations.codex_session_id`，每个候选 revision 创建新的 B run。单个 launchd 服务内的 consumer pool 允许不同会话并行处理；SQLite 原子认领和会话锁保证同一 A session 的 JSONL 顺序。运行审计以 Codex session JSONL 为准，业务数据库只保存 session ID、transcript 行范围、角色关系、operation ID 和恢复状态。任务终态采用严格 A/B result；服务在收到结果后本地校验 JSON，不使用 Codex CLI 的 `--output-schema` 传输参数。精确重复动作由 trigger、generation 与 revision 共同阻止，人工修订后的新内容不被旧结果拦截。
 
-单一 launchd 服务默认每轮由 2 个 consumer 线程各处理至多 4 条 reply task。该限制提高积压恢复吞吐，不创建额外 launchd job；任务认领是原子的，同一会话仍必须先取得会话锁，所有外部动作仍走 Consumer A 与 Audit B 的审核和回读。
+单一 launchd 服务的并发由 `CEO_CONSUMER_WORKERS`（默认 2，范围 1–4）决定，所有 Agent 队列合计使用这些线程，不创建额外 launchd job；任务认领是原子的，同一会话仍必须先取得会话锁，所有外部动作仍走 Consumer A 与 Audit B 的审核和回读。
 
 `rerun-message --force-new-decision` 会在当前 generation 结束后创建新 generation，但继续复用该对话的 Codex session；仍在运行的 Agent 不会被抢占，普通重复提交仍按同一来源 revision 去重。
 
@@ -156,7 +156,6 @@ workload 启用 OAuth→API 故障切换并核对同一 run 的 attempt 与 secr
 
 - 由定时任务“恢复近期 DingTalk 消息”（服务命令 `recover-recent-messages`）在每小时 `:30` 触发，不再夹在每分钟的快路径里。两条 DingTalk producer 命令共用一把锁，不会并行执行。
 - 单聊：最近 24 小时、最多 50 个本地记录过的单聊。
-- 群聊：最近 24 小时、最多 3 个本地记录过的群聊。
 - 钉钉日程卡片可能在改期时原地更新而不产生新的消息 ID。慢路径会比较已处理卡片的最新可读内容；只有内容确实变化、日程仍有效且本人仍待响应时，才按同一消息业务对象的新输入版本重新触发 Consumer。普通已读消息仍按消息 ID 去重。
 - 慢路径仍然遵守群聊触发规则：没有 @ 本人或广播 alias 的群聊消息不会进入 agent。
 
@@ -262,7 +261,7 @@ Lark 可通过 `LARK_CLI_INSTALL_COMMAND` 覆盖默认 npm 安装命令。
 
 需要：
 
-- Python 3.11+
+- Python 3.12+
 - 已认证的 `dws` CLI
 - 可运行 `codex exec` 的 Codex CLI
 - 可选：已认证的 Feishu/Lark CLI，默认二进制名为 `lark`
@@ -295,11 +294,8 @@ cp .env.example .env
 | `CEO_NOT_SEND_MESSAGE` | `1` 表示只记录不发送，`0` 表示允许发送 |
 | `CEO_LIVE_SEND_BLOCKERS_ACCEPTED` | live send 的显式确认开关 |
 | `CEO_CORPUS_DIR` | 本地风格语料目录 |
-| `CEO_MEETING_PRODUCER_INTERVAL_SECONDS` | 会议信息发现周期，默认 60 秒 |
-| `CEO_MEETING_CONSUMER_POLL_INTERVAL_SECONDS` | 会后对齐队列消费周期，默认 10 秒 |
-| `CEO_MEETING_SETTLE_SECONDS` | 明确会议结束后的静默等待时间，默认 600 秒 |
 | `CEO_REPOSITORY_UPGRADE_REMOTE` / `CEO_REPOSITORY_UPGRADE_BRANCH` | repository-upgrade 检查的 Git remote 和目标分支，默认 `origin` / `main` |
-| `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 21600 秒（6 小时） |
+| `CEO_REPOSITORY_UPGRADE_CHECK_INTERVAL_SECONDS` | 自动检查远端更新的周期，默认 300 秒（5 分钟） |
 | `CEO_REPOSITORY_UPGRADE_DISABLED` | 设为 `1` 禁用周期检查；History 页面仍可手动查看已保存状态 |
 | `CEO_CODEX_MODEL` / `CEO_CODEX_MODEL_REASONING_EFFORT` / `CEO_CODEX_MODEL_PROVIDER` | Codex OAuth 默认模型、thinking 强度和可选 provider；默认 `gpt-5.5` + `medium`。在 `Settings → Agent Runtime` 中用下拉菜单修改；模型可选 `gpt-5.5`、`gpt-5.6-sol`、`gpt-5.6-terra`、`gpt-5.6-luna`。不提供 `gpt-5.6` 别名，因为 Codex CLI 的 ChatGPT OAuth 会拒绝该别名。保存到 `.env` 后重启主服务统一生效，认证与 MCP/skills 保持沿用当前安装用户配置。 |
 | `CEO_AGENT_RUNTIME_ROUTES` / `CEO_RUNTIME_<名字>_KIND` / `_BASE_URL` / `_MODEL` / `_REASONING_EFFORT` / `_API_KEY` | 可选的 Codex/Claude 路由：在 `Settings → Agent Runtime` 添加、改名和配置。Codex 添加线路可单独选择 thinking 强度；留空沿用全局 Codex 值。Token 留空保存会保留已有 Token。旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时一次性迁移为名为 `codex_api` / `claude_api` 的添加线路。 |
@@ -344,7 +340,7 @@ diagnostics 及全部临时输出中不存在 provider token 泄漏。
 
 ### Repository upgrade
 
-服务每六小时检查配置的 Git remote/branch（默认 `origin/main`）。History 页面只刷新升级提示，
+服务每 5 分钟检查配置的 Git remote/branch（默认 `origin/main`）。History 页面只刷新升级提示，
 不会重载整个页面；设 `CEO_REPOSITORY_UPGRADE_DISABLED=1` 可关闭周期检查，但仍可查看已保存状态。
 升级只允许 fast-forward：分叉仓库或状态指纹变化时停止，不自动 merge、rebase 或覆盖本地改动。
 脏工作树可以在明确确认分支名和提交信息后先保存，再继续升级；升级前创建经完整性校验的 SQLite
@@ -477,13 +473,13 @@ http://127.0.0.1:8765/
 - `/attempts/{id}`：单次处理详情；同一触发消息后续重跑成功时，旧记录顶部会链接到后续 attempt 并展示其最新动作，原始状态仍保留在详情字段中供审计。Consumer 与 Audit 执行记录只能从该 Attempt 打开，不显示内部会话标识或本地文件路径。
 - Attempt 详情中的“查看审批”始终把触发消息里的完整钉钉 OA 链接交给钉钉桌面客户端打开；没有审批链接时才提供“查看钉钉消息”，避免把聊天弹窗地址误显示为审批入口。
 - `/developer-prompt`：Developer/User Prompt 模板管理
-- `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、纷享销客 CLI、WeChat 和 Email；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
+- `/settings`：Settings 使用 React SPA 统一导航（Status、Info、Configuration、Agent Runtime、Prompts、Skills、MCP、Connectors、Audit Rules、Attention）。Configuration 汇总 `.env` 中的运行参数和 Prompt variables；Prompts 页面用 Developer/User tab 与 Template/Rendered preview 切换；Connectors 内含 DingTalk、Lark、纷享销客 CLI、WeChat 和 Email；Workers 通过 `/status` 映射到 Runtime Monitor，Attention 单独展示未解决运行项。`/config`、`/workers`、`/logs` 保留为兼容入口并在 SPA 内映射；Logs 不再作为 Settings 一级导航。
 - Status 的“会议结论同步”用队列租约与对应执行租约共同判断真实活跃 Agent；它展示待处理、到期、超时、处理中、可重试、失败、最久等待和近一小时完成量。超过 30 分钟的到期项或失去有效队列租约的旧运行记录会让系统状态显示为降级，而不是把历史 `running` 记录误报为仍在工作。
 - `/email`：Email 控制台展示保存邮件的可读正文。HTML 邮件只投影可见文字；样式、脚本和远程资源不会在 Console 中执行或加载，保存的邮件文本仍保留在本地存储中。
   邮件分类采用列表与阅读双栏（窄屏全宽阅读），详情一页展开（处理记录在原文之前）、已处理邮件重新分类和退订 Attempt 跳转。模型训练提供总览、新建训练、样本预览、晋升设置与版本详情；参见 [Email 阅读与训练界面](docs/email-reading-training-ui.md)。
 
 除 DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*` 外，业务页面统一由同一个 React SPA 渲染。FastAPI 的 `/api/console/*` 按 History、Tasks、Settings、Feedback、Tutorial、Notifications、Codex 和 WeChat 领域返回 JSON DTO；Tasks 使用显式的语义深链，因此 `/tasks/item/836` 等地址可以直接打开或刷新，而未知 `/api/*` 仍返回 JSON 404。
-- `/errors`：错误列表
+- `/errors`：重定向到 `/history`；错误详情在 `/history/errors/:id`
 
 ### 8. Task-first 工作跟踪
 
@@ -497,13 +493,12 @@ Store `2026-10-19.11`／Email53 进一步按明确批准永久退休九个旧运
 
 Task Agent 为每个来源判断 0 到多个 Task 决定。正式任务必须有来源明确的负责人以及四种正式依据之一；明确指派不等于负责人已接受。外部钉钉 TODO 只是 Task 的镜像，只有正式、开放、已接受且有可解析承诺期限的 Task 才能排入创建队列。Agent 不直接创建、修改或完成外部 TODO；本地完成、提供者回执和有界重试按 Task ID 关联保存。跟进日期必须是来源明确的 `next_check_at`，不从通用截止日推算，也不猜收件人：群聊发回精确来源会话并提及有证据的负责人；单聊只发给来源明确指定的负责人。
 
-Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，每个 Work Item 仍有独立处理记录；后续输入续接同一路由会话，context compact 由 CLI 原生管理。主服务每 `CEO_TASK_WORK_ITEM_INTERVAL_SECONDS` 秒消费 reply worker 写入的 Work Item（默认 60 秒）；每日维护由 `CEO_TASK_DAILY_INTERVAL_SECONDS` 控制（默认 86400 秒），包含开放正式 Task 的完成检查且无需先有 Project。旧历史读取/排空路径仍暂时保留；历史队列和待跟进的最终排空边界须在切换时核实。
+Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，每个 Work Item 仍有独立处理记录；后续输入续接同一路由会话，context compact 由 CLI 原生管理。Dispatcher 的 work_summary consumer 领取 reply worker 写入的 Work Item；每日维护由定时任务“将会议行动项整理到 Tasks”承担，包含开放正式 Task 的完成检查且无需先有 Project。旧历史读取/排空路径仍暂时保留；历史队列和待跟进的最终排空边界须在切换时核实。
 - `refresh-okr-archive --period-label '2026 Q3'` 会只读拉取 CEO-2 管理群成员的实时叮当 OKR，
   写入 `CEO_WORKSPACE/OKR档案/<period>/company_okr_<period>_raw.json` 和
   `CEO_WORKSPACE/OKR档案/latest_company_okr_index.md`。task agent 会把 latest index 作为公司目标参照，
   用于判断事项是否和 OKR/KR、关键项目或管理风险有关；该索引不是 TODO 完成证据。
-- 钉钉 OA 待审批扫描默认开启，由 `CEO_OA_PENDING_SCAN_ENABLED` 控制；扫描间隔由
-  `CEO_OA_PENDING_SCAN_INTERVAL_SECONDS` 控制，默认 3600 秒；每次扫描查询最近
+- 钉钉 OA 待审批扫描由定时任务“处理新的钉钉 OA 审批”（默认每小时）触发，启停和频率在“定时任务”页面调整；每次扫描查询最近
   `CEO_OA_PENDING_SCAN_LOOKBACK_DAYS` 天的待审批，默认 365 天。扫描只会在审批详情中
   确认当前登录用户存在 RUNNING 审批节点时入队，避免猜测 task id；同一审批仅在首次到达
   当前用户、任务 ID 变化或申请方产生新的审批操作/留言时再次入队；服务自身写入的审批
@@ -525,7 +520,7 @@ Task Agent 与完成检查共用 `task-agent:work-tracking:v1` 会话范围，�
 可见性：
 
 - `/tasks/item/{task_id}` 展示当前 Task；旧 Todo 深链接使用 `/tasks/legacy-project/{legacyProjectId}`，保留原来的外部 ID、状态、pull/push 时间和错误。
-- `/logs` 的 `DingTalk Todo` 历史记录继续可查询；Status 的 dispatcher adapter 队列已移除旧 Todo outbox，保留 `business_task_todo_sync_outbox`。独立 D1c 已从 Status 聚合和小时质量检查移除旧 link/outbox 的运营计数；旧事实、回执与 History 读取仍按原身份保留。
+- `/logs` 重定向到 `/history`，`DingTalk Todo` 历史记录在 `/history` 查询；Status 的 dispatcher adapter 队列已移除旧 Todo outbox，保留 `business_task_todo_sync_outbox`。独立 D1c 已从 Status 聚合和小时质量检查移除旧 link/outbox 的运营计数；旧事实、回执与 History 读取仍按原身份保留。
 - 定时任务「补查遗漏的钉钉消息和日历更新」执行当前 Task 的完成扫描，输出中的 `dingtalk_todos_closed` 是本次关闭的当前 Task 数量。需要补跑时在 Console 手动运行该定时任务。
 
 手动补跑命令：
@@ -536,14 +531,14 @@ cd /path/to/ceo-agent-service
 # 处理 reply worker 已写入的 Work Item
 "$HOME/miniforge3/bin/ceo-agent" process-work-items --max-batches 20
 
-# 扫描新增 AI 听记和 CEO_WORKSPACE 下的新增 Markdown/text 文件
+# 扫描新增 AI 听记
 "$HOME/miniforge3/bin/ceo-agent" scan-task-sources
 
 # 扫描当前登录人的钉钉 OA 待审批
 "$HOME/miniforge3/bin/ceo-agent" scan-oa-approvals
 ```
 
-`scan-task-sources` 的本地文件扫描只读取 `CEO_WORKSPACE` 指定路径，不会全盘扫描。`local_file` Work Item 只能更新明确匹配的现有项目；没有可靠匹配时必须跳过，不能从历史文档自动新建项目。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
+`scan-task-sources` 只扫描 AI 听记，不再扫描工作区文件。AI 听记通过当前 `dws` 登录态从最新页读取到已记录的时间边界；首次只建立最新页基线，后续在到达该边界时停止，不会为查找历史 ID 持续使用易失效分页游标。旧版仅含 ID 的状态会安全读取一页、处理该恢复窗口中未记录的条目，并建立时间边界。
 
 Task Agent 创建 project 时必须提供非空标题。更新采用受保护的稀疏语义：结构化输出里的空字符串、空数组或枚举默认值不能覆盖已有的标题、分类、owner、目标、背景、facts 或来源记录；需要有意清除这些字段时必须走单独、可审计的人工修复流程。项目匹配会遍历全部 active/waiting project，再只把最高分候选交给 Agent，避免旧项目因超过 500 条窗口而不可见。
 
@@ -597,8 +592,8 @@ plist 通过 `SoftResourceLimits/NumberOfFiles=4096` 提高进程可打开文件
 运行模型只有一个 launchd job。它的 supervisor 运行 worker 和审计 Web 两个独立子进程；它们共享 SQLite，但不共享 Python 解释器。任一子进程退出时，supervisor 只退避重启该子进程，另一方继续服务；不会创建 meeting crontab 或第二个 plist：
 
 - `com.ceo-agent-service.main`：唯一 launchd job，托管队列 worker 与本地审计页面。
-- Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。启动时按稳定 migration key 幂等 seed 十个默认任务：邮件、钉钉消息、钉钉日历邀请、每小时 `:30` 的近期消息恢复、会议、微信、OA、会议行动项、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 AI 听记同步。
-- 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行确定性发现代码，不创建 synthetic scheduled Agent 任务。当前十个种子任务全部是服务命令。服务命令发现真实对象后，才由对应的 reply、meeting、work-summary 或 Email classifier Consumer 处理；其可编辑 prompt 和精确 Skill 选择随真实输入保存，不回退加载全部业务 Skill。OKR 周报也保留为服务命令：它要用无头浏览器逐个读取管理者的实时 OKR 并在同一受控流程内完成分析，整轮可能远超普通 Agent 任务的空闲与总时长上限。
+- Agent Cron scheduler：按任务自己的 Cron 和时区创建 trigger；停机不补跑，重叠轮次跳过，手动运行不移动计划。启动时按稳定 migration key 幂等 seed 14 个默认任务（11 个服务命令；CEO 日报、CEO 管理周报、OKR 管理周报是 Agent 任务）：邮件、钉钉消息、钉钉日历邀请、每小时 `:30` 的近期消息恢复、会议、微信、OA、会议行动项、Chrome 登录态同步、听记权限申请、CEO 日报、CEO 管理周报、每周 OKR，以及每天 `20:00`（`Asia/Shanghai`）的 AI 听记同步。清单以 `app/agent_cron/seeds.py` 为准。
+- 服务命令任务：定时任务分两种执行形式。`command` 为空的任务由 Agent 按 prompt、Skill 和 Runtime 执行；`command` 非空的任务由 Dispatcher 在本进程内直接运行确定性发现代码，不创建 synthetic scheduled Agent 任务。当前 14 个种子任务中 11 个是服务命令，CEO 日报、CEO 管理周报和 OKR 管理周报是 Agent 任务。服务命令发现真实对象后，才由对应的 reply、meeting、work-summary 或 Email classifier Consumer 处理；其可编辑 prompt 和精确 Skill 选择随真实输入保存，不回退加载全部业务 Skill。OKR 周报也保留为服务命令：它要用无头浏览器逐个读取管理者的实时 OKR 并在同一受控流程内完成分析，整轮可能远超普通 Agent 任务的空闲与总时长上限。
 - Agent 执行容量：单一 launchd 服务内按 `CEO_CONSUMER_WORKERS` 限制所有 Agent 队列合计并发，默认 2；各队列独立调度，Meeting 单类最多 1 个，同一会话仍串行。无需 Agent 的 trigger 和 Todo outbox 不占用 Agent 容量。
 - Consumer Dispatcher：直接从 scheduled trigger/execution、reply、meeting、work summary、OKR 和 Todo outbox 的既有事实来源领取；内部唤醒、等待、租约和 recovery 没有用户设置。Dispatcher 面板的 `latest_error` 只反映当前可领取来源上的错误；终态失败请在 Queue、Attention 或历史中排查，reply 与 scheduled execution 分别按其 channel 显示。
 - 消息入队：钉钉消息由 `produce-once` 服务命令按分钟增量读取、去重并写入 reply task；队列的 `available_at` 按实际时间解析，兼容带时区的 ISO 时间与数据库时间格式，不以字符串顺序判断是否到期。reply task 由 Dispatcher 的 reply consumer 领取，调用 Agent 后执行发送或跳过；同一会话仍串行。
@@ -608,7 +603,7 @@ plist 通过 `SoftResourceLimits/NumberOfFiles=4096` 提高进程可打开文件
 - `replay-recent-meetings` 会重新读取日历和听记证据，并只重开没有任何发送回执的 `no_action` 或 `failed` 会议任务；已发送或存在发送回执的任务保持终态，避免重复外发。
 - 会议行动项与 Work Item：“将会议行动项整理到 Tasks”任务读取钉钉会议中新增或修改的行动项并创建工作摘要输入；Dispatcher 的 work summary consumer 核验证据后创建或更新需要持续跟进的 Tasks，到期 follow-up 由内部机制检查。
 
-连接器本身不配置调度；可配置的定时任务统一在顶部导航的 Agent Cron 页面维护，Settings 仅保留 Skills、Runtime 和 Connectors。
+连接器本身不配置调度；可配置的定时任务统一在顶部导航的“定时任务”页面维护，Settings 保留 Skills、MCP、Runtime 和 Connectors 等。
 
 meeting producer 首次启用时会持久化激活时间。服务启动恢复队列前，会把激活时间以前且从未尝试发送的历史任务统一标记为 `no_action`；因此切换瞬间已被旧进程领取的历史会议也不会在重启后重新进入分析或发送。
 
@@ -705,7 +700,7 @@ cd /path/to/ceo-agent-service
 npm test
 ```
 
-`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行完整 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。GitHub Quality 将收集到的全部 Python 用例按 node ID 稳定分到四十八个独立 runner，每个 runner 使用一个 pytest worker，并保持每进程 2 GB／5 分钟的固定限制。CI 汇总各分片全部失败并输出具体节点，不能将达到资源上限的运行视为通过；所有分片、Ruff、前端测试、构建和浏览器测试都通过才算完整检查通过。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
+`npm test` 使用统一的 `$HOME/miniforge3/bin/python -m pytest` 运行完整 Python 测试，并先运行 Ruff，再运行 Workbench 前端测试。GitHub Quality 将收集到的全部 Python 用例按 node ID 稳定分到四十八个独立 runner，每个 runner 使用一个 pytest worker，并保持每进程 2 GB／10 分钟的固定限制。CI 汇总各分片全部失败并输出具体节点，不能将达到资源上限的运行视为通过；所有分片、Ruff、前端测试、构建和浏览器测试都通过才算完整检查通过。仓库不创建或依赖私有 `.venv`。修改 Workbench 后的本地集成流程是：
 
 ```bash
 npm install --prefix frontend
@@ -731,7 +726,7 @@ History、Tasks、用户反馈的 1、10、100、1000、10000 条数据，不写
 需要覆盖为 `/`）：
 
 ```bash
-pnpm --dir frontend exec vite --host 127.0.0.1 --port 5174 --base /
+npm --prefix frontend exec vite -- --host 127.0.0.1 --port 5174 --base /
 WORKBENCH_BROWSER_TESTS=1 CONSOLE_BASE_URL=http://127.0.0.1:5174 \
   "$HOME/miniforge3/bin/python" -m pytest tests/browser/test_console_acceptance.py -q -s
 ```
@@ -742,7 +737,7 @@ WORKBENCH_BROWSER_TESTS=1 CONSOLE_BASE_URL=http://127.0.0.1:5174 \
 读屏验收。
 
 普通业务页面统一由同一个 React SPA 渲染。FastAPI 对 `/`、`/history`、`/tasks`、
-`/tasks/{project_id}`、`/settings`、`/user-feedback`、`/tutorial`、`/notifications`、
+`/tasks/item/{task_id}`、`/settings`、`/user-feedback`、`/tutorial`、`/notifications`、
 `/codex`、详情页和 WeChat 页面返回同一份 React 入口；`/api/console/*` 始终返回 JSON，
 未知 API 返回 JSON 404。DingTalk bridge/popup、通知 Service Worker 和 `/api/workbench/*`
 保留各自专用入口。Settings 的凭据会回填并可编辑，模型字段使用按 provider 分组的下拉菜单，
@@ -755,8 +750,8 @@ Prompt/Audit 使用 Template 与 Rendered preview 两层切换，WeChat 回复�
 `cancelled`、`disabled` 为中性。颜色始终与中文状态文案并列，不单独依赖颜色。
 
 发布后的最小运行读回是：先记录旧 PID，再执行
-`launchctl kickstart -k gui/$(id -u)/com.ceo-agent-service.main`，确认新 PID、
-`/healthz`、`/tasks/836`、Settings 和未知 API 404；随后独立读取 SQLite 的
+`python -m app.deploy`（只改设置时用 `python -m app.deploy --restart`），确认新 PID、
+`/healthz`、`/tasks?view=all`、Settings 和未知 API 404；随后独立读取 SQLite 的
 `processing/running`、`failed`、`needs_human`、Attention、lease 和最近 receipt。页面 200
 只证明页面入口可达，不代表后台业务队列或外部动作已经完成；现有 backlog 必须单独报告和处理。
 

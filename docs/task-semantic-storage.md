@@ -3,13 +3,12 @@
 This document describes the storage, atomic commands, decision rules, and business
 resolution commands introduced by Tasks 1–5, plus the Task 6 owner, acceptance,
 and typed-date semantic contract of the approved
-[implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). It does
-not describe deployment; the live Agent and console contracts are documented in
-`architecture.md` and `runtime-mechanism.md`. The Project-centered domain
-extensions below follow the approved 2026-10-04 plan; their new Agent wire and
-console integration remain later steps in that plan.
+[implementation plan](superpowers/plans/2026-09-22-task-first-tasks.md). The live
+Agent and console contracts are in `architecture.md` and
+`runtime-mechanism.md`; the Project-centered domain extensions below were
+released (see `architecture.md`).
 
-The current source-storage schema version is `2026-10-04.4`. The original
+The current Store schema version is `STORE_SCHEMA_VERSION` in `app/store.py`; `2026-10-04.3`/`.4` are historical migration steps. The original
 semantic initialization added 16 bounded tables to a pre-semantic database
 without reclassifying, copying, or deleting legacy work records. An existing
 `2026-09-22.1` semantic database gains the
@@ -228,7 +227,7 @@ branch now connects TaskDecision.suggestion to this command in the same Agent
 turn as independent Project decisions and assessments. Console integration reads
 persisted Project context and distinguishes current candidate suggestions from
 same-ID human-promoted formal Tasks; the retained origin is historical. An omitted update title/description retains the stored
-value. This wire is not a second assignment or outbound path and is not deployed.
+value. This wire is not a second assignment or outbound path.
 
 ## Task dates and events
 
@@ -257,7 +256,7 @@ objects, reason, and creation time. Source-backed title/description edits use
 fields use `fields_changed`. Both preserve the new source signal as Task evidence
 and commit the Task snapshot and event atomically. Attention events retain the same evidence
 shape with a required signal. Task 2 adds atomic Task transitions and append-only
-Task event APIs; attention projections remain later work.
+Task event APIs.
 
 ## Relationships and projections
 
@@ -293,7 +292,7 @@ Task event APIs; attention projections remain later work.
   endpoint and exactly one legacy endpoint (`work_projects`, `work_todos`, or
   `work_updates`). Each legacy row can be linked once; additional task evidence
   can point to the imported signal. This keeps both endpoints referentially
-  constrained without a generic, unchecked entity ID. No import runs in Task 1.
+  constrained without a generic, unchecked entity ID.
 
 All semantic references have foreign keys, membership links have unique keys,
 and the required schema manifest covers the semantic and shared-body tables,
@@ -315,7 +314,7 @@ Task listing accepts enum members or their canonical strings for optional
 an explicitly empty collection matches nothing. Pagination defaults to
 `limit=100`, `offset=0`, ordered stably by `updated_at, id`.
 The default, unfiltered order is supported by
-`idx_business_tasks_updated_id(updated_at, id)` without a temporary sort. The
+`idx_business_task_updated(updated_at, public_id)` without a temporary sort. The
 stage/status and relevance filter indexes remain in place, and all three task
 listing indexes are included in the required schema manifest.
 `list_business_task_project_links` reads official projects through confirmed,
@@ -403,7 +402,7 @@ Projects, candidates, and evidence signals in the same write transaction.
 
 A cluster groups existing Tasks through membership rows. It never rewrites a
 member's owner, deadline, lifecycle status, or commitment status. Proposing a
-Project for a cluster creates only a `business_project_candidates` row. An
+Project for a cluster creates only a `project_candidate` business record. An
 official `business_projects` row can be registered from an active canonical
 anchor whose type is `project`, with a nonblank canonical registry source. An
 explicit meeting decision to start or approve a named project is also a valid
@@ -512,50 +511,7 @@ initialization and read paths do not keep copying new Task evidence to Projects.
 This is verified on isolated synthetic migration copies, not the frozen W39 or
 production database, whose existing unrelated meeting foreign-key fault remains pending.
 
-## Repair verification
-
-The inherited three-file suite passed 433 tests before the repair, but lacked the
-complete schema contract. The expanded semantic suite first failed with
-`109 failed, 59 passed` using
-`.venv/bin/pytest -q tests/test_task_semantic_store.py --tb=line`.
-Missing columns, record classes, canonical enums, and primitive parameters were
-the failures. After the schema/model/CRUD repair, the independent immutability
-check remained red (`4 failed`, each `DID NOT RAISE IntegrityError`) for evidence
-rewrite, provenance rewrite, deletion, and SQLite replacement. The corresponding
-triggers made these checks green. Tests also exercise real dangling foreign-key
-writes, canonical project-anchor type enforcement, valid record round trips,
-invalid states, uniqueness, listing, source fidelity, and pre-semantic startup.
-
-Initial contract repair validation: `.venv/bin/pytest -q tests/test_task_semantic_store.py
-tests/test_store.py tests/test_task_models.py` passed **627 tests**. Python
-compilation of both production files, Ruff on both production files and both
-specified test files, and `git diff --check` also passed. These are isolated
-storage checks, not evidence of a deployed runtime or applied legacy import.
-
-The follow-up interface regression copies the approved standalone-task call
-sequence unchanged: create signal ID, create task ID, link evidence, and get the
-task. Before the return-value correction it failed with two Pydantic `int_type`
-errors because `BusinessTask` and `BusinessTaskSignal` records reached the
-integer evidence-link fields. Both create methods now return their persisted
-integer IDs, and tests that inspect records use the getters. The same three-file
-suite then passed **628 tests**, including this regression; compilation, Ruff,
-and `git diff --check` also passed.
-
-The nonblank/index quality regressions were run before the production correction:
-`.venv/bin/pytest -q tests/test_task_semantic_store.py -k 'nonblank_text or
-default_task_listing or list_indexes_are_present' --tb=line` produced
-**135 failed, 76 passed, 202 deselected**. The 133 nonblank failures were direct
-SQLite writes that did not raise `IntegrityError` after Pydantic had rejected the
-same whitespace-only rows. The other failures were the absent default-list
-index and the actual query plan's `USE TEMP B-TREE FOR ORDER BY`. Empty/plain-space
-rejection and original-whitespace preservation already passed. The expanded
-tests cover all 19 required text/resolution-time fields and capture the query
-issued by the default listing API to inspect its plan.
-
-After the correction, the same focused command passed **211 tests** with
-202 deselected. The required three-file suite passed **838 tests**; Python
-compilation, Ruff, and `git diff --check` also passed. These checks remain local
-to the isolated Task 1 storage worktree; no runtime deployment was performed.
+> “Repair verification” 一次性验证记录已移至 [archive/task-semantic-storage-repair-verification.md](archive/task-semantic-storage-repair-verification.md)。
 
 ## Task 6 retrieval context (read side)
 

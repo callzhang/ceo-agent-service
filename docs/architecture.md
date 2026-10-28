@@ -1184,7 +1184,7 @@ API 将有原文和原文不可用分别表示为非空正文或 null 加原因�
 仍可查看。来源包以稳定身份键标识文档；原文不可用时不伪造字符长度。
 2026-10-18 已授权对 20 个例外版本永久移除原文、保留事实/来源/回执；这个物理删除尚未执行，
 不属于 B/C/D 运行时单元。
-当前业务 schema 是 `2026-10-04.4`，不等于生产已迁移。
+当前 Store schema 版本以 `app/store.py` 的 `STORE_SCHEMA_VERSION` 为准。
 
 Console 提供两条只读的原始证据接口。`GET /api/console/tasks/projects/{project_id}/evidence`
 按既有 Store 顺序分页返回 `BusinessProjectEvidence` 引用（project_id、signal_id、created_at），

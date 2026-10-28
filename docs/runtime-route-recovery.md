@@ -17,8 +17,8 @@ one fresh Consumer or Audit turn only when either the task still records the
 same deferred error or it was explicitly reopened by the retry API. The fresh turn must independently pass current route health and capability
 selection; it is not an authorization to ignore a route pause.
 
-`reply_tasks.error` records the operator-visible recovery reason after an
-explicit reopen. `reply_tasks.recovery_code` records that the reopen was
+The task `error` records the operator-visible recovery reason after an
+explicit reopen. `recovery_code` (stored in `tasks.parameters_json`) records that the reopen was
 intentional. Scheduling must use that structured recovery fact rather than
 mistaking the displayed reason for evidence that the route has not yet waited.
 

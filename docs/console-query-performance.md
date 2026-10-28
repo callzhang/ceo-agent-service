@@ -1,5 +1,7 @@
 # Console query performance
 
+> 本文是带日期的测量与修复记录，不是现行契约。现行代码里 `/history` 有 5 秒 TTL 的 `history_chart_cache`（按时间范围）和 2 秒的 `_RecentHtmlCache`（后台刷新），见 `app/audit_web.py`；下文“不新增查询缓存”仅指当次修复。
+
 ## Failed History projection correction, 2026-10-16
 
 The failed-only Reply Attempt key query now filters the existing canonical

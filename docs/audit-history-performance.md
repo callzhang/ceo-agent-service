@@ -4,7 +4,7 @@ The audit history combines reply, approval, meeting, and task records. Its
 reply branch performs correlated lookups for the latest approval attempt and
 for later delivery evidence.
 
-`AutoReplyStore` maintains three supporting indexes after schema migrations:
+The static `actions` schema declares four partial supporting indexes (`idx_actions_sent_history`, `idx_actions_reply_oa_history`, `idx_actions_reply_trigger_history`, `idx_actions_reply_current_trigger`):
 
 - approval instance and recency for the latest approval attempt;
 - conversation, trigger, action, and attempt id for later-attempt checks;

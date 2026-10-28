@@ -28,7 +28,11 @@ History 一致”；它不解释 Agent 如何调用命令，也不维护外部�
 | `meeting_alignment_jobs` | `failed` 或超时处理中状态 | 等待、排队或发送中 |
 | `okr_review_requests` | `failed`、超时 `processing` | `pending` / `processing` |
 | 外部投递队列 | 明确失败的投递 | 活动状态 |
-| `feedback_events` | 未记录 `resolved_at` 的反馈 | 无 |
+| `feedback_events` | 未记录 `resolved_at`、且扣除下列两类后仍未解决的反馈 | `acted_unresolved`（已重跑且动作已核验）、`recovered_unresolved`（失败后同 trigger 已 done 的手动反馈） |
+| `service_state` | 调度器 tick 超过 5 分钟没有更新（`scheduler_tick_stale`） | Codex 容量或路由暂停 |
+| `agent_runtime_attempts` | 不变量被破坏或记录里出现密钥 | 无 |
+| `sent_replies` / `reply_attempts` | 标记 executed 却没有发送记录；最近出现 dry-run attempt | 无 |
+| `email_model_activation` | 已上线模型当前没有在判断（`activated_model_not_deciding`） | 无 |
 | `daily_scan_state` / `wechat_read_state` | scanner `last_error` 或 reader 不可用 | 无待处理工作时 reader 未就绪 |
 | `errors` | 关联到 `conversation_id` 或 `message_id`，且最近 4 小时新建、未解决并没有活动重试路径的错误 | Codex 容量暂停期间的共享事件 |
 | `email_classifier_runtime_samples` | 最近 24 小时最新连续样本为 `failure`：已上线的邮件模型当前仍在抛错而不是判断；后续正常决策会恢复健康，失败样本仍保留为历史 | 最近 24 小时判出率低于一半：模型在把大部分邮件推回 Agent |
@@ -81,7 +85,7 @@ projection。后续同一 trigger 的成功或 `no_action` 会解除当前告警
 
 ## 外部依赖边界
 
-`quality-check` 检查 DingTalk，以及当前有 active task 或最近 72 小时失败 attempt 的可选通道。
+`quality-check` 的通道由 `required_live_channels` 决定：DingTalk 与 Codex 常驻，另加 pending / processing / failed 任务引用到的通道（链接指向 feishu／larksuite 时加 Lark）；`--verify-channels` 默认开启，`--state-file` 写入小时巡检状态文件。
 没有待处理工作引用的未配置 Lark 仅保留在 `channel-doctor`；一旦任务进入队列，通道不可用才
 成为 violation。Codex 不在本命令中执行登录或写入 smoke test，运行可用性由 `agent_runs`、`errors`
 和独立诊断反映。

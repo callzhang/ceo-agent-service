@@ -4,7 +4,7 @@ Derek explicitly requested that business review have no trusted/untrusted contex
 
 Consumer and Audit always receive the context contract, including when a custom saved Audit template exists. Mail and WeChat Skill wording follows the same rule. Explicit draft-only/do-not-send scope, fact and audience checks, configured action capabilities, exact persisted System plans and real runtime/provider errors remain unchanged. Historical rejected financial actions are not replayed.
 
-The existing stopped-window publisher updates ten explicitly hashed files; only the default Audit rules and existing mail/WeChat Skills differ from installed content. WeChat is a shared Skill file, not an added managed Skill or background task.
+The existing stopped-window publisher updates the files listed in its manifest (26 pairs today; ten at the time of this change); only the default Audit rules and existing mail/WeChat Skills differ from installed content. WeChat is a shared Skill file, not an added managed Skill or background task.
 
 ## Validation
 

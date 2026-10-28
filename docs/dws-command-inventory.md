@@ -7,6 +7,8 @@ find exact parameter schemas. It is not a runtime command allowlist or a second
 application-level review gate; Codex Agent review and the current business
 result contract own execution decisions.
 
+> **过期提示：** 本文是 `v1.0.37` 时的调研记录。本机现为 `v1.0.65`：`dws schema -f json` 已返回完整命令目录（约 32 个产品、1500 个工具），可直接作为命令目录；`hrmregister`、`doc-comment` 已不是顶层服务，`dws cache` 与 `dws recovery` 标注为不再支持，并新增 agoal、conference、contract、devapp、hrbrain、whiteboard、profile 等。改自动化前以实时 `dws --help` 与 `dws schema` 为准，下面的表格只当历史参考。
+
 This survey records the useful safety boundary and operational command families
 for this repository. It is not an exhaustive schema snapshot. On the observed
 CLI version, `dws schema -f json` returned only one product (`aitable-form`) with

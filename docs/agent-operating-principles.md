@@ -24,12 +24,12 @@ flows. They are product behavior, not optional safety policy.
 
 ## `needs_human` boundary
 
-`needs_human` is allowed only when the Skill-driven reads do not provide enough
-decision information, or when the action crosses a genuinely human-only
-boundary (conflicting evidence, unrecognized target, irreversible or sensitive
-action, approval, budget, or a required human factor). Technical inconvenience,
-missing context that the agent can retrieve, or a normal retry is not a reason
-to escalate to the user.
+`needs_human` is allowed only when a complete Consumer rule question has passed
+Audit and waits for Derek's feedback on 2–4 rule options that apply to a whole
+class of tasks (`applies_to=task_class`), or when the bounded feedback cycle
+cannot resolve the issue. It is never a way to ask Derek to decide a single
+current item. Technical inconvenience, missing context that the agent can
+retrieve, or a normal retry is not a reason to escalate to the user.
 
 ## Runtime routing
 
