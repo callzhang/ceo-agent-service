@@ -77,7 +77,7 @@ AGENT_CLI_READ_TOOLS = (
     "search_dingtalk_documents",
     "read_dingtalk_messages",
     "read_wechat_messages",
-    "save_wechat_voice",
+    "save_message_audio",
     "upload_audio_file",
     "search_dingtalk_messages",
     "read_dingtalk_thread_replies",

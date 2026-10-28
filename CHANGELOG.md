@@ -48,7 +48,7 @@
 
 ## 2026-10-28 — 微信语音转写改走一次性上传地址
 
-- `read_wechat_voice` 换成 `save_wechat_voice`（把 WAV 存为任务文件），新增通用工具 `upload_audio_file(name, upload_url)`：Agent 先调 `ai_services.create_audio_upload` 取一次性地址，服务把音频文件直接 POST 过去，再调 `get_audio_transcription(job_id)` 取文字。音频不经过模型，服务不存任何转写凭据，所有线路用普通工具调用，不再需要 CodeMode。撤回微信的 `code_mode_handoff`（OA 的不动）。
+- `read_wechat_voice` 换成通用的 `save_message_audio(message_id, resource_id)`（微信与钉钉语音都存为任务文件，其他渠道报错），新增通用工具 `upload_audio_file(name, upload_url)`：Agent 先调 `ai_services.create_audio_upload` 取一次性地址，服务把音频文件直接 POST 过去，再调 `get_audio_transcription(job_id)` 取文字。音频不经过模型，服务不存任何转写凭据，所有线路用普通工具调用，不再需要 CodeMode。撤回微信的 `code_mode_handoff`（OA 的不动）。
 
 ## 2026-10-26 — 微信语音
 

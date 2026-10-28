@@ -169,7 +169,7 @@ def test_wechat_read_needs_a_ready_account(tmp_path, monkeypatch):
 def _voice_tool(role, db_path, task_id, generation="generation-one"):
     return build_role_server(
         role, task_id=task_id, db_path=db_path, execution_generation=generation,
-    )._tool_manager.get_tool("save_wechat_voice").fn
+    )._tool_manager.get_tool("save_message_audio").fn
 
 
 def _silk(tmp_path):
@@ -251,12 +251,63 @@ def test_wechat_voice_cannot_name_another_conversation(tmp_path):
         _voice_tool("consumer", db_path, task_id)("m7", conversation_id="someone-else")
 
 
-def test_wechat_voice_refuses_a_non_wechat_task(tmp_path, monkeypatch):
-    db_path, task_id = _bound_task(tmp_path, channel="dingtalk")
+def test_audio_of_a_channel_without_voice_messages_is_refused(tmp_path, monkeypatch):
+    db_path, task_id = _bound_task(tmp_path, channel="email")
     monkeypatch.setattr(service, "build_reader", lambda **_kw: pytest.fail("must not read"))
 
-    with pytest.raises(ValueError, match="not a WeChat conversation"):
+    with pytest.raises(ValueError, match="has no voice messages"):
         _voice_tool("consumer", db_path, task_id)("m7")
+
+
+class FakeDws:
+    """A dws client whose resource download writes the file the way dws does."""
+
+    dws_bin = "dws"
+    calls = []
+
+    def __init__(self, payload=None, content=b"OggS-audio"):
+        self.payload, self.content = payload, content
+
+    def run_json(self, command, cwd=None):
+        FakeDws.calls.append((command, cwd))
+        flags = dict(zip(command[3::2], command[4::2]))
+        (cwd / "audio.ogg").write_bytes(self.content)
+        return self.payload or {
+            "localPath": "audio.ogg", "messageVerified": True,
+            "messageId": flags["--message-id"], "resourceId": flags["--resource-id"],
+            "sizeBytes": len(self.content),
+        }
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_dingtalk_voice_is_saved_as_a_task_file(tmp_path, monkeypatch, role):
+    db_path, task_id = _bound_task(tmp_path, channel="dingtalk")
+    FakeDws.calls = []
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+
+    result = _voice_tool(role, db_path, task_id)("msg-1", "@media-1")
+
+    assert result["message_id"] == "msg-1"
+    assert result["name"].startswith("dingtalk-audio-") and result["name"].endswith(".ogg")
+    root = task_artifacts.TASK_ARTIFACT_ROOT / str(task_id) / "generation-one"
+    assert (root / result["name"]).read_bytes() == b"OggS-audio"
+    assert sorted(item.name for item in root.iterdir()) == [result["name"]]
+    command, _cwd = FakeDws.calls[0]
+    assert command[1:4] == ["chat", "+messages-resource-download", "--resource-id"]
+    assert "--open-conversation-id" in command and "u9" in command
+
+
+def test_dingtalk_voice_needs_the_media_id_and_a_verified_download(tmp_path, monkeypatch):
+    db_path, task_id = _bound_task(tmp_path, channel="dingtalk")
+    tool = _voice_tool("consumer", db_path, task_id)
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+
+    with pytest.raises(ValueError, match="needs the mediaId"):
+        tool("msg-1")
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: FakeDws(
+        payload={"localPath": "audio.ogg", "messageVerified": False}))
+    with pytest.raises(ValueError, match="could not read the voice message"):
+        tool("msg-1", "@media-1")
 
 
 def _upload_tool(role, db_path, task_id):
