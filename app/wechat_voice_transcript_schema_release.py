@@ -76,9 +76,12 @@ class WechatVoiceTranscriptRelease:
                 db.rollback()
                 raise
 
-    def finalize(self):
+    def verify_loaded(self):
         from app.current_schema_manifest import require_current_pair
         require_current_pair(self.database_path)
+
+    def finalize(self):
+        self.verify_loaded()
 
     def rollback(self):
         if not self.published:
