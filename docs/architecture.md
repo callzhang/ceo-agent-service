@@ -914,6 +914,16 @@ remain mandatory. This does not reopen `needs_human`
 or other skipped work. Refusal behavior, original-input verification and the
 appended execution generation remain unchanged.
 
+For a scheduled Agent Attempt, explicit History rerun preserves the original
+occurrence date, prompt, route, workspace, runtime options and run identity, but
+creates a new input with the Skills currently selected on that schedule. The
+original run and input remain immutable, and automatic retries stay pinned to
+the original Skill snapshot. Rerun attempts are counted against the exact
+scheduled input digest: the three-retry cap remains for identical input, while
+a changed selected-Skill snapshot is a new input revision. Missing or
+unresolvable occurrence/task/Skill data rejects the rerun. Consumer, independent
+Audit, send authorization and receipt checks are unchanged.
+
 Empty dispatcher polls are read-only across all queue adapters. A candidate
 probe does not reserve an item: the existing writer transaction rechecks the
 candidate before changing its source and lease ledger atomically. Todo outbox

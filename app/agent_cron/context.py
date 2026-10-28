@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 import json
 from pathlib import Path
 from typing import Literal, Protocol
@@ -288,6 +288,42 @@ class ScheduledAgentContextBuilder:
             ),
             skill_protocol_source="generated_discovery",
         )
+
+    def refresh_manual_rerun_context(
+        self,
+        prior: ScheduledAgentContext,
+        run: ScheduledTaskRun,
+        scheduled_task: ScheduledTask,
+    ) -> ScheduledAgentContext:
+        """Create a new manual-rerun input with the task's current selected Skills.
+
+        The occurrence snapshot remains authoritative for its prompt, date,
+        route, workspace and runtime options. Only the selected Skill refs come
+        from the current scheduled-task definition; `run` and prior input are
+        immutable historical records.
+        """
+        trigger = prior.context.trigger_raw_payload
+        if (
+            type(trigger.get("scheduled_task_id")) is not int
+            or trigger["scheduled_task_id"] != run.snapshot.task_id
+            or run.snapshot.task_id != scheduled_task.id
+            or type(trigger.get("scheduled_task_run_id")) is not int
+            or trigger["scheduled_task_run_id"] != run.id
+            or trigger.get("scheduled_for") != run.scheduled_for.isoformat()
+            or prior.context.conversation_id != f"scheduled-task-run:{run.id}"
+            or prior.context.trigger_message_id != run.event_id
+        ):
+            raise ValueError("scheduled manual rerun identity does not match its occurrence")
+        if run.execution_kind and (
+            run.execution_kind != "reply_task"
+            or run.execution_id != str(prior.context.task_id)
+        ):
+            raise ValueError("scheduled manual rerun is not bound to this Reply task")
+        refreshed_run = replace(
+            run,
+            snapshot=replace(run.snapshot, skill_refs=scheduled_task.skill_refs),
+        )
+        return self.build(refreshed_run, reply_task_id=prior.context.task_id)
 
     def build_consumer_context(
         self, run: ScheduledTaskRun

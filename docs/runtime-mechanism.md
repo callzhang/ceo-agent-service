@@ -3538,10 +3538,18 @@ invalid-result failure, including its syntax cause. It is not classified as a
 missing result. An earlier valid result in the same primary turn remains usable;
 no JSON repair or successful external-effect inference is performed.
 
-Manual reruns of scheduled Agent work preserve the saved scheduled execution
-context, including its route and pinned Skill content. A missing or invalid
-scheduled payload is rejected instead of being rebuilt as a DingTalk message;
-the original scheduled run is the authoritative source for explicit recovery.
+Manual reruns of scheduled Agent work preserve the original occurrence's
+scheduled date, prompt, route, workspace, runtime options and run identity. They
+create a new immutable input using the currently selected Skills on that
+scheduled-task definition; automatic retries keep using the occurrence's
+original pinned Skills. The original run and input remain unchanged. The manual
+rerun budget is counted per exact scheduled input digest, so an identical input
+still has the existing three-retry cap while a changed selected Skill snapshot
+is a new input revision. Missing run, task or Skill material rejects the rerun
+without queueing. Consumer, independent Audit, delivery authorization and
+receipt gates are unchanged. A missing or invalid scheduled payload is rejected
+instead of being rebuilt as a DingTalk message; the original scheduled run is
+the authoritative source for explicit recovery.
 
 The approved DingTalk send tool persists its exact prepared body and verified
 provider receipt into `sent_replies` as soon as provider verification reports

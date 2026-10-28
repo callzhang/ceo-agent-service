@@ -6838,7 +6838,16 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         or is_provider_risk_rejection("", attempt_error=current["error"])
                         or any(is_provider_risk_rejection(row[0]) for row in current_errors)):
                     raise ManualRerunConflict(PROVIDER_RISK_REJECTION_RERUN_BLOCK_REASON)
-            revision_key = self._manual_rerun_revision_key(db, attempt_id)
+            input_revision_digest = (
+                hashlib.sha256(trigger_message_json.encode("utf-8")).hexdigest()
+                if channel == "scheduled"
+                else ""
+            )
+            revision_key = self._manual_rerun_revision_key(
+                db,
+                attempt_id,
+                input_revision_digest=input_revision_digest,
+            )
             task = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
                 conversation_id=conversation_id,
@@ -6966,6 +6975,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _manual_rerun_revision_key(
         db: sqlite3.Connection,
         attempt_id: int,
+        *,
+        input_revision_digest: str = "",
     ) -> str:
         revision: dict[str, object] = {
             "attempt_id": attempt_id,
@@ -6989,6 +7000,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             revision["corrected_reply_text"] = str(
                 row["corrected_reply_text"] or ""
             ).strip()
+        if input_revision_digest:
+            revision["input_revision_digest"] = input_revision_digest.strip()
         canonical = json.dumps(
             revision,
             ensure_ascii=False,
