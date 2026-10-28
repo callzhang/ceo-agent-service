@@ -11880,6 +11880,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         grant is available again, let the same unsent delivery have one fresh
         dispatch without reopening any ambiguous or target-related failure.
         """
+        return self._requeue_wechat_deliveries_waiting_on("accessibility_not_trusted")
+
+    def requeue_wechat_deliveries_blocked_by_user_activity(self) -> int:
+        """Restore deliveries the Sender did not start because the user was busy.
+
+        The Sender only works after 30 quiet seconds and stops when the user
+        touches the computer (Derek, 2026-10-28). That is waiting, not a failed
+        send, so it does not use the bounded retry budget.
+        """
+        return self._requeue_wechat_deliveries_waiting_on("user_active")
+
+    def _requeue_wechat_deliveries_waiting_on(self, error: str) -> int:
+        if error not in {"accessibility_not_trusted", "user_active"}:
+            raise ValueError("unsupported waiting WeChat delivery error")
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""
@@ -11887,11 +11901,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from ({WECHAT_DELIVERY_SQL}) as deliveries
                 join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks on tasks.id=deliveries.reply_task_id
                 where deliveries.status='failed'
-                  and deliveries.error='accessibility_not_trusted'
+                  and deliveries.error=?
                   and deliveries.pre_action_failure=1
                   and deliveries.action_started_at<>''
                   and deliveries.execution_generation=tasks.execution_generation
-                """
+                """,
+                (error,),
             ).fetchall()
             requeued = 0
             for row in rows:
@@ -11907,7 +11922,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     where wechat_deliveries.record_type='wechat_deliveries'
                       and cast(wechat_deliveries.legacy_key as integer)=?
                       and wechat_deliveries.td_status='failed'
-                      and wechat_deliveries.td_error='accessibility_not_trusted'
+                      and wechat_deliveries.td_error=?
                       and wechat_deliveries.td_pre_action_failure=1
                       and exists (
                           select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks
@@ -11916,7 +11931,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                 wechat_deliveries.td_execution_generation
                       )
                     """,
-                    (*set_args, delivery_id),
+                    (*set_args, delivery_id, error),
                 )
                 if cursor.rowcount != 1:
                     continue

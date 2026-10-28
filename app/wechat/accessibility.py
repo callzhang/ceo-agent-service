@@ -45,18 +45,40 @@ def _pause(sleep, bounds, *, uniform=random.uniform) -> None:
     sleep(uniform(*bounds))
 
 
-def _type_text(text: str, *, key_char, newline, sleep, uniform=random.uniform) -> None:
+def _type_text(text: str, *, key_char, newline, sleep, uniform=random.uniform,
+               check=lambda: None) -> None:
     """Type ``text`` one character at a time like a person.
 
     Return sends in WeChat, so a line break is inserted at the caret instead of
-    being typed as a key.
+    being typed as a key. ``check`` runs before every character so the user
+    touching the computer stops the typing at once.
     """
     for ch in text:
+        check()
         if ch == "\n":
             newline()
         else:
             key_char(ch)
         _pause(sleep, PAUSE_PER_KEY, uniform=uniform)
+
+
+class UserActive(RuntimeError):
+    """The user touched the keyboard or mouse while the Sender was working."""
+
+
+# HID idle time is measured in fractions of a second; allow for that slack
+# before calling an input the user's rather than the Sender's own.
+USER_INPUT_TOLERANCE_SECONDS = 0.5
+
+
+def _user_touched_since(*, hid_idle_seconds: float, seconds_since_own_input: float) -> bool:
+    """Whether someone else produced input after the Sender's last own event.
+
+    The Sender's own clicks and keys also count as input for macOS, so it
+    remembers when it last produced one: input more recent than that is the
+    user's.
+    """
+    return hid_idle_seconds + USER_INPUT_TOLERANCE_SECONDS < seconds_since_own_input
 
 
 @dataclass
@@ -527,6 +549,7 @@ class MacWechatAccessibility:
         self.min_interaction_interval = max(0.0, min_interaction_interval)
         self._last_interaction_started_at: float | None = None
         self._settings_opened_at: float | None = None
+        self._own_input_at: float | None = None
 
     def _wait_for_interaction_slot(self, *, sleep, monotonic) -> None:
         """Keep foreground navigation spaced even when several deliveries queue."""
@@ -537,21 +560,45 @@ class MacWechatAccessibility:
                 sleep(remaining)
         self._last_interaction_started_at = monotonic()
 
-    def _wait_until_idle(self) -> None:
-        import time
-        try:
-            import Quartz
-        except Exception:
+    @staticmethod
+    def _hid_idle_seconds() -> float:
+        import Quartz
+
+        return float(Quartz.CGEventSourceSecondsSinceLastEventType(
+            Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType
+        ))
+
+    def _wait_until_idle(self, *, budget: float | None = None, sleep=None,
+                         monotonic=system_time.monotonic, idle_seconds=None) -> bool:
+        """Wait until nobody has touched the computer for ``idle_seconds``.
+
+        Never goes ahead while the user is working: when the budget runs out
+        the caller reports ``user_active`` and the delivery is tried again later
+        (Derek, 2026-10-28: 30 seconds of silence before WeChat is touched).
+        """
+        sleep = sleep or system_time.sleep
+        idle_seconds = idle_seconds or self._hid_idle_seconds
+        deadline = monotonic() + (self.idle_max_wait if budget is None else budget)
+        while True:
+            if idle_seconds() >= self.idle_seconds:
+                return True
+            if monotonic() >= deadline:
+                return False
+            sleep(0.3)
+
+    def _note_own_input(self) -> None:
+        self._own_input_at = system_time.monotonic()
+
+    def _check_user_inactive(self, idle_seconds=None) -> None:
+        """Raise ``UserActive`` if the user touched the computer after our last event."""
+        if self._own_input_at is None:
             return
-        waited = 0.0
-        while waited < self.idle_max_wait:
-            idle = Quartz.CGEventSourceSecondsSinceLastEventType(
-                Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType
-            )
-            if idle >= self.idle_seconds:
-                return
-            time.sleep(0.3)
-            waited += 0.3
+        idle_seconds = idle_seconds or self._hid_idle_seconds
+        if _user_touched_since(
+            hid_idle_seconds=idle_seconds(),
+            seconds_since_own_input=system_time.monotonic() - self._own_input_at,
+        ):
+            raise UserActive("user input while operating WeChat")
 
     @staticmethod
     def _frontmost_app():
@@ -807,9 +854,11 @@ class MacWechatAccessibility:
             return (p.x + s.width / 2, p.y + s.height / 2)
 
         def click(el, n=1):
+            check()
             _click_at_accessibility_center(
                 el, center=center, quartz=Quartz, sleep=time.sleep, count=n,
             )
+            self._note_own_input()
 
         def scroll_session_list():
             session_list = first(id_eq="session_list")
@@ -832,6 +881,7 @@ class MacWechatAccessibility:
                 -6,
             )
             Quartz.CGEventPost(Quartz.kCGHIDEventTap, event)
+            self._note_own_input()
             _pause(time.sleep, PAUSE_BETWEEN_SCROLLS)
             return True
 
@@ -842,23 +892,34 @@ class MacWechatAccessibility:
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
                     Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
                     Quartz.CGEventPostToPid(pid, e)
+                    self._note_own_input()
                     _pause(time.sleep, PAUSE_KEY_HOLD if down else PAUSE_PER_KEY)
 
         def key_to_wechat(keycode):
             for down in (True, False):
                 Quartz.CGEventPostToPid(pid, Quartz.CGEventCreateKeyboardEvent(None, keycode, down))
+                self._note_own_input()
                 if down:
                     _pause(time.sleep, PAUSE_KEY_HOLD)
 
+        # Nobody else may touch the computer while the Sender works; the
+        # user's input aborts this pass (Derek, 2026-10-28).
+        guarded = not skip_idle_wait
+
+        def check():
+            if guarded:
+                self._check_user_inactive()
+
         prev_app = self._frontmost_app()
-        try:
+        composer_holder = {}
+
+        def attempt():
             # --- navigation (needs a real click; briefly foreground WeChat) ---
-            if not skip_idle_wait:
-                self._wait_until_idle()   # don't interrupt the user mid-typing
             self._wait_for_interaction_slot(
                 sleep=time.sleep,
                 monotonic=system_time.monotonic,
             )
+            self._note_own_input()
             if not _activate_wait(
                 pid,
                 first=first,
@@ -891,6 +952,8 @@ class MacWechatAccessibility:
                     False,
                     failure_reason="target_binding_mismatch",
                 )
+            composer_holder["composer"] = composer
+            check()
 
             # --- compose (typed key by key) + send (key to pid, no focus steal) ---
             # WeChat logged the account out after text appeared in one AX write
@@ -903,14 +966,19 @@ class MacWechatAccessibility:
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
                     Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
                     Quartz.CGEventPostToPid(pid, e)
+                    self._note_own_input()
                     if down:
                         _pause(time.sleep, PAUSE_KEY_HOLD)
 
+            # Start from an empty input box: an interrupted pass may have
+            # left part of the reply behind.
+            set_attr(composer, "AXValue", "")
             _type_text(
                 reply_text,
                 key_char=key_char,
                 newline=lambda: set_attr(composer, "AXSelectedText", "\n"),
                 sleep=time.sleep,
+                check=check,
             )
             time.sleep(0.4)
             if reply_text not in (g(composer, "AXValue") or ""):
@@ -926,6 +994,7 @@ class MacWechatAccessibility:
                     False,
                     failure_reason="target_changed_before_send",
                 )
+            check()
             key_to_wechat(36)                # Return -> WeChat pid
             time.sleep(1.0)
             cleared = (g(first(id_eq="chat_input_field"), "AXValue") or "").strip() == ""
@@ -934,9 +1003,25 @@ class MacWechatAccessibility:
                 cleared=cleared,
                 target_fingerprint=fp,
             )
-        finally:
-            if self.restore_focus:
-                self._reactivate(prev_app)
+
+        deadline = system_time.monotonic() + self.idle_max_wait
+        while True:
+            if guarded and not self._wait_until_idle(
+                budget=max(0.0, deadline - system_time.monotonic()),
+            ):
+                return AccessibilityResult(False, False, failure_reason="user_active")
+            try:
+                return attempt()
+            except UserActive:
+                # Pause: leave nothing half typed, give the user their app back,
+                # then wait for another quiet period and start over.
+                composer = composer_holder.pop("composer", None)
+                if composer is not None:
+                    set_attr(composer, "AXValue", "")
+                LOGGER.info("wechat_sender_paused_for_user_input")
+            finally:
+                if self.restore_focus:
+                    self._reactivate(prev_app)
 
     def open_and_identify(
         self, target_label: str, *, search_query: str | None = None,
@@ -1065,8 +1150,8 @@ class MacWechatAccessibility:
             # A user-requested "view this message" leaves WeChat in front
             # (restore_focus=False). It must not wait for the background-send
             # idle window after the user has explicitly initiated navigation.
-            if restore_focus is not False:
-                self._wait_until_idle()
+            if restore_focus is not False and not self._wait_until_idle():
+                return ""
             self._wait_for_interaction_slot(
                 sleep=time.sleep,
                 monotonic=system_time.monotonic,
@@ -1116,7 +1201,8 @@ class MacWechatAccessibility:
 
         prev_app = self._frontmost_app()
         try:
-            self._wait_until_idle()
+            if not self._wait_until_idle():
+                return False
             self._reactivate(
                 __import__("AppKit").NSRunningApplication
                 .runningApplicationWithProcessIdentifier_(pid)

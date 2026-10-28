@@ -97,6 +97,9 @@ def recover_before_sender(store, reader, account=None, sender=None) -> list:
     from app.wechat.accessibility import reconcile_incomplete_deliveries
 
     store.supersede_failed_wechat_deliveries_with_newer_sent()
+    # Waiting for the user to stop working is not a send attempt: requeue it
+    # before the bounded retry pass can count it against the budget.
+    store.requeue_wechat_deliveries_blocked_by_user_activity()
     store.requeue_unperformed_wechat_deliveries()
     # Do not probe WeChat while idle. This passive check is only made when a
     # previously unsent delivery is specifically blocked on the macOS grant.

@@ -208,6 +208,21 @@ at a time and spaces foreground navigation attempts by 1 second by default
 causing concurrent or burst UI interaction. This affects only navigation pacing;
 it does not relax target binding, compose, or send confirmation checks.
 
+The Sender only touches WeChat after the computer has been untouched for 30
+seconds (`CEO_WECHAT_SEND_IDLE_SECONDS`, default 30; Derek, 2026-10-28), and it
+never goes ahead while the user is working: if the quiet period does not come
+within 120 seconds, the delivery records `user_active` before any UI action and
+the sender loop requeues it on its next pass without using the bounded retry
+budget. While it works, the Sender remembers when it last produced a click or
+key itself; input newer than that is the user's, and the Sender pauses at once
+— before every click, before every typed character and before Return. A pause
+empties the input box it may have started filling, hands the previous app back
+to the front, waits for another 30 quiet seconds and starts over from opening
+the chat. Sends the user starts explicitly from the console skip the quiet wait
+and the pause. The Codex computer-use alternative (virtual pointer) is kept on
+branch `experiment/wechat-codex-computer-use`: on 2026-10-28 WeChat logged the
+account out after every Codex session, even one that only clicked a chat open.
+
 Within one delivery every UI step also pauses for a randomized, person-like
 interval, because WeChat flags back-to-back events as non-human use (Derek,
 2026-09-30). The ranges are the `PAUSE_*` constants at the top of

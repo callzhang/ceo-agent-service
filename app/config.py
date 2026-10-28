@@ -559,12 +559,12 @@ def wechat_self_user_id() -> str:
 
 
 def wechat_send_idle_seconds() -> float:
-    """Seconds the user must be idle (no keyboard/mouse) before a send briefly
-    foregrounds WeChat to select the chat. Default 10s."""
+    """Seconds the computer must be untouched (no keyboard/mouse) before the
+    Sender starts operating WeChat. Default 30s (Derek, 2026-10-28)."""
     try:
-        return float(os.getenv("CEO_WECHAT_SEND_IDLE_SECONDS", "10"))
+        return float(os.getenv("CEO_WECHAT_SEND_IDLE_SECONDS", "30"))
     except ValueError:
-        return 10.0
+        return 30.0
 
 
 def wechat_send_min_interval_seconds() -> float:

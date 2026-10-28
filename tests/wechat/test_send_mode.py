@@ -726,6 +726,31 @@ def test_accessibility_permission_recovery_restores_exhausted_pre_action_deliver
     assert store.get_reply_attempt(attempt_id).retry_count == MAX_AUTOMATIC_RETRIES
 
 
+def test_a_send_skipped_because_the_user_was_busy_is_requeued_without_using_retries(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, attempt_id = _seed_with_attempt(store)
+    _exhaust_pre_action_retries(store, delivery.id, "user_active")
+
+    service.recover_before_sender(store, None)
+
+    restored = store.get_wechat_delivery_by_id(delivery.id)
+    assert restored.status == "ready_to_send"
+    assert restored.error == ""
+    assert store.get_reply_attempt(attempt_id).retry_count == MAX_AUTOMATIC_RETRIES
+    assert store.requeue_wechat_deliveries_blocked_by_user_activity() == 0
+
+
+def test_only_waiting_errors_can_be_requeued_outside_the_retry_budget(tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    delivery, _ = _seed_with_attempt(store)
+    _exhaust_pre_action_retries(store, delivery.id, "target_open_failed")
+
+    assert store.requeue_wechat_deliveries_blocked_by_user_activity() == 0
+    assert store.get_wechat_delivery_by_id(delivery.id).status == "failed"
+    with pytest.raises(ValueError):
+        store._requeue_wechat_deliveries_waiting_on("target_open_failed")
+
+
 def test_sender_checks_accessibility_only_for_permission_blocked_delivery(tmp_path):
     store = AutoReplyStore(tmp_path / "w.sqlite3")
     calls = []

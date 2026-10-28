@@ -1119,3 +1119,62 @@ def test_trusted_sender_never_opens_settings(monkeypatch):
         open_settings=lambda: opened.append(True),
     ) == "ready"
     assert opened == []
+
+
+def test_input_after_the_senders_own_last_event_is_the_users():
+    assert accessibility._user_touched_since(
+        hid_idle_seconds=0.1, seconds_since_own_input=3.0) is True
+    assert accessibility._user_touched_since(
+        hid_idle_seconds=2.9, seconds_since_own_input=3.0) is False
+    # The Sender's own click is the latest input.
+    assert accessibility._user_touched_since(
+        hid_idle_seconds=0.2, seconds_since_own_input=0.3) is False
+
+
+def test_the_sender_waits_for_30_quiet_seconds_and_never_goes_ahead_while_busy():
+    runner = MacWechatAccessibility(idle_seconds=None, min_interaction_interval=0)
+    assert runner.idle_seconds == 30.0
+    now = [0.0]
+
+    def sleep(seconds):
+        now[0] += seconds
+
+    busy = runner._wait_until_idle(
+        budget=5, sleep=sleep, monotonic=lambda: now[0], idle_seconds=lambda: 2.0,
+    )
+    quiet = runner._wait_until_idle(
+        budget=5, sleep=sleep, monotonic=lambda: now[0], idle_seconds=lambda: 31.0,
+    )
+
+    assert busy is False and now[0] >= 5
+    assert quiet is True
+
+
+def test_typing_stops_the_moment_the_user_touches_the_computer():
+    typed = []
+    touches = iter([None, None, accessibility.UserActive("moved")])
+
+    def check():
+        touch = next(touches)
+        if touch is not None:
+            raise touch
+
+    with pytest.raises(accessibility.UserActive):
+        accessibility._type_text(
+            "好的呀", key_char=typed.append, newline=lambda: None,
+            sleep=lambda _s: None, check=check,
+        )
+    assert typed == ["好", "的"]
+
+
+def test_activity_check_raises_only_after_the_senders_own_input(monkeypatch):
+    runner = MacWechatAccessibility(idle_seconds=30, min_interaction_interval=0)
+    runner._check_user_inactive(idle_seconds=lambda: 0.0)  # nothing of ours yet
+
+    monkeypatch.setattr(accessibility.system_time, "monotonic", lambda: 100.0)
+    runner._note_own_input()
+    monkeypatch.setattr(accessibility.system_time, "monotonic", lambda: 103.0)
+
+    runner._check_user_inactive(idle_seconds=lambda: 3.0)
+    with pytest.raises(accessibility.UserActive):
+        runner._check_user_inactive(idle_seconds=lambda: 0.5)
