@@ -1,6 +1,5 @@
 """A WeChat task reads only its own conversation, through the standard agent tools."""
 
-import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
 import math

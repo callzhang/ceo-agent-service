@@ -2240,6 +2240,44 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             assert row is not None
             return self._managed_skill_revision_from_row(row)
 
+    def install_repository_skill(
+        self, name: str, display_name: str, content: str, *, source: str,
+        expected_parent_id: int | None, publish_package: Callable[[], None],
+    ) -> tuple[ManagedSkillRevision, RuntimeSkillConfig]:
+        """Publish one new external Skill with its pending config in one transaction."""
+        name = validate_managed_skill_name(name)
+        digest = validate_managed_skill_content(name, content, require_managed_marker=False)
+        with self._immediate_write_transaction() as db:
+            if db.execute(f"select 1 from ({config_projection('managed_skills')}) where name=?", (name,)).fetchone():
+                raise ValueError("Skill name conflict")
+            latest = db.execute(f"select id,status from ({config_projection('runtime_skill_configs')}) order by id desc limit 1").fetchone()
+            parent = int(latest["id"]) if latest else None
+            if parent != expected_parent_id:
+                raise ValueError("runtime Skill configuration parent conflict")
+            effective_parent = parent
+            if latest and latest["status"] == "load_failed":
+                active = db.execute(f"select id from ({config_projection('runtime_skill_configs')}) where status='active' order by id desc limit 1").fetchone()
+                effective_parent = int(active["id"]) if active else None
+            old_bindings = db.execute(f"select * from ({config_projection('runtime_skill_bindings')}) where config_id=? order by load_order", (effective_parent,)).fetchall()
+            capability = db.execute(f"select enabled from ({config_projection('runtime_feedback_iteration_capabilities')}) where config_id=?", (effective_parent,)).fetchone()
+            publish_package()
+            skill_id = int(insert_config(db, "managed_skills", {"name": name, "display_name": display_name}).lastrowid)
+            revision_id = int(insert_config(db, "managed_skill_revisions", {
+                "skill_id": skill_id, "revision_number": 1, "content": content,
+                "sha256": digest, "parent_revision_id": None, "source": source,
+            }).lastrowid)
+            config_id = int(insert_config(db, "runtime_skill_configs", {"parent_id": parent, "status": "pending_restart"}).lastrowid)
+            insert_config(db, "runtime_feedback_iteration_capabilities", {"config_id": config_id, "enabled": int(capability["enabled"]) if capability else 1})
+            for binding in old_bindings:
+                insert_config(db, "runtime_skill_bindings", {"config_id": config_id, **{key: binding[key] for key in ("skill_id", "revision_id", "enabled", "load_order", "purpose")}})
+            insert_config(db, "runtime_skill_bindings", {
+                "config_id": config_id, "skill_id": skill_id, "revision_id": revision_id,
+                "enabled": 1, "load_order": max((b["load_order"] for b in old_bindings), default=-1) + 1, "purpose": "business",
+            })
+            revision_row = db.execute(f"select * from ({config_projection('managed_skill_revisions')}) where id=?", (revision_id,)).fetchone()
+            config_row = db.execute(f"select * from ({config_projection('runtime_skill_configs')}) where id=?", (config_id,)).fetchone()
+            return self._managed_skill_revision_from_row(revision_row), self._runtime_skill_config_from_row(config_row)
+
     def get_managed_skill_revision(
         self, revision_id: int
     ) -> ManagedSkillRevision | None:
@@ -5486,6 +5524,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"select * from ({config_projection('runtime_skill_configs')}) "
                 "where status='active' order by id desc limit 1"
             ).fetchone()
+        return self._runtime_skill_config_from_row(row) if row is not None else None
+
+    def get_latest_runtime_skill_config(self) -> RuntimeSkillConfig | None:
+        """Return the exact latest version for installation's existing-parent CAS."""
+        with self._connect() as db:
+            row = db.execute(f"select * from ({config_projection('runtime_skill_configs')}) order by id desc limit 1").fetchone()
         return self._runtime_skill_config_from_row(row) if row is not None else None
 
     def get_pending_or_active_runtime_skill_config(self) -> RuntimeSkillConfig | None:

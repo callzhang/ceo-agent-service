@@ -48,6 +48,9 @@ from app.web_api.tasks import (
 )
 from app.web_api.settings import info_payload
 from app.web_api.status import StatusEnvelope, StatusMeta, WorkerStatus
+from app.web_api.skill_installation import register_skill_installation_routes
+from app.skill_discovery import SkillDiscoveryService
+from app.skill_installation import SkillInstallationService
 from app.web_api.email import register_email_routes
 from app.web_api.history_tasks import annotate_task_identity, register_history_task_routes
 from app.web_api.scheduled_tasks import register_scheduled_task_routes
@@ -63,6 +66,7 @@ from app.managed_skills import (
     import_repository_managed_skills,
     export_managed_skill_revision,
     validate_managed_skill_name,
+    repository_installed_skill_names,
 )
 from app.feedback_processing import (
     FeedbackIterationDecision,
@@ -108,6 +112,8 @@ def register_console_routes(
     email_source_reader_factory: Callable[[], Any] | None = None,
     feature_registry_factory: Callable[[], FeatureRegistry] | None = None,
     skill_file_service_factory: Callable[[], SkillFileService] | None = None,
+    skill_discovery_factory: Callable[[], Any] | None = None,
+    skill_installation_factory: Callable[[], Any] | None = None,
     dws_factory: Callable[[], Any] | None = None,
     scheduled_task_option_service_factory: Callable[
         [], ScheduledTaskOptionService
@@ -1785,6 +1791,12 @@ def register_console_routes(
         import_repository_managed_skills(store)
         return store
 
+    register_skill_installation_routes(
+        app,
+        discovery_factory=skill_discovery_factory or SkillDiscoveryService,
+        installation_factory=skill_installation_factory or (lambda: SkillInstallationService(store=managed_store())),
+    )
+
     def _managed_revision_payload(store: Any, revision: Any) -> dict[str, Any]:
         receipt = store.latest_managed_skill_export_receipt(revision.id)
         export = {
@@ -1864,11 +1876,14 @@ def register_console_routes(
         if set(payload) - {"content", "parent_revision_id"}:
             return JSONResponse({"ok": False, "code": "validation_error", "message": "unsupported managed revision fields", "details": {}}, status_code=422)
         try:
-            revision = managed_store().create_managed_skill_revision(
+            store = managed_store()
+            skill = store.get_managed_skill(skill_id)
+            revision = store.create_managed_skill_revision(
                 skill_id,
                 payload.get("content"),
                 source="settings",
                 parent_revision_id=payload.get("parent_revision_id"),
+                require_managed_marker=skill is None or skill.name not in repository_installed_skill_names(store),
             )
         except ManagedSkillValidationError as exc:
             return JSONResponse({"ok": False, "code": "validation_error", "message": str(exc), "details": {}}, status_code=422)

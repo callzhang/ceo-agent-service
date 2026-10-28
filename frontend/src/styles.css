@@ -2125,3 +2125,8 @@ h1, h2, h3, p { margin-top: 0; }
   .scheduled-task-detail > .scheduled-task-pane-heading { margin: 0 -16px 18px; padding: 16px; }
   .scheduled-task-run { grid-template-columns: minmax(0, 1fr); }
 }
+
+.skill-search-form { display: grid; gap: 8px; margin-bottom: 14px; }
+.skill-search-controls { display: flex; gap: 10px; }
+.skill-search-controls input { flex: 1; min-width: 0; }
+.skill-search-description { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

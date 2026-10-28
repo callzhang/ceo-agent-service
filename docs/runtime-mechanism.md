@@ -5898,3 +5898,11 @@ individual materials. Consumer and Audit compare the proposed message with that
 artifact. Installed-file, repository-source and managed release baselines are
 aligned to the exact same digest; this sync preserves the installed contract.
 The half-day leave correction remains a separate change.
+
+### Repository Skill installation (2026-10-28)
+
+First deployment installs missing public managed Skill packages from the release into the installed Skill directory before startup. Existing installed content is preserved. Enterprise packages are optional and are installed separately; the initial baseline does not copy adjacent company Skill folders. Bootstrap verifies the complete generic baseline.
+
+Repository URL/name discovery resolves exact commits. Installing a selected Skill copies its complete tracked package into the installed directory and creates its immutable revision plus pending configuration through the current Configs owner in one transaction. File publication occurs inside that transaction and failed operations restore the staged package. Existing bindings and feedback capability are inherited; no external workflow is enabled. Source identity remains in the revision source field; imported optional names participate in existing edit capture without rewriting their ownership metadata. Runtime activation still requires normal startup and load evidence.
+
+External Skill discovery/import/edit capture share the portable catalog field reader, including multiline descriptions; service-owned metadata checks remain strict. Exact UTF-8 bytes, including CRLF, determine revision identity. A selected root package excludes nested independent Skill packages. Source-shaped unsupported inputs are rejected locally, while supported HTTPS/SSH sources use native Git only. Installation checks the exact latest config row for concurrency and, after a failed load, inherits the effective active bindings/capability without deleting the failed revision. Settings exposes a return to all installed Skills. Ordinary exception rollback is verified; no cross-system crash-recovery or new authorization policy is introduced.

@@ -1181,11 +1181,14 @@ describe("SettingsPage", () => {
     renderSettings("/settings?tab=skills");
 
     expect(await screen.findByText("选择一个功能以查看它关联的 Skills")).toBeInTheDocument();
-    expect(screen.queryByText("Message Triage Skill")).not.toBeInTheDocument();
+    expect(screen.getByText("Message Triage Skill")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "选择 Message Triage" }));
     expect((await screen.findAllByText("Message Triage Skill")).length).toBeGreaterThan(0);
     expect(screen.queryByText("Meeting Work Skill")).not.toBeInTheDocument();
     expect(screen.getByRole("button", { name: "选择 Message Triage" })).toHaveAttribute("aria-pressed", "true");
+    await user.click(screen.getByRole("button", { name: "全部已安装" }));
+    expect(screen.getByText("Meeting Work Skill")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "选择 Message Triage" })).toHaveAttribute("aria-pressed", "false");
   });
 
   it("shows the WeChat automatic-reply configuration inside its Skill", async () => {
@@ -1235,4 +1238,16 @@ describe("SettingsPage MCP", () => {
     await waitFor(() => expect((screen.getByLabelText("cua_repl 后台 Agent 可用") as HTMLInputElement).checked).toBe(false));
     expect(getSettings).not.toHaveBeenCalled();
   });
+});
+
+it("shows an installed unassigned Skill without choosing a feature", async () => {
+  listAttention.mockResolvedValue({items: []});
+  getFeedbackIterationCapability.mockResolvedValue({enabled: false, config_id: null});
+  getSkillFeatures.mockResolvedValueOnce({features: []});
+  listManagedSkills.mockResolvedValueOnce({items: [{id: 9, name: "installed-example", display_name: "Installed Example", created_at: "2026-01-01T00:00:00Z"}]});
+  listManagedSkillRevisions.mockResolvedValueOnce({items: []});
+  getCurrentRuntimeSkillConfig.mockResolvedValueOnce({pending_or_active: null, active: null});
+  renderSettings("/settings?tab=skills");
+  expect(await screen.findByRole("heading", {name: "已安装 · Skills"})).toBeInTheDocument();
+  expect(screen.getByText("Installed Example")).toBeInTheDocument();
 });

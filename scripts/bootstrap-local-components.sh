@@ -245,14 +245,14 @@ ensure_ceo_business_skills() {
   if detail="$(
     PYTHONPATH="${REPO_ROOT}${PYTHONPATH:+:${PYTHONPATH}}" "${CEO_PYTHON}" - 2>&1 <<'SKILLCHECK'
 from app.business_skills import (
-    BUNDLED_BUSINESS_SKILL_NAMES,
     bundled_business_skills_root,
 )
 
+from app.managed_skills import REPOSITORY_MANAGED_SKILL_NAMES
 root = bundled_business_skills_root()
 missing = [
     name
-    for name in BUNDLED_BUSINESS_SKILL_NAMES
+    for name in REPOSITORY_MANAGED_SKILL_NAMES
     if not (root / name / "SKILL.md").is_file()
 ]
 if missing:
@@ -260,7 +260,7 @@ if missing:
         f"missing business Skills in {root}: " + ", ".join(missing)
         + "; install them from the shared Skills library"
     )
-print(f"present in {root}: " + ", ".join(BUNDLED_BUSINESS_SKILL_NAMES))
+print(f"present in {root}: " + ", ".join(REPOSITORY_MANAGED_SKILL_NAMES))
 SKILLCHECK
   )"; then
     record "ceo-business-skills" "done" "${detail}"

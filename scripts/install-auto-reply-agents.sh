@@ -131,6 +131,14 @@ for plist_name in "${plist_names[@]}"; do
   fi
 done
 
+# First deployment supplies the public baseline; installed local edits are preserved.
+PYTHONPATH="${repo_root}${PYTHONPATH:+:${PYTHONPATH}}" python3 - "${repo_root}" <<'SKILLS'
+from pathlib import Path
+import sys
+from app.business_skills import install_public_skill_baseline
+install_public_skill_baseline(Path(sys.argv[1]) / "ci/shared-skills", Path.home() / ".agents/skills")
+SKILLS
+
 mkdir -p "${target_dir}" "${log_dir}"
 
 for label in "${obsolete_labels[@]}"; do
