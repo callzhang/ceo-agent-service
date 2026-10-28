@@ -8,7 +8,7 @@
 
 **Tech Stack:** Python、SQLite JSONB/生成列/复合 FK、pytest/Ruff、现有 Store/EmailStore、现有标准 app.deploy 和 console 前端。
 
-**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈/剩余历史闭包继续；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
+**Status:** Derek 已于 2026-10-28 确认实施。第一批无 DDL 已作为 c5f39aa8e 标准部署，相关测试、SPEC/QUALITY、生产读回和明确归属清理通过。第二批44c13bc91已标准部署及读回/清理完成，第三批af24bc485会话归属标准部署/读回/清理完成，反馈第四批标准发布正在安静等待；第五批分单元实现/审查继续，尚未上线；第二批冻结依赖见 docs/model-retirement-batch2-contract.md。会话 inverse 明确采用权威记录重建完整副本，不额外保存旧镜像空值。
 
 **Audit baseline:** production `d1efdbc28ddbc9ea847036c9f8ba3a597b354e88`，本地 `c866d4fbd051044f1ba86e846ab14b70706ba741`，检查时 main `0ef0a929565248a51ea5a9e8fd43d1abfe575d37`；48 表/476 对象。精确字段、调用方与索引证据见 [审计](../../database-simplification-audit-20261027.md) 和三个 CSV。实施先刷新基线，不硬编码本次 PID 或把本次行数当作未来迁移前置常量。
 
@@ -116,12 +116,12 @@ CREATE INDEX idx_setup_events_id ON setup_wizard_events(id DESC);
 
 **Modify/Delete:** 审计 §4 明确列出的 task_entity_schema/run_entity_schema/run_adoption_schema/run_adoption_inverse/task_entity_inverse_files、business_legacy_owner_storage 转换半部、business_candidate_storage 转换半部、email_canonical_storage 转换闭包、workbench_storage 老转换；调用它们的显式过期工具、测试夹具和 gate 清单。
 
-- [ ] 在 Tasks 1–5 稳定后重新建立 import/动态字符串依赖闭包；先将当前业务测试改为 native creator，再退休只验证旧版本转换的测试。不能只删除核心模块，让 tests 被 tools 反向 import 后断裂。
-- [ ] 明确处理 validate_run_adoption_cold 的动态 import、validate_email_orphan_old_dao 对测试的依赖、两个 Workbench inverse 验证脚本。旧工具如仍决定保留，隔离为冻结显式工具；不得为了它们保留当前业务 helper 的旧字段分支。
-- [ ] 保留当前声明/assembly、Business insert/update 与语义导入 read_import_task/assign_import_task、实际 Workbench 文件生命周期和当前需要的 predecessor release/inverse。
-- [ ] 保留四张 identity_map 的唯一身份事实和 coalescer 当前必要维护。删除旧转换器不代表允许删除 provenance。不得新建通用历史容器或将它们塞进备用 JSON。
-- [ ] CodexDecisionRunner executor/_legacy_adapter 分支单独小提交：当前测试改为现有 RoutedCodexExecution 替身，检验 live smoke 构造合同，再删旧 direct executor；保留生产运行与 route 能力规则，不改 policy。
-- [ ] Ruff、仓内符号/动态注册复扫和保留下来的直接相关测试通过；文档明确哪些历史工具已退休、哪些显式 inverse 仍必要。
+- [x] 在 Tasks 1–5 稳定后重新建立 import/动态字符串依赖闭包；先将当前业务测试改为 native creator，再退休只验证旧版本转换的测试。不能只删除核心模块，让 tests 被 tools 反向 import 后断裂。
+- [x] 明确处理 validate_run_adoption_cold 的动态 import、validate_email_orphan_old_dao 对测试的依赖、两个 Workbench inverse 验证脚本。旧工具如仍决定保留，隔离为冻结显式工具；不得为了它们保留当前业务 helper 的旧字段分支。
+- [x] 保留当前声明/assembly、Business insert/update 与语义导入 read_import_task/assign_import_task、实际 Workbench 文件生命周期和当前需要的 predecessor release/inverse。
+- [x] 保留四张 identity_map 的唯一身份事实和 coalescer 当前必要维护。删除旧转换器不代表允许删除 provenance。不得新建通用历史容器或将它们塞进备用 JSON。
+- [x] CodexDecisionRunner executor/_legacy_adapter 分支单独小提交：当前测试改为现有 RoutedCodexExecution 替身，检验 live smoke 构造合同，再删旧 direct executor；保留生产运行与 route 能力规则，不改 policy。
+- [x] Ruff、仓内符号/动态注册复扫和保留下来的直接相关测试通过；文档明确哪些历史工具已退休、哪些显式 inverse 仍必要。
 
 ## 不混入本计划的行为变更
 

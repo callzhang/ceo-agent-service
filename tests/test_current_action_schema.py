@@ -7,7 +7,6 @@ import pytest
 from app import action_storage as actions
 from app.current_database_schema import create_current_database_schema
 from app.current_action_schema import (
-    create_source_current_action_schema,
     current_action_payloads, current_reply_action_projection,
 )
 from app.task_run_entity_assembly import _action_objects as assembled_action_declarations
@@ -93,31 +92,3 @@ def test_current_payload_layout_does_not_select_a_historical_factory(monkeypatch
     payloads = current_action_payloads()
     assert "conversation_single_chat" in payloads.layouts["reply_attempts"].fields
     assert "attempt_id" not in payloads.layouts["memory_write_events"].fields
-
-
-def test_existing_current_action_schema_is_idempotent_and_rejects_tampered_map_without_writes():
-    from app.predecessor_database_schema import create_store_2026_10_21_1_schema
-    from app.task8_storage import register_task8_functions
-
-    connection = sqlite3.connect(":memory:")
-    register_task8_functions(connection)
-    create_store_2026_10_21_1_schema(connection)
-
-    before = connection.execute(
-        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-    ).fetchall()
-    create_source_current_action_schema(connection)
-    assert connection.execute(
-        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-    ).fetchall() == before
-
-    connection.execute("drop index idx_action_identity_map_owner")
-    tampered = connection.execute(
-        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-    ).fetchall()
-    with pytest.raises(ValueError, match="unsupported current Action child declaration"):
-        create_source_current_action_schema(connection)
-    assert connection.execute(
-        "select type, name, tbl_name, sql from sqlite_schema order by type, name"
-    ).fetchall() == tampered
-    connection.close()

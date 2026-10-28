@@ -1,0 +1,136 @@
+{
+  "phase": "implementation_reviewed_not_deployed",
+  "source_commit": "7a6b73ee9486699c51315fd30e08315e329a0c25",
+  "implementation_commits": [
+    "96748f5f8",
+    "aa6070cf8",
+    "6f2fe6ff1",
+    "14617e441"
+  ],
+  "schema": {
+    "store": "2026-10-28.3",
+    "email": 54,
+    "objects": 463,
+    "sha256": "ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a",
+    "ddl_changes": false
+  },
+  "explicit_predecessor": {
+    "store": "2026-10-28.2",
+    "objects": 463,
+    "sha256": "8fe0b0d99c39c9bcab5b6637ba188677038cd620a72c78e7daa720a8d0d36b2a"
+  },
+  "units": {
+    "runner": {
+      "spec": "passed",
+      "quality": "passed"
+    },
+    "direct_source": {
+      "spec": "passed",
+      "quality": "passed"
+    },
+    "business": {
+      "spec": "passed",
+      "quality": "passed"
+    },
+    "email_workbench": {
+      "spec": "passed",
+      "quality": "passed"
+    },
+    "run_maps_and_closed_releases": {
+      "spec": "passed",
+      "quality": "passed"
+    }
+  },
+  "completed_test_runs_overlapping": [
+    {
+      "scope": "DecisionRunner",
+      "passed": 41
+    },
+    {
+      "scope": "runner",
+      "passed": 39
+    },
+    {
+      "scope": "Worker direct nodes",
+      "passed": 2
+    },
+    {
+      "scope": "non-live smoke construction",
+      "passed": 1
+    },
+    {
+      "scope": "direct frozen source/release/cold guard",
+      "passed": 15
+    },
+    {
+      "scope": "drain current source ports whole file",
+      "passed": 33
+    },
+    {
+      "scope": "Business/native/semantic import/catalog",
+      "passed": 70
+    },
+    {
+      "scope": "Business final current assertion ports",
+      "passed": 47
+    },
+    {
+      "scope": "Email/Workbench focused",
+      "passed": 230
+    },
+    {
+      "scope": "Email direct lifecycle nodes",
+      "passed": 6
+    },
+    {
+      "scope": "Run/assembly map closure",
+      "passed": 36
+    },
+    {
+      "scope": "Feedback latest release/ledger",
+      "passed": 10
+    },
+    {
+      "scope": "declarations/Signal/receipt",
+      "passed": 16
+    },
+    {
+      "scope": "frozen historical Configs codec",
+      "passed": 3
+    },
+    {
+      "scope": "predecessor fixture ports",
+      "passed": 20
+    },
+    {
+      "scope": "final positive receipts/cold/Feedback",
+      "passed": 42
+    },
+    {
+      "scope": "current trigger reparse regression file",
+      "passed": 7
+    },
+    {
+      "scope": "root ReviewedCandidate/Task/Run/release integration",
+      "passed": 61
+    }
+  ],
+  "coverage_review_fixes": [
+    "Preserved current import-owner FK/delete/id mutation assertions and scalar TEXT/timestamp/type parity",
+    "Preserved current ALTER TABLE/EXPLAIN trigger compilation regression in current declaration tests"
+  ],
+  "production": null,
+  "cleanup": {
+    "root_final_temp": "/private/tmp/ceo-retirement-final.xv4Wg9",
+    "runner_temp": "/private/tmp/ceo-runner-retirement.tzwA6t",
+    "known_implementer_temp_roots_absent": true,
+    "unowned_default_pytest_directories": "not removed; ownership not established"
+  },
+  "limits": {
+    "memory_gib": 2,
+    "wall_minutes": 10,
+    "full_local_suite_run": false,
+    "test_outbound": "doubles only"
+  },
+  "boundary": "No claim of globally optimal schema or repository-wide zero historical tools."
+}

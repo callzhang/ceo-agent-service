@@ -1,6 +1,8 @@
 """Frozen Action and Task fixtures for historical schema release tests."""
 
 import hashlib
+import json
+from pathlib import Path
 import sqlite3
 
 import pytest
@@ -14,8 +16,7 @@ from app.task_source_documents import source_document_key
 @pytest.fixture(params=("actual_no_memory_fk", "fresh_memory_fk"))
 def db(request):
     with sqlite3.connect(":memory:") as connection:
-        from app.model_retirement_schema_source import store26_objects
-        config_objects = [item for item in store26_objects() if item[2] == "configs"]
+        config_objects = json.loads((Path(__file__).parent / "fixtures/store26_configs.json").read_text())
         CONFIG_TABLE_DDL = next(item[3] for item in config_objects if item[0] == "table")
         CONFIG_INDEX_DDL = tuple(item[3] for item in config_objects if item[0] == "index")
         from app.task20_definitions import TASK20_TABLE_DDL, TASK20_INDEX_DDL

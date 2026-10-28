@@ -1,5 +1,17 @@
 # Current Runtime Mechanism
 
+## Run 正面声明与显式发布窗口收口（2026-10-28）
+
+Run／采用结果只保留当前正面声明和真实身份／来源维护，不再生成旧字段全集映射。
+11项当前receipt SQL直接固定，逐字等于原生成结果，不改写旧execution_id声明。
+过期的9个release/source模块、旧copy工具和专用转换测试退出；当前显式Feedback
+28.2→28.3发布及新增数据inverse保留。所需历史Configs源SQL只在测试夹具中。
+四张identity_map的身份事实、当前coalescer和历史查询不变。当前触发器重解析回归
+仍执行两次ALTER及EXPLAIN UPDATE；不因旧测试容器退休而取消当前覆盖。
+所有463项SQL与前一当前声明逐字一致，不新增schema版本、运行时兼容或policy。
+本段是代码合同；部署／生产功能／清理的实际状态以第五批验收为准。
+
+
 ## Email／Workbench 历史转换退休（2026-10-28）
 
 Email现行投影、元数据、正文来源和业务写入继续使用原有owner；已关闭的旧表转换、
@@ -55,14 +67,14 @@ Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前
 session列表/Attempt关联直接读取canonical owner。CLI OAuth reset清除同一owner的OAuth槽，
 其他路线保留；原有全路线clear、路线上compare-and-clear与Run/Attempt原生证据不变。
 退休两个镜像payload键/生成列及旧getter/setter/clear、双写和无用开关，不保留运行时兼容。
-显式准确28.1→28.2发布先验证镜像非空事实与canonical一致；inverse从当前canonical恢复完整
+历史af24发布中的显式28.1→28.2先验证镜像非空事实与canonical一致；当时inverse从canonical恢复完整
 旧镜像（包括原来为空的hash），不保存镜像备份。463项schema、48表、1232列。历史声明固定，
 constructor不自动升级。af24bc485标准部署/读回/清理已完成，证据见[第三批验收](model-retirement-batch3-validation.md)。
 
 
 ## 模型退休第二批：明确26.1→28.1发布（2026-10-28）
 
-Store28.1/Email54直接构造463对象（bare462）；运行时不读取旧schema catalog。
+历史44c13bc91的Store28.1/Email54直接构造463对象（bare462）；运行时不读取旧schema catalog。
 部署静默读取和paired release只接收精确26.1/54来源，旧25.2/25.3只保留必要
 显式工具，不再自动分派。原安静等待、备份、账本、停止/重启、健康和回滚顺序不变。
 
@@ -97,7 +109,7 @@ History 可见页面仍按10秒间隔检查刷新；已有列表请求未完成�
 修改筛选、翻页或离开页面时仍取消过时请求，旧请求的迟到响应不能覆盖新结果。
 这不改变后端查询、结果排序、业务状态、审查或发送合同。
 
-显式 Store21.1 来源构造使用通知字段加入前的冻结 schedules 声明，保留原有
+历史验收的Store21.1来源工件采用通知字段加入前的冻结schedules声明，保留原有
 505项／920b7eed 摘要；当前 Task/Run SQL 文档则与当前声明同步，包含已有的
 notify_on_completion 字段。历史来源与当前目标不互相冒充，不增加运行时兼容。
 测试与实际发布读回见[收口验收](history-artifact-closeout-20261027.md)。

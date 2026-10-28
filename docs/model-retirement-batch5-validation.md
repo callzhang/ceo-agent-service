@@ -16,7 +16,7 @@ Runner文件39项、两个确实不调用Codex的Worker节点、非live smoke构
 审查为只读检查，未将它们误记为额外测试运行。
 
 临时产物：/private/tmp/ceo-runner-retirement.tzwA6t，待最终发布／读回后核实并清理。
-剩余Business/Email/Workbench转换半部、旧声明来源依赖与map生成器仍在继续核对，
+Business/Email/Workbench转换半部与旧声明来源依赖、map生成器的后续单元见下文，
 不宣称全仓库零兼容或数据库最优。当前生产发布由第四批独占，不能并行部署本单元。
 
 ## 显式前序声明依赖
@@ -60,3 +60,36 @@ Workbench只供旧source13的转换／inverse／探测及6个转换专用测试�
 相关Email／Workbench230项、6个直接生命周期节点、精确463项catalog摘要通过；
 有重叠不累加为全仓覆盖。独立SPEC和QUALITY均PASS。Ruff和diff／引用
 闭包检查通过，实施者清理的临时根已由根代理确认不存在。未改DDL或生产业务。
+
+## Run 映射生成器与过期发布闭包
+
+退休Run／Adoption旧字段全集映射生成器及其专用再生成测试；当前正面DDL、
+采用结果、receipt约束、四张唯一身份map和现行coalescer／来源事实保留。
+将11项当前receipt SQL固定为正面声明，逐字符串等于基线生成结果，不再从
+旧execution_id声明作字符串替换；没有改变任何owner、lineage或不可变约束。
+
+删除9个已关闭release/source模块、3个旧copy工具及其专用迁移测试和3份无调用
+旧schema JSON。只保留现行Feedback28.2→28.3显式发布／当前数据inverse；
+历史Action测试实际需要的45项Configs源声明冻结在测试目录，不进入应用。
+更早505工件／旧映射再生成案例退休，当前Signal与receipt测试继续验证实际owner。
+未知版本拒绝用准确28.2fixture加明确的synthetic非法marker，检查报错后文件字节不变，
+不再为了构造一个拒绝用例保留整个旧运行结构。
+
+最新Feedback前后迁移、当前新增事实和ledger读写/inverse均保留；Run／assembly36项、
+Feedback10项、声明／Signal／receipt16项、Configs历史codec3项、前序替换20项、
+drain完整33项，以及最后receipt／组装／cold／Feedback42项通过，存在重叠。
+独立SPEC和QUALITY最终均PASS。18个被删Python文件在app/tests/scripts/tools
+的import闭包无残留，gate全部路径存在。当前463项target完整hash及前代source
+hash保持冻结值。未对其他有实际显式消费者的历史Action／Email工具作全仓退休宣称。
+
+后一个42项运行使用明确归属临时目录并已确认删除。该单元先前pytest采用默认
+临时根；目前剩余根无法归属于本次工作，保留其他任务目录，不用测试名或时间猜测删除。
+根代理另建/private/tmp/ceo-retirement-final.xv4Wg9用于最终集成，验收后按归属清理。
+
+QUALITY发现已退休专用文件里有一个真实当前回归：schema重解析与Action public ID
+编译测试。已将原两次ALTER和EXPLAIN UPDATE原样迁入当前声明测试，完整7项
+通过；两位reviewer复查PASS。不能因文件名旧就删除仍覆盖当前触发器的断言。
+根代理当前Task／Run／ReviewedCandidate／发布接口集成61项通过。
+
+本批所有实施单元现已通过审查；尚需正常主线整合与精确提交完整发布gate。
+第四批仍持标准发布锁等待在途业务，不并行部署第五批、不绕过安静门槛。

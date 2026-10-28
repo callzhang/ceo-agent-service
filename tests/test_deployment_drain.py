@@ -470,15 +470,21 @@ def test_direct_email_reply_claim_is_paused_and_counted_before_runtime(
     assert in_flight_work(store.path) == 1
 
 
-def test_quiet_rejects_retired_pre_lifecycle_publication_source(tmp_path):
+def test_quiet_rejects_unsupported_store_marker_without_writes(tmp_path):
+    import sqlite3
     import pytest
-    from tests.support.predecessor_source import source_database as _source_database
+    from tests.support.store28_session_source import create_store28_2_source
     from app.repository_updater import in_flight_work
 
-    path = tmp_path / "store21-1.db"
-    _source_database(path)
+    path = tmp_path / "unsupported.db"
+    with sqlite3.connect(path) as db:
+        create_store28_2_source(db)
+        db.execute("update state set payload_json=json_set(payload_json,'$.value','synthetic-unsupported') "
+                   "where record_type='service_state' and legacy_key='1'")
+    before = path.read_bytes()
     with pytest.raises(ValueError, match="unsupported"):
         in_flight_work(path)
+    assert path.read_bytes() == before
 
 
 def test_email_provider_admission_lock_spans_writer_recheck_and_commit(

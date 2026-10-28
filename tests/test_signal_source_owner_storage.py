@@ -185,39 +185,14 @@ def test_signal_rows_are_immutable_and_source_lookup_uses_parent_indexes(current
     assert "USE TEMP B-TREE" not in plan
 
 
-def test_frozen_signal_source_actions_declaration_is_exact_25_2_digest():
-    builder = getattr(current_action_schema, "signal_source_action_objects", None)
-    assert builder is not None
-    objects = builder()
-    encoded = json.dumps(objects, separators=(",", ":")).encode()
-    assert len(objects) == 215
-    assert hashlib.sha256(encoded).hexdigest() == (
-        "679e4bd4a5b9166a10754884a7dcab0b7b33b5c9137e01d270888b5cc2ff46a0"
-    )
-
-
-def test_frozen_target_manifest_has_exact_25_3_count_and_digest():
-    from app.signal_source_owner_schema_release import target_objects
-
-    objects = target_objects()
-    encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
-    assert len(objects) == 476
-    assert hashlib.sha256(encoded).hexdigest() == (
-        "234e17843afc171b4fa8cb42f3e1d959ef2ba415f43e295dc7db640ab3d02221"
-    )
-    assert "trg_actions_email_retry_immutable_insert" in {
-        name for object_type, name, *_ in objects if object_type == "trigger"
-    }
-
-
-def test_current_manifest_preserves_476_object_digest():
+def test_current_manifest_preserves_463_object_digest():
     from app.current_schema_manifest import current_objects
 
     objects = current_objects(email_ledger=True)
     encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
-    assert len(objects) == 476
+    assert len(objects) == 463
     assert hashlib.sha256(encoded).hexdigest() == (
-        "8d87a56c15429d971564a59de6b752d655500a46b407b0fef435180a1a0c882f"
+        "ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a"
     )
 
 

@@ -1,15 +1,10 @@
-import json
 import sqlite3
 from pathlib import Path
 
 import pytest
 
-from app.run_entity_definitions import (
-    run_entity_field_map, run_entity_objects,
-    validate_run_entity_contract,
-)
+from app.run_entity_definitions import run_entity_objects
 from app.task_run_entity_definitions import task_run_entity_objects
-from app.run_entity_definitions import SOURCE_DECLARED_FIELDS
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -43,29 +38,10 @@ def valid_attempt(parent_id=1, workload_kind="agent_run", workload_key="1", atte
             "start", "finish", "create", "update")
 
 
-def test_contract_is_valid_and_artifacts_are_exact():
-    validate_run_entity_contract()
-    source = sqlite3.connect(":memory:")
-    from app.logical_run_definitions import logical_run_objects
-    source.execute(logical_run_objects()["runs"])
-    source_columns = {row[1]: row for row in source.execute("PRAGMA table_info(runs)")}
-    assert tuple(source_columns) == SOURCE_DECLARED_FIELDS
-    expected = run_entity_field_map()
-    assert next(row for row in expected if row["source_kind"] == "agent_runtime_attempts"
-                and row["source_field"] == "parent_id")["target_owner"] == (
-                    "typed Task/Meeting workload key or source fact")
-    for row in expected:
-        _, name, sql_type, not_null, default, primary_key = source_columns[row["source_field"]]
-        null_contract = "PRIMARY KEY" if primary_key else "NOT NULL" if not_null else "NULL allowed"
-        assert (row["sql_type"], row["null_contract"], row["source_default"]) == (sql_type.upper(), null_contract, default)
-    artifact = json.loads((ROOT / "docs/run-entity-field-map.json").read_text())
-    assert artifact == expected
+def test_run_sql_artifact_is_exact():
     from app.schema_sql import serialize_schema_sql
-    target = serialize_schema_sql(run_entity_objects())
-    assert (ROOT / "docs/run-entity-target.sql").read_text() == target
-    assert """-- Physical IDs and source public keys are migration metadata only.""" in (ROOT / "docs/run-entity-retirement.sql").read_text()
-    assert len(expected) == 8 * len(SOURCE_DECLARED_FIELDS)
-    assert all(row["identity_order_semantics"] for row in expected if row["source_field"] == "legacy_key")
+
+    assert (ROOT / "docs/run-entity-target.sql").read_text() == serialize_schema_sql(run_entity_objects())
 
 
 def test_committed_run_sql_executes_after_task_and_native_schedule_config_prerequisites():
@@ -309,15 +285,3 @@ def test_only_one_running_eligible_run_exists_per_task():
     db.execute("INSERT INTO runs(id,task_id,status,created_at) VALUES (21,4,'running','now')")
     with pytest.raises(sqlite3.IntegrityError):
         db.execute("INSERT INTO run_provenance VALUES (20,'task_agent_runs',NULL)")
-
-
-def test_validator_rejects_wrong_or_nonexistent_target_column():
-    mapping = run_entity_field_map()
-    mapping[0] = {**mapping[0], "target_field": "not_a_column"}
-    with pytest.raises(ValueError, match="target mapping mismatch|unknown target field"):
-        validate_run_entity_contract(mapping)
-    mapping = run_entity_field_map()
-    mapping[0] = {**mapping[0], "target_field": "role"}
-    with pytest.raises(ValueError, match="target mapping mismatch"):
-        validate_run_entity_contract(mapping)
-
