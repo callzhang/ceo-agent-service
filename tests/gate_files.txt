@@ -404,7 +404,6 @@ tests/test_console_scheduled_tasks_api.py
 tests/test_current_declarations_independent.py
 tests/test_attention_attempt_links.py
 tests/test_oa_business_attention.py
-tests/test_wechat_voice_transcript_cache.py
 tests/test_feedback_owner_schema_release.py
 tests/test_business_candidate_storage.py
 tests/test_business_legacy_owner_storage.py
@@ -416,3 +415,4 @@ tests/test_skill_repositories.py
 tests/test_skill_discovery.py
 tests/test_skill_installation.py
 tests/test_console_skill_installation_api.py
+tests/test_wechat_voice_transcript_retirement_release.py

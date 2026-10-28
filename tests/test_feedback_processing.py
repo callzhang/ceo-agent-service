@@ -2354,29 +2354,22 @@ def test_stale_or_ambiguous_current_round_cannot_be_mutated(
     assert after["workbench_task_id"] is None  # stale pointer must not project old evidence
 
 
-def test_resolution_evidence_requires_zero_backlog_and_prevalidated_commit():
+def test_resolution_evidence_records_backlog_without_gating_task_completion():
     complete = _complete_resolution_receipt()
     validate_resolution_evidence(complete, commit_is_ancestor=True)
 
-    with pytest.raises(ValidationError):
-        ResolutionEvidence(
-            commit_sha="b" * 40,
-            test_evidence={"pytest": {"exit_code": 0}},
-            restart_evidence={
-                "launchd_label": "com.ceo-agent-service.main",
-                "before_pid": 10,
-                "after_pid": 11,
-            },
-            health_evidence={
-                "url": "http://127.0.0.1:8765/healthz",
-                "status_code": 200,
-                "ok": True,
-            },
-        )
+    without_snapshot = complete.model_copy(update={"backlog_evidence": {}})
+    validate_resolution_evidence(without_snapshot, commit_is_ancestor=True)
     for backlog in (
         {"processing": 1, "failed": 0, "retryable": 0},
         {"processing": 0, "failed": 1, "retryable": 0},
         {"processing": 0, "failed": 0, "retryable": 1},
+    ):
+        validate_resolution_evidence(
+            complete.model_copy(update={"backlog_evidence": backlog}),
+            commit_is_ancestor=True,
+        )
+    for backlog in (
         {"processing": 0, "failed": 0},
         {"processing": False, "failed": 0, "retryable": 0},
     ):
@@ -2387,6 +2380,29 @@ def test_resolution_evidence_requires_zero_backlog_and_prevalidated_commit():
             )
     with pytest.raises(ValueError):
         validate_resolution_evidence(complete, commit_is_ancestor=False)
+
+    decision = feedback_processing_module.FeedbackIterationDecision(
+        scope="runtime_config",
+        root_cause="The approved runtime configuration was loaded.",
+        feedback_keys=["feedback-1"],
+        source_references=["runtime load receipt"],
+        target_runtime_config_id=2,
+        why_not_code="No code change was needed.",
+        acceptance={
+            "scenario": "Load the approved configuration",
+            "expected_behavior": "The task uses the verified runtime configuration.",
+            "verification": ["Matching startup load receipt exists."],
+        },
+    )
+    scope_evidence = complete.model_copy(update={
+        "backlog_evidence": {"processing": 1, "failed": 13, "retryable": 0},
+        "previous_runtime_config_id": 1,
+        "runtime_config_id": 2,
+        "load_receipt_id": 3,
+    })
+    feedback_processing_module.validate_resolution_receipt(
+        decision, scope_evidence, commit_is_ancestor=True
+    )
 
 
 def test_resolve_uses_only_current_round_receipt_and_updates_batch_atomically(

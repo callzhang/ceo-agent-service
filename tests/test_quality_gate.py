@@ -1762,3 +1762,49 @@ def test_quality_delivery_requires_exact_current_actions_declaration(tmp_path):
         db.execute("create index unexpected_quality_action_index on actions(id)")
         with pytest.raises(sqlite3.IntegrityError, match="unsupported or mixed Attempt/Memory action schema"):
             _check_external_delivery_queues(db, NOW, [], [])
+
+
+def _feedback_on_attempt(tmp_path, *, send_status, task_updated_at, received_at):
+    from app.quality_gate import _check_feedback
+
+    store = AutoReplyStore(tmp_path / "recovered-feedback.sqlite3")
+    with store._connect() as db:
+        _insert_canonical_reply_task(db, channel='dingtalk', conversation_id='conversation', conversation_title='group', single_chat=0, trigger_message_id='message', trigger_create_time='2026-08-07 00:00:00', trigger_sender='sender', trigger_text='trigger', status='done', updated_at=task_updated_at)
+        attempt_id = insert_action(db, "reply_attempts", {
+            "conversation_id": "conversation", "conversation_title": "group",
+            "trigger_message_id": "message", "trigger_sender": "sender",
+            "trigger_text": "trigger", "action": "agent_run",
+            "sensitivity_kind": "general", "send_status": send_status,
+            "updated_at": "2026-08-07 00:10:00",
+        }).lastrowid
+    store.upsert_feedback_event(
+        key=f"manual:{attempt_id}", feedback_token="", received_at=received_at
+    )
+    violations, attention = [], []
+    with store._connect() as db:
+        _check_feedback(db, violations, attention)
+    return (
+        [(item.code, item.count) for item in violations],
+        [(item.code, item.count) for item in attention],
+    )
+
+
+def test_feedback_on_a_failed_attempt_whose_trigger_later_finished_is_attention(tmp_path):
+    assert _feedback_on_attempt(
+        tmp_path, send_status="failed",
+        task_updated_at="2026-08-07 00:50:00", received_at="2026-08-07T00:20:00+00:00",
+    ) == ([], [("recovered_unresolved", 1)])
+
+
+def test_feedback_on_a_sent_attempt_stays_an_error_even_if_the_task_is_done(tmp_path):
+    assert _feedback_on_attempt(
+        tmp_path, send_status="sent",
+        task_updated_at="2026-08-07 00:50:00", received_at="2026-08-07T00:20:00+00:00",
+    ) == ([("unresolved", 1)], [])
+
+
+def test_feedback_after_the_task_finished_stays_an_error(tmp_path):
+    assert _feedback_on_attempt(
+        tmp_path, send_status="failed",
+        task_updated_at="2026-08-07 00:15:00", received_at="2026-08-07T00:20:00+00:00",
+    ) == ([("unresolved", 1)], [])

@@ -87,12 +87,12 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             email_version = (db.execute(
                 "select max(version) from main.email_schema_migrations"
             ).fetchone()[0] if "email_schema_migrations" in tables else None)
-        from app.wechat_voice_transcript_schema_release import (
+        from app.wechat_voice_transcript_retirement_release import (
             SOURCE_STORE_VERSION as VOICE_TRANSCRIPT_SOURCE_STORE_VERSION,
-            prepare_wechat_voice_transcript_release,
+            prepare_wechat_voice_transcript_retirement_release,
         )
         if marker == (VOICE_TRANSCRIPT_SOURCE_STORE_VERSION,) and email_version == CURRENT_EMAIL_VERSION:
-            return prepare_wechat_voice_transcript_release(path)
+            return prepare_wechat_voice_transcript_retirement_release(path)
         if not tables:
             require_current_pair(path)
             return None

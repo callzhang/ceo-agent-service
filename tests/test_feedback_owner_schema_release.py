@@ -104,7 +104,6 @@ def test_frozen_source_and_target_catalogs_match_exact_published_declarations():
 
 
 def test_release_and_new_writes_preserve_facts_through_inverse(tmp_path):
-    from app.store import AutoReplyStore
     from tools.validate_feedback_owner_copy import fact_digest
 
     path = tmp_path / 'source-independent.sqlite3'
@@ -113,13 +112,11 @@ def test_release_and_new_writes_preserve_facts_through_inverse(tmp_path):
     release = prepare_feedback_owner_release(path)
     release.publish()
     assert fact_digest(path) == before
-    # The current Store is one release later; stack it to open the Store, then peel it off.
-    from app.wechat_voice_transcript_schema_release import prepare_wechat_voice_transcript_release
-    voice = prepare_wechat_voice_transcript_release(path)
-    voice.publish()
-    store = AutoReplyStore(path)
-    store.upsert_feedback_event(key='new-fact', feedback_token='token', comment='new', original_text='new')
-    voice.rollback()
+    with closing(sqlite3.connect(path)) as db:
+        register_task8_functions(db)
+        insert_feedback_action(db, 'feedback_events', {
+            'key': 'new-fact', 'feedback_token': 'token', 'comment': 'new', 'original_text': 'new'})
+        db.commit()
     after_write = fact_digest(path)
     release.rollback()
     assert fact_digest(path) == after_write

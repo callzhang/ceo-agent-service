@@ -14,6 +14,11 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from app.feedback_processing import (
+    FeedbackIterationDecision,
+    ResolutionEvidence,
+    validate_resolution_receipt,
+)
 import app.config as app_config
 import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
@@ -200,6 +205,43 @@ def _seed_processing_batch_for_resolution(
     )
 
 
+def test_runtime_config_resolution_receipt_ignores_global_backlog():
+    decision = FeedbackIterationDecision(
+        scope="runtime_config",
+        root_cause="The approved runtime configuration was loaded.",
+        feedback_keys=["feedback-a"],
+        source_references=["runtime load receipt"],
+        target_runtime_config_id=2,
+        why_not_code="No code change was needed.",
+        acceptance={
+            "scenario": "Load the approved configuration",
+            "expected_behavior": "The task uses the verified runtime configuration.",
+            "verification": ["Matching startup load receipt exists."],
+        },
+    )
+    evidence = ResolutionEvidence(
+        test_evidence={"scenario": {"exit_code": 0}},
+        restart_evidence={
+            "launchd_label": "com.ceo-agent-service.main",
+            "before_pid": 10,
+            "after_pid": 11,
+        },
+        health_evidence={
+            "url": "http://127.0.0.1:8765/healthz",
+            "status_code": 200,
+            "ok": True,
+        },
+        backlog_evidence={"processing": 1, "failed": 13, "retryable": 0},
+        previous_runtime_config_id=1,
+        runtime_config_id=2,
+        load_receipt_id=3,
+    )
+
+    validate_resolution_receipt(
+        decision, evidence, commit_is_ancestor=True
+    )
+
+
 def test_feedback_batch_resolve_api_can_resolve_selected_items(
     tmp_path: Path, monkeypatch
 ):
@@ -209,7 +251,7 @@ def test_feedback_batch_resolve_api_can_resolve_selected_items(
     client, store = _registered_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {
-            "processing": 0, "failed": 0, "retryable": 0,
+            "processing": 1, "failed": 13, "retryable": 0,
         },
     )
     keys = ["feedback-a", "feedback-b"]
@@ -431,7 +473,7 @@ def test_batch_detail_database_query_count_is_bounded_by_batch_not_total_feedbac
     assert len(queries) <= 4
 
 
-def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
+def test_resolve_does_not_require_zero_global_backlog(
     tmp_path: Path,
     feedback_repository: Path,
 ):
@@ -455,12 +497,11 @@ def test_resolve_ignores_cached_refreshing_zero_and_uses_fresh_backlog(
             json=receipt,
         )
 
-    assert response.status_code == 409
-    assert response.json()["code"] == "feedback_resolution_incomplete"
-    assert store.get_feedback_processing_batch("batch-fresh-backlog").status == "processing"
+    assert response.status_code == 200, response.text
+    assert store.get_feedback_processing_batch("batch-fresh-backlog").status == "resolved"
 
 
-def test_resolve_fails_closed_when_fresh_backlog_factory_raises(
+def test_resolve_does_not_read_global_backlog(
     tmp_path: Path, feedback_repository: Path,
 ):
     receipt = _main_receipt()
@@ -483,10 +524,8 @@ def test_resolve_fails_closed_when_fresh_backlog_factory_raises(
             json=receipt,
         )
 
-    assert response.status_code == 409
-    assert response.json()["code"] == "feedback_resolution_incomplete"
-    assert "fresh backlog unavailable" not in response.text
-    assert store.get_feedback_processing_batch("batch-backlog-error").status == "processing"
+    assert response.status_code == 200, response.text
+    assert store.get_feedback_processing_batch("batch-backlog-error").status == "resolved"
 
 
 def test_resolve_does_not_call_cached_status_factory(
@@ -519,45 +558,6 @@ def test_resolve_does_not_call_cached_status_factory(
 
     assert response.status_code == 200
     assert store.get_feedback_processing_batch("batch-no-cache").status == "resolved"
-
-
-@pytest.mark.parametrize(
-    "backlog",
-    [
-        {},
-        {"processing": 0, "failed": 0},
-        {"state": "refreshing", "summary": {"processing": 0, "failed": 0, "retryable": 0}},
-        {"state": "unavailable"},
-        {"processing": False, "failed": 0, "retryable": 0},
-        {"processing": "0", "failed": 0, "retryable": 0},
-        {"processing": 0, "failed": 1, "retryable": 0},
-        {"processing": 0, "failed": 0, "retryable": 1},
-    ],
-)
-def test_resolve_requires_strict_fresh_zero_backlog(
-    tmp_path: Path,
-    backlog: dict[str, object],
-    feedback_repository: Path,
-):
-    receipt = _main_receipt()
-    client, store = _registered_route_client(
-        tmp_path,
-        feedback_backlog_factory=lambda: backlog,
-    )
-    _seed_processing_batch_for_resolution(
-        store,
-        batch_id="batch-strict-backlog",
-        receipt=receipt,
-    )
-    with client:
-        response = client.post(
-            "/api/console/feedback/batches/batch-strict-backlog/resolve",
-            json=receipt,
-        )
-
-    assert response.status_code == 409
-    assert response.json()["code"] == "feedback_resolution_incomplete"
-    assert store.get_feedback_processing_batch("batch-strict-backlog").status == "processing"
 
 
 @pytest.mark.parametrize("commit_kind", ["missing", "unmerged"])
@@ -811,7 +811,7 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         ] == [1]
         assert resolved_item.json()["item"]["processing_history"][0][
             "backlog_evidence"
-        ] == {"processing": 0, "failed": 0, "retryable": 0}
+        ] == {}
 
         assert store.record_reply_feedback(
             attempt_id,

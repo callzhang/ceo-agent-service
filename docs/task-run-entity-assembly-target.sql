@@ -312,8 +312,6 @@ CREATE TABLE tasks (
  FOREIGN KEY(claimed_input_id) REFERENCES task_inputs(id),
  CHECK(typeof(parameters_json)='blob' AND json_valid(parameters_json,8)));
 
-CREATE TABLE wechat_voice_transcripts (account_id text not null, conversation_id text not null, message_id text not null, audio_sha256 text not null check(length(audio_sha256)=64), transcript text not null check(length(trim(transcript))>0), created_at text not null default current_timestamp, primary key(account_id,conversation_id,message_id));
-
 CREATE TABLE work_summary_inputs (task_id INTEGER PRIMARY KEY REFERENCES tasks(id), source_type TEXT NOT NULL, source_ref TEXT NOT NULL, payload_json TEXT NOT NULL, source_created_at TEXT NOT NULL DEFAULT '', body_sha256 TEXT NOT NULL DEFAULT '', body_bytes INTEGER NOT NULL DEFAULT 0, body_compacted INTEGER NOT NULL DEFAULT 0);
 
 CREATE TABLE workbench_artifacts (id INTEGER PRIMARY KEY,"workbench_turn_id" INTEGER NOT NULL REFERENCES workbench_turns(task_id),"label" TEXT NOT NULL,"path" TEXT NOT NULL,"media_type" TEXT NOT NULL,"created_at" TEXT NOT NULL DEFAULT current_timestamp);

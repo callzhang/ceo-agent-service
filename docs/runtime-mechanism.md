@@ -59,11 +59,11 @@ Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前
 [第四批验收](model-retirement-batch4-validation.md)。上述转换半部与Runner已在第五批分单元退休，
 发布／读回状态见[第五批验收](model-retirement-batch5-validation.md)。
 
-## 微信语音转写缓存 Store28.4/Email54（2026-10-28）
+## 撤销微信语音转写缓存 Store28.5/Email54（2026-10-28）
 
-新表 `wechat_voice_transcripts` 随配对发布 28.3→28.4 上线：只 `create table`，inverse 只 `drop table`
-并恢复 Store 标记，不迁移数据、不改其他表。发布前后各验证完整 schema、FK 与 quick_check；
-部署路径 `prepare_database_schema_release` 对 28.3 标记选择该发布，对 28.4 无操作。
+配对发布 28.4→28.5 只 `drop table wechat_voice_transcripts`；inverse 重建该表并写回发布时记录的行，
+恢复 Store 标记。发布前后各验证完整 schema、FK 与 quick_check，部署路径 `prepare_database_schema_release`
+对 28.4 标记选择该发布，对 28.5 无操作。`save_message_audio` 不再查缓存，`save_voice_transcript` 已删除。
 
 ## 会话唯一归属 Store28.2/Email54（2026-10-28）
 
@@ -2543,14 +2543,15 @@ turn、attempt/run、commit 和测试/重启/健康证据都归属该轮次。�
 
 只有当前 `processing` 轮次可以接收关联或证据 PATCH。resolution receipt 按已持久化的
 feedback-iteration decision scope 校验，而不是对所有修复一律要求 commit：`skill_only` 要求
-精确 revision/SHA、active config、匹配的启动 load receipt、场景验证、health 和零 backlog；
-`runtime_config` 要求前后 config、目标 receipt、场景验证、health 和零 backlog；`code` 要求
-本地 `main` 祖先 commit、测试、不同 PID 的重启、health 和零 backlog；`mixed` 同时满足相应
+精确 revision/SHA、active config、匹配的启动 load receipt、场景验证和 health；
+`runtime_config` 要求前后 config、目标 receipt、场景验证和 health；`code` 要求
+本地 `main` 祖先 commit、测试、不同 PID 的重启和 health；`mixed` 同时满足相应
 code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项目保持 open。任一适用
 条件不满足时，未满足条件的项目保持 `processing`。`POST /api/console/feedback/batches/{id}/resolve`
 可用 `feedback_ids` 结案批内指定项目；没有该字段时仍要求并结案整个批次。指定项目必须通过
-同一套关联、决策范围、证据、提交祖先、测试、重启、health 和零 backlog 校验；未指定项目保持
-原状态。只有所有项目都结案后，批次才变为 `resolved`。后续处理应只选择仍处于 `processing`
+同一套关联、决策范围、证据、提交祖先、测试、重启和 health 校验；服务级队列积压由独立的
+健康与队列投影报告，不作为反馈项目的结案条件。未指定项目保持原状态。只有所有项目都结案后，
+批次才变为 `resolved`。后续处理应只选择仍处于 `processing`
 的项目，不重复结案或重放已结案项目的任务或外部动作。所有关联、证据和结果仍须通过
 Feedback API 持久化并回读一致。
 
