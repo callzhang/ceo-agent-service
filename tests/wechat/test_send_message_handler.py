@@ -32,26 +32,13 @@ class Runner:
 
 
 class Reader:
-    def __init__(self, sent_text=None):
-        self.sent_text = sent_text
-        self.reads = 0
-
     def read_messages(self, *_args, **_kwargs):
         from app.wechat.models import WechatMessage
-        self.reads += 1
-        messages = [WechatMessage(
+        return [WechatMessage(
             account_id="acct-1", source_version="4.1.10",
             message_id="m1", conversation_id="u9", conversation_type="direct",
             sender_id="u9", sender_display_name="Alex", direction="inbound", kind="text",
             text="hi", sent_at="2026-10-24T10:00:00+08:00")]
-        if self.sent_text is not None and self.reads >= 3:
-            # WeChat's database shows the sent message a little later.
-            messages.append(WechatMessage(
-                account_id="acct-1", source_version="4.1.10",
-                message_id="m2", conversation_id="u9", conversation_type="direct",
-                sender_id="self-1", sender_display_name="Derek", direction="outbound",
-                kind="text", text=self.sent_text, sent_at="2026-10-24T10:01:00+08:00"))
-        return messages
 
 
 def _account():
@@ -59,7 +46,7 @@ def _account():
                          account_dir="/a", db_dir="/a/db_storage", app_version="4.1.10")
 
 
-def _setup(tmp_path, runner=None, *, enabled=True, reader=None):
+def _setup(tmp_path, runner=None, *, enabled=True):
     store = AutoReplyStore(tmp_path / "handler.sqlite3")
     task = _task(store)
     key = agent_message_delivery_key(
@@ -71,10 +58,9 @@ def _setup(tmp_path, runner=None, *, enabled=True, reader=None):
     action = ProposedAction.model_validate(
         _result(text=prepared.final_body).proposal.actions[0].model_dump(mode="json"))
     runner = runner or Runner()
-    reader = reader or Reader()
     handler = WechatSendMessageHandler(
-        store, sender_factory=lambda: runner, reader_factory=lambda: reader,
-        account_factory=_account, send_enabled=lambda: enabled, sleep=lambda _s: None)
+        store, sender_factory=lambda: runner, reader_factory=lambda: Reader(),
+        account_factory=_account, send_enabled=lambda: enabled)
     return store, task, row, action, handler, runner, prepared
 
 
@@ -124,17 +110,6 @@ def test_a_send_wechat_cannot_confirm_is_uncertain_and_never_repeated(tmp_path):
     assert handler.dispatch(action, action_key="k", candidate=row).status == "uncertain"
     assert len(runner.calls) == 1
     assert handler.reconcile(action, action_key="k", candidate=row).status == "uncertain"
-
-
-def test_return_pressed_is_confirmed_by_wechats_own_database(tmp_path):
-    runner = Runner(AccessibilityResult(True, False, "fp"))
-    reader = Reader(sent_text="收到，稍后回复你。")
-    store, task, row, action, handler, runner, prepared = _setup(
-        tmp_path, runner, reader=reader)
-    reader.sent_text = prepared.final_body
-    assert handler.dispatch(action, action_key="k", candidate=row).status == "verified"
-    assert store.get_wechat_delivery_for_task(task.id).status == "sent"
-    assert len(runner.calls) == 1
 
 
 def test_an_interrupted_send_is_uncertain(tmp_path):

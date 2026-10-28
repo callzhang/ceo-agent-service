@@ -39,10 +39,13 @@ def test_build_reader_is_an_ipc_client(tmp_path):
     assert not hasattr(reader, "key_provider")
 
 
-def test_build_sender_drives_wechat_through_codex_computer_use():
-    sender = wechat_service.build_sender()
+def test_build_sender_is_a_dedicated_ipc_client(tmp_path):
+    build_sender = getattr(wechat_service, "build_sender", None)
+    assert build_sender is not None
+    sender = build_sender(socket_path=tmp_path / "sender.sock")
 
-    assert sender.__class__.__name__ == "CodexWechatRunner"
+    assert sender.socket_path == tmp_path / "sender.sock"
+    assert sender.__class__.__name__ == "WechatSenderClient"
 
 
 def test_tutorial_setup_readiness_check_does_not_activate_wechat(monkeypatch, tmp_path):
@@ -64,7 +67,7 @@ def test_tutorial_setup_readiness_check_does_not_activate_wechat(monkeypatch, tm
             return "ready"
 
     monkeypatch.setattr(wechat_service, "build_reader", lambda: Reader())
-    monkeypatch.setattr(wechat_service, "build_sender", lambda *_a: Sender())
+    monkeypatch.setattr(wechat_service, "build_sender", lambda: Sender())
 
     setup = wechat_service.build_setup_service(AutoReplyStore(tmp_path / "w.sqlite3"))
 

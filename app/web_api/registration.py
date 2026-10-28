@@ -991,7 +991,7 @@ def register_console_routes(
         if scope is None:
             return JSONResponse({"ok": False, "code": "not_configured", "message": "该微信会话未在 Config 中配置", "details": {}}, status_code=409)
         from app.wechat import service
-        visible_title = service.build_sender(store).open_and_identify(
+        visible_title = service.build_sender().open_and_identify(
             scope.display_name,
             search_query=scope.display_name,
             expected_recent_text=None,
@@ -2589,7 +2589,7 @@ def register_console_routes(
         try:
             from app.wechat.accessibility import WechatSender
             store = store_factory()
-            sender = WechatSender(store, service.build_sender(store), user_initiated=True)
+            sender = WechatSender(store, service.build_sender(), user_initiated=True)
             result = service.approve_wechat_delivery(store, sender, delivery_id)
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "发送失败", "details": {"reason": normalize_display_value(exc)}}, status_code=409)
@@ -2602,7 +2602,7 @@ def register_console_routes(
         try:
             from app.wechat.accessibility import WechatSender
             store = store_factory()
-            sender = WechatSender(store, service.build_sender(store), user_initiated=True)
+            sender = WechatSender(store, service.build_sender(), user_initiated=True)
             result = service.retry_expired_wechat_delivery(store, sender, delivery_id)
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "无法重试这条微信消息", "details": {"reason": normalize_display_value(exc)}}, status_code=409)

@@ -2943,7 +2943,7 @@ Meeting 群发现提交给 Agent 的候选列表保留每个群的 ID、完整�
 - 这一恢复规则适用于所有任务：普通服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。若运维明确完成了运行时/路由修复，则服务修复重试创建新的 execution generation 和新的 session 绑定，但仍复用同一业务对象及外部动作幂等事实；用户业务反馈重跑则按反馈闭环复用兼容 session。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
-- 微信界面操作由一轮 Codex computer use（虚拟鼠标，不动真鼠标、不切前台）完成，workload `wechat_ui`，要求路线能力 `desktop_computer_use`（仅 ChatGPT 账号登录的 Codex CLI 路线具备）；无可用路线时投递记发送前失败并等待。按回车后由 `WechatSendMessageHandler` 最多 6 次、间隔 5 秒读微信消息库，出现逐字相同的本人消息才记 `sent`，否则 `send_unknown` 交给只读对账，不重发。被动 readiness 只检查屏幕未锁且微信在运行，不激活、不登录、不发送。
+- WeChat Sender 的被动 readiness 只有在 Accessibility 树含有发送导航所需的搜索框或会话列表控件时才返回 `ready`。仅检测到进程或窗口不足以证明登录会话可用；窗口存在但缺少这些控件（例如 QR 登录界面）时返回 `wechat_window_unavailable`。此检查不会激活、登录或发送。
 - WeChat sender loop 在 `auto` 模式处理已审核的 `ready_to_send` 项时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须从同一当前 Task 代次、候选、Audit 和 action identity 读取已经持久化的预备正文，并逐字匹配 delivery。旧 delivery 只在审核门禁通过且最终正文相同的情况下，才可从 `wechat:{delivery_id}` 预备键恢复；不得重建正文。无法精确恢复时，重试 API 必须在重新入队前返回内部错误且不调用 Sender；这类内部错误由正式重试接口处理，不要求用户通过回复确认卡提供材料。每轮成功完成恢复检查和队列检查后，才将此前同组件错误标记为已恢复；抛出异常的轮次不会清除错误。该收口仅更新错误的恢复状态，不代表任何消息已发送；发送事实仍以 delivery 和 provider 回执为准。
 - OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限为 130 秒，worker 运行上限为 220 秒，调用方上限为 240 秒；worker 超时后会先终止并回收自己的 Chromium 进程组。认证刷新通过 `app.service_browser.launch_service_chrome` 使用每日 Chrome cookie 副本启动真 Chrome，不再启动或清理独立的 bundled Chromium 子进程。
 - OKR 无头来源在请求业务 API 前校验新捕获认证的有效期。专用浏览器会话过期时返回明确的 `okr_headless_session_expired` 服务错误，不得继续请求并把认证失败误报为周期不存在。

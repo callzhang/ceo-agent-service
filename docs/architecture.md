@@ -2468,7 +2468,7 @@ Reader 与服务同版本（Derek 2026-10-28）：Reader 源文件摘要是双�
 
 标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（传入预备消息）。后台 sender loop 在 `auto` 模式重试已审核的 `ready_to_send` 投递时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须复用同一代次、候选、审核、动作身份和最终正文精确匹配的已持久化预备消息。旧投递可使用 `wechat:{delivery_id}` 键，但不能新建或重构正文；证据不全或正文不匹配时，API 在重新入队前报错，且不调用发送器。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，不从未知状态重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。sender loop 只在 `auto` 且发送开关启用时消费投递；`confirm` 模式保留显式确认流程。
 
-微信界面操作（发送、打开会话核对标题、Console「打开这条微信」）由一轮 Codex computer use 完成（Derek 2026-10-28）：它用虚拟鼠标在后台操作微信，不动用户的真鼠标、不把微信切到前台。`app/wechat/codex_runner.py` 的 `CodexWechatRunner` 以运行 workload `wechat_ui` 执行，要求路线能力 `desktop_computer_use`；该能力只声明在用 ChatGPT 账号登录的 Codex CLI 路线上（`runtime_route_surface_capabilities`），Claude、API key 路线和 Friday 没有，因此不会被选中；没有可用路线时投递记发送前失败、等待路线恢复。发送轮次按提示打开会话（有触发原文时只从最近会话列表按原文预览挑选、不用搜索），标题不等于目标即停止，逐字键入预备正文（不粘贴、不直接写输入框，换行用 Shift+Return），核对输入框后只按一次回车。按了回车不算送达：`WechatSendMessageHandler` 随后最多 6 次、每次间隔 5 秒读微信自己的消息库，同一会话里出现逐字相同的本人消息才记 `sent`，否则保持 `send_unknown` 交给对账，绝不重发。被动 readiness 只看屏幕未锁且微信进程在运行。
+Sender 的被动 readiness 检查只有在 Accessibility 树中找到发送导航实际使用的搜索框或会话列表控件时才返回 `ready`；仅有 WeChat 进程或窗口不代表已登录且可发送。窗口存在但这些控件缺失时返回 `wechat_window_unavailable`，不会尝试登录或发送。
 
 ### 任务长期记忆
 

@@ -45,15 +45,15 @@ def build_reader(*, socket_path=None):
     )
 
 
-def build_sender(store=None):
-    """Build the WeChat runner: Codex computer use with a virtual pointer.
+def build_sender(*, socket_path=None):
+    """Build the IPC facade for the stable, Accessibility-trusted Sender app."""
+    from app import config
+    from app.wechat.sender_ipc import WechatSenderClient
 
-    ``store`` is needed for any turn that touches WeChat; readiness checks run
-    without it.
-    """
-    from app.wechat.codex_runner import CodexWechatRunner
-
-    return CodexWechatRunner(store=store)
+    return WechatSenderClient(
+        socket_path or config.wechat_sender_socket(),
+        timeout_seconds=config.wechat_sender_timeout_seconds(),
+    )
 
 
 def build_setup_service(store):

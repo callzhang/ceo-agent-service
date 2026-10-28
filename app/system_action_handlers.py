@@ -2,7 +2,6 @@
 
 import json
 import re
-import time
 from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
@@ -961,10 +960,6 @@ class TextEmotionCreateHandler:
         return None
 
 
-WECHAT_READBACK_ATTEMPTS = 6
-WECHAT_READBACK_INTERVAL_SECONDS = 5.0
-
-
 class WechatSendMessageHandler:
     """Send one reviewed WeChat message and report the delivery's outcome.
 
@@ -978,9 +973,8 @@ class WechatSendMessageHandler:
     """
 
     def __init__(self, store: object, *, sender_factory=None, reader_factory=None,
-                 account_factory=None, send_enabled=None, sleep=None) -> None:
+                 account_factory=None, send_enabled=None) -> None:
         self.store = store
-        self._sleep = sleep or time.sleep
         self._sender_factory = sender_factory
         self._reader_factory = reader_factory
         self._account_factory = account_factory
@@ -999,7 +993,7 @@ class WechatSendMessageHandler:
         account = (self._account_factory() if self._account_factory
                    else _wechat_account(self.store, wechat_service))
         reader = self._reader_factory() if self._reader_factory else wechat_service.build_reader()
-        runner = self._sender_factory() if self._sender_factory else wechat_service.build_sender(self.store)
+        runner = self._sender_factory() if self._sender_factory else wechat_service.build_sender()
         return account, reader, runner
 
     def _task_and_prepared(self, action: ProposedAction, candidate: dict[str, object]):
@@ -1086,7 +1080,6 @@ class WechatSendMessageHandler:
                 if scope is None:
                     return ActionOutcome("failed", {"reason": "wechat_reply_scope_missing", "delivery_id": delivery_id})
             WechatSender(self.store, runner).send(refreshed, scope, prepared=prepared)
-            self._confirm_from_wechat_database(delivery_id, reader, account)
         except ValueError as exc:
             return ActionOutcome("failed", {"reason": "wechat_send_preconditions_failed", "detail": str(exc)})
         except Exception as exc:
@@ -1094,20 +1087,6 @@ class WechatSendMessageHandler:
             return ActionOutcome("uncertain", {"reason": "wechat_send_interrupted", "detail": str(exc)[:200],
                                                "delivery_id": delivery_id})
         return self._from_delivery(self.store.get_wechat_delivery_by_id(delivery_id))
-
-    def _confirm_from_wechat_database(self, delivery_id: int, reader, account) -> None:
-        """Pressing Return is not delivery: look for the message in WeChat's own
-        database (Derek, 2026-10-28). It can take a few seconds to appear there.
-        """
-        from app.wechat.accessibility import reconcile_incomplete_deliveries
-
-        for attempt in range(WECHAT_READBACK_ATTEMPTS):
-            delivery = self.store.get_wechat_delivery_by_id(delivery_id)
-            if delivery is None or delivery.status not in ("sending", "send_unknown"):
-                return
-            if attempt:
-                self._sleep(WECHAT_READBACK_INTERVAL_SECONDS)
-            reconcile_incomplete_deliveries(self.store, reader, account=account)
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
         delivery = self.store.get_wechat_delivery_for_task(candidate["task_id"])

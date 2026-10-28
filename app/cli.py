@@ -3749,7 +3749,7 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
             time.sleep(15)
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
-    wsender = WechatSender(store, _wx.build_sender(store))
+    wsender = WechatSender(store, _wx.build_sender())
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0

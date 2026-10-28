@@ -123,20 +123,13 @@ LOCAL_SERVICE_RUNTIME_CAPABILITIES = frozenset(
     }
 )
 ROLE_BOUND_AGENT_TOOLS = "role_bound_agent_tools"
-# Codex CLI signed in with the user's ChatGPT account carries Codex's own
-# computer-use tool, which operates a desktop app with a virtual pointer on this
-# host. Claude CLI, API-key routes and Friday Runtime do not have it.
-DESKTOP_COMPUTER_USE = "desktop_computer_use"
 
 
 def runtime_route_surface_capabilities(
     route: RuntimeRoute,
 ) -> frozenset[str]:
     if route.runtime_kind in {RuntimeKind.CODEX_CLI, RuntimeKind.CLAUDE_CLI}:
-        capabilities = LOCAL_SERVICE_RUNTIME_CAPABILITIES | {ROLE_BOUND_AGENT_TOOLS}
-        if route.runtime_kind is RuntimeKind.CODEX_CLI and not route.is_cli_api_route:
-            capabilities |= {DESKTOP_COMPUTER_USE}
-        return capabilities
+        return LOCAL_SERVICE_RUNTIME_CAPABILITIES | {ROLE_BOUND_AGENT_TOOLS}
     return frozenset()
 
 
