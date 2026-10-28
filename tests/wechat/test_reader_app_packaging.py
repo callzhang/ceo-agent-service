@@ -31,6 +31,10 @@ def test_build_and_install_scripts_are_valid_and_fail_closed_on_adhoc_signing():
     assert "--adhoc" in build_text
     assert "SIGNING_IDENTITY" in build_text
     assert "--options runtime" not in build_text
+    # The bundle carries the digest of the sources it was built from; the
+    # service refuses a Reader whose digest differs (app/wechat/reader_version.py).
+    assert "app.wechat.reader_version" in build_text
+    assert "--add-data" in build_text and "reader_version.txt" in build_text
     assert "--allow-adhoc" not in install_text
     assert "Signature=adhoc" in install_text
     assert "Full Disk Access" in install_text

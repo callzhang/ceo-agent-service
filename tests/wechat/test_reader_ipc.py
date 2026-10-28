@@ -247,3 +247,66 @@ def test_voice_request_arguments_are_bounded(rpc_service):
             "account": _account().model_dump(), "conversation_id": "friend-1",
             "message_id": "9" * 129,
         })
+
+
+def test_every_reply_carries_the_reader_version_and_health_exposes_it(tmp_path, rpc_service):
+    from app.wechat.reader_version import expected_reader_version
+
+    socket_path = _short_socket_path()
+    server = WechatReaderUnixServer(socket_path, rpc_service)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = WechatReaderClient(socket_path, timeout_seconds=1)
+        health = client.health()
+        assert health["status"] == "ready"
+        assert health["reader_version"] == expected_reader_version()
+        assert client.read_messages(_account(), limit=1)[0].text == "hello"
+    finally:
+        server.shutdown()
+        server.server_close()
+        if socket_path.exists():
+            socket_path.unlink()
+
+
+def test_client_refuses_a_reader_built_from_other_sources_on_every_call(tmp_path, rpc_service):
+    socket_path = _short_socket_path()
+    server = WechatReaderUnixServer(socket_path, rpc_service, reader_version="0ld0ld0ld0ld0ld0")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = WechatReaderClient(socket_path, timeout_seconds=1)
+        for call in (
+            client.health,
+            client.discover_accounts,
+            lambda: client.read_messages(_account(), limit=1),
+            lambda: client.read_voice(_account(), conversation_id="friend-1", message_id="43"),
+        ):
+            with pytest.raises(ReaderIpcError) as raised:
+                call()
+            assert raised.value.code == "reader_version_mismatch"
+            assert "0ld0ld0ld0ld0ld0" in str(raised.value)
+            assert "rebuild and reinstall" in str(raised.value)
+    finally:
+        server.shutdown()
+        server.server_close()
+        if socket_path.exists():
+            socket_path.unlink()
+
+
+def test_client_refuses_a_reader_that_reports_no_version(tmp_path, rpc_service):
+    """A bundle from before the stamp existed answers without a version: still a mismatch."""
+    socket_path = _short_socket_path()
+    server = WechatReaderUnixServer(socket_path, rpc_service, reader_version="unstamped")
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = WechatReaderClient(socket_path, timeout_seconds=1)
+        with pytest.raises(ReaderIpcError) as raised:
+            client.health()
+        assert raised.value.code == "reader_version_mismatch"
+    finally:
+        server.shutdown()
+        server.server_close()
+        if socket_path.exists():
+            socket_path.unlink()
