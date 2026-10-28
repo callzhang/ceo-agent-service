@@ -1435,6 +1435,9 @@ key 是 `manual:<attempt 编号>`；该 attempt 在反馈到达之后又有一�
 该执行状态为 `done`，至少一个动作已 `verified` 且没有未验证的动作；反馈从未被重新打开。
 原因：结案要代码、Skill 或配置证据，纯操作性重跑（重新审批）不产生这些证据。提示只说明反馈没有被晾着，
 不说明重跑做对了；反馈记录本身仍是待处理，结案流程、Audit 和系统执行都不变。其他反馈（含用户 👎）照旧算错误。
+同一规则的另一半（Derek 2026-10-28）：手动反馈指向的 attempt 状态是 `failed`/`blocked`，且同一触发之后已有任务 `done`
+（任务完成时间不早于反馈到达），也不算错误，改为提示 `recovered_unresolved`——一个触发以最新结果为准，与回复 attempt 检查口径一致。
+指向已发送 attempt 的反馈、或反馈晚于任务完成的，照旧算错误。
 
 失败 Reply task 的 Attention 诊断读取该任务当前执行代的最新 run，展示原始 `source_code`
 （没有时使用 `code`）、来源与明确标注为「Agent 说明」的 `reported_summary`。旧代或无法

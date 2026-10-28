@@ -978,18 +978,24 @@ def _check_feedback(
     (Derek 2026-10-24). It stays visible as attention. This says the feedback
     was not left unattended, not that the rerun did what it asked. A reopened
     item is counted again, and so is any other feedback.
+
+    A manual item about a failed attempt is likewise attention, not an error,
+    once a task for the same trigger has finished ``done`` after the feedback
+    arrived: the newest outcome for a trigger decides (Derek 2026-10-28).
     """
     unresolved = _count(
         db, f"select count(*) from ({feedback_projection('feedback_events')}) "
             "where resolved_at='' or resolved_at is null"
     )
-    acted = _count(db, f"""
-        select count(*) from ({feedback_projection('feedback_events')}) fe
-        where (fe.resolved_at='' or fe.resolved_at is null)
+    manual_open = f"""
+        (fe.resolved_at='' or fe.resolved_at is null)
           and fe.key like 'manual:%'
           and not exists (
               select 1 from ({FEEDBACK_PROCESSING_ROUND_SQL}) rnd
               where rnd.feedback_key=fe.key and rnd.reopened_at<>'')
+    """
+    acted_predicate = f"""
+        {manual_open}
           and exists (
               select 1
               from ({REPLY_ATTEMPT_COMMON_SQL}) ra
@@ -1005,14 +1011,42 @@ def _check_feedback(
                 and not exists (
                     select 1 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) action
                     where action.execution_id=execution.id and action.status<>'verified'))
-        """)
+    """
+    # Same rule as the reply-attempt check above: a failed attempt is
+    # superseded once a task for the same trigger finished ``done``. Feedback
+    # about that failure, given before the recovery, has been answered by it
+    # (Derek 2026-10-28). Feedback on an attempt that did not fail is not
+    # covered: a 👎 on a sent reply stays an error until resolved.
+    recovered_predicate = f"""
+        {manual_open}
+          and not ({acted_predicate})
+          and exists (
+              select 1
+              from ({REPLY_ATTEMPT_COMMON_SQL}) ra
+              join ({REPLY_TASK_SQL}) t
+                on t.channel is ra.channel
+               and t.conversation_id is ra.conversation_id
+               and t.trigger_message_id is ra.trigger_message_id
+              where ra.id=cast(substr(fe.key, 8) as integer)
+                and lower(ra.send_status) in ('failed','blocked')
+                and lower(t.status)='done'
+                and julianday(t.updated_at) >= julianday(fe.received_at))
+    """
+    feedback_sql = f"select count(*) from ({feedback_projection('feedback_events')}) fe where "
+    acted = _count(db, feedback_sql + acted_predicate)
+    recovered = _count(db, feedback_sql + recovered_predicate)
     _add(violations, source="feedback_events", code="unresolved",
-         count=unresolved - acted, severity="error",
+         count=unresolved - acted - recovered, severity="error",
          detail="user feedback has not reached a recorded resolution")
     _add(attention, source="feedback_events", code="acted_unresolved", count=acted,
          severity="info", detail=(
              "manual feedback was rerun and its actions verified, but no resolution "
              "is recorded; confirm the rerun did what it asked"
+         ))
+    _add(attention, source="feedback_events", code="recovered_unresolved", count=recovered,
+         severity="info", detail=(
+             "manual feedback was about a failed attempt whose trigger later finished; "
+             "no resolution is recorded, confirm the later result is what it asked"
          ))
 
 
