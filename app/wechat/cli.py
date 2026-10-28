@@ -230,7 +230,16 @@ def main(argv=None) -> int:
             store=AutoReplyStore(Path(args.db)),
             temporary_root=config.workspace_path(),
         ).refresh_expired(force=True)
-    return args.fn(args)
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    try:
+        return args.fn(args)
+    except ReaderIpcError as exc:
+        # The Reader refused or is unreachable: one line with its code and
+        # message, not a traceback (2026-10-28: a version mismatch printed
+        # twenty lines of stack for what was a one-sentence instruction).
+        print(f"WeChat Reader error ({exc.code}): {exc}")
+        return 1
 
 
 if __name__ == "__main__":
