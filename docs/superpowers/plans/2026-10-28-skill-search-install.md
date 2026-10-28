@@ -10,6 +10,13 @@
 
 **Spec:** `docs/superpowers/specs/2026-10-28-skill-search-install-design.md`
 
+**Execution status (2026-10-28):** Native implementation and one independent
+whole-branch review/fix pass completed. PR335 merged; standard exact-commit
+deployment of `da5e1585` and live UI/API/load-receipt readback completed.
+See [acceptance evidence](../../skill-search-install-validation.md) for test
+counts, baseline CI failures and retained scope limits. Company Skill migration
+and the separate unpublished OA optimization are still pending.
+
 ## Global Constraints
 
 - Use the existing Settings route and managed revision/config/load receipt model.
