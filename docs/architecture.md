@@ -4639,3 +4639,17 @@ turn resumes the same route session; a changed Developer contract still selects
 a fresh session under the existing rule. Audit hashes and route/retry/approval
 policy are unchanged. No backfill or old-hash compatibility lookup is added.
 The gated two-turn regression uses the real Store and substituted native CLI.
+
+
+### Leave review proportionality — 2026-10-28
+
+The attendance Skill applies its decision-relevant eligibility/balance rule to
+compensatory leave as well as personal leave. A leave label or absent balance
+field alone does not require the applicant to supply a policy or prove that no
+additional condition applies. An applicable balance rule or concrete conflict
+still requires resolution. Operational handover is evaluated by the accepted
+responsibility scope; an open incident within that scope does not require a
+separate incident-by-incident statement or resolution before leave. This changes
+the shared business Skill used by Consumer and Audit, without changing Audit
+mechanics, task lifecycle or action authority. See
+`oa-half-day-review-correction-20261028.md` for evidence and publication status.

@@ -5752,3 +5752,17 @@ The gated two-turn regression uses the real Store and substituted native CLI.
 ### 会议无合适群时的收件人（2026-10-28）
 
 业务会议总结优先发到合适的业务群。完整搜索后没有合适群时，从来源明确的参会人中选择一人单聊；只有一位非当前用户参会人时发给该人，多人时优先选与讨论最相关者。不要求会议明确指派该人负责某项决定或行动。目标仍须绑定稳定 user_id，且不能是当前用户；敏感内容继续按单独的职责和披露授权规则处理。
+
+
+### Leave review proportionality — 2026-10-28
+
+The attendance Skill applies its decision-relevant eligibility/balance rule to
+compensatory leave as well as personal leave. A leave label or absent balance
+field alone does not require the applicant to supply a policy or prove that no
+additional condition applies. An applicable balance rule or concrete conflict
+still requires resolution. Operational handover is evaluated by the accepted
+responsibility scope; an open incident within that scope does not require a
+separate incident-by-incident statement or resolution before leave. This changes
+the shared business Skill used by Consumer and Audit, without changing Audit
+mechanics, task lifecycle or action authority. See
+`oa-half-day-review-correction-20261028.md` for evidence and publication status.
