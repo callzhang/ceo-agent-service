@@ -5,7 +5,7 @@ import pytest
 
 from app.email_canonical_storage import insert_email_classification, upsert_email_message
 from app.email_store import EmailStore
-from tests.test_email_canonical_storage import _classification, _message
+from tests.support.email_native_fixtures import _classification, _message
 
 
 def test_preview_is_displayed_plain_text_bounded_by_unicode_characters():

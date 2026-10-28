@@ -15,7 +15,7 @@ from app.email_canonical_storage import (
     insert_email_classification,
 )
 from app.store import AutoReplyStore
-from tests.test_email_canonical_storage import _message, _classification
+from tests.support.email_native_fixtures import _message, _classification
 
 
 @pytest.fixture

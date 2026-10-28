@@ -2005,7 +2005,7 @@ def test_batch_creator_rolls_back_task_input_and_key_on_immutable_identity_confl
 
 def test_authorized_email_creator_checks_current_persisted_plan_on_target_owners(tmp_path):
     from app.email_canonical_storage import insert_email_classification, upsert_email_message
-    from tests.test_email_canonical_storage import _classification, _message
+    from tests.support.email_native_fixtures import _classification, _message
 
     store = _target_store(tmp_path / "target.sqlite3")
     identity = "account:message-id:<creator@example.test>"

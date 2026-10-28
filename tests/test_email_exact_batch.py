@@ -90,7 +90,7 @@ def test_source_reader_uses_native_uid_set_for_multiple_originals(tmp_path):
     from app.email_store import EmailStore
     from app.email_source_reader import EmailSourceReader
     from app.email_canonical_storage import upsert_email_message
-    from tests.test_email_canonical_storage import _message
+    from tests.support.email_native_fixtures import _message
 
     store = EmailStore(tmp_path / 'batch.sqlite3')
     with store._connect() as db:

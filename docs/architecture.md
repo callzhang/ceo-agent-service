@@ -1,5 +1,14 @@
 # CEO Agent Service Architecture
 
+## Email／Workbench 历史转换退休（2026-10-28）
+
+Email现行投影、元数据、正文来源和业务写入继续使用原有owner；已关闭的旧表转换、
+来源变体识别和inverse写入退出。Workbench旧source13转换链路及专用探测退休，
+当前文件生命周期、Task/Run父子、事件和回执不变。仅保留实际显式来源工具依赖的
+原有声明，普通constructor不调用；测试当前值模板独立放在tests/support。
+没有DDL、字段、版本或发送／恢复政策变更，部署状态见第五批验收记录。
+
+
 ## Business 当前写入与导入链路清退（2026-10-28）
 
 当前候选insert/update/delete及WorkTodo导入read/assign继续使用已有Business owner；

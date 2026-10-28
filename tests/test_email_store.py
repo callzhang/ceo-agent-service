@@ -76,9 +76,6 @@ from app.email_canonical_storage import (
 from app.email_canonical_storage import (
     delete_email_classification,
 )
-from tests.test_email_canonical_storage import (
-    current13,  # noqa: F401 - imported pytest fixture
-    )
 from app.configs_definitions import config_projection
 from app.configs_storage import delete_config, insert_config, update_config
 

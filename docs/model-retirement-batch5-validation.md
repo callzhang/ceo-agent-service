@@ -44,3 +44,19 @@ Store28.2/Email54的463项精确SQL冻结为内容无关的版本目录，规范
 仍保留Task，以及任意status、非JSON文本、显式timestamp和SQLite类型比对。
 最后两文件47项通过；这是重叠运行，不相加为独立总数。独立SPEC最终PASS，
 QUALITY均PASS。三个归属测试临时目录已核实由实施者删除，无生产或备份操作。
+
+## Email／Workbench 已关闭转换
+
+删除Email capture/migrate/restore和独占来源校验、搬运、inverse；现行19个函数
+及实际显式声明消费者逐AST不变。无测试定义的旧Email夹具模块退休，两个当前
+值模板原样移入tests/support/email_native_fixtures.py；删除无调用current13夹具
+与仅导入重导出的引用，不通过应用旧builder造数。
+
+Workbench只供旧source13的转换／inverse／探测及6个转换专用测试退休；未调用
+的整链旧caller夹具同步删除。当前文件生命周期、原生父子、API、运行与回执
+保留。两个仍被明确source工具使用的原有辅助声明函数与FTS声明保留，未为
+测试新增兼容入口。
+
+相关Email／Workbench230项、6个直接生命周期节点、精确463项catalog摘要通过；
+有重叠不累加为全仓覆盖。独立SPEC和QUALITY均PASS。Ruff和diff／引用
+闭包检查通过，实施者清理的临时根已由根代理确认不存在。未改DDL或生产业务。
