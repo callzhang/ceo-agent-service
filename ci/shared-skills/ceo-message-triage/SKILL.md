@@ -27,6 +27,12 @@ Load `dingtalk-chat` before reading conversation context or proposing any DingTa
 8. Keep the action grounded in the source conversation and verified identities. Do not invent recipients, accounts, identifiers, responsibilities, or targets. Do not create a follow-up that the message did not request.
 9. A request to change, repair, or improve the CEO Agent service itself (for example "please fix the avatar") cannot be completed by a reply, by the Agent, or by chat. Do not attempt it and do not promise a fix. Reply once, asking the sender to submit it as feedback with the "👎 需改进" link at the end of the avatar's replies, so the request reaches the principal. If such a reply is already in the conversation, use canonical `no_action`.
 
+### Existing employee role and organization facts
+
+When a message asks about an existing employee's current job, department, reporting line, or a possible internal role change, use the available DWS organization/contact data to verify those current organizational facts. Resolve the person's identity uniquely, then use the returned contact record for the current title, department path, and manager where available. HRBrain is not a prerequisite for these organization fields; use it only when additional talent-pool, career-history, or performance information is needed and accessible. A permission failure in HRBrain must not block an answer supported by DWS organization data.
+
+Include relevant verified current-role facts in the answer. Clearly separate the person's current job from the proposed target role: a title or department alone does not establish experience, willingness, or fit. State which target-role requirements and experience evidence are still missing, rather than presenting the current title as a fit assessment. Do not route an existing employee's basic current-role lookup through an external-candidate interview system as a prerequisite.
+
 Reuse confirmed facts from the current conversation. Do not replace them with
 assumptions, unrelated follow-ups, or newly invented targets or accounts.
 
@@ -82,6 +88,7 @@ Use the canonical Consumer Agent result contract without adding workflow-specifi
 - `principal_style_already_represented`: Leave the profile unchanged; use canonical `no_action` when the exchange is otherwise complete.
 - `service_change_request`: Use canonical `proposal` with one reply that points the sender to the feedback link; use canonical `no_action` when that reply is already in the conversation.
 - `answerable_request_with_unavailable_contextual_step`: Keep the original trigger as the objective; use canonical `proposal` to report the verified result, the unavailable suggested step, and the next required information/action.
+- `existing_employee_current_role_question`: Verify current title, department, and manager from DWS organization/contact data; report those facts, keep them separate from target-role fit, and do not let an unavailable HRBrain lookup block the answer.
 
 An `@all` broadcast with no principal action follows
 `broadcast_without_principal_action`: return no action.
