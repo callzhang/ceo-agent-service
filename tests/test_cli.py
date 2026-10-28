@@ -6820,7 +6820,7 @@ def test_wechat_sender_loop_resolves_old_errors_only_after_successful_tick(
     monkeypatch.setattr(service, "ready_account_state", lambda _store: object())
     monkeypatch.setattr(service, "account_from_state", lambda _state: object())
     monkeypatch.setattr(service, "build_reader", lambda: object())
-    monkeypatch.setattr(service, "build_sender", lambda: object())
+    monkeypatch.setattr(service, "build_sender", lambda *_a: object())
 
     def process(*_args, **_kwargs):
         if process_error is not None:

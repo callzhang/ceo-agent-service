@@ -407,3 +407,5 @@ tests/test_wechat_voice_transcript_cache.py
 tests/test_feedback_owner_schema_release.py
 tests/test_business_candidate_storage.py
 tests/test_business_legacy_owner_storage.py
+tests/wechat/test_codex_runner.py
+tests/wechat/test_send_message_handler.py

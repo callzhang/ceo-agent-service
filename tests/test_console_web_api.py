@@ -231,7 +231,7 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
     )
     monkeypatch.setattr(
         "app.wechat.service.build_sender",
-        lambda: SimpleNamespace(
+        lambda *_a: SimpleNamespace(
             open_and_identify=lambda target_label, *, search_query, expected_recent_text, keep_foreground: (
                 opened.append((target_label, search_query or "", expected_recent_text or ""))
                 or target_label
@@ -1910,7 +1910,7 @@ def test_wechat_status_snapshot_defers_sender_preflight_until_delivery(
             raise AssertionError("status polling must not preflight WeChat")
 
     monkeypatch.setattr(wechat_service, "build_reader", lambda: Reader())
-    monkeypatch.setattr(wechat_service, "build_sender", lambda: Sender())
+    monkeypatch.setattr(wechat_service, "build_sender", lambda *_a: Sender())
     snapshot = audit_web_module._wechat_status_snapshot(
         AutoReplyStore(tmp_path / "worker.sqlite3"),
     )
@@ -3552,7 +3552,7 @@ def test_principal_superseded_wechat_delivery_is_terminal_in_detail_and_retry_ap
         set_native_task_fields(db, "reply_tasks", 1, {"status": "done"})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     sends = []
-    monkeypatch.setattr("app.wechat.service.build_sender", lambda: SimpleNamespace())
+    monkeypatch.setattr("app.wechat.service.build_sender", lambda *_a: SimpleNamespace())
     monkeypatch.setattr("app.wechat.accessibility.WechatSender.send", lambda self, delivery, scope: sends.append(delivery.id) or SimpleNamespace(status="sent"))
     with _client(tmp_path, spa_enabled=True) as client:
         detail = client.get(f"/api/console/history/{attempt_id}")

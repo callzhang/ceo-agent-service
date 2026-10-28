@@ -182,7 +182,7 @@ def test_retry_absent_uses_user_initiated_sender(tmp_path, monkeypatch):
             )
 
     monkeypatch.setattr("app.wechat.accessibility.WechatSender", Sender)
-    monkeypatch.setattr(cli.service, "build_sender", lambda: "runner")
+    monkeypatch.setattr(cli.service, "build_sender", lambda _store: "runner")
     monkeypatch.setattr(
         cli.service,
         "retry_readback_absent_wechat_delivery",

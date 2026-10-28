@@ -115,7 +115,7 @@ def cmd_pending(args) -> int:
 def cmd_approve(args) -> int:
     from app.wechat.accessibility import WechatSender
     store = AutoReplyStore(Path(args.db))
-    sender = WechatSender(store, service.build_sender())
+    sender = WechatSender(store, service.build_sender(store))
     status = service.approve_wechat_delivery(store, sender, args.id)
     print(f"delivery #{args.id}: {status}")
     return 0
@@ -133,7 +133,7 @@ def cmd_retry_absent(args) -> int:
     store = AutoReplyStore(Path(args.db))
     sender = WechatSender(
         store,
-        service.build_sender(),
+        service.build_sender(store),
         user_initiated=True,
     )
     status = service.retry_readback_absent_wechat_delivery(store, sender, args.id)

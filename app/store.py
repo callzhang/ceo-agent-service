@@ -555,6 +555,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "email_description_optimization",
         "email_unsubscribe_page",
         "workbench",
+        "wechat_ui",
     }
 )
 
@@ -7578,6 +7579,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError(
                     "email classification workload key must name a persisted task"
                 )
+        elif workload_kind == "wechat_ui":
+            if not re.fullmatch(r"wechat-ui:(send|open):[0-9a-f]{64}", workload_key):
+                raise ValueError(
+                    "wechat UI workload key must name its operation and request digest"
+                )
         elif workload_kind == "email_unsubscribe_page":
             prefix = "email-unsubscribe-page:"
             action_identity, separator, digest = workload_key.removeprefix(
@@ -7646,6 +7652,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
                 (run_id,),
             ).fetchone() is not None
+        if workload_kind == "wechat_ui":
+            # The caller holds the WeChat delivery claim for the whole turn.
+            return True
         if workload_kind == "structured":
             return db.execute(
                 "select 1 from tasks where id=? and kind='okr_review' "

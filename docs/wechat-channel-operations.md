@@ -166,67 +166,37 @@ creating a new `SystemPolicyAppData` decision after every Reader PID change even
 for an Apple Team-signed, hardened build. Persistent unattended reads therefore
 require the one-time Full Disk Access setting above.
 
-## Dedicated Sender permission boundary
+## WeChat UI through Codex computer use
 
-Accessibility is granted to `~/Applications/CEO WeChat Sender.app` (bundle ID
-`com.stardust.ceo-agent.wechat-sender`), not to Miniforge Python or the main
-launchd service. The main service calls a strict owner-only Unix socket (mode
-`0600`); the helper only exposes health/preflight, target identification, bounded
-text send, and best-effort recall operations. Build and install it with:
+Since 2026-10-28 (Derek) every WeChat UI operation — sending a reply, opening a
+chat to confirm a binding, and the console's "open this message" — is one Codex
+turn using Codex's own computer-use tool. It works WeChat in the background with
+a virtual pointer: the user's real mouse never moves and WeChat is not brought
+to the front. WeChat's chat list only answers real pointer clicks, so the
+earlier dedicated Sender app had to take the user's mouse for every navigation;
+clicks or keys posted straight to WeChat's process do not open a chat in the
+background, and Codex's tool cannot be called from outside a Codex turn (it
+answers `Sender process is not authenticated`).
 
-```sh
-CEO_WECHAT_SENDER_SIGNING_IDENTITY='CEO Agent Local Signing' \
-  ./scripts/build-wechat-sender-app.sh
-./scripts/install-wechat-sender-app.sh
-```
+`CodexWechatRunner` (`app/wechat/codex_runner.py`) runs workload `wechat_ui` and
+requires route capability `desktop_computer_use`, which only Codex CLI routes
+signed in with the ChatGPT account declare. Without such a route nothing reaches
+WeChat: the delivery records a pre-action failure and waits. The send turn opens
+the chat (from the recent-chat row whose preview contains the trigger text when
+there is one; search is not used then), stops if the title above the input box
+is not exactly the target, types the prepared body one character at a time
+(never pasted or written as a value; line breaks with Shift+Return, because a
+bare Return sends), checks the input box and presses Return once. WeChat logged
+the account out on 2026-10-28 after a reply appeared in the input box all at
+once and a send was blocked by its anti-bot check, which is why typing is
+required.
 
-The stable signing identity prevents ordinary rebuilds from producing a new TCC
-identity. The Sender asks for Accessibility itself: at every start, and again
-whenever a send is blocked on `accessibility_not_trusted`, it raises the macOS
-prompt and, because macOS shows that prompt only once per app, also opens
-System Settings → Privacy & Security → Accessibility itself, at most once every
-30 minutes (Derek, 2026-09-30: nobody opens that page on their own). An already
-trusted Sender shows nothing. The
-installed app was ad-hoc signed until 2026-09-30; its first build with the
-stable identity needed one fresh grant. On 2026-10-23 both apps moved to
-the local `CEO Agent Local Signing` identity (organisation `Stardust CEO Agent`,
-which is what macOS Background Items shows as the developer; the Reader had
-been signed with the personal Apple Development certificate and the Sender with
-`CEO WeChat Reader Local Signing`). A new identity is a new code requirement, so
-Full Disk Access (Reader) and Accessibility (Sender) were granted again once. The AX runner
-does not inspect or foreground WeChat during background health/status polling
-or Tutorial connection checks. On each periodic sender pass, the service reads
-the local `ready_to_send` queue first; an empty queue makes no WeChat UI
-request. An actual delivery owns the one bounded activation needed to navigate
-its target chat, then records a terminal or reconcilable outcome. The AX runner
-resolves the actual WeChat application by bundle ID, waits for asynchronous UI
-state, and navigates duplicate direct-chat names with the stable target ID before
-requiring the composer title to match the expected display name. Group navigation
-uses the verified unique group name. The Sender serves one Accessibility request
-at a time and spaces foreground navigation attempts by 1 second by default
-(`CEO_WECHAT_SEND_MIN_INTERVAL_SECONDS`), preventing queued deliveries from
-causing concurrent or burst UI interaction. This affects only navigation pacing;
-it does not relax target binding, compose, or send confirmation checks.
-
-Within one delivery every UI step also pauses for a randomized, person-like
-interval, because WeChat flags back-to-back events as non-human use (Derek,
-2026-09-30). The ranges are the `PAUSE_*` constants at the top of
-`app/wechat/accessibility.py`: a click moves the pointer first, hovers, holds
-the button down, and settles afterwards; typed keys are held and spaced; after
-activation, before writing the composer, and before Return the Sender waits.
-The reply is typed into the composer one character at a time with the same
-key cadence, never written in one Accessibility value write: WeChat logged the
-account out on 2026-10-28 right after a reply appeared in the composer all at
-once (Derek). A line break is inserted at the caret instead of typed, because
-Return sends. Typing costs up to about 0.31 s per character, so the
-service-side sender timeout (`CEO_WECHAT_SENDER_TIMEOUT_SECONDS`, 180 s by
-default for the 120-second idle wait plus navigation) is extended by that much
-per character of the reply.
-
-Preflight is ready only when both a visible WeChat process window and a usable
-Accessibility `AXWindows` tree are present. A composited but inaccessible
-window is reported as `wechat_window_unavailable`; delivery is paused before a
-retry is spent, rather than repeatedly attempting an impossible UI action.
+Pressing Return is not delivery. `WechatSendMessageHandler` then reads WeChat's
+own message database up to 6 times, 5 seconds apart, and records `sent` only
+when the conversation holds a message from the account with exactly the
+prepared text; otherwise the delivery stays `send_unknown` for read-only
+reconciliation and is never re-sent. Readiness is passive: the screen is not
+locked and WeChat is running.
 
 Delivery status is mirrored back to the History `reply_attempts` row. A
 `ready_to_send` or `sending` delivery remains `pending`; `sent` becomes `sent`;
