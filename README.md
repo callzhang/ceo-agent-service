@@ -230,9 +230,13 @@ OKR 审核 runner 默认使用叮当 OKR Web live source，不再依赖本地 xl
 scripts/bootstrap-local-components.sh --format json
 ```
 
-该脚本会安装 `terminal-notifier`，检查 Codex CLI 与 Nvwa skill，并把八个 CEO 业务 Skill 安装到
-当前用户的 `~/.agents/skills`。它不会向 `~/.codex/skills` 安装用户 Skill，也不会覆盖同名的用户自有
-Skill。只修复业务 Skill 时可运行：
+该脚本会安装 `terminal-notifier`，检查 Codex CLI 与 Nvwa skill，并验证通用 Skill 基线。
+首次安装服务时，安装脚本会将发布版本中缺少的通用 Skill 完整目录安装到当前用户的
+`~/.agents/skills`，保留已有内容。额外的公开或私有 Skill 在 **Settings → Skills** 中搜索安装：
+输入 HTTPS/SSH 仓库 URL 或公开 Skill 名称，点击搜索，再点击对应行的 **Install**。
+搜索结果显示说明、作者/维护者和更新时间；安装固定到搜索时的 commit，并包含 scripts、references
+和资源文件。私有仓库使用服务运行账号已有的 Git 认证。安装后显示“待加载”时，按正常服务重启流程
+应用配置；安装不会开启业务任务或外部动作。只检查通用基线时可运行：
 
 ```bash
 scripts/bootstrap-local-components.sh --component ceo-business-skills --format json
