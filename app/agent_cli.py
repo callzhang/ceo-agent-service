@@ -1791,9 +1791,10 @@ def _task_file_root(
     return task_artifact_directory(task_id, generation, create=create)
 
 
-def _save_wechat_voice(
-    db_path: Path | None, root: Path, conversation_id: str, message_id: str,
-) -> tuple[str, float]:
+def _read_wechat_voice(
+    db_path: Path | None, conversation_id: str, message_id: str,
+) -> tuple[str, bytes, float]:
+    """The ready account id and the voice of one message decoded to WAV."""
     from app.wechat import service
     from app.wechat.models import WechatVoiceUnavailable
     from app.wechat.reader_ipc import ReaderIpcError
@@ -1815,9 +1816,11 @@ def _save_wechat_voice(
         if exc.code != "voice_unavailable":
             raise
         raise ValueError(f"could not read the voice message: {exc}") from exc
-    name = f"wechat-voice-{message_id}.wav"
-    _write_task_file(root, name, wav)
-    return name, seconds
+    return state["account_id"], wav, seconds
+
+
+def _wechat_voice_file_name(message_id: str) -> str:
+    return f"wechat-voice-{message_id}.wav"
 
 
 def _save_dingtalk_audio(
@@ -2740,10 +2743,13 @@ def build_role_server(
 
         Pass the message_id of a WeChat "[语音…]" message, or of a DingTalk
         "[语音消息](mediaId=…)" message together with that mediaId as resource_id.
-        The result names the task file. To transcribe it: ai_services
-        create_audio_upload, then upload_audio_file(name, upload_url), then poll
-        ai_services get_audio_transcription(job_id) until status is done. An
-        unreadable voice raises an error; it is neither empty nor answered.
+        A WeChat voice that was transcribed before returns its `transcript`
+        instead: use it, there is no audio to transcribe. Otherwise the result
+        names the task file. To transcribe it: ai_services create_audio_upload,
+        then upload_audio_file(name, upload_url), then poll ai_services
+        get_audio_transcription(job_id) until status is done (a Consumer then
+        keeps a WeChat transcript with save_voice_transcript). An unreadable
+        voice raises an error; it is neither empty nor answered.
         """
         if not isinstance(message_id, str) or not 1 <= len(message_id) <= 128:
             raise ValueError("voice message id is invalid")
@@ -2754,9 +2760,22 @@ def build_role_server(
             raise ValueError("the bound task has no conversation")
         root = _task_file_root(db_path, task_id, artifact_generation, create=True)
         if channel == "wechat":
-            name, seconds = _save_wechat_voice(
-                db_path, root, conversation_id, message_id,
+            from app.store import AutoReplyStore
+
+            account_id, wav, seconds = _read_wechat_voice(
+                db_path, conversation_id, message_id,
             )
+            transcript = AutoReplyStore(db_path).wechat_voice_transcript(
+                account_id=account_id, conversation_id=conversation_id,
+                message_id=message_id, audio_sha256=hashlib.sha256(wav).hexdigest(),
+            )
+            if transcript is not None:
+                return {
+                    "message_id": message_id, "transcript": transcript,
+                    "duration_seconds": round(seconds, 1),
+                }
+            name = _wechat_voice_file_name(message_id)
+            _write_task_file(root, name, wav)
         elif channel == "dingtalk":
             name, seconds = _save_dingtalk_audio(
                 root, conversation_id, message_id, resource_id,
@@ -3222,6 +3241,44 @@ def build_role_server(
 
         bound.add_tool(
             consumer_artifact_write, name="consumer_artifact_write", annotations=write
+        )
+
+        def save_voice_transcript(message_id: str, transcript: str) -> dict[str, object]:
+            """Keep the transcript of a WeChat voice so it is transcribed only once.
+
+            Call it with the message_id given to save_message_audio and the text
+            ai_services get_audio_transcription returned once its status is done.
+            It is bound to the audio that save_message_audio saved for this task.
+            An empty transcript is refused.
+            """
+            if not isinstance(message_id, str) or not 1 <= len(message_id) <= 128:
+                raise ValueError("voice message id is invalid")
+            channel, conversation_id, _ = _bound_task_conversation(
+                db_path, task_id, artifact_generation,
+            )
+            if channel != "wechat" or not conversation_id:
+                raise ValueError("the bound task is not a WeChat conversation")
+            from app.store import AutoReplyStore
+            from app.wechat import service
+
+            store = AutoReplyStore(db_path)
+            state = service.ready_account_state(store)
+            if state is None:
+                raise ValueError("no ready WeChat account")
+            root = _task_file_root(db_path, task_id, artifact_generation, create=False)
+            path = _task_file_path(root, _wechat_voice_file_name(message_id))
+            if not path.is_file():
+                raise ValueError("save the voice with save_message_audio first")
+            store.save_wechat_voice_transcript(
+                account_id=state["account_id"], conversation_id=conversation_id,
+                message_id=message_id,
+                audio_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                transcript=transcript,
+            )
+            return {"message_id": message_id, "saved": True}
+
+        bound.add_tool(
+            save_voice_transcript, name="save_voice_transcript", annotations=write
         )
 
         def consumer_run_skill_script(

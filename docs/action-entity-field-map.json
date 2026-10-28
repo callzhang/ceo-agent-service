@@ -3350,8 +3350,8 @@
       }
     ],
     "current_release_ddl": "docs/action-entity-current-target.sql",
-    "current_release_ddl_scope": "Exact 463-object Store28.3/Email54 target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture rendered from the explicit Store25.2 Action declaration, not a runtime schema.",
-    "current_release_ddl_sha256": "a0cad863019f8b5bf95b069c783ca0504136018739426d6eaff3f039b1048bfe"
+    "current_release_ddl_scope": "Exact 464-object Store28.4/Email54 target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture rendered from the explicit Store25.2 Action declaration, not a runtime schema.",
+    "current_release_ddl_sha256": "c9c0b05b36bf4b956e18c58d11519a6a73b21a74506e89e7525726ba28d96f05"
   },
   "indexes": [
     {

@@ -88,29 +88,6 @@ def test_mid_rebuild_failure_rolls_back_every_source_fact(tmp_path,monkeypatch):
         assert db.serialize()==before
 
 
-def test_latest_selector_and_current_constructor_contract(tmp_path):
-    from pathlib import Path
-    from app.current_publication_sources import _version
-    from app.feedback_owner_schema_release import FeedbackOwnerSchemaRelease
-    from app.store_schema_release import prepare_database_schema_release
-    from app.store import AutoReplyStore
-    path=tmp_path/'dispatch.sqlite3'
-    from tests.support.store28_session_source import create_store28_2_source
-    with closing(sqlite3.connect(path)) as db:
-        create_store28_2_source(db)
-        assert _version(db)=='2026-10-28.2'
-    with pytest.raises(sqlite3.IntegrityError,match='explicit paired schema release required'):
-        AutoReplyStore(path)
-    release=prepare_database_schema_release(Path(__file__).resolve().parents[1],path)
-    assert isinstance(release,FeedbackOwnerSchemaRelease)
-    release.publish()
-    release.finalize()
-    assert prepare_database_schema_release(Path(__file__).resolve().parents[1],path) is None
-    AutoReplyStore(path)
-    with closing(sqlite3.connect(path)) as db:
-        assert _version(db)=='2026-10-28.3'
-
-
 def test_frozen_source_and_target_catalogs_match_exact_published_declarations():
     import hashlib
     import json
@@ -136,8 +113,13 @@ def test_release_and_new_writes_preserve_facts_through_inverse(tmp_path):
     release = prepare_feedback_owner_release(path)
     release.publish()
     assert fact_digest(path) == before
+    # The current Store is one release later; stack it to open the Store, then peel it off.
+    from app.wechat_voice_transcript_schema_release import prepare_wechat_voice_transcript_release
+    voice = prepare_wechat_voice_transcript_release(path)
+    voice.publish()
     store = AutoReplyStore(path)
     store.upsert_feedback_event(key='new-fact', feedback_token='token', comment='new', original_text='new')
+    voice.rollback()
     after_write = fact_digest(path)
     release.rollback()
     assert fact_digest(path) == after_write

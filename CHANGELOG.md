@@ -46,6 +46,11 @@
 - **限制**：Codex 路线的 Consumer 有 `memory_connector` 全部工具；Claude 路线的 Consumer 只连 `agent_cli`，没有 Memory 工具，走该路线的任务不会写长期记忆。会议结论仍由服务写入，未改动。
 - 历史 `task_memory_write_events` 行与索引保留（删除需要数据库迁移）；旧结果里的 `durable_memories` 读回时被丢弃。
 
+## 2026-10-28 — 微信语音只转写一次
+
+- 新表 `wechat_voice_transcripts`（账号＋会话＋消息主键、音频 SHA-256、转写文字），随 Store 28.3→28.4 配对发布上线（只加表，inverse 删表）。
+- `save_message_audio` 命中缓存时直接返回 `transcript`（不再存音频、不再转写）；Consumer 新工具 `save_voice_transcript(message_id, transcript)` 在转写成功后写缓存，音频摘要由服务对任务里已存的文件重算。空转写、读不到的音频、非微信任务不会写缓存；音频变了不会命中旧转写；Audit 仍只读。
+
 ## 2026-10-28 — 微信语音转写改走一次性上传地址
 
 - `read_wechat_voice` 换成通用的 `save_message_audio(message_id, resource_id)`（微信与钉钉语音都存为任务文件，其他渠道报错），新增通用工具 `upload_audio_file(name, upload_url)`：Agent 先调 `ai_services.create_audio_upload` 取一次性地址，服务把音频文件直接 POST 过去，再调 `get_audio_transcription(job_id)` 取文字。音频不经过模型，服务不存任何转写凭据，所有线路用普通工具调用，不再需要 CodeMode。撤回微信的 `code_mode_handoff`（OA 的不动）。

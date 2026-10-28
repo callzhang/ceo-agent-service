@@ -59,6 +59,14 @@ Item只保留task_id/feedback_key/batch_id/current_round_id四列。九项当前
 [第四批验收](model-retirement-batch4-validation.md)。上述转换半部与Runner已在第五批分单元退休，
 发布／读回状态见[第五批验收](model-retirement-batch5-validation.md)。
 
+## 微信语音转写缓存 Store28.4/Email54（2026-10-28）
+
+Derek 批准新增表 `wechat_voice_transcripts`（账号／会话／消息主键，音频 SHA-256，转写文字）
+及其配对发布。发布只做加法：正向 `create table`，不碰其他表、不迁移任何数据；
+inverse 直接 `drop table`（缓存可重新转写，不丢业务事实），并恢复发布前的 Store 标记。
+源为 Store28.3/Email54 的“当前声明去掉本表”，发布和 inverse 都验证完整 schema、FK 与 quick_check，
+`app/wechat_voice_transcript_schema_release.py` 接在 `prepare_database_schema_release` 的
+28.3 分支上（上一版 28.2→28.3 Feedback 发布不再被选中，模块与固定声明保留）。
 
 ## 会话唯一归属 Store28.2/Email54（2026-10-28）
 
@@ -1386,7 +1394,7 @@ business_object（稳定业务对象，例如一条 OA 审批节点）
   已结算输入不另存从 provenance 可生成的精简 JSON；API 按来源摘要投影原有展示形式。
   微信语音（Derek 2026-10-26）：语音消息的 `kind` 是 `voice`，`text` 是占位 `[语音N秒·未转写，用 save_message_audio 取音频再转写]`，因此语音不是空消息，直接聊天里每条入站语音和入站文字一样成为回复触发（群聊仍只认 @）。
   音频不在消息行里：Reader 的 `read_voice` 按 `message_id` 在该会话自己的表里确认它是语音，再按 `server_id` 到 `media_N.db` 的 `VoiceInfo`（最新的分片先查）取 SILK 字节，最大 2 MiB；找不到、过大、不是语音都返回 `voice_unavailable`。
-  通用工具 `save_message_audio(message_id, resource_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、不接收会话参数，按任务绑定的渠道取音频）把语音存成本任务当前执行代的任务文件并返回文件名：微信在服务环境用 `pilk` 把 SILK 转成 WAV；钉钉按消息里的 `mediaId`（作为 `resource_id`）用 `dws chat +messages-resource-download` 下载并核对消息身份；其他渠道没有语音，直接报错。读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写走 `ai_services` 的大文件路径，音频不经过模型：Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，再调通用工具 `upload_audio_file(name, upload_url)`（任何来源的音频任务文件都可用，钉钉语音同理）由服务把该文件 POST 到该地址并返回 `job_id`，最后调 `ai_services.get_audio_transcription(job_id)` 直到 `done`。服务里不保存任何转写凭据——令牌就在一次性地址里。转写结果不缓存：Consumer 与 Audit 各自可能转写同一条语音。
+  通用工具 `save_message_audio(message_id, resource_id)`（Consumer 与 Audit，与 `read_wechat_messages` 同一份读取工具清单、不接收会话参数，按任务绑定的渠道取音频）把语音存成本任务当前执行代的任务文件并返回文件名：微信在服务环境用 `pilk` 把 SILK 转成 WAV；钉钉按消息里的 `mediaId`（作为 `resource_id`）用 `dws chat +messages-resource-download` 下载并核对消息身份；其他渠道没有语音，直接报错。读不到或解不开时抛出「could not read the voice message」，Reader 不可用则按原样抛出，两者都不会表现为空或已回复。转写走 `ai_services` 的大文件路径，音频不经过模型：Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，再调通用工具 `upload_audio_file(name, upload_url)`（任何来源的音频任务文件都可用，钉钉语音同理）由服务把该文件 POST 到该地址并返回 `job_id`，最后调 `ai_services.get_audio_transcription(job_id)` 直到 `done`。服务里不保存任何转写凭据——令牌就在一次性地址里。微信语音的转写结果只转写一次（Derek 2026-10-28）：表 `wechat_voice_transcripts` 以账号 id＋会话 id＋消息 id 为主键，同时存音频 SHA-256 与转写文字。`save_message_audio` 在微信分支每次都读 Reader 并解码（本地、很快），按音频摘要查表：摘要一致就只返回 `transcript`，不存任务文件、也不再转写；没有记录或摘要不同（音频变了）才存文件走上面的转写路径。转写成功后 Consumer 调 `save_voice_transcript(message_id, transcript)`，服务对本任务已存的那份音频重新算摘要后写表，摘要不经过模型；空文本、读不到的音频、非微信任务一律拒绝，不写表。Audit 的工具不变（仍只读）：它读取 Consumer 留下的缓存，未命中时自己转写但不写缓存。缓存只服务本任务绑定的会话；钉钉语音没有缓存。
   自己发的语音是指令（Derek 2026-10-28）：语音无法带 `@磊哥`，所以本人发的语音在两处自成触发，且只限语音——服务自己发出的都是文字，不会自己回自己。钉钉：本人在以 Agent 名字命名的单聊（`chat_bot_names()`）里发的、含 `[语音消息](mediaId=…)` 的消息进入候选，仍排除服务自己的投递；本人发给同事的语音、群里的语音、该单聊里的文字仍是历史。微信：本人在 `filehelper`（文件传输助手）里发的语音（方向为 outbound）成为候选，前提是该会话有启用的回复范围；其他会话里的 outbound 语音、该会话里的文字仍被忽略。
 - Provider 若原地更新同一个 DingTalk 日程卡片而继续复用消息 ID，近期消息恢复会把
   `input_revision_key` 不同的新快照追加到 `reply_task_inputs`，同时更新同一个
