@@ -213,12 +213,15 @@ interval, because WeChat flags back-to-back events as non-human use (Derek,
 2026-09-30). The ranges are the `PAUSE_*` constants at the top of
 `app/wechat/accessibility.py`: a click moves the pointer first, hovers, holds
 the button down, and settles afterwards; typed keys are held and spaced; after
-activation, before writing the composer, and before Return the Sender waits,
-and when the composer text is set in one Accessibility write it waits about as
-long as typing it would take (capped at 4 seconds). These pauses add up to
-roughly 3–12 seconds per delivery, so the service-side sender timeout
-(`CEO_WECHAT_SENDER_TIMEOUT_SECONDS`) defaults to 180 seconds to leave room
-for the 120-second idle wait plus navigation.
+activation, before writing the composer, and before Return the Sender waits.
+The reply is typed into the composer one character at a time with the same
+key cadence, never written in one Accessibility value write: WeChat logged the
+account out on 2026-10-28 right after a reply appeared in the composer all at
+once (Derek). A line break is inserted at the caret instead of typed, because
+Return sends. Typing costs up to about 0.31 s per character, so the
+service-side sender timeout (`CEO_WECHAT_SENDER_TIMEOUT_SECONDS`, 180 s by
+default for the 120-second idle wait plus navigation) is extended by that much
+per character of the reply.
 
 Preflight is ready only when both a visible WeChat process window and a usable
 Accessibility `AXWindows` tree are present. A composited but inaccessible
