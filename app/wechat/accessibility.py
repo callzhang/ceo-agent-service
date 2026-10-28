@@ -35,8 +35,8 @@ PAUSE_AFTER_CLICK = (0.4, 1.0)
 PAUSE_PER_KEY = (0.06, 0.2)
 PAUSE_KEY_HOLD = (0.04, 0.11)
 PAUSE_BEFORE_COMPOSE = (0.6, 1.5)
-PAUSE_PER_COMPOSED_CHAR = 0.04
-PAUSE_COMPOSE_CAP = 4.0
+# Upper bound of one typed character (key hold + gap), for the IPC timeout.
+SECONDS_PER_TYPED_CHAR = PAUSE_KEY_HOLD[1] + PAUSE_PER_KEY[1]
 PAUSE_BEFORE_RETURN = (0.5, 1.2)
 PAUSE_BETWEEN_SCROLLS = (0.35, 0.9)
 
@@ -45,10 +45,18 @@ def _pause(sleep, bounds, *, uniform=random.uniform) -> None:
     sleep(uniform(*bounds))
 
 
-def _compose_pause(sleep, text: str, *, uniform=random.uniform) -> None:
-    """Wait roughly as long as typing and rereading ``text`` would take."""
-    typing = min(PAUSE_COMPOSE_CAP, PAUSE_PER_COMPOSED_CHAR * len(text))
-    sleep(typing * uniform(0.8, 1.2) + uniform(*PAUSE_BEFORE_RETURN))
+def _type_text(text: str, *, key_char, newline, sleep, uniform=random.uniform) -> None:
+    """Type ``text`` one character at a time like a person.
+
+    Return sends in WeChat, so a line break is inserted at the caret instead of
+    being typed as a key.
+    """
+    for ch in text:
+        if ch == "\n":
+            newline()
+        else:
+            key_char(ch)
+        _pause(sleep, PAUSE_PER_KEY, uniform=uniform)
 
 
 @dataclass
@@ -668,7 +676,23 @@ class MacWechatAccessibility:
                 continue
             error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
             if error == 0 and windows:
-                return "ready"
+                def attribute(element, name):
+                    error, value = AXUIElementCopyAttributeValue(
+                        element, name, None,
+                    )
+                    return value if error == 0 else None
+
+                def children(element):
+                    return attribute(element, "AXChildren")
+
+                for element in _walk_accessibility_tree(app, children):
+                    role = attribute(element, "AXRole")
+                    identifier = attribute(element, "AXIdentifier") or ""
+                    title = attribute(element, "AXTitle") or ""
+                    if (
+                        role == "AXTextArea" and "搜索" in title
+                    ) or identifier == "session_list":
+                        return "ready"
             break
         return "wechat_window_unavailable"
 
@@ -868,25 +892,34 @@ class MacWechatAccessibility:
                     failure_reason="target_binding_mismatch",
                 )
 
-            # --- compose (PURE AX) + send (key to pid, no focus steal) ---
+            # --- compose (typed key by key) + send (key to pid, no focus steal) ---
+            # WeChat logged the account out after text appeared in one AX write
+            # (Derek, 2026-10-28), so the reply is typed character by character.
             _pause(time.sleep, PAUSE_BEFORE_COMPOSE)
             set_attr(composer, "AXFocused", True)
-            set_attr(composer, "AXValue", reply_text)
-            time.sleep(0.3)
-            if reply_text in (g(composer, "AXValue") or ""):
-                # The text appeared at once; take the time typing it would have.
-                _compose_pause(time.sleep, reply_text)
-            else:
-                # fallback: some builds ignore AXValue set -> type into WeChat
-                type_to_wechat(reply_text)
-                time.sleep(0.4)
-                if reply_text not in (g(composer, "AXValue") or ""):
-                    return AccessibilityResult(
-                        False,
-                        False,
-                        failure_reason="composer_input_unconfirmed",
-                    )
-                _pause(time.sleep, PAUSE_BEFORE_RETURN)
+
+            def key_char(ch):
+                for down in (True, False):
+                    e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
+                    Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
+                    Quartz.CGEventPostToPid(pid, e)
+                    if down:
+                        _pause(time.sleep, PAUSE_KEY_HOLD)
+
+            _type_text(
+                reply_text,
+                key_char=key_char,
+                newline=lambda: set_attr(composer, "AXSelectedText", "\n"),
+                sleep=time.sleep,
+            )
+            time.sleep(0.4)
+            if reply_text not in (g(composer, "AXValue") or ""):
+                return AccessibilityResult(
+                    False,
+                    False,
+                    failure_reason="composer_input_unconfirmed",
+                )
+            _pause(time.sleep, PAUSE_BEFORE_RETURN)
             if g(first(id_eq="chat_input_field"), "AXTitle") != target_label:
                 return AccessibilityResult(
                     False,

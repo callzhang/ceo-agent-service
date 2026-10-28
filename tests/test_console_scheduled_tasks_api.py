@@ -429,6 +429,7 @@ def test_options_expose_runtime_and_skill_availability_without_fabrication(
             "unavailable_reason": "snapshot_missing",
             "supported_thinking": ["low", "medium", "high", "xhigh"],
             "capabilities": [
+                "desktop_computer_use",
                 "local_process_execution",
                 "local_service_database_access",
                 "local_workspace_access",

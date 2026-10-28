@@ -1462,12 +1462,21 @@ def test_quality_check_help_names_the_default_live_channel_gates():
 
 def test_parser_supports_recent_meeting_replay():
     args = build_parser().parse_args(
-        ["replay-recent-meetings", "--limit", "9", "--offset", "1"]
+        [
+            "replay-recent-meetings",
+            "--limit",
+            "9",
+            "--offset",
+            "1",
+            "--meeting-id",
+            "minutes-1",
+        ]
     )
 
     assert args.command == "replay-recent-meetings"
     assert args.limit == 9
     assert args.offset == 1
+    assert args.meeting_id == "minutes-1"
 
 
 def test_replay_recent_meetings_command_prints_structured_failure(
@@ -6811,7 +6820,7 @@ def test_wechat_sender_loop_resolves_old_errors_only_after_successful_tick(
     monkeypatch.setattr(service, "ready_account_state", lambda _store: object())
     monkeypatch.setattr(service, "account_from_state", lambda _state: object())
     monkeypatch.setattr(service, "build_reader", lambda: object())
-    monkeypatch.setattr(service, "build_sender", lambda: object())
+    monkeypatch.setattr(service, "build_sender", lambda *_a: object())
 
     def process(*_args, **_kwargs):
         if process_error is not None:

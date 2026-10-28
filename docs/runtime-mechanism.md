@@ -4,8 +4,8 @@
 
 Run／采用结果只保留当前正面声明和真实身份／来源维护，不再生成旧字段全集映射。
 11项当前receipt SQL直接固定，逐字等于原生成结果，不改写旧execution_id声明。
-过期的9个release/source模块、旧copy工具和专用转换测试退出；当前显式Feedback
-28.2→28.3发布及新增数据inverse保留。所需历史Configs源SQL只在测试夹具中。
+过期的9个release/source模块、旧copy工具和专用转换测试退出；本批4022验收时保留的显式Feedback
+28.2→28.3发布及新增数据inverse有独立证据；后发28.4由另一任务负责。所需历史Configs源SQL只在测试夹具中。
 四张identity_map的身份事实、当前coalescer和历史查询不变。当前触发器重解析回归
 仍执行两次ALTER及EXPLAIN UPDATE；不因旧测试容器退休而取消当前覆盖。
 所有463项SQL与前一当前声明逐字一致，不新增schema版本、运行时兼容或policy。
@@ -2321,6 +2321,7 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
 执行期间 current 指针更新不会改写已领取的会话范围。
 微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。通用 Agent 工具 `save_message_audio(message_id, resource_id)` 按任务渠道把语音存为任务文件（微信：`pilk==0.2.4` 转成 24 kHz 单声道 WAV；钉钉：`dws` 下载消息里 `mediaId` 对应的音频并核对消息身份）；Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，用通用工具 `upload_audio_file(name, upload_url)` 把该任务文件 POST 过去（音频不经过模型，服务不存凭据），再调 `ai_services.get_audio_transcription(job_id)` 取文字；读不到或解不开是明确错误，不当作空消息或已回复。微信语音转写缓存（Derek 2026-10-28）：`wechat_voice_transcripts(account_id, conversation_id, message_id, audio_sha256, transcript, created_at)`，主键为前三项；`save_message_audio` 微信分支解码后按 `audio_sha256` 查表，命中只返回 `transcript`（不存文件）；Consumer 专有工具 `save_voice_transcript(message_id, transcript)` 对任务里已存的 `wechat-voice-<message_id>.wav` 重算摘要后写入，空文本由工具和表约束双重拒绝，Audit 只读不写。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。 自己发的语音是指令（Derek 2026-10-28）：钉钉里本人在以 Agent 名字命名的单聊发的语音消息（含 `[语音消息](mediaId=…)`）和微信里本人在 `filehelper` 发的语音（outbound）都成为候选，不需要 `@磊哥`；仅限语音，其余本人消息仍是历史（`worker._is_principal_voice_to_agent_chat`、`wechat.producer.is_self_voice_command`）。
+微信显示不了的消息（Derek 2026-10-28）：本机微信版本渲染不了的 appmsg，微信会用自己的标题「Your current Weixin version does not support this content…」和升级链接 `support.weixin.qq.com/update` 顶替原内容。Reader 的 `decode_message` 识别这个占位（升级链接前缀或中英文「不支持该内容」标题），输出 `[无法显示的内容·本机微信版本不支持这类消息，appmsg 类型 N，看不到发送方发了什么]` 而不是 `[链接]《…》`；`kind_for` 因此把它归为 `unknown`，与图片一样不生成回复任务，只作为会话上下文出现。此前它被当作文章分享建任务，分身对同一位发送者的 10 条这类消息用同一句「把截图发我」回了 4 次。微信投递状态回写 Attempt 只认当前执行代：`_sync_wechat_delivery_reply_attempt` 在投递的 `execution_generation` 与任务当前代不同时不写回。此前旧代失败投递被新代已发送投递标为 `superseded` 时，按会话加触发消息找到的是同一个 Attempt，把一秒前刚写成 `sent` 的状态覆盖成 `skipped`（attempt 16295）。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
@@ -2546,8 +2547,12 @@ feedback-iteration decision scope 校验，而不是对所有修复一律要求 
 `runtime_config` 要求前后 config、目标 receipt、场景验证、health 和零 backlog；`code` 要求
 本地 `main` 祖先 commit、测试、不同 PID 的重启、health 和零 backlog；`mixed` 同时满足相应
 code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项目保持 open。任一适用
-条件不满足时，整个批次保持 `processing`，不部分结案。关联、证据和结果必须通过 Feedback API
-持久化并回读一致。
+条件不满足时，未满足条件的项目保持 `processing`。`POST /api/console/feedback/batches/{id}/resolve`
+可用 `feedback_ids` 结案批内指定项目；没有该字段时仍要求并结案整个批次。指定项目必须通过
+同一套关联、决策范围、证据、提交祖先、测试、重启、health 和零 backlog 校验；未指定项目保持
+原状态。只有所有项目都结案后，批次才变为 `resolved`。后续处理应只选择仍处于 `processing`
+的项目，不重复结案或重放已结案项目的任务或外部动作。所有关联、证据和结果仍须通过
+Feedback API 持久化并回读一致。
 
 Feedback API 的 Git 回归使用独立临时仓库初始化 `main`，并将测试 API 与回执指向同一仓库。
 PR 的 detached checkout 或缺少本地 `main` 不应改变测试结果；测试不得修改开发/生产检出的
@@ -2933,6 +2938,7 @@ Meeting 群发现提交给 Agent 的候选列表保留每个群的 ID、完整�
 - 这一恢复规则适用于所有任务：普通服务重启只释放已经停止的 worker 租约，保留同一任务的执行代次、已准备消息和外部回执；恢复 worker 从这些事实继续。若运维明确完成了运行时/路由修复，则服务修复重试创建新的 execution generation 和新的 session 绑定，但仍复用同一业务对象及外部动作幂等事实；用户业务反馈重跑则按反馈闭环复用兼容 session。
 - 外部动作的 operation、target 和 provider result identifier（若 provider 返回）会保留用于去重；缺少标识属于 provider/Agent 失败，不转换为额外状态。
 - WeChat reader 由独立 launchd job 自动保持运行；worker 连续三次 IPC 超时后主动 kickstart 该 job，处理“进程仍在但 IPC 已卡住”的情况。worker 只恢复 reader 进程，不启动 WeChat 主应用，也不重放消息。
+- 微信界面操作由一轮 Codex computer use（虚拟鼠标，不动真鼠标、不切前台）完成，workload `wechat_ui`，要求路线能力 `desktop_computer_use`（仅 ChatGPT 账号登录的 Codex CLI 路线具备）；无可用路线时投递记发送前失败并等待。按回车后由 `WechatSendMessageHandler` 最多 6 次、间隔 5 秒读微信消息库，出现逐字相同的本人消息才记 `sent`，否则 `send_unknown` 交给只读对账，不重发。被动 readiness 只检查屏幕未锁且微信在运行，不激活、不登录、不发送。
 - WeChat sender loop 在 `auto` 模式处理已审核的 `ready_to_send` 项时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须从同一当前 Task 代次、候选、Audit 和 action identity 读取已经持久化的预备正文，并逐字匹配 delivery。旧 delivery 只在审核门禁通过且最终正文相同的情况下，才可从 `wechat:{delivery_id}` 预备键恢复；不得重建正文。无法精确恢复时，重试 API 必须在重新入队前返回内部错误且不调用 Sender；这类内部错误由正式重试接口处理，不要求用户通过回复确认卡提供材料。每轮成功完成恢复检查和队列检查后，才将此前同组件错误标记为已恢复；抛出异常的轮次不会清除错误。该收口仅更新错误的恢复状态，不代表任何消息已发送；发送事实仍以 delivery 和 provider 回执为准。
 - OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限为 130 秒，worker 运行上限为 220 秒，调用方上限为 240 秒；worker 超时后会先终止并回收自己的 Chromium 进程组。认证刷新通过 `app.service_browser.launch_service_chrome` 使用每日 Chrome cookie 副本启动真 Chrome，不再启动或清理独立的 bundled Chromium 子进程。
 - OKR 无头来源在请求业务 API 前校验新捕获认证的有效期。专用浏览器会话过期时返回明确的 `okr_headless_session_expired` 服务错误，不得继续请求并把认证失败误报为周期不存在。
@@ -5854,6 +5860,11 @@ The gated two-turn regression uses the real Store and substituted native CLI.
 ### 会议无合适群时的收件人（2026-10-28）
 
 业务会议总结优先发到合适的业务群。完整搜索后没有合适群时，从来源明确的参会人中选择一人单聊；只有一位非当前用户参会人时发给该人，多人时优先选与讨论最相关者。不要求会议明确指派该人负责某项决定或行动。目标仍须绑定稳定 user_id，且不能是当前用户；敏感内容继续按单独的职责和披露授权规则处理。
+
+会议日历事件可在标题不同的情况下关联到听记：听记创建者姓名必须与唯一、时间重叠且边界偏差在既有容差内的已确认日历事件中的一位参会人精确匹配。候选事件仍须唯一；创建者或事件关联有歧义时不推断参会人身份。
+
+对这类既有 `needs_human` Meeting，按精确 meeting ID 走 `replay-recent-meetings` 刷新当前听记与日历来源，再进入正常 Consumer 和独立 Audit。该入口保留原 Runs，并在任务锁、活动运行、投递 claim、已准备消息或外部回执存在时拒绝重开。
+在同一 Meeting Task 的 Audit 反馈修订中，如果新候选丢失前一轮已读的群目标，下一轮 Consumer 会继续收到该群目标及其原证据，避免正文修订抹掉目标上下文。它仍只是候选；Consumer 重新选择，独立 Audit 和原投递门禁继续生效。
 
 
 ### Leave review proportionality — 2026-10-28

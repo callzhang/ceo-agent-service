@@ -555,6 +555,7 @@ RUNTIME_OPERATION_WORKLOAD_KINDS = frozenset(
         "email_description_optimization",
         "email_unsubscribe_page",
         "workbench",
+        "wechat_ui",
     }
 )
 
@@ -7578,6 +7579,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ValueError(
                     "email classification workload key must name a persisted task"
                 )
+        elif workload_kind == "wechat_ui":
+            if not re.fullmatch(r"wechat-ui:(send|open):[0-9a-f]{64}", workload_key):
+                raise ValueError(
+                    "wechat UI workload key must name its operation and request digest"
+                )
         elif workload_kind == "email_unsubscribe_page":
             prefix = "email-unsubscribe-page:"
             action_identity, separator, digest = workload_key.removeprefix(
@@ -7646,6 +7652,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "where r.id=? and p.source_type='meeting_alignment_runs' and r.status='running'",
                 (run_id,),
             ).fetchone() is not None
+        if workload_kind == "wechat_ui":
+            # The caller holds the WeChat delivery claim for the whole turn.
+            return True
         if workload_kind == "structured":
             return db.execute(
                 "select 1 from tasks where id=? and kind='okr_review' "
@@ -12758,6 +12767,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 cls._native_wechat_task(db, int(delivery["reply_task_id"])))
         if task is None:
             return
+        if str(delivery["execution_generation"]) != str(task["execution_generation"]):
+            # The Attempt stands for the task's current generation. A delivery
+            # of an earlier generation (a failed draft that a rerun replaced)
+            # being closed as superseded must not overwrite the status the
+            # current generation's delivery just wrote (2026-10-28: attempt
+            # 16295 showed "skipped" one second after its reply was sent).
+            return
         attempt = db.execute(
             f"""
             select id
@@ -13768,7 +13784,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             task = get_task(db, job_id)
             current = self._native_meeting_alignment_job(db, job_id)
             if (task is None or task["kind"] != "meeting_alignment" or current is None
-                    or task["status"] not in {"no_action", "failed"} or current.send_result_json != "{}"):
+                    or task["status"] not in {"no_action", "failed", "needs_human"}
+                    or task["locked_at"] is not None or current.send_result_json != "{}"):
+                return None
+            if db.execute(
+                "select 1 from actions where record_type='meeting_alignment_delivery_claims' "
+                "and td_claim_job_id=? limit 1",
+                (job_id,),
+            ).fetchone():
+                return None
+            if task["lease_owner"] and db.execute(
+                "select julianday(?)>julianday('now')", (task["lease_expires_at"],)
+            ).fetchone()[0]:
+                return None
+            if db.execute(
+                "select 1 from runs r join run_provenance p on p.run_id=r.id "
+                "where p.source_type='meeting_alignment_runs' and r.task_id=? "
+                "and r.status='running' limit 1",
+                (job_id,),
+            ).fetchone() or db.execute(
+                "select 1 from runtime_attempts a join runs r on r.id=a.parent_id "
+                "join run_provenance p on p.run_id=r.id "
+                "and p.source_type='meeting_alignment_runs' "
+                "where r.task_id=? and a.status in ('starting','running') limit 1",
+                (job_id,),
+            ).fetchone():
                 return None
             delivery_key = get_meeting_delivery_key(db, job_id)
             target_key_prefix = delivery_key + ":target:"
@@ -13778,6 +13818,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"select 1 from ({OUTBOUND_POSTFIX_SQL}) outbound "
                 "where outbound.channel='dingtalk' and (outbound.delivery_key in (?,?) "
                 "or substr(outbound.delivery_key,1,length(?))=?) limit 1",
+                (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
+            ).fetchone():
+                return None
+            if db.execute(
+                f"select 1 from ({OUTBOUND_POSTFIX_RECEIPT_SQL}) receipt "
+                "where receipt.channel='dingtalk' and (receipt.delivery_key in (?,?) "
+                "or substr(receipt.delivery_key,1,length(?))=?) limit 1",
                 (delivery_key, delivery_key + ":sensitive", target_key_prefix, target_key_prefix),
             ).fetchone():
                 return None
@@ -17928,12 +17975,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 current_round = round_by_id.get(round_id)
                 feedback_key = str(item["feedback_key"])
                 source = source_by_key[feedback_key]
+                item_status = str(item["status"] or "")
+                round_status = str(current_round["status"] or "") if current_round else ""
+                allowed_statuses = {expected_status}
+                if expected_status == "processing":
+                    allowed_statuses.add("resolved")
                 if (
-                    str(item["status"] or "") != expected_status
+                    item_status not in allowed_statuses
                     or current_round is None
                     or str(current_round["feedback_key"]) != feedback_key
                     or str(current_round["batch_id"] or "") != batch_id
-                    or str(current_round["status"] or "") != expected_status
+                    or round_status != item_status
                     or int(current_round["round_number"])
                     != db.execute(
                         f"""select max(round_number) from ({_native_feedback_round_projection()}) as feedback_processing_rounds where feedback_key=?""",
@@ -17954,7 +18006,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     version_two_claim_timestamps.add(
                         str(current_round["started_at"] or "")
                     )
-                if expected_status == "processing":
+                if round_status == "processing":
                     if str(source["resolved_at"] or "").strip():
                         raise ValueError(stable_error)
                     cls._validate_current_processing_round_projection(
@@ -18119,12 +18171,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 for round_row in version_two_rounds
             }
             if (
-                len(resolution_timestamps) != 1
-                or not next(iter(resolution_timestamps)).strip()
-                or batch_resolved_at not in resolution_timestamps
-                or batch_updated_at not in resolution_timestamps
+                any(not timestamp.strip() for timestamp in resolution_timestamps)
+                or batch_resolved_at != max(resolution_timestamps)
+                or batch_updated_at != batch_resolved_at
                 or any(
-                    str(round_row["updated_at"] or "") not in resolution_timestamps
+                    str(round_row["updated_at"] or "")
+                    != str(round_row["resolved_at"] or "")
                     for round_row in version_two_rounds
                 )
             ):
@@ -18472,13 +18524,15 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         evidence: ResolutionEvidence | dict[str, object] | None = None,
         *,
         commit_is_ancestor: bool,
+        feedback_keys: Sequence[str] | None = None,
     ) -> bool:
-        """Resolve all items together after validating completion evidence.
+        """Resolve selected items after validating completion evidence.
 
         The no-evidence form preserves the original internal transition used
         by older callers (all item rows must already be ``resolved``). New
-        callers provide a receipt and get one atomic processing->resolved
-        transaction, including source-event projection updates.
+        callers provide a receipt and get one atomic transaction for the
+        selected items. The parent batch stays processing until every member
+        is resolved.
         """
         cleaned_batch_id = batch_id.strip()
         if not cleaned_batch_id:
@@ -18541,6 +18595,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 or set(item_keys) != set(round_keys)
             ):
                 raise ValueError("resolution requires complete batch round membership")
+            if feedback_keys is None:
+                selected_keys = item_keys
+            else:
+                if isinstance(feedback_keys, (str, bytes)):
+                    raise ValueError("resolution feedback keys must be a list")
+                selected_keys = [
+                    key.strip() if isinstance(key, str) else ""
+                    for key in feedback_keys
+                ]
+                if (
+                    not selected_keys
+                    or any(not key for key in selected_keys)
+                    or len(set(selected_keys)) != len(selected_keys)
+                    or not set(selected_keys) <= set(item_keys)
+                ):
+                    raise ValueError("resolution feedback keys do not match batch")
+            selected_key_set = set(selected_keys)
+            selected_rows = [
+                item for item in rows if str(item["feedback_key"]) in selected_key_set
+            ]
             if normalized_evidence.associations and set(
                 normalized_evidence.associations
             ) != set(item_keys):
@@ -18576,7 +18650,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 )
                 requires_commit = decision_record.decision.scope in {"code", "mixed"}
             verified: list[tuple[sqlite3.Row, sqlite3.Row]] = []
-            for item in rows:
+            for item in selected_rows:
                 round_id = self._feedback_processing_round_pointer(
                     item,
                     require_positive=True,
@@ -18665,17 +18739,17 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         commit_is_ancestor=commit_is_ancestor,
                     )
                 verified.append((item, current_round))
-            placeholders = ",".join("?" for _ in item_keys)
+            placeholders = ",".join("?" for _ in selected_keys)
             source_rows = db.execute(
                 f"""
                 select key, resolved_at from ({FEEDBACK_EVENT_SQL})
                  where key in ({placeholders})
                 """,
-                item_keys,
+                selected_keys,
             ).fetchall()
             if (
-                len(source_rows) != requested_count
-                or {str(source["key"]) for source in source_rows} != set(item_keys)
+                len(source_rows) != len(selected_keys)
+                or {str(source["key"]) for source in source_rows} != set(selected_keys)
                 or any(str(source["resolved_at"] or "").strip() for source in source_rows)
             ):
                 raise ValueError("resolution requires complete source feedback membership")
@@ -18736,13 +18810,25 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "workbench_turn_id": str(current_round["workbench_turn_id"] or ""),
                     "created_at": resolution_timestamp,
                 })
-            if resolve_feedback_events(db, item_keys, resolution_timestamp) != requested_count:
+            if resolve_feedback_events(db, selected_keys, resolution_timestamp) != len(selected_keys):
                 raise ValueError("resolution source feedback changed during update")
-            cursor = db.execute(
-                "update feedback_processing_batches set status='resolved',resolved_at=?,"
-                "updated_at=? where batch_id=? and status='processing'",
-                (resolution_timestamp, resolution_timestamp, cleaned_batch_id),
-            )
+            remaining = db.execute(
+                f"select count(*) from ({_native_feedback_round_projection()}) "
+                "where batch_id=? and status!='resolved'",
+                (cleaned_batch_id,),
+            ).fetchone()[0]
+            if remaining == 0:
+                cursor = db.execute(
+                    "update feedback_processing_batches set status='resolved',resolved_at=?,"
+                    "updated_at=? where batch_id=? and status='processing'",
+                    (resolution_timestamp, resolution_timestamp, cleaned_batch_id),
+                )
+            else:
+                cursor = db.execute(
+                    "update feedback_processing_batches set updated_at=? "
+                    "where batch_id=? and status='processing'",
+                    (resolution_timestamp, cleaned_batch_id),
+                )
             if cursor.rowcount != 1:
                 raise ValueError("resolution batch changed during update")
             return True

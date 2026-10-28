@@ -844,6 +844,49 @@ def test_sent_revision_supersedes_same_task_pre_action_failure(tmp_path, pre_act
     assert store.supersede_failed_wechat_deliveries_with_newer_sent() == 0
 
 
+def test_superseding_a_stale_generation_delivery_keeps_the_attempt_sent(tmp_path):
+    """Attempt 16295 (2026-10-28): the rerun's delivery was sent, then the first
+    generation's failed draft was closed as superseded and its write-back turned
+    the same Attempt into ``skipped``. A stale generation must not write back."""
+    store = _store(tmp_path)
+    store.enqueue_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="m1",
+        trigger_create_time="2026-07-28T10:01:00", trigger_sender="Alex",
+        trigger_text="message",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id="u1", conversation_title="Alex",
+        trigger_message_id="m1", trigger_sender="Alex", trigger_text="message",
+        action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    old_id = create_wechat_delivery(store,
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="old reply",
+    )
+    store.mark_wechat_delivery_sending(old_id)
+    store.set_wechat_delivery_status(
+        old_id, "failed", error="wechat_ui_not_ready", pre_action_failure=True,
+    )
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+
+    store.rotate_reply_task_execution_generation(1)
+    newer_id = create_wechat_delivery(store,
+        reply_task_id=1, account_id="acct-1", target_type="direct",
+        target_id="u1", conversation_id="u1", reply_text="revised reply",
+    )
+    store.mark_wechat_delivery_sending(newer_id)
+    store.set_wechat_delivery_status(newer_id, "sent")
+
+    old = store.get_wechat_delivery_by_id(old_id)
+    assert old.status == "superseded"
+    assert old.error == f"superseded_by_newer_wechat_delivery:{newer_id}"
+    attempt = store.get_reply_attempt(attempt_id)
+    assert attempt.send_status == "sent"
+    assert attempt.send_error == ""
+
+
 def test_newer_sent_delivery_supersedes_older_action_not_performed(tmp_path):
     store = _store(tmp_path)
     tasks = []

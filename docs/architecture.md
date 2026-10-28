@@ -4,8 +4,8 @@
 
 Run／采用结果只保留当前正面声明和真实身份／来源维护，不再生成旧字段全集映射。
 11项当前receipt SQL直接固定，逐字等于原生成结果，不改写旧execution_id声明。
-过期的9个release/source模块、旧copy工具和专用转换测试退出；当前显式Feedback
-28.2→28.3发布及新增数据inverse保留。所需历史Configs源SQL只在测试夹具中。
+过期的9个release/source模块、旧copy工具和专用转换测试退出；本批4022验收时保留的显式Feedback
+28.2→28.3发布及新增数据inverse有独立证据；后发28.4由另一任务负责。所需历史Configs源SQL只在测试夹具中。
 四张identity_map的身份事实、当前coalescer和历史查询不变。当前触发器重解析回归
 仍执行两次ALTER及EXPLAIN UPDATE；不因旧测试容器退休而取消当前覆盖。
 所有463项SQL与前一当前声明逐字一致，不新增schema版本、运行时兼容或policy。
@@ -241,6 +241,10 @@ Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`ac
 WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 类型化明细由各自 owner 表持有。原来源类型及迁移结构不是当前运行时 kind 或
 兼容层。当前字段、约束和类型定义见 `app/task_run_entity_definitions.py`。
+
+Feedback processing 仍按批次领取，但结案可按 `feedback_ids` 指定批内项目。每个选中项目
+必须独立满足原有证据与关联校验；未选项目保持原状态，批次在全部项目结案前仍为
+`processing`。再次处理只选择未结案项目，不重放已结案项目的任务或外部动作。
 
 截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。下方按 Task2D、Task3E
 等阶段记录的“未启用”“仍待后续验收”“候选”等状态，是各阶段当时的历史实现边界，
@@ -1513,6 +1517,11 @@ agent run 通过 `sent_reply_observers` 关联到它。History 因此既能显�
 会从 append-only Consumer/Audit typed results 修复缺失的 `external_action_results`、`sent_replies`
 与 observer；该修复不重放 provider 动作，也不改写历史 run/event。
 
+会议日历事件可在标题不同的情况下关联到听记：听记创建者姓名必须与唯一、时间重叠且边界偏差在既有容差内的已确认日历事件中的一位参会人精确匹配。候选事件仍须唯一；创建者或事件关联有歧义时不推断参会人身份。
+
+既有 `needs_human` Meeting 可按精确 meeting ID 刷新来源并重新分析。原 Runs 保持不可变；任务锁、活动运行、投递 claim、已准备消息或外部回执会阻止重开。重新排队后仍经过原 Consumer、独立 Audit 和投递门禁。
+同一 Meeting Task 的内容修订若丢失了前一轮已经读取的群候选，后续 Consumer 会收到该候选及原证据，避免只改正文时丢掉目标上下文；这只恢复候选输入，不代表 Audit 批准或触发发送。
+
 会议总结按受众拆分内容。业务会议的普通结论、安排和行动发送到 Agent 根据实时业务承接证据
 选择的群；人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假内容不得进入该群消息，
 而是仅在收件人身份、职责和披露授权均有实时证据时，作为独立私聊消息发送给经核验的
@@ -2437,6 +2446,8 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 
 微信投递只有在独立审核批准了「完全相同的目标和文本」之后才能被领取发送。放行判定只认一种证据：投递证据里的 `standard_candidate_id`、`standard_review_id`、`standard_action_identity`，指向被采纳的候选、它的 Audit 批准和候选里的 `wechat / send_message` 动作。原微信流水线（`WechatReplyConsumer`、`WechatDecisionRunner`、`WechatDeliveryAuditor`、`audit_run_id` 证据、`wechat_audit_rejected` 失败）与相关入口已删除。
 
+投递状态回写 Attempt 只认任务当前执行代（Derek 2026-10-28）：旧代的失败投递被新代已发送投递标为 `superseded` 时不再回写同一个 Attempt，避免把刚发送成功的状态覆盖成 `skipped`。Reader 对本机微信显示不了的 appmsg 输出 `[无法显示的内容…]` 占位并归为 `unknown`，不再伪装成 `[链接]` 分享、不生成回复任务（细节见 runtime-mechanism）。
+
 失败微信 Attempt 的 History「重试」API 先只读对账，不再次发送：当前已审核候选、审核、执行代、动作正文和 Delivery 证据必须完全绑定。`sent` 只有在微信 Reader 从精确账号、会话和发送时间窗口读回唯一匹配的本人消息后，才能把失败 Task 结算为 `done`；`superseded` 只有在其明确 successor 链最终到达已发送且精确读回的 Delivery、旧正文在完整有限读回窗口内不存在时才能结算为 `skipped`。读回缺失、重复或窗口不完整均保留失败并返回冲突。原失败 Attempt、Run 和动作记录不改写；该 API 不创建 Sender，也不重放消息。
 
 内部处理失败的正式 API 是 `POST /api/console/history/{attempt_id}/rerun`：它把同一业务输入送回原任务流程，由原审核和投递门禁重新处理，不需要通过聊天确认卡回复。`/retry` 仅用于上段所述的外部动作读回对账，不能替代或触发重跑。
@@ -2446,6 +2457,8 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 ### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
 
 标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（传入预备消息）。后台 sender loop 在 `auto` 模式重试已审核的 `ready_to_send` 投递时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须复用同一代次、候选、审核、动作身份和最终正文精确匹配的已持久化预备消息。旧投递可使用 `wechat:{delivery_id}` 键，但不能新建或重构正文；证据不全或正文不匹配时，API 在重新入队前报错，且不调用发送器。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，不从未知状态重发），发送前失败→failed（重试可再次发送），被取代→business_state_changed。sender loop 只在 `auto` 且发送开关启用时消费投递；`confirm` 模式保留显式确认流程。
+
+微信界面操作（发送、打开会话核对标题、Console「打开这条微信」）由一轮 Codex computer use 完成（Derek 2026-10-28）：它用虚拟鼠标在后台操作微信，不动用户的真鼠标、不把微信切到前台。`app/wechat/codex_runner.py` 的 `CodexWechatRunner` 以运行 workload `wechat_ui` 执行，要求路线能力 `desktop_computer_use`；该能力只声明在用 ChatGPT 账号登录的 Codex CLI 路线上（`runtime_route_surface_capabilities`），Claude、API key 路线和 Friday 没有，因此不会被选中；没有可用路线时投递记发送前失败、等待路线恢复。发送轮次按提示打开会话（有触发原文时只从最近会话列表按原文预览挑选、不用搜索），标题不等于目标即停止，逐字键入预备正文（不粘贴、不直接写输入框，换行用 Shift+Return），核对输入框后只按一次回车。按了回车不算送达：`WechatSendMessageHandler` 随后最多 6 次、每次间隔 5 秒读微信自己的消息库，同一会话里出现逐字相同的本人消息才记 `sent`，否则保持 `send_unknown` 交给对账，绝不重发。被动 readiness 只看屏幕未锁且微信进程在运行。
 
 ### 任务长期记忆
 

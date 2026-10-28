@@ -626,6 +626,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "replay-recent-meetings":
             subparser.add_argument("--limit", type=_positive_int, required=True)
             subparser.add_argument("--offset", type=_non_negative_int, default=0)
+            subparser.add_argument("--meeting-id", type=_non_blank)
         if command == "backfill-minutes-owners":
             subparser.add_argument(
                 "--limit",
@@ -3655,6 +3656,7 @@ def replay_recent_meetings_command(
     *,
     limit: int,
     offset: int = 0,
+    meeting_id: str | None = None,
 ) -> list[dict[str, object]]:
     try:
         results = queue_recent_meeting_alignment_replay(
@@ -3663,6 +3665,7 @@ def replay_recent_meetings_command(
             now=datetime.now().astimezone(),
             limit=limit,
             offset=offset,
+            meeting_id=meeting_id,
         )
     except DwsError as exc:
         results = [
@@ -3746,7 +3749,7 @@ def _run_wechat_sender_loop(settings: WorkerSettings) -> None:
             time.sleep(15)
     account = _wx.account_from_state(state)
     reader = _wx.build_reader()
-    wsender = WechatSender(store, _wx.build_sender())
+    wsender = WechatSender(store, _wx.build_sender(store))
     interval = 15
     consecutive_sqlite_lock_failures = 0
     consecutive_reader_failures = 0
@@ -5083,6 +5086,7 @@ def main() -> None:
             settings,
             limit=args.limit,
             offset=args.offset,
+            meeting_id=args.meeting_id,
         )
 
 

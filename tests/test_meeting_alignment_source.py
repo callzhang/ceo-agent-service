@@ -607,6 +607,99 @@ def test_build_calendar_evidence_accepts_real_delayed_meeting_shape():
     assert evidence.creator.name == "A"
 
 
+def test_calendar_title_mismatch_matches_unique_overlapping_minutes_creator_attendee():
+    info = live_minutes_info()
+    info["result"]["title"] = "HSW主观任务评估范式与成本优化"
+    list_item = discovery_list_item(
+        flashUserInfo={"name": "A", "userId": "u-a"}
+    )
+    event = calendar_event(
+        title="HSW孙老师交流",
+        attendee_details=[
+            DwsCalendarAttendee(
+                display_name="Derek",
+                is_self=True,
+                response_status="accepted",
+                user_id="u-derek",
+                open_dingtalk_id="open-derek",
+            ),
+            DwsCalendarAttendee(
+                display_name="A",
+                response_status="accepted",
+                user_id="u-a",
+                open_dingtalk_id="open-a",
+            ),
+        ],
+    )
+
+    evidence = build_calendar_meeting_evidence(
+        info,
+        [event],
+        "u-derek",
+        creator=minutes_creator_from_list_item(list_item),
+    )
+
+    assert evidence.event_id == "event-1"
+    assert {participant.user_id for participant in evidence.participants} == {
+        "u-derek",
+        "u-a",
+    }
+    creator = minutes_creator_from_list_item(list_item)
+
+    class MismatchedTitleDws(FakeDws):
+        def get_minutes_info(self, meeting_id: str) -> dict:
+            assert meeting_id == "minutes-1"
+            return info
+
+    source = read_meeting_source(
+        MismatchedTitleDws(),
+        "minutes-1",
+        calendar_evidence=evidence,
+        creator=creator,
+    )
+    assert {participant.user_id for participant in source.participants} == {
+        "u-derek",
+        "u-a",
+    }
+
+
+def test_calendar_title_mismatch_without_exact_creator_attendee_stays_unresolved():
+    info = live_minutes_info()
+    info["result"]["title"] = "HSW主观任务评估范式与成本优化"
+
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(
+            info,
+            [calendar_event(title="HSW孙老师交流")],
+            "u-derek",
+        )
+
+
+def test_calendar_title_mismatch_rejects_conflicting_creator_and_attendee_ids():
+    info = live_minutes_info()
+    info["result"]["title"] = "HSW主观任务评估范式与成本优化"
+    list_item = discovery_list_item(
+        flashUserInfo={"name": "A", "userId": "u-from-minutes"}
+    )
+    event = calendar_event(
+        title="HSW孙老师交流",
+        attendee_details=[
+            DwsCalendarAttendee(
+                display_name="Derek", is_self=True, user_id="u-derek"
+            ),
+            DwsCalendarAttendee(display_name="A", user_id="u-calendar"),
+        ],
+    )
+
+    with pytest.raises(MeetingSourceIncomplete, match="exactly one"):
+        build_calendar_meeting_evidence(
+            info,
+            [event],
+            "u-derek",
+            creator=minutes_creator_from_list_item(list_item),
+        )
+
+
 def test_build_calendar_evidence_leaves_ambiguous_creator_unresolved():
     event = calendar_event(
         organizer="A",

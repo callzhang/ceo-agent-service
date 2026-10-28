@@ -5,7 +5,7 @@ from typing import Any, Literal, Protocol
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-from app.dws_client import DwsCalendarEvent, DwsClient, DwsError
+from app.dws_client import DwsCalendarAttendee, DwsCalendarEvent, DwsClient, DwsError
 from app.meeting_alignment_models import (
     MeetingParticipant,
     MeetingSource,
@@ -204,6 +204,7 @@ def read_meeting_source(
             calendar_evidence,
             current_user_id,
             transcription,
+            creator,
         ),
         transcription,
         current_user_id=current_user_id,
@@ -439,10 +440,13 @@ def _merge_calendar_evidence(
     evidence: CalendarMeetingEvidence,
     current_user_id: str,
     transcription: dict[str, Any] | list[dict[str, Any]],
+    creator: MeetingParticipant | None,
 ) -> dict[str, Any]:
     live = dict(_payload_data(info))
     _validate_metadata_aliases(live)
-    _verify_calendar_evidence(live, evidence, current_user_id, transcription)
+    _verify_calendar_evidence(
+        live, evidence, current_user_id, transcription, creator=creator
+    )
     live["participants"] = [
         participant.model_dump() for participant in evidence.participants
     ]
@@ -453,10 +457,16 @@ def build_calendar_meeting_evidence(
     info: dict[str, Any],
     events: list[DwsCalendarEvent],
     current_user_id: str,
+    *,
+    creator: MeetingParticipant | None = None,
 ) -> CalendarMeetingEvidence:
     data = _payload_data(info)
     _validate_metadata_aliases(data)
-    matches = [event for event in events if _calendar_event_matches(data, event)]
+    matches = [
+        event
+        for event in events
+        if _calendar_event_matches(data, event, creator=creator)
+    ]
     if len(matches) != 1:
         raise MeetingSourceIncomplete("meeting requires exactly one calendar event")
     event = matches[0]
@@ -534,15 +544,16 @@ def build_transcript_roster_evidence(
     )
 
 
-def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bool:
+def _calendar_event_matches(
+    data: dict[str, Any],
+    event: DwsCalendarEvent,
+    *,
+    creator: MeetingParticipant | None = None,
+) -> bool:
     if not event.event_id.strip() or event.status.strip().casefold() != "confirmed":
         return False
     metadata = _discovery_metadata_fields(data)
     title = metadata["title"]
-    normalized_title = _normalized_title(title)
-    normalized_event_title = _normalized_title(event.title)
-    if not normalized_title or normalized_title != normalized_event_title:
-        return False
     try:
         meeting_start = _parsed_time(metadata["started_at"])
         meeting_end = _parsed_time(metadata["ended_at"])
@@ -550,7 +561,7 @@ def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bo
         event_end = _parsed_time(_normalized_time(event.end_time))
     except MeetingSourceIncomplete:
         return False
-    return (
+    time_matches = (
         meeting_start < event_end
         and event_start < meeting_end
         and abs(meeting_start.timestamp() - event_start.timestamp())
@@ -558,6 +569,26 @@ def _calendar_event_matches(data: dict[str, Any], event: DwsCalendarEvent) -> bo
         and abs(meeting_end.timestamp() - event_end.timestamp())
         <= CALENDAR_BOUNDARY_DRIFT_SECONDS
     )
+    if not time_matches:
+        return False
+    normalized_title = _normalized_title(title)
+    if normalized_title and normalized_title == _normalized_title(event.title):
+        return True
+    if creator is None or not creator.name.strip():
+        return False
+    creator_attendees = [
+        detail
+        for detail in event.attendee_details
+        if detail.display_name.strip()
+        and _normalized_title(detail.display_name)
+        == _normalized_title(creator.name)
+        and not (
+            creator.user_id.strip()
+            and detail.user_id.strip()
+            and creator.user_id.strip() != detail.user_id.strip()
+        )
+    ]
+    return len(creator_attendees) == 1
 
 
 def _verify_calendar_evidence(
@@ -565,6 +596,8 @@ def _verify_calendar_evidence(
     evidence: CalendarMeetingEvidence,
     current_user_id: str,
     transcription: dict[str, Any] | list[dict[str, Any]],
+    *,
+    creator: MeetingParticipant | None,
 ) -> None:
     if evidence.source == "transcript":
         current = [
@@ -596,8 +629,17 @@ def _verify_calendar_evidence(
         start_time=evidence.started_at,
         end_time=evidence.ended_at,
         status="confirmed",
+        attendee_details=[
+            DwsCalendarAttendee(
+                display_name=participant.name,
+                is_self=participant.user_id == current_user_id,
+                user_id=participant.user_id,
+                open_dingtalk_id=participant.open_dingtalk_id,
+            )
+            for participant in evidence.participants
+        ],
     )
-    if not _calendar_event_matches(data, event):
+    if not _calendar_event_matches(data, event, creator=creator):
         raise MeetingSourceIncomplete("calendar evidence is stale or mismatched")
     if sum(p.user_id == current_user_id for p in evidence.participants) != 1:
         raise MeetingSourceIncomplete("calendar evidence lacks stable current user")

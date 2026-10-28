@@ -695,6 +695,32 @@ def test_producer_hydrates_missing_calendar_attendee_identity(tmp_path):
     }
 
 
+def test_producer_uses_minutes_creator_to_match_overlapping_calendar_event(
+    tmp_path,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    meeting["flashUserInfo"] = {"name": "A", "userId": "u-a"}
+    event = matching_calendar_event(title="HSW孙老师交流")
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        calendar_pages={"": {"events": [event], "has_more": False, "next_cursor": ""}},
+        info={"minutes-1": ended_meeting()},
+    )
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    assert job.status == "pending"
+    evidence = json.loads(job.source_json)["calendar_evidence"]
+    assert evidence["event_id"] == "event-1"
+    assert {participant["user_id"] for participant in evidence["participants"]} == {
+        "u-derek",
+        "u-a",
+    }
+
+
 def _fake_resolve_sent_message_reference(self, open_task_id: str) -> dict:
     """Answer where a send landed, the way the provider's status call does."""
     self.__dict__.setdefault("resolved", []).append(open_task_id)
@@ -965,6 +991,49 @@ def test_replay_reports_transcript_source_failure_without_calendar_label(tmp_pat
 
     assert results[0]["outcome"] == "source_unavailable"
     assert "transcript roster unavailable" in results[0]["error"]
+
+
+def test_exact_replay_refreshes_needs_human_source_before_ordinary_audit(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    meeting["flashUserInfo"] = {"name": "A", "userId": "u-a"}
+    dws = FakeDws(
+        minutes_pages={"": {"items": [meeting], "has_more": False, "next_token": ""}},
+        calendar_pages={
+            "": {
+                "events": [matching_calendar_event(title="HSW孙老师交流")],
+                "has_more": False,
+                "next_cursor": "",
+            }
+        },
+    )
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id="minutes-1",
+        title="HSW主观任务评估范式与成本优化",
+        source_json='{"old_source":true}',
+        participants_json="[]",
+        ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(),
+        status="needs_human",
+    )
+
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=1,
+        meeting_id="minutes-1",
+    )
+
+    assert results[0]["outcome"] == "queued"
+    assert results[0]["job_id"] == job_id
+    replayed = store.get_meeting_alignment_job(job_id)
+    assert replayed.status == "pending"
+    assert json.loads(replayed.source_json)["calendar_evidence"]["source"] == "calendar"
+    assert {
+        participant["user_id"]
+        for participant in json.loads(replayed.source_json)["calendar_evidence"]["participants"]
+    } == {"u-derek", "u-a"}
 
 
 def test_producer_skips_ambiguous_calendar_matches_without_creating_needs_human(tmp_path):
@@ -1330,7 +1399,8 @@ def test_replay_requeues_recent_failed_unsent_meeting_and_refreshes_source(tmp_p
     assert results[1]["job_id"] == old_id
 
 
-def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_path):
+@pytest.mark.parametrize("status", ["failed", "needs_human"])
+def test_replay_keeps_prepared_delivery_on_recovery_path(tmp_path, status):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     meeting = ended_meeting(meeting_id="minutes-prepared")
     dws = FakeDws(
@@ -1344,7 +1414,7 @@ def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_pat
         participants_json="[]",
         ended_at=meeting["endTimeISO"],
         eligible_at=NOW.isoformat(),
-        status="failed",
+        status=status,
     )
     delivery_key = f"meeting-alignment:{job_id}:{meeting['taskUuid']}"
     store.prepare_meeting_alignment_message(
@@ -1356,12 +1426,18 @@ def test_replay_keeps_failed_job_with_prepared_delivery_on_recovery_path(tmp_pat
         feedback_base_url="",
     )
 
-    results = queue_recent_meeting_alignment_replay(store, dws, now=NOW, limit=50)
+    results = queue_recent_meeting_alignment_replay(
+        store,
+        dws,
+        now=NOW,
+        limit=50,
+        meeting_id=meeting["taskUuid"] if status == "needs_human" else None,
+    )
 
-    assert results[0]["outcome"] == "failed"
+    assert results[0]["outcome"] == status
     assert results[0]["job_id"] == job_id
     replayed = store.get_meeting_alignment_job(job_id)
-    assert replayed.status == "failed"
+    assert replayed.status == status
     assert replayed.title == "Original title"
     assert replayed.source_json == "{\"original\":true}"
     assert store.get_outbound_postfix("dingtalk", delivery_key).final_body.startswith(
@@ -2540,6 +2616,56 @@ def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_pat
     )
     assert selected["topic_discussion_evidence"]
     assert member_reads == ["cid-sales-hiring"]
+
+
+def test_same_task_prior_group_candidate_survives_content_revision():
+    prior_runs = [SimpleNamespace(
+        decision_json=json.dumps({
+            "action": "send",
+            "target": {
+                "kind": "group",
+                "conversation_id": "cid-algorithm",
+                "direct_user_id": "",
+                "title": "算法交流群",
+                "candidates": [{
+                    "conversation_id": "cid-algorithm",
+                    "title": "算法交流群",
+                    "evidence": [
+                        "完整名册：12名成员。",
+                        "当日讨论了HSW方法论、建模和Benchmark。",
+                    ],
+                }],
+            },
+        }),
+    )]
+
+    candidates = meeting_alignment._carry_forward_same_task_group_candidate(
+        [], prior_runs
+    )
+
+    assert candidates == [{
+        "conversation_id": "cid-algorithm",
+        "title": "算法交流群",
+        "prior_same_task_target": True,
+        "prior_same_task_evidence": [
+            "完整名册：12名成员。",
+            "当日讨论了HSW方法论、建模和Benchmark。",
+        ],
+    }]
+
+    current = [{
+        "conversation_id": "cid-algorithm",
+        "title": "算法交流群",
+        "member_roster_complete": True,
+    }]
+    merged = meeting_alignment._carry_forward_same_task_group_candidate(
+        current, prior_runs
+    )
+    assert len(merged) == 1
+    assert merged[0]["member_roster_complete"] is True
+    assert merged[0]["prior_same_task_evidence"] == candidates[0][
+        "prior_same_task_evidence"
+    ]
 
 
 def test_live_group_member_failure_retries_before_meeting_decision(tmp_path):

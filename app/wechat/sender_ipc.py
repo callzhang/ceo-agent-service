@@ -12,7 +12,11 @@ import stat
 import struct
 from typing import Any
 
-from app.wechat.accessibility import AccessibilityResult, SenderExecutionError
+from app.wechat.accessibility import (
+    SECONDS_PER_TYPED_CHAR,
+    AccessibilityResult,
+    SenderExecutionError,
+)
 
 
 PROTOCOL_VERSION = 3
@@ -199,14 +203,16 @@ class WechatSenderClient:
         self.timeout_seconds = timeout_seconds
         self.max_response_bytes = max_response_bytes
 
-    def _request(self, method: str, params: dict | None = None) -> Any:
+    def _request(
+        self, method: str, params: dict | None = None, *, extra_seconds: float = 0.0,
+    ) -> Any:
         request = json.dumps({
             "protocol_version": PROTOCOL_VERSION,
             "method": method,
             "params": params or {},
         }, separators=(",", ":")).encode("utf-8") + b"\n"
         with socket.socket(socket.AF_UNIX, socket.SOCK_STREAM) as connection:
-            connection.settimeout(self.timeout_seconds)
+            connection.settimeout(self.timeout_seconds + extra_seconds)
             try:
                 connection.connect(str(self.socket_path))
             except (OSError, TimeoutError) as exc:
@@ -270,7 +276,10 @@ class WechatSenderClient:
         }
         if skip_idle_wait:
             params["skip_idle_wait"] = True
-        return AccessibilityResult(**self._request("send", params))
+        # The reply is typed key by key, so a long one needs more time.
+        return AccessibilityResult(**self._request(
+            "send", params, extra_seconds=SECONDS_PER_TYPED_CHAR * len(reply_text),
+        ))
 
     def recall_last_outbound(self, text: str) -> bool:
         return bool(self._request("recall_last_outbound", {"text": text}))

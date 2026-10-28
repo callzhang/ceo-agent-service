@@ -75,6 +75,7 @@ tests/test_hourly_dry_run_launchd.py
 tests/test_leak_check.py
 tests/test_legacy_email_task_input_owner.py
 tests/test_main_launchd_resource_class.py
+tests/test_meeting_alignment.py
 tests/test_meeting_alignment_source.py
 tests/test_meeting_alignment_agent.py
 tests/test_meeting_alignment_delivery.py
@@ -152,6 +153,7 @@ tests/test_wechat_skill_package.py
 tests/test_work_profile.py
 tests/test_workbench_codex_runtime.py
 tests/test_workbench_runtime.py
+tests/wechat/test_accessibility.py
 tests/wechat/test_article.py
 tests/wechat/test_backend.py
 tests/wechat/test_discovery.py
@@ -327,6 +329,7 @@ tests/test_business_task_event_actions_runtime.py
 tests/test_error_code_migration.py
 tests/test_oa_notification_routing.py
 tests/test_feedback_events.py
+tests/test_feedback_processing_e2e.py
 tests/test_consumer_access_request_continuation.py
 tests/test_workbench_confirmation_retirement_api.py
 tests/test_email_account_connector.py
@@ -405,3 +408,5 @@ tests/test_wechat_voice_transcript_cache.py
 tests/test_feedback_owner_schema_release.py
 tests/test_business_candidate_storage.py
 tests/test_business_legacy_owner_storage.py
+tests/wechat/test_codex_runner.py
+tests/wechat/test_send_message_handler.py

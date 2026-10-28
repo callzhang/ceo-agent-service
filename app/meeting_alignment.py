@@ -347,6 +347,7 @@ def produce_meeting_alignment_jobs(
                 matcher_info,
                 events,
                 current_user_id=current_user_id,
+                creator=minutes_creator_from_list_item(list_item),
             )
         except MeetingSourceIncomplete as exc:
             _store_meeting_discovery_terminal_job(
@@ -457,6 +458,7 @@ def queue_recent_meeting_alignment_replay(
     now: datetime,
     limit: int,
     offset: int = 0,
+    meeting_id: str | None = None,
     settle_seconds: int = 600,
     discovery_lookback: timedelta = DEFAULT_MEETING_DISCOVERY_LOOKBACK,
     feature_registry: FeatureRegistry | None = None,
@@ -467,6 +469,8 @@ def queue_recent_meeting_alignment_replay(
         raise ValueError("meeting replay limit must be positive")
     if offset < 0:
         raise ValueError("meeting replay offset must not be negative")
+    if meeting_id is not None and not meeting_id.strip():
+        raise ValueError("meeting replay ID must not be blank")
     fetch_limit = limit + offset
     if fetch_limit > REPLAY_PAGE_SIZE_LIMIT:
         raise ValueError(
@@ -483,18 +487,30 @@ def queue_recent_meeting_alignment_replay(
     current_user_id = dws.get_current_user_id().strip()
     if not current_user_id:
         raise DwsError("meeting producer current user id is missing")
-    page = dws.list_minutes_page(
-        limit=fetch_limit,
-        cursor="",
-        start=(now - discovery_lookback).isoformat(),
-        end=now.isoformat(),
-    )
-    raw_items = page.get("items")
-    if not isinstance(raw_items, list):
-        raise DwsError("meeting replay minutes page items must be a list")
+    start = (now - discovery_lookback).isoformat()
+    end = now.isoformat()
+    if meeting_id is not None:
+        raw_items = [
+            item
+            for item in _list_all_minutes(dws, start=start, end=end)
+            if minutes_meeting_id(item) == meeting_id
+        ]
+        if not raw_items:
+            raise DwsError("requested meeting ID was not found in recent Minutes")
+    else:
+        page = dws.list_minutes_page(
+            limit=fetch_limit,
+            cursor="",
+            start=start,
+            end=end,
+        )
+        raw_items = page.get("items")
+        if not isinstance(raw_items, list):
+            raise DwsError("meeting replay minutes page items must be a list")
 
     results: list[dict[str, Any]] = []
-    for list_item in raw_items[offset:fetch_limit]:
+    selected_items = raw_items if meeting_id is not None else raw_items[offset:fetch_limit]
+    for list_item in selected_items:
         if not isinstance(list_item, dict):
             results.append(
                 {
@@ -544,7 +560,7 @@ def queue_recent_meeting_alignment_replay(
                 result["outcome"] = "already_sent"
                 results.append(result)
                 continue
-            if existing.status not in {"no_action", "failed"}:
+            if existing.status not in {"no_action", "failed", "needs_human"}:
                 result["outcome"] = existing.status
                 results.append(result)
                 continue
@@ -572,6 +588,7 @@ def queue_recent_meeting_alignment_replay(
                 matcher_info,
                 events,
                 current_user_id=current_user_id,
+                creator=minutes_creator_from_list_item(list_item),
             )
         except MeetingSourceIncomplete as exc:
             result["outcome"] = "source_unavailable"
@@ -602,7 +619,9 @@ def queue_recent_meeting_alignment_replay(
             ensure_ascii=False,
             sort_keys=True,
         )
-        if existing is not None and existing.status in {"no_action", "failed"}:
+        if existing is not None and existing.status in {
+            "no_action", "failed", "needs_human"
+        }:
             reopened = store.reopen_meeting_alignment_job_for_replay(
                 existing.id,
                 title=metadata.title,
@@ -1166,6 +1185,61 @@ def _search_meeting_group_candidates(
     return candidates
 
 
+def _carry_forward_same_task_group_candidate(
+    current_candidates: list[dict[str, Any]],
+    prior_runs: list[MeetingAlignmentRun],
+) -> list[dict[str, Any]]:
+    """Keep one previously read group candidate available across same-task revisions.
+
+    A content-only Audit return must not make a later Consumer forget the
+    candidate it already read. The candidate remains ordinary input: the
+    Consumer chooses again and independent Audit still decides whether delivery
+    is approved.
+    """
+    result = [dict(candidate) for candidate in current_candidates]
+    for run in prior_runs:
+        try:
+            payload = json.loads(run.decision_json)
+        except (TypeError, json.JSONDecodeError):
+            continue
+        if not isinstance(payload, dict) or payload.get("action") != "send":
+            continue
+        target = payload.get("target")
+        if not isinstance(target, dict) or target.get("kind") != "group":
+            continue
+        conversation_id = str(target.get("conversation_id") or "").strip()
+        if not conversation_id:
+            continue
+        candidates = target.get("candidates")
+        if not isinstance(candidates, list):
+            continue
+        selected = next((
+            candidate for candidate in candidates
+            if isinstance(candidate, dict)
+            and str(candidate.get("conversation_id") or "").strip() == conversation_id
+        ), None)
+        if selected is None:
+            continue
+        evidence = selected.get("evidence")
+        prior_evidence = (
+            [item for item in evidence if isinstance(item, str)]
+            if isinstance(evidence, list) else []
+        )
+        for current in result:
+            if str(current.get("conversation_id") or "").strip() == conversation_id:
+                current["prior_same_task_target"] = True
+                current["prior_same_task_evidence"] = prior_evidence
+                return result
+        result.append({
+            "conversation_id": conversation_id,
+            "title": str(selected.get("title") or target.get("title") or ""),
+            "prior_same_task_target": True,
+            "prior_same_task_evidence": prior_evidence,
+        })
+        return result
+    return result
+
+
 def _meeting_topic_terms(text: str) -> list[str]:
     from app.jieba_loader import jieba_lcut
 
@@ -1292,6 +1366,10 @@ def _analyze_meeting_job(
         )
         return
 
+    group_candidates = _carry_forward_same_task_group_candidate(
+        group_candidates,
+        store.list_meeting_alignment_runs(job.id),
+    )
     similar_sessions = _search_similar_meeting_sessions(
         store,
         source,
@@ -2305,9 +2383,12 @@ def _build_meeting_roster_evidence(
     events: list[DwsCalendarEvent],
     *,
     current_user_id: str,
+    creator: MeetingParticipant | None = None,
 ) -> CalendarMeetingEvidence:
     try:
-        evidence = build_calendar_meeting_evidence(info, events, current_user_id)
+        evidence = build_calendar_meeting_evidence(
+            info, events, current_user_id, creator=creator
+        )
         return _hydrate_calendar_participant_identities(dws, evidence)
     except MeetingSourceIncomplete:
         try:

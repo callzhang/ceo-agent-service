@@ -992,7 +992,7 @@ def register_console_routes(
         if scope is None:
             return JSONResponse({"ok": False, "code": "not_configured", "message": "该微信会话未在 Config 中配置", "details": {}}, status_code=409)
         from app.wechat import service
-        visible_title = service.build_sender().open_and_identify(
+        visible_title = service.build_sender(store).open_and_identify(
             scope.display_name,
             search_query=scope.display_name,
             expected_recent_text=None,
@@ -1605,6 +1605,7 @@ def register_console_routes(
             "health_evidence",
             "health",
             "associations",
+            "feedback_ids",
         }
         if set(payload) - allowed:
             return JSONResponse(
@@ -1612,6 +1613,23 @@ def register_console_routes(
                     "ok": False,
                     "code": "feedback_resolution_invalid",
                     "message": "unsupported feedback resolution field",
+                    "details": {},
+                },
+                status_code=409,
+            )
+        feedback_ids = payload.get("feedback_ids")
+        if feedback_ids is not None and (
+            not isinstance(feedback_ids, list)
+            or not feedback_ids
+            or any(not isinstance(key, str) or not key.strip() for key in feedback_ids)
+            or len({key.strip() for key in feedback_ids if isinstance(key, str)})
+            != len(feedback_ids)
+        ):
+            return JSONResponse(
+                {
+                    "ok": False,
+                    "code": "feedback_resolution_invalid",
+                    "message": "feedback_ids must be a non-empty list of unique feedback keys",
                     "details": {},
                 },
                 status_code=409,
@@ -1630,7 +1648,10 @@ def register_console_routes(
             )
         try:
             evidence = ResolutionEvidence.model_validate(
-                {**payload, "backlog_evidence": backlog_evidence}
+                {
+                    **{key: value for key, value in payload.items() if key != "feedback_ids"},
+                    "backlog_evidence": backlog_evidence,
+                }
             )
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_invalid", "message": str(exc), "details": {}}, status_code=409)
@@ -1665,12 +1686,22 @@ def register_console_routes(
                 batch_id,
                 evidence,
                 commit_is_ancestor=True,
+                feedback_keys=feedback_ids,
             )
         except (ValueError, subprocess.SubprocessError, OSError) as exc:
             return JSONResponse({"ok": False, "code": "feedback_resolution_incomplete", "message": str(exc), "details": {}}, status_code=409)
         if not resolved:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Feedback batch not found", "details": {}}, status_code=404)
-        return command_result(item={"batch_id": batch_id, "status": "resolved"}, message="反馈批次已解决")
+        current_batch = store_factory().get_feedback_processing_batch(batch_id)
+        status = current_batch.status if current_batch is not None else "processing"
+        return command_result(
+            item={"batch_id": batch_id, "status": status},
+            message=(
+                "反馈批次已解决"
+                if status == "resolved"
+                else "已结案所选反馈项，批次仍有未结项"
+            ),
+        )
 
     @app.get("/api/console/feedback/{feedback_id}")
     def console_feedback_detail(feedback_id: str):
@@ -2574,7 +2605,7 @@ def register_console_routes(
         try:
             from app.wechat.accessibility import WechatSender
             store = store_factory()
-            sender = WechatSender(store, service.build_sender(), user_initiated=True)
+            sender = WechatSender(store, service.build_sender(store), user_initiated=True)
             result = service.approve_wechat_delivery(store, sender, delivery_id)
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "发送失败", "details": {"reason": normalize_display_value(exc)}}, status_code=409)
@@ -2587,7 +2618,7 @@ def register_console_routes(
         try:
             from app.wechat.accessibility import WechatSender
             store = store_factory()
-            sender = WechatSender(store, service.build_sender(), user_initiated=True)
+            sender = WechatSender(store, service.build_sender(store), user_initiated=True)
             result = service.retry_expired_wechat_delivery(store, sender, delivery_id)
         except Exception as exc:
             return JSONResponse({"ok": False, "code": "delivery_failed", "message": "无法重试这条微信消息", "details": {"reason": normalize_display_value(exc)}}, status_code=409)

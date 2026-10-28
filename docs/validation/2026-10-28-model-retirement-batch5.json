@@ -1,5 +1,5 @@
 {
-  "phase": "implementation_reviewed_not_deployed",
+  "phase": "deployed_accepted_cleaned",
   "source_commit": "7a6b73ee9486699c51315fd30e08315e329a0c25",
   "implementation_commits": [
     "96748f5f8",
@@ -120,12 +120,367 @@
     "Preserved current import-owner FK/delete/id mutation assertions and scalar TEXT/timestamp/type parity",
     "Preserved current ALTER TABLE/EXPLAIN trigger compilation regression in current declaration tests"
   ],
-  "production": null,
+  "production": {
+    "checked_at": "2026-10-28T11:57:07.880525+00:00",
+    "installed": "4022bbe59c5d258ab1a1a48d8a96fa6f7669e8d2",
+    "schema": {
+      "objects": 463,
+      "sha256": "ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a",
+      "foreign_keys": []
+    },
+    "feedback_item_fields": [
+      "task_id",
+      "feedback_key",
+      "batch_id",
+      "current_round_id"
+    ],
+    "no_round_resolved": 46,
+    "historical_provider_receipt_20893": [
+      20893,
+      125572,
+      "send_group_message",
+      1
+    ],
+    "operation": {
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-ca69085b-4289-4acb-a5f3-668c8311dba9.sqlite3",
+      "branch_name": "",
+      "commit_message": "",
+      "error": "",
+      "expected_fingerprint": "1c7c566ee412162fc3247141a840225e200fc60080fdacfd9f337f6c7e07fb18",
+      "installed_commit": "4022bbe59c5d258ab1a1a48d8a96fa6f7669e8d2",
+      "operation_id": "deploy-ca69085b-4289-4acb-a5f3-668c8311dba9",
+      "original_commit": "7a6b73ee9486699c51315fd30e08315e329a0c25",
+      "status": "succeeded",
+      "target_commit": "4022bbe59c5d258ab1a1a48d8a96fa6f7669e8d2",
+      "updated_at": "2026-10-28T11:54:07.091474+00:00"
+    },
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "89202",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "summary": {
+      "queue_count": 11,
+      "pending": 7,
+      "processing": 2,
+      "failed": 26,
+      "retryable": 0,
+      "attention": 1
+    },
+    "system_health": {
+      "state": "degraded",
+      "violations": 1,
+      "native_delivery_coverage": {
+        "checked": 381,
+        "unavailable": 0
+      }
+    },
+    "attention_meta": {
+      "snapshot_at": "2026-10-28T11:57:10.651964Z",
+      "page": null,
+      "page_size": null,
+      "total": 1,
+      "next_cursor": "",
+      "has_more": false
+    },
+    "history": {
+      "page1": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:57:11.138323Z",
+          "page": 1,
+          "page_size": 2,
+          "total": 39152,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "identities": [
+          [
+            "126077",
+            null,
+            "processing"
+          ],
+          [
+            "126075",
+            null,
+            "done"
+          ]
+        ]
+      },
+      "page2": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:57:11.931128Z",
+          "page": 2,
+          "page_size": 2,
+          "total": 39152,
+          "next_cursor": "3",
+          "has_more": true
+        },
+        "identities": [
+          [
+            "126073",
+            null,
+            "done"
+          ],
+          [
+            "400305",
+            null,
+            "failed"
+          ]
+        ]
+      },
+      "done": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:57:12.677829Z",
+          "page": 1,
+          "page_size": 2,
+          "total": 22922,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "identities": [
+          [
+            "126075",
+            null,
+            "done"
+          ],
+          [
+            "126073",
+            null,
+            "done"
+          ]
+        ]
+      },
+      "failed": {
+        "meta": {
+          "snapshot_at": "2026-10-28T11:57:13.509227Z",
+          "page": 1,
+          "page_size": 100,
+          "total": 20,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "identities": [
+          [
+            "400305",
+            null,
+            "failed"
+          ],
+          [
+            "400303",
+            null,
+            "failed"
+          ],
+          [
+            "16262",
+            405078,
+            "failed"
+          ],
+          [
+            "16195",
+            417637,
+            "failed"
+          ],
+          [
+            "16175",
+            417594,
+            "failed"
+          ],
+          [
+            "16152",
+            417576,
+            "failed"
+          ],
+          [
+            "16010",
+            417411,
+            "failed"
+          ],
+          [
+            "15984",
+            417170,
+            "failed"
+          ],
+          [
+            "15949",
+            417039,
+            "failed"
+          ],
+          [
+            "15921",
+            416922,
+            "failed"
+          ],
+          [
+            "15910",
+            416838,
+            "failed"
+          ],
+          [
+            "15898",
+            416816,
+            "failed"
+          ],
+          [
+            "15871",
+            416701,
+            "failed"
+          ],
+          [
+            "15868",
+            416696,
+            "failed"
+          ],
+          [
+            "15593",
+            405078,
+            "failed"
+          ],
+          [
+            "15592",
+            405076,
+            "failed"
+          ],
+          [
+            "15547",
+            405078,
+            "failed"
+          ],
+          [
+            "15546",
+            405078,
+            "failed"
+          ],
+          [
+            "15545",
+            405076,
+            "failed"
+          ],
+          [
+            "15544",
+            405076,
+            "failed"
+          ]
+        ]
+      }
+    },
+    "historical_attempt_16220": {
+      "ok": true,
+      "item_keys": [
+        "action_pills",
+        "actions",
+        "agent_execution_record",
+        "agent_sessions",
+        "audit_explanation",
+        "audit_summary",
+        "calendar",
+        "consumer_result",
+        "context_only_info",
+        "conversation",
+        "created_at",
+        "decision_options",
+        "delivery",
+        "draft_reply",
+        "email",
+        "failure_reason",
+        "feedback",
+        "generated_reply",
+        "historical_attempt",
+        "human_decision",
+        "id",
+        "metadata",
+        "oa",
+        "quality_warnings",
+        "recovery_state",
+        "references",
+        "revision_count",
+        "runtime_attempts",
+        "status",
+        "system_execution",
+        "title",
+        "tool_uses",
+        "trigger",
+        "type",
+        "updated_at",
+        "what_happened"
+      ]
+    },
+    "feedback_list": {
+      "meta": {
+        "snapshot_at": "2026-10-28T11:57:15.001111Z",
+        "page": 1,
+        "page_size": 2,
+        "total": 54,
+        "next_cursor": "2",
+        "has_more": true
+      },
+      "statuses": [
+        "processing",
+        "processing"
+      ]
+    },
+    "no_round_resolved_detail": {
+      "status": "resolved",
+      "current_round_id": 0,
+      "source_time_exact": true
+    },
+    "frontend_stamp": "52f12e56e1aebbc7834767c5328a8e88cefb9334"
+  },
   "cleanup": {
     "root_final_temp": "/private/tmp/ceo-retirement-final.xv4Wg9",
     "runner_temp": "/private/tmp/ceo-runner-retirement.tzwA6t",
     "known_implementer_temp_roots_absent": true,
-    "unowned_default_pytest_directories": "not removed; ownership not established"
+    "unowned_default_pytest_directories": "not removed; ownership not established",
+    "backup_generation": {
+      "own_generation": {
+        "inode": 832838274,
+        "mtime_ns": 1793188500913452561,
+        "bytes": 514969600
+      },
+      "own_generation_absent": true,
+      "retired_by_verified_successor_replacement": true,
+      "successor_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3",
+      "successor_generation": {
+        "inode": 832916088,
+        "mtime_ns": 1793189058547698052,
+        "bytes": 514969600
+      },
+      "successor_integrity": "ok",
+      "successor_schema_exact": true,
+      "successor_foreign_keys": [],
+      "successor_operation": "deploy-eda6f34a-bbf1-423c-a4ad-3d3f7a9a05a1",
+      "successor_deleted_by_this_task": false,
+      "reason": "Distinct concurrent release; preserve its verified generation for its owner to complete readback/cleanup."
+    },
+    "scope": "Only known task-owned artifacts; concurrent release backup generation is excluded.",
+    "owned_temporary_roots": [
+      {
+        "path": "/private/tmp/ceo-retirement-final.xv4Wg9",
+        "files_before": 3458,
+        "bytes_before": 693950960,
+        "no_open_files": true,
+        "absent": true
+      },
+      {
+        "path": "/private/tmp/ceo-runner-retirement.tzwA6t",
+        "files_before": 5,
+        "bytes_before": 6447,
+        "no_open_files": true,
+        "absent": true
+      }
+    ],
+    "publish_worktree_unregistered": true,
+    "own_workflow_complete": true
   },
   "limits": {
     "memory_gib": 2,
@@ -369,5 +724,92 @@
     "candidate_code_commit": "7c654734a",
     "actual_old_commit": "af24bc48595c0f3eb0edd80d9730f10fb37a45c6",
     "actual_old_archive_files_exact": 465
-  }
+  },
+  "successor_production": {
+    "installed": "3f126d1ad0cf8830eb68bd0168723d51f8792580",
+    "store": "2026-10-28.4",
+    "schema_objects": 464,
+    "schema_sha256": "f8fa683f9b1ab7e77ebd076686eb2969c77cfbc36e0be3cb62fed4738038b78b",
+    "foreign_keys": [],
+    "includes_batch5": true,
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "status": {
+      "summary": {
+        "queue_count": 11,
+        "pending": 6,
+        "processing": 1,
+        "failed": 26,
+        "retryable": 0,
+        "attention": 1
+      },
+      "service": {
+        "label": "com.ceo-agent-service.main",
+        "target": "gui/501/com.ceo-agent-service.main",
+        "ok": true,
+        "state": "running",
+        "detail": "running",
+        "pid": "10517",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0
+      },
+      "system_health": {
+        "state": "degraded",
+        "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 381; unavailable: 0.",
+        "checked_at": "2026-10-28T12:08:21.487793+00:00",
+        "violations": 1,
+        "components": [],
+        "native_delivery_coverage": {
+          "checked": 381,
+          "unavailable": 0
+        }
+      }
+    },
+    "attention": {
+      "meta": {
+        "snapshot_at": "2026-10-28T12:08:32.387592Z",
+        "page": null,
+        "page_size": null,
+        "total": 1,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    "retired_runtime_entrypoints_absent": true
+  },
+  "history_comparison": {
+    "before": 19,
+    "after": 20,
+    "all_baseline_identities_retained": true,
+    "added": [
+      {
+        "run_id": 400305,
+        "task_id": 417755,
+        "history_kind": "meeting",
+        "recorded_run_status": "retry",
+        "reason_kind": "meeting_audit_feedback",
+        "execution_runtime_status": "completed",
+        "audit_runtime_status": "completed",
+        "classification": "Normal business Audit return, no SQLite/FK or runtime transport error"
+      }
+    ],
+    "removed": []
+  },
+  "ui_readback": {
+    "production_commit_at_ui": "4022bbe59c5d258ab1a1a48d8a96fa6f7669e8d2",
+    "formal_task_rows": 20,
+    "formal_task_862_source_evidence": true,
+    "history_next_page": true,
+    "history_done_filter_checked": true,
+    "attempt_16220_receipt_20893_verified": true,
+    "outbound_actions_clicked": false,
+    "temporary_browser_tab_closed": true,
+    "feedback_api_46_no_round_resolved": true,
+    "feedback_ui_previous_batch_verified": true
+  },
+  "deployment_note": "Own exact4022 gate/quiet/backup deployment succeeded at11:54:07Z. A concurrent task later installed3f126/Store28.4, which includes4022; successor schema/health/FK and retained removals independently read back. No downgrade or repeat deploy."
 }

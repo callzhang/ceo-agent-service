@@ -8,7 +8,7 @@
 | 重复索引/空 Configs 家族/NULL 元数据列 | 44c13bc91标准部署；PID25260/health200；精确schema/功能读回及备份/目录清理通过 | Store28.1/Email54、463对象/FK[]；内部占用少3.20MiB，文件大小不变，见[第二批验收](model-retirement-batch2-validation.md) |
 | Conversation session 唯一 owner | af24bc485标准部署；PID71305/health200；精确schema及API/UI/native/回执读回、备份/目录清理完成 | Store28.2/Email54、镜像两键/两列消失、463项SQL/FK[]；inverse权威重建，见[第三批验收](model-retirement-batch3-validation.md) |
 | Feedback Item 镜像退休 | 7a6b73ee9标准部署；PID39304/health200，准确schema/API/UI及历史回执读回、本轮备份/临时目录清理完成 | Store28.3/Email54、4列Item、463项SQL/FK[]，46条无Round来源已解决事实保留，见[第四批验收](model-retirement-batch4-validation.md) |
-| 关闭历史转换包/专用夹具 | Runner、直接前代声明、Business、Email／Workbench闭包已分单元实现并经SPEC/QUALITY；Run旧映射及过期发布闭包亦通过SPEC／QUALITY和最终集成61项；均待标准部署及生产读回 | 保留唯一身份provenance及准确28.2→28.3当前数据inverse，见[第五批验收](model-retirement-batch5-validation.md) |
+| 关闭历史转换包/专用夹具 | 精确4022bbe59标准gate/quiet发布、生产API/UI/回执读回、最新49表副本及真实旧代码inverse、明确归属清理完成；后发3f126已包含本批 | 本批28.3的463项SQL不变；后发28.4独立读回464项/FK[]，其新备份归对应owner，见[第五批验收](model-retirement-batch5-validation.md) |
 
 本轮范围和字段/索引清单见[审计](database-simplification-audit-20261027.md)，
 第一批部署与读回证据见[验收记录](model-retirement-batch1-validation.md)。下方
