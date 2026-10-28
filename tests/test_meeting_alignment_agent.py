@@ -359,6 +359,19 @@ def test_audit_prompt_carries_no_digest_for_the_model_to_copy():
     assert meeting_alignment_decision_digest(decision) not in prompt
 
 
+def test_audit_prompt_accepts_same_project_group_and_asks_for_a_better_candidate():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
+
+    MeetingAlignmentAgent(MeetingAlignmentCodexRunner(routed_execution=routed)).audit(
+        source(), decision, run_id=9,
+    )
+
+    prompt = routed.calls[0]["prompt"]
+    assert "need not repeat this meeting's topic" in prompt
+    assert "name the better candidate from the supplied candidates" in prompt
+
+
 def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evidence():
     decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
     meeting_source_payload = source().model_dump(mode="json")

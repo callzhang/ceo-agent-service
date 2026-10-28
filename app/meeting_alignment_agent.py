@@ -244,6 +244,8 @@ class MeetingAlignmentAgent:
             + "Never include sensitive details or indirect hints in the group body or title, even when the group is HR-only or attendee matching is high. "
             + "Send the sanitized ordinary summary to the business group selected from relevant group discussion and attendee-member matching; do not review each group member's individual disclosure authorization for ordinary business content. "
             + "A group whose discussion covers the same project or customer and whose complete roster is readable is acceptable even when the attendee list is too incomplete to match; record that gap in audit_summary instead of rejecting. "
+            + "The group's recent topics need not repeat this meeting's topic (a project group that discussed annotation statistics fits a meeting about acceptance sampling for the same project). "
+            + "If you return the target, name the better candidate from the supplied candidates and say why; do not return only to say the proof is missing. "
             + "Put sensitive details only in sensitive_private_message, addressed to an explicitly matched person whose current responsibility and authorization for that exact content are evidenced. "
             + "If no such person is established, omit the sensitive details and record the unresolved gap in audit_summary; do not merge them into the group message or use the principal as fallback. "
             + "When sensitive details appear in the meeting source but the private message is missing, approve only when the gap is explicitly recorded and those details are absent from the group title and body."
