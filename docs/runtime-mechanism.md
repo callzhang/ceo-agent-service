@@ -1,5 +1,11 @@
 # Current Runtime Mechanism
 
+## 微信语音转写缓存 Store28.3/Email54（2026-10-28）
+
+新表 `wechat_voice_transcripts` 随配对发布 28.2→28.3 上线：只 `create table`，inverse 只 `drop table`
+并恢复 Store 标记，不迁移数据、不改其他表。发布前后各验证完整 schema、FK 与 quick_check；
+部署路径 `prepare_database_schema_release` 对 28.2 标记选择该发布，对 28.3 无操作。
+
 ## 会话唯一归属 Store28.2/Email54（2026-10-28）
 
 正常运行只在`conversation_runtime_sessions`保存按会话和路线的session/hash，
@@ -2255,7 +2261,7 @@ Store schema `2026-10-11.1` 中，`reply_tasks.current_input_id` 与
 再次领取仍捕获当时 current 输入，沿用原有恢复及版本水位行为。
 WeChat Agent 的 `read_wechat_messages` 同样读取本轮 claimed TaskInput 的会话，不接受调用者指定会话；
 执行期间 current 指针更新不会改写已领取的会话范围。
-微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。通用 Agent 工具 `save_message_audio(message_id, resource_id)` 按任务渠道把语音存为任务文件（微信：`pilk==0.2.4` 转成 24 kHz 单声道 WAV；钉钉：`dws` 下载消息里 `mediaId` 对应的音频并核对消息身份）；Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，用通用工具 `upload_audio_file(name, upload_url)` 把该任务文件 POST 过去（音频不经过模型，服务不存凭据），再调 `ai_services.get_audio_transcription(job_id)` 取文字；读不到或解不开是明确错误，不当作空消息或已回复。不缓存转写结果。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。 自己发的语音是指令（Derek 2026-10-28）：钉钉里本人在以 Agent 名字命名的单聊发的语音消息（含 `[语音消息](mediaId=…)`）和微信里本人在 `filehelper` 发的语音（outbound）都成为候选，不需要 `@磊哥`；仅限语音，其余本人消息仍是历史（`worker._is_principal_voice_to_agent_chat`、`wechat.producer.is_self_voice_command`）。
+微信语音（Derek 2026-10-26）：`kind=voice` 的消息，`text` 为非空占位，直接聊天的入站语音与入站文字同样触发回复。Reader 新增 IPC `read_voice(conversation_id, message_id)`，只在该会话的消息表确认语音后，到 `media_N.db.VoiceInfo` 按 `server_id` 取 SILK（最新分片先查，上限 2 MiB，失败码 `voice_unavailable`）。通用 Agent 工具 `save_message_audio(message_id, resource_id)` 按任务渠道把语音存为任务文件（微信：`pilk==0.2.4` 转成 24 kHz 单声道 WAV；钉钉：`dws` 下载消息里 `mediaId` 对应的音频并核对消息身份）；Agent 调 `ai_services.create_audio_upload` 取一次性上传地址，用通用工具 `upload_audio_file(name, upload_url)` 把该任务文件 POST 过去（音频不经过模型，服务不存凭据），再调 `ai_services.get_audio_transcription(job_id)` 取文字；读不到或解不开是明确错误，不当作空消息或已回复。微信语音转写缓存（Derek 2026-10-28）：`wechat_voice_transcripts(account_id, conversation_id, message_id, audio_sha256, transcript, created_at)`，主键为前三项；`save_message_audio` 微信分支解码后按 `audio_sha256` 查表，命中只返回 `transcript`（不存文件）；Consumer 专有工具 `save_voice_transcript(message_id, transcript)` 对任务里已存的 `wechat-voice-<message_id>.wav` 重算摘要后写入，空文本由工具和表约束双重拒绝，Audit 只读不写。`pilk` 需装进服务 Python（`~/miniforge3`），部署不会替你装；Reader 需重建才有 `read_voice`。解密改为逐页写出，避免 700 MB 的 `media_0.db` 占满 Reader 内存。 自己发的语音是指令（Derek 2026-10-28）：钉钉里本人在以 Agent 名字命名的单聊发的语音消息（含 `[语音消息](mediaId=…)`）和微信里本人在 `filehelper` 发的语音（outbound）都成为候选，不需要 `@磊哥`；仅限语音，其余本人消息仍是历史（`worker._is_principal_voice_to_agent_chat`、`wechat.producer.is_self_voice_command`）。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。

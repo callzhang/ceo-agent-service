@@ -98,6 +98,7 @@ AGENT_CLI_READ_TOOLS = (
 AGENT_CLI_CONSUMER_TOOLS = AGENT_CLI_READ_TOOLS + (
     "consumer_document_write",
     "consumer_artifact_write",
+    "save_voice_transcript",
     "consumer_run_skill_script",
 )
 

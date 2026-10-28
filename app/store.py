@@ -519,7 +519,7 @@ CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
 CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-28.2"
+STORE_SCHEMA_VERSION = "2026-10-28.3"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -11544,6 +11544,25 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 f"select * from {projection} order by account_id"
             ).fetchall()
         return [dict(row) for row in rows]
+
+    def wechat_voice_transcript(self, *, account_id: str, conversation_id: str,
+                                message_id: str, audio_sha256: str) -> str | None:
+        from app.wechat.voice_transcript import find_transcript
+        with self._connect() as db:
+            return find_transcript(
+                db, account_id=account_id, conversation_id=conversation_id,
+                message_id=message_id, audio_sha256=audio_sha256,
+            )
+
+    def save_wechat_voice_transcript(self, *, account_id: str, conversation_id: str,
+                                     message_id: str, audio_sha256: str,
+                                     transcript: str) -> None:
+        from app.wechat.voice_transcript import store_transcript
+        with self._immediate_write_transaction() as db:
+            store_transcript(
+                db, account_id=account_id, conversation_id=conversation_id,
+                message_id=message_id, audio_sha256=audio_sha256, transcript=transcript,
+            )
 
     def list_wechat_reply_scopes_for_ready_account(
         self, *, enabled_only: bool = True

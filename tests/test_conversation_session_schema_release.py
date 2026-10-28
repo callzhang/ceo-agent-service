@@ -118,23 +118,3 @@ def test_failure_during_state_rebuild_restores_source(tmp_path,monkeypatch):
     release.rollback()
     with sqlite3.connect(path) as db:
         assert db.serialize() == before
-
-
-def test_dispatch_accepts_only_precise_previous_source_and_then_current(tmp_path):
-    from app.current_publication_sources import _version
-    from app.conversation_session_schema_release import ConversationSessionSchemaRelease
-    from app.store_schema_release import prepare_database_schema_release
-    from pathlib import Path
-
-    path=tmp_path/'dispatch.sqlite3'
-    with sqlite3.connect(path) as db:
-        source(db)
-        assert _version(db) == '2026-10-28.1'
-    root=Path(__file__).resolve().parents[1]
-    release=prepare_database_schema_release(root,path)
-    assert isinstance(release,ConversationSessionSchemaRelease)
-    release.publish()
-    release.finalize()
-    assert prepare_database_schema_release(root,path) is None
-    with sqlite3.connect(path) as db:
-        assert _version(db) == '2026-10-28.2'

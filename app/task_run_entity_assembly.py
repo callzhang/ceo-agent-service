@@ -62,6 +62,7 @@ def _cached_assembly_objects(email_ledger):
     import sqlite3
     from app.action_entity_definitions import ACTION_IDENTITY_MAP_DDL
     from app.reply_receipt_reference import DDL as REPLY_RECEIPT_REFERENCE_DDL
+    from app.wechat.voice_transcript import DDL as WECHAT_VOICE_TRANSCRIPT_DDL
     from app.business_legacy_fields import current_business_declaration
     from app.business_schema_helpers import _create_auxiliary
     from app.configs_storage import create_configs_schema
@@ -78,6 +79,7 @@ def _cached_assembly_objects(email_ledger):
         ADOPTION_INDEXES, ADOPTION_TRIGGERS, receipt_schema_objects(), _action_objects(),
         ((_object_name(sql), sql) for sql in ACTION_IDENTITY_MAP_DDL),
         ((_object_name(sql), sql) for sql in REPLY_RECEIPT_REFERENCE_DDL),
+        ((_object_name(sql), sql) for sql in WECHAT_VOICE_TRANSCRIPT_DDL),
     ))
     db = sqlite3.connect(":memory:")
     register_task8_functions(db)

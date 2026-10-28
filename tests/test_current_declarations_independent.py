@@ -57,15 +57,17 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
     from app.model_retirement_schema_source import store26_objects
 
     for email_ledger, count, digest in (
-        (False, 462, '7e4a5ab95e558ea7e88c3fbafa59d93191b16721b6818ae6a9da0eac46e26df5'),
-        (True, 463, 'b03e1a3054ab5b2481a7e6d15b00ac3aac7799138239b4a592293c1bda0c297e'),
+        (False, 463, '3c5bd51a6e80bd2e0cbc00b17cbcbd16f20af3590e9e70a4c083f93c5c1e0cd9'),
+        (True, 464, '2624de7172677c8fe5644178d7c29c882f0eceeaf7c39014101b7653c490be3d'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
         encoded = json.dumps(objects).encode()
         assert hashlib.sha256(encoded).hexdigest() == digest
-        assert objects == tuple(row for row in session_target_objects()
-                                if email_ledger or row[1] != 'email_schema_migrations')
+        # Store28.3 only adds the WeChat voice transcript table to the frozen Store28.2 catalog.
+        assert tuple(row for row in objects if row[1] != 'wechat_voice_transcripts') == tuple(
+            row for row in session_target_objects()
+            if email_ledger or row[1] != 'email_schema_migrations')
 
     for email_ledger, count, digest in (
         (False, 475, '335bb6fe9c5c04a1c6f10849e8c7d4e8e1bee6e037ae070aea28126a506f8575'),
@@ -193,5 +195,5 @@ def test_current_assembly_cache_is_isolated_by_role_and_caller(monkeypatch):
     assert paired_again == original_paired
     assert 'email_schema_migrations' not in bare_again
     assert 'email_schema_migrations' in paired_again
-    assert len(bare_again) == 462 and len(paired_again) == 463
+    assert len(bare_again) == 463 and len(paired_again) == 464
     assert len(calls) == 2
