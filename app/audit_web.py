@@ -9156,9 +9156,27 @@ def handle_rerun_attempt_post(
                 "Rerun unavailable",
                 "<p>OA Skill snapshot could not be refreshed; rerun was not queued.</p>",
             )
+    elif channel == "scheduled":
+        if skill_options_factory is None or existing_task is None:
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>Scheduled Skill snapshot could not be refreshed; rerun was not queued.</p>",
+            )
+        try:
+            trigger_message_json = refresh_scheduled_rerun_skill_snapshot(
+                trigger_message_json,
+                store=store,
+                skill_options=skill_options_factory(),
+                reply_task_id=existing_task.id,
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>Scheduled Skill snapshot could not be refreshed; rerun was not queued.</p>",
+            )
     try:
         force_rotation = False
-        if attempt.oa_process_instance_id:
+        if attempt.oa_process_instance_id or channel == "scheduled":
             prior_payload = json.loads(existing_task.trigger_message_json)
             refreshed_payload = json.loads(trigger_message_json)
             force_rotation = json.dumps(
@@ -9374,6 +9392,42 @@ def handle_needs_human_decision_post(
     except ValueError as exc:
         return 409, {}, render_page("Decision unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, source.id)}, ""
+
+
+def refresh_scheduled_rerun_skill_snapshot(
+    trigger_message_json: str,
+    *,
+    store: AutoReplyStore,
+    skill_options: object | None,
+    reply_task_id: int,
+) -> str:
+    """Bind current selected Skills to a new input for the same scheduled run."""
+    from app.agent_cron.context import (
+        ScheduledAgentContext,
+        ScheduledAgentContextBuilder,
+    )
+
+    if skill_options is None:
+        raise ValueError("scheduled rerun Skill options are unavailable")
+    prior = ScheduledAgentContext.from_execution_json(
+        trigger_message_json,
+        reply_task_id=reply_task_id,
+    )
+    run_id = prior.context.trigger_raw_payload.get("scheduled_task_run_id")
+    if type(run_id) is not int or run_id <= 0:
+        raise ValueError("scheduled rerun source occurrence is unavailable")
+    run = store.get_scheduled_task_run(run_id)
+    if run is None:
+        raise ValueError("scheduled rerun source occurrence is unavailable")
+    scheduled_task = store.get_scheduled_task(run.snapshot.task_id)
+    if scheduled_task is None:
+        raise ValueError("scheduled rerun task is unavailable")
+    refreshed = ScheduledAgentContextBuilder(skill_options).refresh_manual_rerun_context(
+        prior,
+        run,
+        scheduled_task,
+    )
+    return refreshed.to_execution_json()
 
 
 def _is_valid_rerun_trigger_json(
