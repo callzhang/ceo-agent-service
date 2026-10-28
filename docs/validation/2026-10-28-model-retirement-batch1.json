@@ -1,5 +1,5 @@
 {
-  "phase": "candidate",
+  "phase": "deployed_accepted_cleaned",
   "created_at": "2026-10-28T07:46:44.156304+00:00",
   "source_baseline": "9742c0fd5",
   "implementation": "batch1_no_ddl",
@@ -252,10 +252,166 @@
     "quality": "passed"
   },
   "deployment": {
-    "status": "not_started"
+    "status": "succeeded",
+    "target_commit": "c5f39aa8e18d7bceb1b460108374dd296671cab2",
+    "pid": "82581",
+    "gate": "standard exact-target gate passed; successful clone removed by deployer",
+    "quiet_wait": "standard, no bypass",
+    "operation": {
+      "operation_id": "deploy-35275d26-718b-4c5b-bf8c-b5385616956b",
+      "status": "succeeded",
+      "original_commit": "bb9f51b13cb9ccb9bfe6b9369dec3543422f6850",
+      "target_commit": "c5f39aa8e18d7bceb1b460108374dd296671cab2",
+      "installed_commit": "c5f39aa8e18d7bceb1b460108374dd296671cab2",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-35275d26-718b-4c5b-bf8c-b5385616956b.sqlite3",
+      "updated_at": "2026-10-28T07:53:55.730203+00:00"
+    },
+    "frontend_stamp_equals_tree": true
   },
   "cleanup": {
-    "status": "pending",
-    "owned_temp_root": "/private/tmp/ceo-model-retirement.qWbIiJ"
-  }
+    "status": "owned_directories_and_backup_complete",
+    "owned_temp_root": "/private/tmp/ceo-model-retirement.qWbIiJ",
+    "original_deploy_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-35275d26-718b-4c5b-bf8c-b5385616956b.sqlite3",
+      "status": "already absent; replaced by post-restart daily backup"
+    },
+    "verified_daily_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3",
+      "checked_at": "2026-10-28T08:02:18.836693+00:00",
+      "kind": "post_restart_daily_replacement",
+      "inode": 831033648,
+      "mtime_ns": 1793174119600742034,
+      "bytes": 514969600,
+      "integrity": [
+        "ok"
+      ],
+      "application_id": 1128615746,
+      "schema_matches": true,
+      "foreign_keys": [],
+      "workflow": {
+        "operation_id": "deploy-35275d26-718b-4c5b-bf8c-b5385616956b",
+        "status": "succeeded",
+        "target_commit": "c5f39aa8e18d7bceb1b460108374dd296671cab2",
+        "installed_commit": "c5f39aa8e18d7bceb1b460108374dd296671cab2"
+      },
+      "no_open_references": true,
+      "status": "verified_and_removed",
+      "owned_workflow_matches": true,
+      "removed_at": "2026-10-28T08:03:52.255583+00:00"
+    },
+    "owned_temp_absent": true,
+    "temporary_regular_files": 1300,
+    "temporary_bytes": 64652191,
+    "gate_workdir_absent": true,
+    "owned_browser_tab_closed": true,
+    "additional_repo_pyc_purge": "not performed; broader timestamp ownership could not be proved and auto-review rejected it; no workaround attempted",
+    "checked_at": "2026-10-28T08:08:53.162702+00:00"
+  },
+  "production_readback": {
+    "api": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "elapsed_seconds": 0.028
+      },
+      {
+        "path": "/api/console/status",
+        "http": 200,
+        "elapsed_seconds": 2.721
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "elapsed_seconds": 0.746,
+        "total": 0,
+        "items_count": 0
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=2&include_chart=false",
+        "http": 200,
+        "elapsed_seconds": 1.412,
+        "total": 39082,
+        "items_count": 2
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=2&include_chart=false",
+        "http": 200,
+        "elapsed_seconds": 1.758,
+        "total": 39082,
+        "items_count": 2
+      },
+      {
+        "path": "/api/console/history?status=done&page_size=2&include_chart=false",
+        "http": 200,
+        "elapsed_seconds": 1.68,
+        "total": 22877,
+        "items_count": 2
+      },
+      {
+        "path": "/api/console/history?status=failed&page_size=100&include_chart=false",
+        "http": 200,
+        "elapsed_seconds": 1.464,
+        "total": 19,
+        "items_count": 19
+      },
+      {
+        "path": "/api/console/history/16220",
+        "http": 200,
+        "elapsed_seconds": 1.779
+      },
+      {
+        "path": "/api/console/codex/sessions",
+        "http": 200,
+        "elapsed_seconds": 0.016,
+        "total": 370,
+        "items_count": 370
+      }
+    ],
+    "schema": {
+      "objects": 476,
+      "equal_baseline": true,
+      "foreign_keys": []
+    },
+    "history_failure_identity_added": [],
+    "history_failure_identity_removed": [],
+    "baseline_summary": {
+      "queue_count": 11,
+      "pending": 5,
+      "processing": 0,
+      "failed": 28,
+      "retryable": 0,
+      "attention": 0
+    },
+    "after_summary": {
+      "queue_count": 11,
+      "pending": 5,
+      "processing": 0,
+      "failed": 28,
+      "retryable": 0,
+      "attention": 0
+    },
+    "system_health": {
+      "state": "degraded",
+      "detail": "user feedback has not reached a recorded resolution Native delivery results readable: 390; unavailable: 0.",
+      "checked_at": "2026-10-28T08:04:40.571042+00:00",
+      "violations": 1,
+      "components": [],
+      "native_delivery_coverage": {
+        "checked": 390,
+        "unavailable": 0
+      }
+    },
+    "ui": {
+      "history_next_page": "passed page2 21-40",
+      "history_done_filter": "passed selected done, total22877",
+      "formal_tasks": "passed403items",
+      "formal_task862_sources": "passed2sourceentries",
+      "attempt16220": "completed; allapprovedactionsverified;receipt20893",
+      "consumer_and_audit_details": "passed",
+      "native_session": "01a17ed7-eff2-74c3-9d9e-aca07681998c;394visibleevents",
+      "outbound_actions_by_acceptance": 0,
+      "owned_tab": "closed"
+    }
+  },
+  "updated_at": "2026-10-28T08:07:03.449740+00:00"
 }

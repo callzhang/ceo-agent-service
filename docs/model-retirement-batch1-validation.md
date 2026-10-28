@@ -1,6 +1,6 @@
 # 模型退休第一批：无 DDL 清理验收
 
-状态：2026-10-28 隔离 worktree 候选，实施、SPEC/QUALITY审查通过；尚未发布。
+状态：2026-10-28 第一批已标准部署、生产读回与明确归属清理完成。后续四批未完成。
 
 ## 范围与基线
 
@@ -47,6 +47,34 @@ receipt12；RuntimeAttempt子集51。分组包含重叠，不相加成不同测�
 lint均已修正并通过对应复验，不删除有效断言或放宽规则。独立SPEC/QUALITY审查
 均通过，没有Important/Critical问题；QUALITY另行复核57文件默认Ruff通过。
 
-尚未完成：最新主线集成复验、标准gate/部署、生产
-版本与页面/原生结果/历史回执读回，以及本轮临时文件和已验证备份清理。
-无数据库容量缩减声明；未创建生产测试任务或真实发送。
+## 标准部署与生产读回
+
+完整target gate通过后，标准安静等待/备份/切换/健康流程安装
+`c5f39aa8e18d7bceb1b460108374dd296671cab2`，operation为
+`deploy-35275d26-718b-4c5b-bf8c-b5385616956b`，07:53:55Z账本succeeded；
+PID82581/health200，前端stamp等于安装commit的frontend tree。
+没有使用skip-quiet-wait，没有额外生产测试任务或验收发送。
+
+独立只读复核完整476对象SQL数组/FK[]与基线完全相等；status/Attention/History
+第一页、第二页、done筛选、既有Attempt16220与session列表均200。370个会话可列出。
+History的19条failed身份集合没有增减；status summary前后均pending5/processing0/
+failed28/attention0，指标口径不同，不把28与19混为同一列表。
+
+实际浏览器完成History page2（21-40）及done筛选（22877条）、正式Task列表
+（403条）和Task862来源详情、Attempt16220 completed/All approved actions verified/
+receipt20893、Consumer与Audit分离详情、原生session394条事件。验收标签已关闭。
+状态页仍degraded：未解决反馈有1个健康项；native delivery coverage390/不可用0。
+本批不修改该反馈业务状态，不把health200宣称为所有业务问题已解决。
+
+## 清理
+
+标准升级备份在重启后被服务07:55的已验证日备份替代清理。独立核对新日备份
+包含同一成功operation/目标c5f39、完整性ok、CEOB完成标记、schema/FK一致、
+无打开引用；持目录锁并复核inode831033648/mtime1793174119600742034后删除
+该514969600字节精确代次，确认路径不存在。没有删除其他代次或生产库。
+
+自有`/private/tmp/ceo-model-retirement.qWbIiJ`无打开引用，1300个普通文件/
+64652191字节已删除；标准gate成功克隆已由部署器清理，路径缺失。只保留简洁
+验收和第二批无业务数据合同。原生trajectory保留。额外的仓内pyc时间戳批量清理
+被自动审批以并发归属不能证明拒绝；该额外范围未执行、未绕过，窄清理正常完成。
+本批仅代码/模型入口简化，不声明数据库容量缩减。
