@@ -1,183 +1,110 @@
 # dws Command Inventory
 
-This document records the local `dws` CLI surface inspected for the CEO
-auto-reply service. It is intentionally operational rather than tutorial-style:
-use it as a capability reference when designing or debugging a Skill, and to
-find exact parameter schemas. It is not a runtime command allowlist or a second
-application-level review gate; Codex Agent review and the current business
-result contract own execution decisions.
+Survey of the local `dws` CLI used by the CEO service, re-done on 2026-10-28
+with read-only probes only (`--help`, `dws schema`, `version`, `doctor`).
+It is a capability reference, not a runtime allowlist and not a second review
+gate: Agent review and the business result contract own execution decisions.
 
-> **过期提示：** 本文是 `v1.0.37` 时的调研记录。本机现为 `v1.0.65`：`dws schema -f json` 已返回完整命令目录（约 32 个产品、1500 个工具），可直接作为命令目录；`hrmregister`、`doc-comment` 已不是顶层服务，`dws cache` 与 `dws recovery` 标注为不再支持，并新增 agoal、conference、contract、devapp、hrbrain、whiteboard、profile 等。改自动化前以实时 `dws --help` 与 `dws schema` 为准，下面的表格只当历史参考。
+Observed: `dws` `v1.0.65+ceo-docfmt.6747c671` (MCP static endpoint mode; upstream
+latest was `1.0.66`). `dws doctor`: auth, keychain, runtime context and network
+pass; only the version check warns.
 
-This survey records the useful safety boundary and operational command families
-for this repository. It is not an exhaustive schema snapshot. On the observed
-CLI version, `dws schema -f json` returned only one product (`aitable-form`) with
-no tools, so command coverage must be checked from the live CLI before changing
-automation. Do not commit generated raw schema JSON; regenerate it locally only
-when exact schema output is needed for review.
+## Live Command Catalog
 
-Observed `dws` version during this pass: `v1.0.37`.
+Always check the live CLI before changing automation; this file will age.
 
-## How To Check Current Commands
+- `dws schema -f json` now returns the full product catalog: 32 products,
+  1501 tools (`count`, `tool_count`, `catalog_hash`, one row per product with
+  `id` and `tool_count`). It is product level only; leaf schemas come from
+  `dws schema --cli-path "<path>" --compact -f json` (parameters, constraints,
+  examples) or `dws schema <product>` to expand one product.
+- Each leaf carries `effect` (`read|write|destructive`), `risk`
+  (`low|medium|high`), `confirmation` (`not_required|user_required`) and
+  `idempotency` (`idempotent|retryable|non_idempotent|unknown`). Use `effect` to
+  classify a command as read-only or mutating instead of guessing from its name;
+  treat `unknown` idempotency as not safe to retry.
+- Schema product ids are not identical to the `dws --help` service list: schema
+  also lists `aicard`, `audit`, `dev`, `event`, `html`, `markdown`, `mcp` and
+  `dingtalk-tag`, and has no `conference` row.
+- Command path is `dws <service> [group] <command>`. Chat leads with `+shortcut`
+  commands (for example `dws chat +messages-send`); lower-level resources
+  (`dws chat message ...`) remain available. Shortcuts are preferred by the CLI.
+- Do not commit raw schema output. Regenerate it into a `mktemp -d` directory
+  when exact output is needed and delete it afterwards.
 
-The most reliable current sources are live, non-mutating CLI probes:
+## Top-Level Services (`dws --help`)
 
-- `dws --help` for the current top-level service list and utility commands.
-- `dws <service> --help` and `dws <service> <command> --help` for command
-  paths and accepted flags.
-- `dws schema` or `dws schema -f json` only when it returns the relevant
-  product/tool. Current output may be partial.
-- live read-only probes, such as list/get/help commands, before wiring a command
-  into automation.
+| Service | Purpose |
+| --- | --- |
+| `agoal` | Agoal goal management |
+| `aisearch` | AI search: semantic people and cross-source search |
+| `aitable` | AI tables |
+| `attendance` | Clock-in, shifts, statistics |
+| `calendar` | Events, meeting rooms, free/busy |
+| `chat` (alias `im`) | Groups, messages, bots |
+| `conference` | Video meetings: start, schedule, invite, in-meeting control |
+| `contact` | Directory: users, departments, roles |
+| `contract` | Smart contract management |
+| `devapp` | Developer app shortcuts |
+| `devdoc` | Open-platform doc search |
+| `ding` | DING messages, send and recall |
+| `doc` | Online documents |
+| `drive` | DingTalk Drive files |
+| `hrbrain` | Org brain: talent pool, employee profiles |
+| `live` | Live streams list and info |
+| `mail` | Mailbox |
+| `minutes` | AI minutes / meeting records |
+| `oa` | OA approvals |
+| `pat` | Behaviour authorization |
+| `report` | Reports (daily/weekly templates) |
+| `sheet` | Spreadsheets |
+| `todo` | Todo tasks |
+| `whiteboard` | Whiteboards |
+| `wiki` | Knowledge bases, nodes, members, permissions |
 
-CLI path construction:
+Utility commands: `aicard` (A2UI card validate/preview), `api` (raw OpenAPI
+call), `audit` (operation audit log), `auth`, `completion`, `config`, `dev`,
+`doctor`, `event` (Stream subscription), `help`, `html`, `markdown`, `mcp`
+(published MCP services), `plugin`, `profile`, `schema`, `skill`, `upgrade`,
+`version`.
 
-```text
-dws <service> <group> <cli_name>
-```
-
-Omit `<group>` when it is absent. Example:
-
-```text
-canonical_path: ding.send_ding_message
-service: ding
-group: message
-cli_name: send
-CLI: dws ding message send
-```
-
-For exact command schemas, prefer canonical paths from the generated JSON
-snapshot only when the schema output includes the relevant product/tool.
-Otherwise use command help and read-only probes:
-
-```bash
-dws chat message send --help
-dws schema -f json > /tmp/dws-command-schema.snapshot.json
-```
-
-## Safety Rules
-
-Do not execute mutating commands from automation unless the caller has already
-decided the action and a send/approval gate has accepted it. Mutating commands
-include:
-
-- sending chat, DING, mail, todo, calendar, document, sheet, AI table, or report
-  content
-- approval agree/refuse/revoke/comment actions
-- file upload, move, delete, rename, permission, or folder mutations
-- group create/rename/dismiss/member/role mutations
-- reaction, recall, forward, combine-forward, and card-send operations
-- auth reset/logout and plugin install/remove/enable/disable operations
-
-For CEO auto-reply, default to read-only commands plus explicit send gates:
-
-- Read messages and context with `chat message list-*` commands.
-- Read DingTalk docs through `doc read`.
-- Resolve people/departments through `contact` commands.
-- Use `chat message send`, `ding message send`, and recall commands only behind
-  the service's explicit live-send controls.
-- Use OA approval commands only for review support unless the human explicitly
-  asks for the real approval action.
-
-## Commands Actually Probed
-
-The pass used only non-mutating probes:
-
-| Command | Result | Notes |
-| --- | --- | --- |
-| `dws --help` | ok | Listed all discovered services and utility commands. |
-| `dws schema -f json` | ok but partial | Returned `count: 1` with `aitable-form` and no tools, so it is not an exhaustive command catalog. |
-| `dws version --format json` | ok | Confirmed CLI version/build metadata. |
-| `dws doctor --json --timeout 5` | ok | Login/network/cache/version passed; CLI reported latest version `v1.0.37`. |
-| `dws contact user get-self --format json` | ok | Verified read-only contact access; output was not copied into this doc. |
-| `dws chat message list-unread-conversations --count 1 --format json` | ok | Verified read-only unread conversation access; output was not copied into this doc. |
-
-Commands that can send, approve, edit, delete, revoke, or change configuration
-were not executed. Check their current parameters with command help and schema
-output when available; do not rely on this file as exhaustive coverage.
+Hidden group: `dws dingtalk-tag` is the digital-employee command group (product
+`deap-dev`); it is not in `--help`. Not used by this service.
 
 ## Global Flags
 
-These flags are available broadly across `dws` commands:
+`--profile` (one-off organisation/account, `corpId:userId` as listed by
+`dws profile list`; the default account only changes with `profile switch/use`),
+`--format/-f` (`json|table|raw|pretty|ndjson|csv`; use `json`), `--jq`,
+`--fields`, `--timeout` (seconds, default 30), `--dry-run` (only where the leaf
+supports it), `--yes/-y` (skips confirmation; only behind a reviewed gate),
+`--debug`, `--verbose/-v`, `--mock`, `--client-id`, `--client-secret` (never
+hardcode credentials).
 
-| Flag | Meaning |
-| --- | --- |
-| `--client-id` | Override DingTalk OAuth client ID. Do not hardcode in scripts. |
-| `--client-secret` | Override DingTalk OAuth client secret. Do not hardcode in scripts. |
-| `--debug` | Print debug logs. Avoid in user-facing logs because it may expose internals. |
-| `--dry-run` | Preview when a command supports dry-run behavior. Do not assume every MCP tool is side-effect-free. |
-| `--fields` | Select output fields. |
-| `--format` / `-f` | Output format: `json`, `table`, `raw`, `pretty`, `ndjson`, `csv`. Prefer `json` in services. |
-| `--jq` | Filter JSON output. Useful for script-safe extraction. |
-| `--mock` | Use mock data where supported. |
-| `--timeout` | HTTP timeout in seconds. |
-| `--verbose` / `-v` | Verbose logs. |
-| `--yes` / `-y` | Skip confirmation prompts. Only use behind a human-reviewed gate. |
+## Removed Or Unsupported
 
-## Current Service Discovery
+- `dws cache` and `dws recovery` are marked deprecated / not supported in help:
+  service discovery is gone (static endpoint catalog) and failure-snapshot
+  recovery is offline. Do not point Skills or Agents at them; use `doctor`,
+  `schema` and the business command instead.
+- `hrmregister` and `doc-comment` are no longer top-level services.
+- `dws upgrade` replaces the binary; it is a local mutation, never run by
+  automation.
 
-Use `dws --help` for the current top-level service list. During this pass it
-included `aisearch`, `aitable`, `attendance`, `calendar`, `chat`, `contact`,
-`devdoc`, `ding`, `doc`, `doc-comment`, `drive`, `hrmregister`, `live`, `mail`,
-`minutes`, `oa`, `pat`, `report`, `sheet`, `todo`, and `wiki`. This section is
-only a discovery marker, not a command-count table.
+## Safety Boundary
 
-## Utility Commands
+Read-only probes: `--help`, `schema`, `version`, `doctor`, `auth status`, and
+list/get/read commands whose schema says `effect: read`.
 
-These are utility commands from `dws --help`, not CEO auto-reply service
-commands:
+Mutating (not for probing or automated exploration): sending chat, DING, mail,
+todo, calendar, doc, sheet, AI table or report content; OA agree/refuse/revoke/
+comment/add-sign; file upload, move, delete, rename, permission changes; group
+create/rename/dismiss/member/role changes; reaction, recall, forward, card
+send; `auth login/logout/reset`; `plugin`, `skill install`, `config`, `profile
+switch`, `upgrade`; `api` with a non-GET method. `--dry-run` is not proof of
+safety: check the leaf's `effect`.
 
-| Command | Purpose | Mutation Risk |
-| --- | --- | --- |
-| `dws api <METHOD> <PATH>` | Raw DingTalk OpenAPI call. | Depends on method/path; treat non-GET as mutating. |
-| `dws auth login` | Login or refresh auth. | Local auth mutation. |
-| `dws auth logout` | Clear auth. | Local auth mutation. |
-| `dws auth reset` | Reset local auth. | Local auth mutation. |
-| `dws auth status` | Inspect auth status. | Read-only. |
-| `dws cache refresh` | Refresh local tool cache. | Local cache mutation. |
-| `dws cache status` | Inspect cache. | Read-only. |
-| `dws completion bash|zsh|fish` | Generate shell completions. | Read-only unless redirected to shell config. |
-| `dws config list` | List config/env knobs. | Read-only; may expose local config values. |
-| `dws doctor` | Diagnose auth/network/cache/version. | Read-only. |
-| `dws plugin build/create/dev/disable/enable/install/remove` | Manage plugins. | Local/plugin mutation. |
-| `dws plugin config/info/list/validate` | Inspect or configure plugins. | Mixed; config mutates, info/list/validate read. |
-| `dws recovery plan/execute/finalize` | Error recovery workflow. | Mixed; finalize writes recovery state. |
-| `dws schema [path]` | Inspect MCP product/tool schemas. | Read-only. |
-| `dws skill search/get/install` | Search/download/install skills. | Search is read-only; get/install mutate local files. |
-| `dws version` | Print version. | Read-only. |
-
-## CEO Service Command Reference
-
-These are command families observed or commonly used by the service. They are
-reference examples, not an exhaustive or enforced allowlist. The service does
-not classify an otherwise valid Agent result by command name, MCP tool name, or
-whether a command appears in this document.
-
-| Purpose | Preferred command family |
-| --- | --- |
-| List unread conversations | `dws chat message list-unread-conversations` |
-| Read group context | `dws chat message list --group ...` |
-| Read direct-chat context | `dws chat message list-direct --user ...` or `--open-dingtalk-id ...` |
-| Search messages/groups when manually debugging | `dws chat search`, `dws chat message search`, `dws chat search-common` |
-| Read DingTalk online docs | `dws doc read --node ...` |
-| Locate ordinary DingTalk files | `dws doc` / `dws drive` read/download commands only |
-| Resolve current user | `dws contact user get-self` |
-| Resolve users/departments | `dws contact user get`, `dws contact user search`, `dws contact dept search`, `dws contact dept list-members` |
-| Send reviewed group reply | `dws chat message send` behind live-send gate |
-| Send reviewed direct reply | `dws chat message send --user ...` or `--open-dingtalk-id ...` behind live-send gate |
-| DING handoff notification | `dws ding message send` behind live-send gate |
-| Recall bot/user message | `dws chat message recall-by-bot` or equivalent recall command only from audit UI/gate |
-| Review OA approval | `dws oa` read/detail commands plus referenced attachments/documents |
-| Execute OA approval | Not allowed in automation by default; human explicit request required |
-
-## Regenerating The Snapshot
-
-Run this after upgrading `dws`:
-
-```bash
-dws schema -f json > /tmp/dws-command-schema.snapshot.json
-```
-
-Then update this file if the version, service discovery output, or useful command
-families changed. Do not commit the generated raw JSON unless there is a specific
-review need for the full schema artifact.
+Reading messages must not mark them read. Sends happen only behind the
+service's live-send controls (see `docs/dws-capabilities.md`); OA approval
+actions are never part of exploratory probing.
+Do not copy command output (user data, IDs, tokens) into this file.
