@@ -117,6 +117,7 @@ def test_flag_uses_exact_dws_move_receipt_and_reads_back_tag():
     assert len(updates) == 1
     assert updates[0][updates[0].index("--ids") + 1] == "DzzzzzzNJ0u"
     assert updates[0][updates[0].index("--tags") + 1] == "107"
+    assert "--yes" in updates[0]
     assert result.provider_result_id.startswith("dws-mail:")
 
 
@@ -129,6 +130,18 @@ def test_read_action_is_noop_when_exact_message_is_already_read():
     assert result.status == "done"
     assert result.provider_operation == "dws_readback_noop"
     assert not any(c[1:4] == ["mail", "message", "batch-update"] for c in dws.commands)
+
+
+def test_mark_read_uses_noninteractive_confirmation_flag():
+    dws = FakeDws(read=False)
+    result = DwsVerifiedMoveActionExecutor(
+        dws, mailbox="derek@stardust.ai", context=CONTEXT
+    ).execute(action(EmailAction.MARK_READ))
+
+    assert result.status == "done"
+    updates = [c for c in dws.commands if c[1:4] == ["mail", "message", "batch-update"]]
+    assert len(updates) == 1
+    assert "--yes" in updates[0]
 
 
 def test_dws_action_fails_closed_when_time_identity_is_outside_approved_window():
