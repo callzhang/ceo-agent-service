@@ -1294,7 +1294,7 @@
   },
   "cleanup_evidence": "2026-10-29-final-model-cleanup.json",
   "junhe_closeout_followup": {
-    "phase": "awaiting_explicit_date_identity_scope_confirmation",
+    "phase": "date_scope_approved_publisher_implementation_pending",
     "checked_at": "2026-10-29T20:19:52.987843+00:00",
     "installed_commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
     "health": 200,
@@ -1351,7 +1351,8 @@
       "source": "AGENTS.md:10-12; publisher explicitly treats date identity/effect reconciliation change as separate scope",
       "requested": "Normalize legitimate RFC/ISO email date facts, preserve exact source and matching threshold/identity; regressions then standard gate/deploy, original approved actions only",
       "excluded": "Tag mapping, Audit, authorization and retry policy",
-      "status": "pending_human_confirmation"
+      "status": "approved_by_Derek",
+      "human_reply": "批准日期修复，继续完成收尾（推荐）"
     },
     "production_snapshot": {
       "checked_at": "2026-10-29T20:57:20.982304+00:00",

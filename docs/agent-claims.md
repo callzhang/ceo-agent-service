@@ -51,7 +51,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-junhe-closeout-readback-20261029 | docs/final-model-residue-validation-20261029.md; docs/validation/2026-10-29-final-email-field-retirement.json; docs/validation/2026-10-29-final-model-cleanup.json; this claim | Derek authorizes publisher coordination, independent JunHe receipt/production readback, then verified workflow backup/temp cleanup. No runtime edits, duplicate deploy, or provider writes. | Waiting for explicit date identity/effect-reconciliation scope confirmation; no runtime ownership. |
+| codex-junhe-closeout-readback-20261029 | app/email_dws_actions.py approved date parsing only; tests/test_email_dws_actions.py; matching architecture/runtime date paragraphs; own closeout/evidence docs; integration of peer22a426428 | Derek explicitly approved RFC/ISO date contract fix, preserving raw values/identity/10s/tag/Audit/authorization/retry. Publisher explicitly handed date implementation and sole integration/deploy to root; no concurrent deploy or Task7 replay. Root verifies receipts and cleans released artifacts. | Active handoff 2026-10-29. |
 
 
 
