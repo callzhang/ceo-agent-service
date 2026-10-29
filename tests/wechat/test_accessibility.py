@@ -1178,3 +1178,10 @@ def test_activity_check_raises_only_after_the_senders_own_input(monkeypatch):
     runner._check_user_inactive(idle_seconds=lambda: 3.0)
     with pytest.raises(accessibility.UserActive):
         runner._check_user_inactive(idle_seconds=lambda: 0.5)
+
+
+def test_key_event_text_length_counts_utf16_units_so_emoji_is_whole():
+    # WeChat crashed on half a surrogate pair when 😄 was declared one unit long.
+    assert accessibility._utf16_length("😄") == 2
+    assert accessibility._utf16_length("哈") == 1
+    assert accessibility._utf16_length("a") == 1

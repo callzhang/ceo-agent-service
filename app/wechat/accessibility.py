@@ -62,6 +62,16 @@ def _type_text(text: str, *, key_char, newline, sleep, uniform=random.uniform,
         _pause(sleep, PAUSE_PER_KEY, uniform=uniform)
 
 
+def _utf16_length(ch: str) -> int:
+    """The length a key event's text is given in: UTF-16 code units.
+
+    An emoji outside the Basic Multilingual Plane is two units. Declaring it
+    as one hands WeChat half a surrogate pair, and WeChat crashed on that
+    (2026-10-28, a reply ending in 😄).
+    """
+    return len(ch.encode("utf-16-le")) // 2
+
+
 class UserActive(RuntimeError):
     """The user touched the keyboard or mouse while the Sender was working."""
 
@@ -890,7 +900,7 @@ class MacWechatAccessibility:
             for ch in s:
                 for down in (True, False):
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
-                    Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
+                    Quartz.CGEventKeyboardSetUnicodeString(e, _utf16_length(ch), ch)
                     Quartz.CGEventPostToPid(pid, e)
                     self._note_own_input()
                     _pause(time.sleep, PAUSE_KEY_HOLD if down else PAUSE_PER_KEY)
@@ -964,7 +974,7 @@ class MacWechatAccessibility:
             def key_char(ch):
                 for down in (True, False):
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
-                    Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
+                    Quartz.CGEventKeyboardSetUnicodeString(e, _utf16_length(ch), ch)
                     Quartz.CGEventPostToPid(pid, e)
                     self._note_own_input()
                     if down:
@@ -1141,7 +1151,7 @@ class MacWechatAccessibility:
             for ch in text:
                 for down in (True, False):
                     e = Quartz.CGEventCreateKeyboardEvent(None, 0, down)
-                    Quartz.CGEventKeyboardSetUnicodeString(e, 1, ch)
+                    Quartz.CGEventKeyboardSetUnicodeString(e, _utf16_length(ch), ch)
                     Quartz.CGEventPostToPid(pid, e)
                     _pause(time.sleep, PAUSE_KEY_HOLD if down else PAUSE_PER_KEY)
 
