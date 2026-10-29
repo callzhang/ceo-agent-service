@@ -1,5 +1,7 @@
 """Compare source-backed Console reads with current real SQLite search."""
 
+from tests.support.email_native_fixtures import mark_processed_with_plan
+
 from tests.support.email_listing_oracle import StoredEmailListingOracle
 from email.parser import Parser
 import json
@@ -215,9 +217,7 @@ def test_source_io_has_no_write_lock_and_candidate_change_is_explicit(catalog):
 def test_explicit_status_filter_is_preserved(catalog):
     store, _ = catalog
     with store._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=1"
-        )
+        mark_processed_with_plan(db, 1)
     options = dict(
         status=EmailClassificationStatus.PROCESSED, limit=2, offset=0, q="alpha"
     )

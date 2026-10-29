@@ -65,7 +65,7 @@ def _cached_assembly_objects(email_ledger):
     from app.business_legacy_fields import current_business_declaration
     from app.business_schema_helpers import _create_auxiliary
     from app.configs_storage import create_configs_schema
-    from app.email_canonical_storage import _create_emails
+    from app.current_email_declaration import create_current_emails
     from app.current_schema_manifest import EMAIL_LEDGER_SQL
     from app.provenance_storage import create_provenance_schema
     from app.provider_state_storage import create_provider_state_schema
@@ -93,7 +93,7 @@ def _cached_assembly_objects(email_ledger):
     create_state_schema(db)
     create_provider_state_schema(db)
     create_provenance_schema(db)
-    _create_emails(db, metadata_owner=True, action_owner=True)
+    create_current_emails(db)
     business = current_business_declaration()
     db.execute(business["sql"])
     _create_auxiliary(db, business)

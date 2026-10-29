@@ -44,11 +44,12 @@ from app.action_email_definitions import (
     EMAIL_AUTOINCREMENT_TYPES, EMAIL_COMPOSITE_KEYS, EMAIL_DEFAULTS,
     EMAIL_NUMERIC_SCOPE as _EMAIL_NUMERIC_SCOPE,
     POSTFIX_ACTION_TYPES,
-    EMAIL_FIELDS, EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER,
-    email_action_projection as email_action_projection,
+    EMAIL_FIELDS as SOURCE_EMAIL_FIELDS, EMAIL_ROWID_TYPES, EMAIL_TYPES_ORDER,
     _encoded_value, _encoded_value_check, email_schema_parts,
 )
 
+from app.current_email_fields import EMAIL_FIELDS
+from app.shared_action_definitions import email_projection as email_action_projection  # noqa: F401
 
 SYNC_ACTION_PROJECTIONS = CURRENT_SYNC_PROJECTIONS
 
@@ -257,7 +258,7 @@ def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance
                    "memory_write_events": tuple(memory_fields)})
     fields.update({kind: tuple(field for field in names if field != "id"
                                and field not in EMAIL_COMPOSITE_KEYS.get(kind, ()))
-                   for kind, names in EMAIL_FIELDS.items()})
+                   for kind, names in SOURCE_EMAIL_FIELDS.items()})
     fields.update({kind: tuple(field for field in names if field != "id"
                                and not (kind == "business_task_follow_up_send_attempts" and field == "draft_id"))
                    for kind, names in SYNC_FIELDS.items()})
@@ -1638,7 +1639,8 @@ def _update_email_action(db, kind, identity, values, *, new_source_rowid=_EMAIL_
         bound += (new_source_rowid,)
     _email_lock(db, bound)
     if where_sql:
-        projection = email_action_projection(kind, include_rowid=kind in EMAIL_ROWID_TYPES)
+        from app.shared_action_definitions import email_projection
+        projection = email_projection(kind, include_rowid=kind in EMAIL_ROWID_TYPES)
         predicate += " and exists(select 1 from (" + projection + ") where " + " and ".join(
             f"{field}=?" for field in (EMAIL_COMPOSITE_KEYS[kind] if kind in EMAIL_COMPOSITE_KEYS else
                                        ("rowid",) if kind in EMAIL_ROWID_TYPES else ("id",))

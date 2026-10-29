@@ -10,10 +10,11 @@ from app.action_email_storage import (
 )
 from app.action_task_delivery_storage import _hash, _quote, _source_declaration
 from app.email_canonical_definitions import (
-    CLASS_FIELDS, MESSAGE_FIELDS, SHARED_FIELDS, canonical_column, email_projection,
+    MESSAGE_FIELDS, SHARED_FIELDS, canonical_column,
     MESSAGE_METADATA_FIELDS, email_metadata_declaration,
 )
 
+from app.current_email_definitions import CLASS_FIELDS, email_projection
 
 ACTION_OPTIONS = dict(include_receipts=True, include_reply=True, include_email=True,
                       include_followup_sync=True, include_skill_config_receipts=True,
@@ -26,13 +27,13 @@ _UNSET = object()
 CLASS_DEFAULTS = {
     "sender": "''", "subject": "''", "preview": "''", "model_text": "''",
     "received_at": "''", "agent_result_json": "'null'",
-    "legacy_processed_without_plan": "0", "confirmed_at": "''",
+    "confirmed_at": "''",
     "created_at": "current_timestamp", "updated_at": "current_timestamp",
 }
 
 
 def email_classification_projection() -> str:
-    return email_projection(KINDS[0], metadata_owner=True)
+    return email_projection(KINDS[0])
 
 
 def email_message_projection() -> str:

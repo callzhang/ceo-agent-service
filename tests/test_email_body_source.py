@@ -5,7 +5,7 @@ import json
 
 import pytest
 
-from tests.support.email_native_fixtures import _message, _classification
+from tests.support.email_native_fixtures import _message, _classification, mark_processed_with_plan
 
 
 def test_email_original_reference_has_one_nullable_owner_column(tmp_path):
@@ -90,7 +90,8 @@ def body_store(tmp_path):
     with store._connect() as db:
         db.execute("begin immediate")
         upsert_email_message(db, _message(normalized_text="complete body"))
-        insert_email_classification(db, _classification(status="processed", legacy_processed_without_plan=1))
+        insert_email_classification(db, _classification())
+        mark_processed_with_plan(db, 101)
     return store
 
 
@@ -168,8 +169,8 @@ def test_unfinished_classification_task_keeps_original(body_store, status):
         ).lastrowid
         db.execute(
             "insert into email_classification_inputs"
-            "(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
-            (task_id, "email", "stable-1", "{}"),
+            "(task_id,stable_message_identity,input_json) values(?,?,?)",
+            (task_id, "stable-1", "{}"),
         )
     assert not body_store.compact_email_message_body(101,
         source_reader=SimpleNamespace(read=lambda *args: pytest.fail("unfinished task needs input")))

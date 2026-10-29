@@ -1,0 +1,849 @@
+{
+  "status": "passed",
+  "checked_at": "2026-10-29T10:59:21.433871+00:00",
+  "native_tables_including_sequence": 49,
+  "source_fact_hashes": {
+    "emails": {
+      "rows": 11441,
+      "sha256": "f63fa7b7e61025a7327013a52db71502e8feb8e186934c81ada2906dc6f8cfd5"
+    },
+    "actions": {
+      "rows": 91425,
+      "sha256": "2ee7b184d13663d6a6692f319d7db60310651c8f3bf69f4a02501df70350f0b0"
+    },
+    "state": {
+      "rows": 24415,
+      "sha256": "fccac1d9a23b1484158326cb9e0930dde78059be7f73b3e807306f413a58e7e8"
+    },
+    "run_entity_identity_map": {
+      "rows": 172078,
+      "sha256": "9ed0b7d02373600598a0ca3d513f7b558401ac3269afac4939a428370fd66a53"
+    },
+    "configs": {
+      "rows": 7560,
+      "sha256": "1ee31f096ff591d7f364bfbb8933783635e81077c1c3baebf700d7477357a6fc"
+    },
+    "schedules": {
+      "rows": 16,
+      "sha256": "1eddb3aae102a220ba5f71ca4377be63bbfaf545913fcd4148a874247b5b50a3"
+    },
+    "action_receipts": {
+      "rows": 21588,
+      "sha256": "39c6a9508e5e78c79724136cbf6416ffbb01a8601e7d12b989fbbdff321db3c8"
+    },
+    "run_execution_progress": {
+      "rows": 656,
+      "sha256": "8a580941af22669e5950c1573829fa2ccb469217dbd2d70a624b064a430061af"
+    },
+    "run_adopted_selections": {
+      "rows": 0,
+      "sha256": "27b0a9dc295aa16ee527ec0fa0dc6f8c07a0de446db90964bf79508985d15c5d"
+    },
+    "run_adopted_reviews": {
+      "rows": 1937,
+      "sha256": "862489ab384a7e7e6205e530593f8f21768b7b4e973479486192a8c2c3927876"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "a98ad5956d58ae28cabb608feeb46c73796e793ca0e7d5f3cd7080663303fde2"
+    },
+    "codex_session_search_index": {
+      "rows": 795,
+      "sha256": "1230908c1afd5eaf66093b6a4b61185e65d6053a38e9bb548412dc560bb7f5fe"
+    },
+    "workbench_events": {
+      "rows": 1397,
+      "sha256": "cf8aff3b2554e5dad72acea4e1d90e4390770d1e219133c16f0fda093a166941"
+    },
+    "action_entity_identity_map": {
+      "rows": 31822,
+      "sha256": "de0624a9eb579f87bc1389fd3ffc31726d2487619794ba4b281f367b3db052f7"
+    },
+    "run_adopted_results": {
+      "rows": 1948,
+      "sha256": "177aed816af8dc269b3d92e1da4a851a7cbc6e2811019187b884d69377a6db40"
+    },
+    "tasks": {
+      "rows": 20097,
+      "sha256": "4ce6341a63ec6349d07a8c946e3a3b1026252de3de37a0ae57cb3fd125413200"
+    },
+    "provider_state": {
+      "rows": 73758,
+      "sha256": "47a67e690b15cca2d716610deb6b3b9f6cc3c8bdb500c8a054effb59cfd05b2e"
+    },
+    "reply_attempt_receipt_refs": {
+      "rows": 67,
+      "sha256": "80520b9ebf292a7ced241b3cfc2db8b7ac41a0f9a3a9c92f5c68059a9e84ff9b"
+    },
+    "email_schema_migrations": {
+      "rows": 41,
+      "sha256": "1638fc476222fd3972e2d702efa3bed6ae271f32815948e6ce0f5b87fb764929"
+    },
+    "run_adopted_supplements": {
+      "rows": 8,
+      "sha256": "d5fe4fb54a369baa980cfddf975f8154bd67db22e15c00214d34710458ced53a"
+    },
+    "run_projections": {
+      "rows": 10802,
+      "sha256": "b80c0941f0241118c3adc7e1049f6792e8743c156bfc3a8bd3da976f40bbf5ff"
+    },
+    "runtime_attempts": {
+      "rows": 27867,
+      "sha256": "7e06f17d01e0ae4d6865a3b1700a45d3675149adbfc66142e0ca3e10141e74f4"
+    },
+    "feedback_processing_items": {
+      "rows": 54,
+      "sha256": "3bad24b84052519d6d2455078552a66d04212283240011830b284b8e115ccee7"
+    },
+    "work_summary_inputs": {
+      "rows": 9148,
+      "sha256": "bf1c1f8c9e9c0513af109a7494a54223a35bc207dcad9324741e57f77757e318"
+    },
+    "feedback_processing_rounds": {
+      "rows": 9,
+      "sha256": "82141700f0c2a9949c2d285f6ed26eeac13b6f426b890ad5c09e0cb6e31fe6dc"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "44787050357d1fdcda0e3fe54b1e93b6327432a7a55af67ac5c1726ed8d0923f"
+    },
+    "provenance": {
+      "rows": 291,
+      "sha256": "a2b1814a5b2e9d8a60895fbbbe6345f08ff12922460051ab2c78c082bd6dbe72"
+    },
+    "run_failures": {
+      "rows": 1164,
+      "sha256": "bfad970f59b122b205e13f18e83eb57c1c4468da2af36e5126115bbcfe5cf6b8"
+    },
+    "business": {
+      "rows": 5303,
+      "sha256": "8ae549e3fc38624843acd2ffb4d50d02c4098eb7527869b34f806cbab3f40a14"
+    },
+    "run_adoption_identity_map": {
+      "rows": 3405,
+      "sha256": "1f1905e4acf211854dbaa78075c547cac5a33916227f1f50841bd07f41130914"
+    },
+    "runs": {
+      "rows": 39414,
+      "sha256": "4de06cb57683e0de310599b38570d6a39aeccbaa0e9a12a7530932e5ef728e9f"
+    },
+    "email_classification_inputs": {
+      "rows": 1436,
+      "sha256": "f0d0d208fe7ed9bc29ba9ff1e8fcc7526e05c6234756f618414b93c502a73105"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "391b5c19a283829f96cd99100f8775c91e6fd6e725d9da1bd8950fd9802d209b"
+    },
+    "task_inputs": {
+      "rows": 9307,
+      "sha256": "10a8ba2538e603c80d03b289a6ed4cc1dbf99c302c698cd77316770c80af30d8"
+    },
+    "run_provenance": {
+      "rows": 13703,
+      "sha256": "c453734f9a23281aa5557d32efea4a000f9bb0c72809cebe8e6ebfde2c48b4c2"
+    },
+    "task_business_keys": {
+      "rows": 9044,
+      "sha256": "ff65ea726d70cf6e9cedcecca0abb6faa852324597eb1af89778520793abbaad"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "e2cba6482203eea19cd1f718f22155d556ce371f430e8698ff0a11ce159c68f7"
+    },
+    "workbench_turns": {
+      "rows": 41,
+      "sha256": "9c31bba88d59ea454aceb6072a29683414e6c1c5ee8cdd22fadf6798bf49d106"
+    },
+    "task_results": {
+      "rows": 2536,
+      "sha256": "74510a6f86bb51acf1787b80ad5242d8ffe04d4ac60ae316b7140da8378ed17f"
+    },
+    "task_run_identity_map": {
+      "rows": 19744,
+      "sha256": "e9e6d1b76dbc6e1c46a05c499a34f5968f11aa33525b86adf0e1a176eb9d3ad3"
+    },
+    "sqlite_sequence": {
+      "rows": 58,
+      "sha256": "35fb1f8af0ccb97537608f5d1a8673aae3822d8c515fc783005640ff551c2ae9"
+    },
+    "feedback_processing_batches": {
+      "rows": 4,
+      "sha256": "e06bbb6434628bada92f2730db170b82015292a616b080cda1ce5807a8efdba1"
+    },
+    "oa_notification_events": {
+      "rows": 46,
+      "sha256": "6a7d074cc2f749964e336b802517b78111839590a558f02de3284542280bbc2c"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 6,
+      "sha256": "62264cfc67b2e5b3154096e826c6fd3385e982d35ec3eec304fe8ccd9347d2ca"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "c1c8c1dc27d4fa5012b327fe3f68061e14dbc2112877029bcb6a50ff234b9ba0"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "41e78a5a748f8f223b0ecef995b9a6d66ef9d7a3d9aafe6f75a6d7fb71930998"
+    },
+    "action_observers": {
+      "rows": 670,
+      "sha256": "249477a121b5328ccd9f1e48cd1b26e5f34d7db629aa128e088add4673ac6a99"
+    },
+    "workbench_tasks": {
+      "rows": 21,
+      "sha256": "c90a1bb3502623f5d777d982fa8da2335920c6014983a6e7b849ed21c247c6a2"
+    },
+    "schedule_occurrences": {
+      "rows": 123397,
+      "sha256": "2d9cccfd0875b6dd9d8cb36cd67c21ad65914d948740439118ac7bf5657a5abe"
+    }
+  },
+  "new_target_fact_hashes": {
+    "emails": {
+      "rows": 11442,
+      "sha256": "0eb44ef160a8b67b5e8e9629d3302fac8dccea7207223c69b073107f11ea7f0b"
+    },
+    "actions": {
+      "rows": 91427,
+      "sha256": "4e9549bba06d211080298526976601f07e5415bb8150710f1922cbf86ce53dd3"
+    },
+    "state": {
+      "rows": 24415,
+      "sha256": "fccac1d9a23b1484158326cb9e0930dde78059be7f73b3e807306f413a58e7e8"
+    },
+    "run_entity_identity_map": {
+      "rows": 172078,
+      "sha256": "9ed0b7d02373600598a0ca3d513f7b558401ac3269afac4939a428370fd66a53"
+    },
+    "configs": {
+      "rows": 7560,
+      "sha256": "1ee31f096ff591d7f364bfbb8933783635e81077c1c3baebf700d7477357a6fc"
+    },
+    "schedules": {
+      "rows": 16,
+      "sha256": "1eddb3aae102a220ba5f71ca4377be63bbfaf545913fcd4148a874247b5b50a3"
+    },
+    "action_receipts": {
+      "rows": 21589,
+      "sha256": "c047512de094a3deb87667863551f7f51e72b473c5de47782e87aee8e5dc4273"
+    },
+    "run_execution_progress": {
+      "rows": 656,
+      "sha256": "8a580941af22669e5950c1573829fa2ccb469217dbd2d70a624b064a430061af"
+    },
+    "run_adopted_selections": {
+      "rows": 0,
+      "sha256": "27b0a9dc295aa16ee527ec0fa0dc6f8c07a0de446db90964bf79508985d15c5d"
+    },
+    "run_adopted_reviews": {
+      "rows": 1937,
+      "sha256": "862489ab384a7e7e6205e530593f8f21768b7b4e973479486192a8c2c3927876"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "a98ad5956d58ae28cabb608feeb46c73796e793ca0e7d5f3cd7080663303fde2"
+    },
+    "codex_session_search_index": {
+      "rows": 795,
+      "sha256": "1230908c1afd5eaf66093b6a4b61185e65d6053a38e9bb548412dc560bb7f5fe"
+    },
+    "workbench_events": {
+      "rows": 1397,
+      "sha256": "cf8aff3b2554e5dad72acea4e1d90e4390770d1e219133c16f0fda093a166941"
+    },
+    "action_entity_identity_map": {
+      "rows": 31822,
+      "sha256": "de0624a9eb579f87bc1389fd3ffc31726d2487619794ba4b281f367b3db052f7"
+    },
+    "run_adopted_results": {
+      "rows": 1948,
+      "sha256": "177aed816af8dc269b3d92e1da4a851a7cbc6e2811019187b884d69377a6db40"
+    },
+    "tasks": {
+      "rows": 20098,
+      "sha256": "63c5ed2e9f1a34177c12d2215a504da4176aba083f388d979b3a3ab40fc8f939"
+    },
+    "provider_state": {
+      "rows": 73758,
+      "sha256": "47a67e690b15cca2d716610deb6b3b9f6cc3c8bdb500c8a054effb59cfd05b2e"
+    },
+    "reply_attempt_receipt_refs": {
+      "rows": 67,
+      "sha256": "80520b9ebf292a7ced241b3cfc2db8b7ac41a0f9a3a9c92f5c68059a9e84ff9b"
+    },
+    "email_schema_migrations": {
+      "rows": 41,
+      "sha256": "1638fc476222fd3972e2d702efa3bed6ae271f32815948e6ce0f5b87fb764929"
+    },
+    "run_adopted_supplements": {
+      "rows": 8,
+      "sha256": "d5fe4fb54a369baa980cfddf975f8154bd67db22e15c00214d34710458ced53a"
+    },
+    "run_projections": {
+      "rows": 10802,
+      "sha256": "b80c0941f0241118c3adc7e1049f6792e8743c156bfc3a8bd3da976f40bbf5ff"
+    },
+    "runtime_attempts": {
+      "rows": 27867,
+      "sha256": "7e06f17d01e0ae4d6865a3b1700a45d3675149adbfc66142e0ca3e10141e74f4"
+    },
+    "feedback_processing_items": {
+      "rows": 54,
+      "sha256": "3bad24b84052519d6d2455078552a66d04212283240011830b284b8e115ccee7"
+    },
+    "work_summary_inputs": {
+      "rows": 9148,
+      "sha256": "bf1c1f8c9e9c0513af109a7494a54223a35bc207dcad9324741e57f77757e318"
+    },
+    "feedback_processing_rounds": {
+      "rows": 9,
+      "sha256": "82141700f0c2a9949c2d285f6ed26eeac13b6f426b890ad5c09e0cb6e31fe6dc"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "44787050357d1fdcda0e3fe54b1e93b6327432a7a55af67ac5c1726ed8d0923f"
+    },
+    "provenance": {
+      "rows": 291,
+      "sha256": "a2b1814a5b2e9d8a60895fbbbe6345f08ff12922460051ab2c78c082bd6dbe72"
+    },
+    "run_failures": {
+      "rows": 1164,
+      "sha256": "bfad970f59b122b205e13f18e83eb57c1c4468da2af36e5126115bbcfe5cf6b8"
+    },
+    "business": {
+      "rows": 5303,
+      "sha256": "8ae549e3fc38624843acd2ffb4d50d02c4098eb7527869b34f806cbab3f40a14"
+    },
+    "run_adoption_identity_map": {
+      "rows": 3405,
+      "sha256": "1f1905e4acf211854dbaa78075c547cac5a33916227f1f50841bd07f41130914"
+    },
+    "runs": {
+      "rows": 39414,
+      "sha256": "4de06cb57683e0de310599b38570d6a39aeccbaa0e9a12a7530932e5ef728e9f"
+    },
+    "email_classification_inputs": {
+      "rows": 1437,
+      "sha256": "25ecc5f6d9310861f2377b4fd4cf51a2bbb204dbecc98ce7e6facae403248242"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "391b5c19a283829f96cd99100f8775c91e6fd6e725d9da1bd8950fd9802d209b"
+    },
+    "task_inputs": {
+      "rows": 9307,
+      "sha256": "10a8ba2538e603c80d03b289a6ed4cc1dbf99c302c698cd77316770c80af30d8"
+    },
+    "run_provenance": {
+      "rows": 13703,
+      "sha256": "c453734f9a23281aa5557d32efea4a000f9bb0c72809cebe8e6ebfde2c48b4c2"
+    },
+    "task_business_keys": {
+      "rows": 9044,
+      "sha256": "ff65ea726d70cf6e9cedcecca0abb6faa852324597eb1af89778520793abbaad"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "e2cba6482203eea19cd1f718f22155d556ce371f430e8698ff0a11ce159c68f7"
+    },
+    "workbench_turns": {
+      "rows": 41,
+      "sha256": "9c31bba88d59ea454aceb6072a29683414e6c1c5ee8cdd22fadf6798bf49d106"
+    },
+    "task_results": {
+      "rows": 2537,
+      "sha256": "1011b2e1fd56a66c84cff9063941b43b5d068029af87eb919b42a51658f82511"
+    },
+    "task_run_identity_map": {
+      "rows": 19744,
+      "sha256": "e9e6d1b76dbc6e1c46a05c499a34f5968f11aa33525b86adf0e1a176eb9d3ad3"
+    },
+    "sqlite_sequence": {
+      "rows": 58,
+      "sha256": "ec2ac06f08aaebea18fc81fd603d6738d2ca66977c96029ae1a42f356d43acc5"
+    },
+    "feedback_processing_batches": {
+      "rows": 4,
+      "sha256": "e06bbb6434628bada92f2730db170b82015292a616b080cda1ce5807a8efdba1"
+    },
+    "oa_notification_events": {
+      "rows": 46,
+      "sha256": "6a7d074cc2f749964e336b802517b78111839590a558f02de3284542280bbc2c"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 6,
+      "sha256": "62264cfc67b2e5b3154096e826c6fd3385e982d35ec3eec304fe8ccd9347d2ca"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "c1c8c1dc27d4fa5012b327fe3f68061e14dbc2112877029bcb6a50ff234b9ba0"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "41e78a5a748f8f223b0ecef995b9a6d66ef9d7a3d9aafe6f75a6d7fb71930998"
+    },
+    "action_observers": {
+      "rows": 670,
+      "sha256": "249477a121b5328ccd9f1e48cd1b26e5f34d7db629aa128e088add4673ac6a99"
+    },
+    "workbench_tasks": {
+      "rows": 21,
+      "sha256": "c90a1bb3502623f5d777d982fa8da2335920c6014983a6e7b849ed21c247c6a2"
+    },
+    "schedule_occurrences": {
+      "rows": 123397,
+      "sha256": "2d9cccfd0875b6dd9d8cb36cd67c21ad65914d948740439118ac7bf5657a5abe"
+    }
+  },
+  "first_inverse_fact_hashes": {
+    "emails": {
+      "rows": 11442,
+      "sha256": "f0555253adc2c280ea6e08723ab6e453cb9a9a269a5e1f578be1082cc9108a8d"
+    },
+    "actions": {
+      "rows": 91427,
+      "sha256": "4ee032517e0a59df1bfcee82ee172ea03c95af843f553e17bfa2ae0ec863331c"
+    },
+    "state": {
+      "rows": 24415,
+      "sha256": "fccac1d9a23b1484158326cb9e0930dde78059be7f73b3e807306f413a58e7e8"
+    },
+    "run_entity_identity_map": {
+      "rows": 172078,
+      "sha256": "9ed0b7d02373600598a0ca3d513f7b558401ac3269afac4939a428370fd66a53"
+    },
+    "configs": {
+      "rows": 7560,
+      "sha256": "1ee31f096ff591d7f364bfbb8933783635e81077c1c3baebf700d7477357a6fc"
+    },
+    "schedules": {
+      "rows": 16,
+      "sha256": "1eddb3aae102a220ba5f71ca4377be63bbfaf545913fcd4148a874247b5b50a3"
+    },
+    "action_receipts": {
+      "rows": 21589,
+      "sha256": "c047512de094a3deb87667863551f7f51e72b473c5de47782e87aee8e5dc4273"
+    },
+    "run_execution_progress": {
+      "rows": 656,
+      "sha256": "8a580941af22669e5950c1573829fa2ccb469217dbd2d70a624b064a430061af"
+    },
+    "run_adopted_selections": {
+      "rows": 0,
+      "sha256": "27b0a9dc295aa16ee527ec0fa0dc6f8c07a0de446db90964bf79508985d15c5d"
+    },
+    "run_adopted_reviews": {
+      "rows": 1937,
+      "sha256": "862489ab384a7e7e6205e530593f8f21768b7b4e973479486192a8c2c3927876"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "a98ad5956d58ae28cabb608feeb46c73796e793ca0e7d5f3cd7080663303fde2"
+    },
+    "codex_session_search_index": {
+      "rows": 795,
+      "sha256": "1230908c1afd5eaf66093b6a4b61185e65d6053a38e9bb548412dc560bb7f5fe"
+    },
+    "workbench_events": {
+      "rows": 1397,
+      "sha256": "cf8aff3b2554e5dad72acea4e1d90e4390770d1e219133c16f0fda093a166941"
+    },
+    "action_entity_identity_map": {
+      "rows": 31822,
+      "sha256": "de0624a9eb579f87bc1389fd3ffc31726d2487619794ba4b281f367b3db052f7"
+    },
+    "run_adopted_results": {
+      "rows": 1948,
+      "sha256": "177aed816af8dc269b3d92e1da4a851a7cbc6e2811019187b884d69377a6db40"
+    },
+    "tasks": {
+      "rows": 20098,
+      "sha256": "63c5ed2e9f1a34177c12d2215a504da4176aba083f388d979b3a3ab40fc8f939"
+    },
+    "provider_state": {
+      "rows": 73758,
+      "sha256": "47a67e690b15cca2d716610deb6b3b9f6cc3c8bdb500c8a054effb59cfd05b2e"
+    },
+    "reply_attempt_receipt_refs": {
+      "rows": 67,
+      "sha256": "80520b9ebf292a7ced241b3cfc2db8b7ac41a0f9a3a9c92f5c68059a9e84ff9b"
+    },
+    "email_schema_migrations": {
+      "rows": 41,
+      "sha256": "1638fc476222fd3972e2d702efa3bed6ae271f32815948e6ce0f5b87fb764929"
+    },
+    "run_adopted_supplements": {
+      "rows": 8,
+      "sha256": "d5fe4fb54a369baa980cfddf975f8154bd67db22e15c00214d34710458ced53a"
+    },
+    "run_projections": {
+      "rows": 10802,
+      "sha256": "b80c0941f0241118c3adc7e1049f6792e8743c156bfc3a8bd3da976f40bbf5ff"
+    },
+    "runtime_attempts": {
+      "rows": 27867,
+      "sha256": "7e06f17d01e0ae4d6865a3b1700a45d3675149adbfc66142e0ca3e10141e74f4"
+    },
+    "feedback_processing_items": {
+      "rows": 54,
+      "sha256": "3bad24b84052519d6d2455078552a66d04212283240011830b284b8e115ccee7"
+    },
+    "work_summary_inputs": {
+      "rows": 9148,
+      "sha256": "bf1c1f8c9e9c0513af109a7494a54223a35bc207dcad9324741e57f77757e318"
+    },
+    "feedback_processing_rounds": {
+      "rows": 9,
+      "sha256": "82141700f0c2a9949c2d285f6ed26eeac13b6f426b890ad5c09e0cb6e31fe6dc"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "44787050357d1fdcda0e3fe54b1e93b6327432a7a55af67ac5c1726ed8d0923f"
+    },
+    "provenance": {
+      "rows": 291,
+      "sha256": "a2b1814a5b2e9d8a60895fbbbe6345f08ff12922460051ab2c78c082bd6dbe72"
+    },
+    "run_failures": {
+      "rows": 1164,
+      "sha256": "bfad970f59b122b205e13f18e83eb57c1c4468da2af36e5126115bbcfe5cf6b8"
+    },
+    "business": {
+      "rows": 5303,
+      "sha256": "8ae549e3fc38624843acd2ffb4d50d02c4098eb7527869b34f806cbab3f40a14"
+    },
+    "run_adoption_identity_map": {
+      "rows": 3405,
+      "sha256": "1f1905e4acf211854dbaa78075c547cac5a33916227f1f50841bd07f41130914"
+    },
+    "runs": {
+      "rows": 39414,
+      "sha256": "4de06cb57683e0de310599b38570d6a39aeccbaa0e9a12a7530932e5ef728e9f"
+    },
+    "email_classification_inputs": {
+      "rows": 1437,
+      "sha256": "0aabd781da148dbe159e974b654a2868dc91ddbca7193dc8a7a3809712a8adf6"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "391b5c19a283829f96cd99100f8775c91e6fd6e725d9da1bd8950fd9802d209b"
+    },
+    "task_inputs": {
+      "rows": 9307,
+      "sha256": "10a8ba2538e603c80d03b289a6ed4cc1dbf99c302c698cd77316770c80af30d8"
+    },
+    "run_provenance": {
+      "rows": 13703,
+      "sha256": "c453734f9a23281aa5557d32efea4a000f9bb0c72809cebe8e6ebfde2c48b4c2"
+    },
+    "task_business_keys": {
+      "rows": 9044,
+      "sha256": "ff65ea726d70cf6e9cedcecca0abb6faa852324597eb1af89778520793abbaad"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "e2cba6482203eea19cd1f718f22155d556ce371f430e8698ff0a11ce159c68f7"
+    },
+    "workbench_turns": {
+      "rows": 41,
+      "sha256": "9c31bba88d59ea454aceb6072a29683414e6c1c5ee8cdd22fadf6798bf49d106"
+    },
+    "task_results": {
+      "rows": 2537,
+      "sha256": "1011b2e1fd56a66c84cff9063941b43b5d068029af87eb919b42a51658f82511"
+    },
+    "task_run_identity_map": {
+      "rows": 19744,
+      "sha256": "e9e6d1b76dbc6e1c46a05c499a34f5968f11aa33525b86adf0e1a176eb9d3ad3"
+    },
+    "sqlite_sequence": {
+      "rows": 58,
+      "sha256": "ec2ac06f08aaebea18fc81fd603d6738d2ca66977c96029ae1a42f356d43acc5"
+    },
+    "feedback_processing_batches": {
+      "rows": 4,
+      "sha256": "e06bbb6434628bada92f2730db170b82015292a616b080cda1ce5807a8efdba1"
+    },
+    "oa_notification_events": {
+      "rows": 46,
+      "sha256": "6a7d074cc2f749964e336b802517b78111839590a558f02de3284542280bbc2c"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 6,
+      "sha256": "62264cfc67b2e5b3154096e826c6fd3385e982d35ec3eec304fe8ccd9347d2ca"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "c1c8c1dc27d4fa5012b327fe3f68061e14dbc2112877029bcb6a50ff234b9ba0"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "41e78a5a748f8f223b0ecef995b9a6d66ef9d7a3d9aafe6f75a6d7fb71930998"
+    },
+    "action_observers": {
+      "rows": 670,
+      "sha256": "249477a121b5328ccd9f1e48cd1b26e5f34d7db629aa128e088add4673ac6a99"
+    },
+    "workbench_tasks": {
+      "rows": 21,
+      "sha256": "c90a1bb3502623f5d777d982fa8da2335920c6014983a6e7b849ed21c247c6a2"
+    },
+    "schedule_occurrences": {
+      "rows": 123397,
+      "sha256": "2d9cccfd0875b6dd9d8cb36cd67c21ad65914d948740439118ac7bf5657a5abe"
+    }
+  },
+  "old_cold_write_fact_hashes": {
+    "emails": {
+      "rows": 11443,
+      "sha256": "ece5a367452613197ce0ff79f55fcfc9d40ec5cb3ffb462548a362d8721ff675"
+    },
+    "actions": {
+      "rows": 91429,
+      "sha256": "58aa9a4d3febf4f6f7105dc2fb2c134eea37b856d5baeaca85c99761d68ffb7d"
+    },
+    "state": {
+      "rows": 24415,
+      "sha256": "fccac1d9a23b1484158326cb9e0930dde78059be7f73b3e807306f413a58e7e8"
+    },
+    "run_entity_identity_map": {
+      "rows": 172078,
+      "sha256": "9ed0b7d02373600598a0ca3d513f7b558401ac3269afac4939a428370fd66a53"
+    },
+    "configs": {
+      "rows": 7560,
+      "sha256": "1ee31f096ff591d7f364bfbb8933783635e81077c1c3baebf700d7477357a6fc"
+    },
+    "schedules": {
+      "rows": 16,
+      "sha256": "1eddb3aae102a220ba5f71ca4377be63bbfaf545913fcd4148a874247b5b50a3"
+    },
+    "action_receipts": {
+      "rows": 21590,
+      "sha256": "d4abf30764f0dee75905cd63130141b78b473e34dc7a5f0411dbaefaa33bdd60"
+    },
+    "run_execution_progress": {
+      "rows": 656,
+      "sha256": "8a580941af22669e5950c1573829fa2ccb469217dbd2d70a624b064a430061af"
+    },
+    "run_adopted_selections": {
+      "rows": 0,
+      "sha256": "27b0a9dc295aa16ee527ec0fa0dc6f8c07a0de446db90964bf79508985d15c5d"
+    },
+    "run_adopted_reviews": {
+      "rows": 1937,
+      "sha256": "862489ab384a7e7e6205e530593f8f21768b7b4e973479486192a8c2c3927876"
+    },
+    "email_classifier_runtime_samples": {
+      "rows": 2048,
+      "sha256": "a98ad5956d58ae28cabb608feeb46c73796e793ca0e7d5f3cd7080663303fde2"
+    },
+    "codex_session_search_index": {
+      "rows": 795,
+      "sha256": "1230908c1afd5eaf66093b6a4b61185e65d6053a38e9bb548412dc560bb7f5fe"
+    },
+    "workbench_events": {
+      "rows": 1397,
+      "sha256": "cf8aff3b2554e5dad72acea4e1d90e4390770d1e219133c16f0fda093a166941"
+    },
+    "action_entity_identity_map": {
+      "rows": 31822,
+      "sha256": "de0624a9eb579f87bc1389fd3ffc31726d2487619794ba4b281f367b3db052f7"
+    },
+    "run_adopted_results": {
+      "rows": 1948,
+      "sha256": "177aed816af8dc269b3d92e1da4a851a7cbc6e2811019187b884d69377a6db40"
+    },
+    "tasks": {
+      "rows": 20099,
+      "sha256": "d414ad839682c4fa3ce2433a8144d82ea69a48d60841b11ba80fbe391bf55633"
+    },
+    "provider_state": {
+      "rows": 73758,
+      "sha256": "47a67e690b15cca2d716610deb6b3b9f6cc3c8bdb500c8a054effb59cfd05b2e"
+    },
+    "reply_attempt_receipt_refs": {
+      "rows": 67,
+      "sha256": "80520b9ebf292a7ced241b3cfc2db8b7ac41a0f9a3a9c92f5c68059a9e84ff9b"
+    },
+    "email_schema_migrations": {
+      "rows": 41,
+      "sha256": "1638fc476222fd3972e2d702efa3bed6ae271f32815948e6ce0f5b87fb764929"
+    },
+    "run_adopted_supplements": {
+      "rows": 8,
+      "sha256": "d5fe4fb54a369baa980cfddf975f8154bd67db22e15c00214d34710458ced53a"
+    },
+    "run_projections": {
+      "rows": 10802,
+      "sha256": "b80c0941f0241118c3adc7e1049f6792e8743c156bfc3a8bd3da976f40bbf5ff"
+    },
+    "runtime_attempts": {
+      "rows": 27867,
+      "sha256": "7e06f17d01e0ae4d6865a3b1700a45d3675149adbfc66142e0ca3e10141e74f4"
+    },
+    "feedback_processing_items": {
+      "rows": 54,
+      "sha256": "3bad24b84052519d6d2455078552a66d04212283240011830b284b8e115ccee7"
+    },
+    "work_summary_inputs": {
+      "rows": 9148,
+      "sha256": "bf1c1f8c9e9c0513af109a7494a54223a35bc207dcad9324741e57f77757e318"
+    },
+    "feedback_processing_rounds": {
+      "rows": 9,
+      "sha256": "82141700f0c2a9949c2d285f6ed26eeac13b6f426b890ad5c09e0cb6e31fe6dc"
+    },
+    "workbench_attachments": {
+      "rows": 0,
+      "sha256": "44787050357d1fdcda0e3fe54b1e93b6327432a7a55af67ac5c1726ed8d0923f"
+    },
+    "provenance": {
+      "rows": 291,
+      "sha256": "a2b1814a5b2e9d8a60895fbbbe6345f08ff12922460051ab2c78c082bd6dbe72"
+    },
+    "run_failures": {
+      "rows": 1164,
+      "sha256": "bfad970f59b122b205e13f18e83eb57c1c4468da2af36e5126115bbcfe5cf6b8"
+    },
+    "business": {
+      "rows": 5303,
+      "sha256": "8ae549e3fc38624843acd2ffb4d50d02c4098eb7527869b34f806cbab3f40a14"
+    },
+    "run_adoption_identity_map": {
+      "rows": 3405,
+      "sha256": "1f1905e4acf211854dbaa78075c547cac5a33916227f1f50841bd07f41130914"
+    },
+    "runs": {
+      "rows": 39414,
+      "sha256": "4de06cb57683e0de310599b38570d6a39aeccbaa0e9a12a7530932e5ef728e9f"
+    },
+    "email_classification_inputs": {
+      "rows": 1438,
+      "sha256": "53edc9012eb49a5f07b77c114e6b9bf49d896c3b57cea67d90edb8ba4d1b2384"
+    },
+    "setup_wizard_events": {
+      "rows": 22,
+      "sha256": "391b5c19a283829f96cd99100f8775c91e6fd6e725d9da1bd8950fd9802d209b"
+    },
+    "task_inputs": {
+      "rows": 9307,
+      "sha256": "10a8ba2538e603c80d03b289a6ed4cc1dbf99c302c698cd77316770c80af30d8"
+    },
+    "run_provenance": {
+      "rows": 13703,
+      "sha256": "c453734f9a23281aa5557d32efea4a000f9bb0c72809cebe8e6ebfde2c48b4c2"
+    },
+    "task_business_keys": {
+      "rows": 9044,
+      "sha256": "ff65ea726d70cf6e9cedcecca0abb6faa852324597eb1af89778520793abbaad"
+    },
+    "okr_review_items": {
+      "rows": 413,
+      "sha256": "e2cba6482203eea19cd1f718f22155d556ce371f430e8698ff0a11ce159c68f7"
+    },
+    "workbench_turns": {
+      "rows": 41,
+      "sha256": "9c31bba88d59ea454aceb6072a29683414e6c1c5ee8cdd22fadf6798bf49d106"
+    },
+    "task_results": {
+      "rows": 2538,
+      "sha256": "a37aaaaf660e24c22fa8db1541fc992552af86be533bdc206577b54c2d6f8c17"
+    },
+    "task_run_identity_map": {
+      "rows": 19744,
+      "sha256": "e9e6d1b76dbc6e1c46a05c499a34f5968f11aa33525b86adf0e1a176eb9d3ad3"
+    },
+    "sqlite_sequence": {
+      "rows": 58,
+      "sha256": "9cac836078f8f9331a44e4eade1f7d65f56b98f451fd6caa4942a2a2a006012d"
+    },
+    "feedback_processing_batches": {
+      "rows": 4,
+      "sha256": "e06bbb6434628bada92f2730db170b82015292a616b080cda1ce5807a8efdba1"
+    },
+    "oa_notification_events": {
+      "rows": 46,
+      "sha256": "6a7d074cc2f749964e336b802517b78111839590a558f02de3284542280bbc2c"
+    },
+    "feedback_iteration_decisions": {
+      "rows": 6,
+      "sha256": "62264cfc67b2e5b3154096e826c6fd3385e982d35ec3eec304fe8ccd9347d2ca"
+    },
+    "workbench_artifacts": {
+      "rows": 0,
+      "sha256": "c1c8c1dc27d4fa5012b327fe3f68061e14dbc2112877029bcb6a50ff234b9ba0"
+    },
+    "email_historical_candidates": {
+      "rows": 924,
+      "sha256": "41e78a5a748f8f223b0ecef995b9a6d66ef9d7a3d9aafe6f75a6d7fb71930998"
+    },
+    "action_observers": {
+      "rows": 670,
+      "sha256": "249477a121b5328ccd9f1e48cd1b26e5f34d7db629aa128e088add4673ac6a99"
+    },
+    "workbench_tasks": {
+      "rows": 21,
+      "sha256": "c90a1bb3502623f5d777d982fa8da2335920c6014983a6e7b849ed21c247c6a2"
+    },
+    "schedule_occurrences": {
+      "rows": 123397,
+      "sha256": "2d9cccfd0875b6dd9d8cb36cd67c21ad65914d948740439118ac7bf5657a5abe"
+    }
+  },
+  "original_cohort_typed_facts_preserved": true,
+  "new_target_inputs_plans_results_and_fake_receipts_survive_inverse": true,
+  "actual_old_code_cold_read_write": true,
+  "second_inverse_exact_including_new_old_writes": true,
+  "email_constructor_validation": "validate_rows=False, matching actual Email worker; schema/account validation retained",
+  "fixture_clock": "before existing classification lease expiry; original in-flight work is not recovered or consumed",
+  "current_old_current_cold_writes": [
+    {
+      "task_id": "417854",
+      "classification_id": 9220938145839983094,
+      "plan_id": "email-action-plan:b154d6d9a7b534c28d64c9c5e851239fee639b49276b79d8bb7ed0f5867f3bbc",
+      "receipt_id": 21589,
+      "receipt_body": "{\"synthetic_ack\": \"3506f928a923424a9a1b60ae3b925fdf\"}"
+    },
+    {
+      "task_id": "417855",
+      "classification_id": 9220938145839983095,
+      "plan_id": "email-action-plan:c98edc1e717d243bc48ae985481db101fdfd902fb2ad2fb19cd0bbbe4570d679",
+      "receipt_id": 21590,
+      "receipt_body": "{\"synthetic_ack\": \"4b9100c467f34e75ac7a85c49be5b203\"}"
+    },
+    {
+      "task_id": "417856",
+      "classification_id": 9220938145839983096,
+      "plan_id": "email-action-plan:f48936da5d7c132827b8ff253bd79b85d3e1f871139930f5070f761d2a111fd0",
+      "receipt_id": 21591,
+      "receipt_body": "{\"synthetic_ack\": \"da4ea2b3784e48dabb15f6c376728c33\"}"
+    }
+  ],
+  "network_and_native_cli": "refused",
+  "copy": "/private/tmp/ceo-final-model-residue.OAxXjh/roundtrip3.sqlite3",
+  "old_root": "/private/tmp/ceo-final-model-residue.OAxXjh/old-code",
+  "phase": "implemented_copy_validated_not_deployed",
+  "source_code_commit": "4b1ec3e661823a50287904ad7dd80f3819a05be7",
+  "target_store_version": "2026-10-29.1",
+  "email_version": 54,
+  "reviews": {
+    "SPEC": "passed",
+    "QUALITY": "passed"
+  },
+  "focused_tests": {
+    "adapter": 75,
+    "store_before_final_projection": 235,
+    "reader_training_source": 59,
+    "body_source": 18,
+    "release_declaration_drain_integration": 66,
+    "inverse_ledger_and_current_artifact": 15,
+    "attention_dashboard_quality": 86,
+    "strict_compaction_reopen_identity": 4,
+    "overlap": "counts are overlapping evidence, not summed as a unique suite",
+    "interrupted_batch": "not passed; implementer sent unauthorized Ctrl-C during old current-SQL artifact mismatch, corrected artifact and reran focused checks"
+  }
+}

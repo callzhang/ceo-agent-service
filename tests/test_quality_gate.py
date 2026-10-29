@@ -83,9 +83,9 @@ def _insert_task(db, kind, values):
         )
     elif kind == 'email_agent_classification_tasks':
         db.execute(
-            "insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) "
-            "values(?,?,?,?)",
-            (task['id'], values['channel'], values['stable_message_identity'], values['input_json']),
+            "insert into email_classification_inputs(task_id,stable_message_identity,input_json) "
+            "values(?,?,?)",
+            (task['id'], values['stable_message_identity'], values['input_json']),
         )
     return SimpleNamespace(lastrowid=task['id'])
 

@@ -8,7 +8,8 @@ from app.action_email_definitions import EMAIL_FIELDS, EMAIL_CHECKS
 from app.action_storage import SOURCE_COLUMNS, ENUMS
 from app.prepared_action_definitions import COLUMNS as PREPARED_COLUMNS, SLOTS
 from app.current_action_schema import current_action_payloads
-from app.shared_action_definitions import SHARED_RECORD_TYPES, email_projection
+from app.shared_action_definitions import SHARED_RECORD_TYPES
+from tests.support.historical_email_projection import email_projection
 from tools.action_entity_contract import (
     build_current_release_target_ddl,
     inspect_action_entity_source,

@@ -197,12 +197,12 @@ def _native_predecessor_case(test):
 
 def test_native_feedback_receipts_survive_full_paired_selection(tmp_path: Path):
     """Current public receipts survive the exact immediately-previous release."""
-    from app.feedback_owner_schema_release import prepare_feedback_owner_release
-    from tests.support.store28_session_source import create_store28_2_source
+    from app.email_field_retirement_release import prepare_email_field_retirement_release
+    from tests.support.store28_5_source import create_store28_5_source
     db_path = tmp_path / "native-paired.sqlite3"
     with sqlite3.connect(db_path) as db:
-        create_store28_2_source(db)
-    initial = prepare_feedback_owner_release(db_path)
+        create_store28_5_source(db)
+    initial = prepare_email_field_retirement_release(db_path)
     initial.publish()
     store = AutoReplyStore(db_path)
     store.upsert_feedback_event(key='feedback-native', feedback_token='token-native',

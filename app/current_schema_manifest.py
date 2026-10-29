@@ -5,7 +5,7 @@ import os
 from pathlib import Path
 import sqlite3
 
-STORE_VERSION = "2026-10-28.5"
+STORE_VERSION = "2026-10-29.1"
 EMAIL_VERSION = 54
 EMAIL_LEDGER_SQL = """CREATE TABLE email_schema_migrations (
                 version integer primary key,

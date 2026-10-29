@@ -20,7 +20,7 @@ def _scalar(value):
     return ("text", value)
 
 
-def fact_digest(path, *, original_ceilings=None):
+def fact_digest(path, *, original_ceilings=None, original_identities=None):
     """Hash native stored values/types and hidden identities; never export bodies."""
     result = {}
     with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
@@ -31,7 +31,7 @@ def fact_digest(path, *, original_ceilings=None):
         for schema, table, kind, _, without_rowid, _ in table_rows:
             if schema != "main" or kind != "table" or (table.startswith("sqlite_") and table != "sqlite_sequence"):
                 continue
-            if original_ceilings is not None and table == "sqlite_sequence":
+            if (original_ceilings is not None or original_identities is not None) and table == "sqlite_sequence":
                 continue
             quoted = '"' + table.replace('"', '""') + '"'
             columns = db.execute(f"pragma main.table_xinfo({quoted})").fetchall()
@@ -47,12 +47,35 @@ def fact_digest(path, *, original_ceilings=None):
             where = " where " + " and ".join(clauses) if clauses else ""
             digest = hashlib.sha256(json.dumps(retained).encode())
             count = 0
+            primary = [row[1] for row in sorted(columns, key=lambda row: row[5]) if row[5]]
             for row in db.execute(f"select {projection} from {quoted}{where} order by {order}", parameters):
+                if original_identities is not None:
+                    identity = tuple(row[retained.index(name)] for name in primary) if without_rowid else row[0]
+                    if identity not in original_identities[table]:
+                        continue
                 digest.update(json.dumps([_scalar(value) for value in row], ensure_ascii=False,
                                          separators=(",", ":")).encode())
                 digest.update(b"\n")
                 count += 1
             result[table] = {"rows": count, "sha256": digest.hexdigest()}
+    return result
+
+
+def _identities(path):
+    """Freeze exact native row identities; future rowids can fill existing holes."""
+    result = {}
+    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+        db.execute("pragma query_only=on")
+        db.execute("begin")
+        for schema, table, kind, _, without_rowid, _ in db.execute("pragma main.table_list").fetchall():
+            if schema != "main" or kind != "table" or table.startswith("sqlite_"):
+                continue
+            quoted = '"' + table.replace('"', '""') + '"'
+            columns = db.execute(f"pragma main.table_xinfo({quoted})").fetchall()
+            keys = [row[1] for row in sorted(columns, key=lambda row: row[5]) if row[5]]
+            names = ",".join('"' + name.replace('"', '""') + '"' for name in keys) if without_rowid else "rowid"
+            rows = db.execute(f"select {names} from {quoted}")
+            result[table] = {tuple(row) if without_rowid else row[0] for row in rows}
     return result
 
 

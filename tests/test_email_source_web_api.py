@@ -1,5 +1,7 @@
 """Default Console HTTP source wiring with real SQLite and readonly fake IMAP."""
 
+from tests.support.email_native_fixtures import mark_processed_with_plan
+
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 import pytest
@@ -224,9 +226,7 @@ def test_training_preview_uses_default_shared_source_without_db_inputs(
 ):
     store, _ = catalog
     with store._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=1"
-        )
+        mark_processed_with_plan(db, 1)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("preview must use accurate external inputs")
@@ -254,9 +254,7 @@ def test_training_preview_missing_source_is_explicit_and_does_not_publish(
 ):
     store, _ = catalog
     with store._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=1"
-        )
+        mark_processed_with_plan(db, 1)
 
     def forbidden(*args, **kwargs):
         raise AssertionError("no database input fallback")
@@ -297,9 +295,7 @@ def test_audit_console_preview_and_manual_freeze_share_one_source_registry(
     monkeypatch.setenv("CEO_EMAIL_EMBEDDING_REVISION", "synthetic-test-revision")
     store, _ = catalog
     with store._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=1"
-        )
+        mark_processed_with_plan(db, 1)
     unused_client, opened, closed, constructions = source_client(catalog, monkeypatch)
     before = len(constructions)
 
@@ -377,9 +373,7 @@ def test_training_preview_does_not_run_blocking_sources_on_the_event_loop(
 
     store, _ = catalog
     with store._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=1"
-        )
+        mark_processed_with_plan(db, 1)
     read = EmailSelectedTrainingReader.list_selected_training_records
 
     def off_loop(self, **kwargs):

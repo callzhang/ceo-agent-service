@@ -19,8 +19,8 @@ def test_email_attention_reads_payloads_only_for_failed_ids(tmp_path):
             })
             db.execute(
                 "insert into email_classification_inputs "
-                "(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
-                (task["id"], "email", stable_identity, input_json),
+                "(task_id,stable_message_identity,input_json) values(?,?,?)",
+                (task["id"], stable_identity, input_json),
             )
             return str(task["id"])
 

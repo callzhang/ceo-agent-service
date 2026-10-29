@@ -10,6 +10,7 @@ import sqlite3
 from collections.abc import Mapping
 
 from app.action_storage import REPLY_VARIANTS
+from app.action_email_definitions import EMAIL_ACTION_PROJECTIONS
 from app.email_category_config import (
     CATEGORY_CONFIG_CHECKS, CATEGORY_CONFIG_COLUMN_CONTRACTS,
     FOLDER_BINDING_CHECKS, FOLDER_BINDING_COLUMN_CONTRACTS,
@@ -18,7 +19,7 @@ from app.business_legacy_fields import current_action_objects
 from app.configs_definitions import CONFIG_FIELDS
 from app.email_current_schema import current_canonical_email_parent_is_current
 from app.email_store import (
-    EmailStore, EmailPersistenceCorruption, EMAIL_ACTION_PROJECTIONS,
+    EmailStore, EmailPersistenceCorruption,
     _json_load,
     _schema_identifier, _schema_metadata_text,
 )

@@ -304,7 +304,7 @@ class EmailClassificationTaskAdapter:
         with self.email_store._connect() as db:
             db.execute("begin immediate")
             row = db.execute(
-                "select t.*, i.channel, i.stable_message_identity, i.input_json, "
+                "select t.*, i.stable_message_identity, i.input_json, "
                 "r.result_json from email_classification_inputs i "
                 "join tasks t on t.id=i.task_id left join task_results r "
                 "on r.task_id=t.id and r.result_kind='email_classification' "
@@ -321,11 +321,11 @@ class EmailClassificationTaskAdapter:
                 })
                 db.execute(
                     "insert into email_classification_inputs"
-                    "(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
-                    (task["id"], "email", task_input.stable_message_identity, input_json),
+                    "(task_id,stable_message_identity,input_json) values(?,?,?)",
+                    (task["id"], task_input.stable_message_identity, input_json),
                 )
                 row = db.execute(
-                    "select t.*, i.channel, i.stable_message_identity, i.input_json, "
+                    "select t.*, i.stable_message_identity, i.input_json, "
                     "r.result_json from tasks t join email_classification_inputs i "
                     "on i.task_id=t.id left join task_results r "
                     "on r.task_id=t.id and r.result_kind='email_classification' where t.id=?",
@@ -378,8 +378,8 @@ class EmailClassificationTaskAdapter:
             })
             db.execute(
                 "insert into email_classification_inputs"
-                "(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
-                (task["id"], "email", offline_identity, "{}"),
+                "(task_id,stable_message_identity,input_json) values(?,?,?)",
+                (task["id"], offline_identity, "{}"),
             )
         return str(task["id"])
 
@@ -455,7 +455,7 @@ class EmailClassificationTaskAdapter:
     def get_task(self, task_id: str) -> EmailClassificationTask | None:
         with self.email_store._connect() as db:
             row = db.execute(
-                "select t.*, i.channel, i.stable_message_identity, i.input_json, "
+                "select t.*, i.stable_message_identity, i.input_json, "
                 "r.result_json from tasks t join email_classification_inputs i "
                 "on i.task_id=t.id left join task_results r "
                 "on r.task_id=t.id and r.result_kind='email_classification' where t.id=?",
@@ -542,7 +542,7 @@ class EmailClassificationTaskAdapter:
             if updated != 1:
                 return None
             claimed = db.execute(
-                "select t.*,i.channel,i.stable_message_identity,i.input_json,r.result_json "
+                "select t.*,i.stable_message_identity,i.input_json,r.result_json "
                 "from tasks t join email_classification_inputs i on i.task_id=t.id "
                 "left join task_results r on r.task_id=t.id and r.result_kind='email_classification' "
                 "where t.id=?",
@@ -680,6 +680,8 @@ class EmailClassificationTaskAdapter:
         if not isinstance(payload, dict):
             raise ValueError("stable classification task input is invalid")
         if payload.get("input_compacted") is True:
+            if "stable_message_identity" in payload:
+                raise ValueError("compacted classifier task input repeats stable identity")
             return input_json
         scheduled = payload.get("scheduled_consumer")
         scheduled_ref: dict[str, object] = {}
@@ -709,7 +711,6 @@ class EmailClassificationTaskAdapter:
             "input_sha256": sha256(input_json.encode("utf-8")).hexdigest(),
             "input_bytes": len(input_json.encode("utf-8")),
             "identity_sha256": cls._identity_sha256(payload),
-            "stable_message_identity": payload["stable_message_identity"],
             "provider_locator": payload["provider_locator"],
             "config_version": payload["config_version"],
             "unsubscribe_candidates": payload["unsubscribe_candidates"],
@@ -727,7 +728,7 @@ class EmailClassificationTaskAdapter:
     def _row(row: sqlite3.Row) -> EmailClassificationTask:
         return EmailClassificationTask(
             task_id=str(row["id"]),
-            channel=row["channel"],
+            channel="email",
             stable_message_identity=row["stable_message_identity"],
             status=row["status"],
             owner=row["lease_owner"] or "",

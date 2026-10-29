@@ -1,5 +1,7 @@
 """Training source counts need labels, not complete input corpora."""
 
+from tests.support.email_native_fixtures import mark_processed_with_plan
+
 from types import SimpleNamespace
 
 from fastapi import FastAPI
@@ -13,9 +15,7 @@ from tests.test_email_classification_reader import catalog as catalog
 def eligible(catalog):
     store, _ = catalog
     with store._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=1"
-        )
+        mark_processed_with_plan(db, 1)
     return store
 
 

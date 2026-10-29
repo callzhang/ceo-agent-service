@@ -169,8 +169,8 @@ def test_email_classifier_uses_subject_and_its_live_model(tmp_path):
         task = create_task(db, values={"kind": "email_classification", "status": "processing",
             "created_at": now, "updated_at": now, "lease_owner": "classifier",
             "lease_expires_at": "2026-10-20 17:10:00"})
-        db.execute("insert into email_classification_inputs(task_id,channel,stable_message_identity,input_json) values(?,?,?,?)",
-                   (task["id"], "email", "opaque-message-id", '{"message":{"subject":"Customer proposal"}}'))
+        db.execute("insert into email_classification_inputs(task_id,stable_message_identity,input_json) values(?,?,?)",
+                   (task["id"], "opaque-message-id", '{"message":{"subject":"Customer proposal"}}'))
         create_runtime_attempt(db, values={"parent_id": None, "workload_kind": "email_classification",
             "workload_key": str(task["id"]), "attempt_number": 1, "route_name": "primary",
             "runtime_kind": "claude_cli", "credential_mode": "oauth", "model": "real-classifier-model",

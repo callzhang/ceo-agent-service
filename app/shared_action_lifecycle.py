@@ -10,7 +10,8 @@ import json
 import sqlite3
 
 from app import action_storage as storage
-from app.action_email_definitions import EMAIL_FIELDS, EMAIL_DEFAULTS, EMAIL_NUMERIC_SCOPE
+from app.action_email_definitions import EMAIL_DEFAULTS, EMAIL_NUMERIC_SCOPE
+from app.current_email_fields import EMAIL_FIELDS
 from app.shared_action_definitions import SPECIALIZED_RECORD_TYPES, SOURCE_TO_TARGET, SPECIALIZED_SOURCE_TO_TARGET, email_projection
 
 STEP_KINDS = {'email_reply': 'email_reply_dispatch_claims', 'email_unsubscribe': 'email_unsubscribe_claims'}
@@ -98,7 +99,7 @@ def persist_email_plan(db, values, *, ignore=False):
     kind = 'email_action_plans'
     from app.email_store import EmailActionPlanConflict
     existing = _fetch(db, 'select * from (' + email_projection(kind) + ') where action_plan_id=?', (values['action_plan_id'],))
-    immutable = tuple(field for field in EMAIL_FIELDS[kind] if field not in ('action_plan_id', 'legacy_serialization_pre_v16'))
+    immutable = tuple(field for field in EMAIL_FIELDS[kind] if field not in ('action_plan_id',))
     if existing is not None:
         if any(existing[field] != values[field] for field in immutable):
             raise EmailActionPlanConflict(f"ActionPlan ID {values['action_plan_id']} has different immutable fields")

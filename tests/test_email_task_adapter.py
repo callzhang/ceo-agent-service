@@ -440,6 +440,7 @@ def test_completed_classification_compacts_input_and_keeps_immutable_identity(tm
     assert json.loads(done.result_json) == result
     compact = json.loads(done.input_json)
     assert compact["input_compacted"] is True
+    assert "stable_message_identity" not in compact
     assert compact["input_bytes"] == len(pending.input_json.encode("utf-8"))
     assert compact["input_sha256"] == hashlib.sha256(
         pending.input_json.encode("utf-8")
@@ -524,7 +525,7 @@ def test_assembled_classifier_schema_is_email_owned_not_adapter(tmp_path: Path):
         result_columns = {row[1] for row in db.execute("pragma table_info(task_results)")}
     assert {"id", "kind", "status", "available_at", "attempts", "generation",
             "lease_owner", "lease_expires_at", "parameters_json"} <= columns
-    assert {"task_id", "channel", "stable_message_identity", "input_json"} <= input_columns
+    assert {"task_id", "stable_message_identity", "input_json"} == input_columns
     assert {"task_id", "result_kind", "result_json"} <= result_columns
     assert (
         "create table"
@@ -2128,3 +2129,60 @@ def test_enqueue_does_not_build_unused_execution_context(tmp_path, monkeypatch):
     [route] = adapter.ensure_action_plan_tasks(plan, task_input)
     assert route.task.channel == "email"
     assert not hasattr(route, "context")
+
+
+def test_completed_compact_classification_task_reopens_real_email_store(tmp_path):
+    path = tmp_path / "completed-reopen.sqlite3"
+    store = EmailStore(path)
+    adapter = EmailClassificationTaskAdapter(store)
+    task_input = _classification_input(uid=198)
+    pending = adapter.ensure_task(task_input)
+    claimed = adapter.claim_next(owner="worker")
+    adapter.complete(claimed, {"decision_status": "processed"})
+    completed = adapter.get_task(pending.task_id)
+    compact = json.loads(completed.input_json)
+    assert "stable_message_identity" not in compact
+    assert compact["input_sha256"] == hashlib.sha256(pending.input_json.encode()).hexdigest()
+    assert compact["input_bytes"] == len(pending.input_json.encode())
+    assert compact["identity_sha256"] == adapter._identity_sha256(json.loads(pending.input_json))
+
+    reopened = EmailStore(path)
+    restored = EmailClassificationTaskAdapter(reopened).get_task(pending.task_id)
+    assert restored.stable_message_identity == task_input.stable_message_identity
+    assert restored.input_json == completed.input_json
+    assert restored.result_json == completed.result_json
+
+
+def test_active_classification_task_reopen_rejects_mismatched_identity(tmp_path):
+    from app.email_store import EmailPersistenceCorruption
+
+    path = tmp_path / "active-identity.sqlite3"
+    adapter = EmailClassificationTaskAdapter(EmailStore(path))
+    task = adapter.ensure_task(_classification_input(uid=199))
+    with sqlite3.connect(path) as db:
+        db.execute("update email_classification_inputs set input_json=json_set(input_json, '$.stable_message_identity', 'different') where task_id=?", (task.task_id,))
+    with pytest.raises(EmailPersistenceCorruption, match="stable identity diverges"):
+        EmailStore(path)
+
+
+def test_completed_compact_task_reopen_rejects_repeated_identity(tmp_path):
+    from app.email_store import EmailPersistenceCorruption
+
+    path = tmp_path / "compact-duplicate.sqlite3"
+    adapter = EmailClassificationTaskAdapter(EmailStore(path))
+    task = adapter.ensure_task(_classification_input(uid=200))
+    claimed = adapter.claim_next(owner="worker")
+    adapter.complete(claimed, {"decision_status": "processed"})
+    with sqlite3.connect(path) as db:
+        db.execute(
+            "update email_classification_inputs set input_json=json_set(input_json, '$.stable_message_identity', stable_message_identity) where task_id=?",
+            (task.task_id,),
+        )
+    with pytest.raises(EmailPersistenceCorruption, match="repeats stable identity"):
+        EmailStore(path)
+
+
+def test_compacting_already_compact_input_rejects_repeated_identity():
+    old_compact = json.dumps({"input_compacted": True, "stable_message_identity": "same"})
+    with pytest.raises(ValueError, match="repeats stable identity"):
+        EmailClassificationTaskAdapter.compact_done_input_json(old_compact)

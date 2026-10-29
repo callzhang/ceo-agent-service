@@ -4,7 +4,7 @@
 
 ## 数据库结构与迁移合同
 
-当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-28.4／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
+当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-28.5／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
 
 ### 历史业务读取归一（2026-10-25）
 
@@ -1918,7 +1918,7 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 
 描述优化提案保持产生它时的快照身份与引用证据不变。若提案尚未评估而源快照已被最新数据替代，提案一次性转为 `unavailable`，原因 `description_proposal_source_unavailable`；不反复启动失败的评估，也不把旧证据套到新数据上。下一次基于最新数据的训练可产生新的提案。
 
-Task2D6 的 Email 分类运行时拥有原生 `tasks(kind='email_classification')` 行，状态使用 `pending/running/done/failed`；不可变输入只在 `email_classification_inputs`，分类运行结果只在 `task_results(result_kind='email_classification')`。Task `parameters_json` 不复制输入、结果或生命周期字段；路由运行键为规范 Task ID。完成仍在 owner/generation CAS 事务内精简输入，保存精确来源摘要、稳定邮件身份、provider locator、配置版本和脱敏退订候选引用。稳定身份去重、输入不可变性、重试预算、claim 次序和退避保持来源语义；Email 业务分类、ActionPlan 与动作回执仍由 Email 业务表拥有。已完成输入不长期保留正文，历史维护仍显式执行。
+Task2D6 的 Email 分类运行时拥有原生 `tasks(kind='email_classification')` 行，状态使用 `pending/running/done/failed`；不可变输入只在 `email_classification_inputs`，分类运行结果只在 `task_results(result_kind='email_classification')`。Task `parameters_json` 不复制输入、结果或生命周期字段；路由运行键为规范 Task ID。完成仍在 owner/generation CAS 事务内精简输入，保存精确来源摘要、provider locator、配置版本和脱敏退订候选引用。稳定邮件身份只由输入表独立列拥有；完成态 JSON 不重复该列，原输入 hash、字节数及 identity hash 不变。固定 Email channel 由该领域合同提供，不再存储成输入列。稳定身份去重、输入不可变性、重试预算、claim 次序和退避保持来源语义；Email 业务分类、ActionPlan 与动作回执仍由 Email 业务表拥有。已完成输入不长期保留正文，历史维护仍显式执行。
 
 精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。
 
@@ -2282,3 +2282,13 @@ Reporting policy, scoring, tenant destinations and their executable implementati
 执行造数仅在测试夹具内。Workbench 当前状态为 queued、running、completed、stopped、
 failed；已退休确认功能的 waiting_confirmation 不再进入 API 类型、计数或界面状态。
 本次不改变原生 CLI 确认、外部授权、审查、回执或恢复策略，也不重解释历史任务状态。
+
+
+### 邮件历史中性标记退休
+
+Store29.1/Email54 的分类不保存 legacy_processed_without_plan，当前 processed 分类始终
+引用已持久化 ActionPlan；计划的 legacy_serialization_pre_v16 零值槽位及虚拟列也已移除。
+NULL authorization snapshot 和历史 category 仍是原有事实，计划 ID、正文来源及回执不改变。
+显式 Store28.5→29.1 发布先核实零值/NULL、固定 channel、可精确重建的重复输入身份，
+未知或非中性事实在修改前拒绝。当前数据 inverse 从现有 owner 重建这些已证明的中性
+副本，不另存旧正文；更早已关闭的 Feedback/微信缓存发布链退出当前发布入口。

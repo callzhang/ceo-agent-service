@@ -16,11 +16,11 @@ Baseline: isolated branch codex/retire-final-model-residue-20261029 at4b1ec3e66.
 - [x] SPEC then QUALITY; commit only unit-owned files.
 
 ## Unit2 — exact Email field ownership and paired release
-- [ ] Freeze actual Store28.5/Email54 source SQL and typed field map. Retire classification legacy_processed_without_plan and plan legacy_serialization_pre_v16 only after source assertions prove all values0. Keep all other plan facts, especially null authorization snapshots, unchanged.
-- [ ] Remove repeated stable_message_identity from completed classification input JSON; scalar identity remains owner. Remove fixed channel column only after all consumers derive existing Email contract without fallback; preserve original input hashes/byte counts, provenance and compact-state fact.
-- [ ] Add explicit forward/current-data inverse with exact declarations; inverse reconstructs only proven constant/duplicate facts. Unknown/nonneutral source must reject before modification. No historical raw input reconstruction from guesses.
-- [ ] Current-data copy forward/new native writes/inverse/real old-code cold read/write/reforward; compare typed facts/identity/water/FK. Markers/manifest/SQL artifacts update together.
-- [ ] SPEC then QUALITY and focused Email storage/reader/compaction tests with fake providers.
+- [x] Freeze actual Store28.5/Email54 source SQL and typed field map. Retire classification legacy_processed_without_plan and plan legacy_serialization_pre_v16 only after source assertions prove all values0. Keep all other plan facts, especially null authorization snapshots, unchanged.
+- [x] Remove repeated stable_message_identity from completed classification input JSON; scalar identity remains owner. Remove fixed channel column only after all consumers derive existing Email contract without fallback; preserve original input hashes/byte counts, provenance and compact-state fact.
+- [x] Add explicit forward/current-data inverse with exact declarations; inverse reconstructs only proven constant/duplicate facts. Unknown/nonneutral source must reject before modification. No historical raw input reconstruction from guesses.
+- [x] Current-data copy forward/new native writes/inverse/real old-code cold read/write/reforward; compare typed facts/identity/water/FK. Markers/manifest/SQL artifacts update together.
+- [x] SPEC then QUALITY and focused Email storage/reader/compaction tests with fake providers.
 
 ## Unit3 — separately scoped retired Email startup lifecycle
 - [ ] Audit direct_v1 inventory and skip/fail entrypoints; current producer writes audited_v2. Source preflight must report any direct_v1 residue rather than silently changing it.

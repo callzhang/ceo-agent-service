@@ -1308,10 +1308,6 @@ def _damage_current_email_actions_metadata(
         "email_authorization_snapshot_json": (
             " and ((email_authorization_snapshot_json is null or json_valid ( email_authorization_snapshot_json )))",
         ),
-        "email_legacy_serialization_pre_v16": (
-            " and (email_legacy_serialization_pre_v16 is not null)",
-            " and ((email_legacy_serialization_pre_v16 in ( 0 , 1 )))",
-        ),
     }
     checks = {
         "action_uppercase_status": (
@@ -2350,19 +2346,6 @@ def test_current_v16_missing_authorization_column_fails_without_schema_repair(
     _assert_current_email_metadata_rejected_without_repair(database)
 
 
-def test_current_v16_missing_legacy_provenance_column_fails_without_schema_repair(
-    tmp_path: Path,
-):
-    database = tmp_path / "v16-missing-legacy-provenance-column.sqlite3"
-    EmailStore(database)
-    target_column = "email_legacy_serialization_pre_v16"
-    _damage_current_email_actions_metadata(database, missing_column=target_column)
-    with sqlite3.connect(database) as db:
-        assert target_column not in {row[1] for row in db.execute("pragma table_xinfo(actions)")}
-        assert target_column not in db.execute("select sql from sqlite_schema where name='actions'").fetchone()[0]
-    _assert_current_email_metadata_rejected_without_repair(database)
-
-
 def test_concurrent_first_initialization_is_transactionally_idempotent(
     tmp_path: Path,
 ):
@@ -2595,20 +2578,6 @@ def test_startup_rejects_pending_feedback_with_user_source(tmp_path: Path):
         EmailStore(database)
 
 
-def test_startup_rejects_pending_feedback_with_legacy_marker(tmp_path: Path):
-    database = tmp_path / "pending-legacy.sqlite3"
-    store = EmailStore(database)
-    _persist_scan(
-        store,
-        _classification(status=EmailClassificationStatus.PENDING_FEEDBACK),
-    )
-    with sqlite3.connect(database) as db:
-        db.execute("update emails set class_legacy_processed_without_plan=1")
-
-    with pytest.raises(EmailPersistenceCorruption, match="pending feedback.*legacy"):
-        EmailStore(database)
-
-
 def test_startup_rejects_legacy_user_processed_with_mismatched_confirmation(
     tmp_path: Path,
 ):
@@ -2623,8 +2592,7 @@ def test_startup_rejects_legacy_user_processed_with_mismatched_confirmation(
             """
             update emails
             set class_status='processed', class_classification_source='user',
-                class_category='important', class_confirmed_category='work',
-                class_legacy_processed_without_plan=1
+                class_category='important', class_confirmed_category='work'
             """
         )
 

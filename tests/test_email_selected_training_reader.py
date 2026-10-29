@@ -1,5 +1,7 @@
 """Selected training input sources: real final SQLite and frozen external data."""
 
+from tests.support.email_native_fixtures import mark_processed_with_plan
+
 from datetime import datetime, timezone
 from types import SimpleNamespace
 
@@ -171,9 +173,7 @@ def test_changed_current_fact_is_not_replaced_by_a_stale_frozen_input(
 
 def test_provider_reads_are_account_scoped_and_bounded(selected, monkeypatch):
     with selected._connect() as db:
-        db.execute(
-            "update emails set class_status='processed',class_legacy_processed_without_plan=1 where classification_id=3"
-        )
+        mark_processed_with_plan(db, 3)
     forbid_stored_inputs(selected, monkeypatch)
     reader, calls = source_reader(selected, batch_size=1)
     records = reader.list_selected_training_records(sources=["agent_auto_label"])

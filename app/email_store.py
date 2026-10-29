@@ -97,12 +97,13 @@ from app.email_provider_folders import FolderRole
 from app.leak_check import assert_no_credentials
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.action_storage import (
-    ActionWriteResult, EMAIL_ACTION_PROJECTIONS, insert_action, insert_email_action, update_action,
+    ActionWriteResult, insert_action, insert_email_action, update_action,
     delete_action, delete_email_action,
 )
 
 
 from app import shared_action_lifecycle
+from app.current_email_fields import EMAIL_FIELDS
 from app.shared_action_definitions import email_projection as email_action_projection
 
 REPLY_TASK_SQL = NATIVE_REPLY_TASK_CURRENT_SQL
@@ -121,12 +122,11 @@ _EMAIL_CLASSIFICATION_SQL = """select tasks.id, tasks.id as task_id,
 
 
 # Finite Email29 source-shaped reads used by the current DAO and validators.
-EMAIL_ACTION_PROJECTIONS = {kind: email_action_projection(kind) for kind in EMAIL_ACTION_PROJECTIONS}
+EMAIL_ACTION_PROJECTIONS = {kind: email_action_projection(kind) for kind in EMAIL_FIELDS}
 
 EMAIL_PLAN_SQL = EMAIL_ACTION_PROJECTIONS["email_action_plans"]
 # Direct effects have one current common Action owner; the historical
 # source-shaped projection remains available from the release module only.
-EMAIL_ATTEMPT_SQL = EMAIL_ACTION_PROJECTIONS["email_action_attempts"]
 EMAIL_RETRY_SQL = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
 EMAIL_FEEDBACK_SQL = EMAIL_ACTION_PROJECTIONS["email_feedback_requests"]
 EMAIL_REPLY_RECEIPT_SQL = EMAIL_ACTION_PROJECTIONS["email_reply_receipts"]
@@ -2188,8 +2188,11 @@ class EmailStore:
             f"""
             select stable_message_identity, status, owner, lease_expires_at,
                    json_type(input_json) as input_json_type,
+                   json_type(input_json, '$.input_compacted') as input_compacted_type,
                    json_extract(input_json, '$.stable_message_identity')
                        as input_stable_message_identity,
+                   json_type(input_json, '$.stable_message_identity')
+                       as input_stable_message_identity_type,
                    json_type(input_json, '$.unsubscribe_candidates')
                        as unsubscribe_candidates_type,
                    json_extract(input_json, '$.unsubscribe_candidates')
@@ -2204,7 +2207,12 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     "classifier task input is not a JSON object"
                 )
-            if (
+            compact_done = row["status"] == "done" and row["input_compacted_type"] == "true"
+            if compact_done and row["input_stable_message_identity_type"] is not None:
+                raise EmailPersistenceCorruption(
+                    "compacted classifier task input repeats stable identity"
+                )
+            if not compact_done and (
                 row["input_stable_message_identity"]
                 != row["stable_message_identity"]
             ):
@@ -2323,8 +2331,7 @@ class EmailStore:
                        predicted_category, confirmed_category, confidence,
                        probabilities_json, model_id, config_version, status,
                        classification_source, agent_result_json,
-                       current_action_plan_id,
-                       legacy_processed_without_plan
+                       current_action_plan_id
                 from ({EMAIL_CLASSIFICATION_SQL})
                 """
             )
@@ -2468,10 +2475,6 @@ class EmailStore:
                     raise EmailPersistenceCorruption(
                         f"uncertain Agent classification {row['id']} has a category"
                     )
-                if row["legacy_processed_without_plan"] != 0:
-                    raise EmailPersistenceCorruption(
-                        f"pending feedback classification {row['id']} carries a legacy marker"
-                    )
                 if (
                     row["current_action_plan_id"] is not None
                     or classification_plans
@@ -2504,17 +2507,8 @@ class EmailStore:
                     f"model-processed classification {row['id']} has inconsistent category"
                 )
             if row["current_action_plan_id"] is None:
-                if (
-                    classification_plans
-                    or row["legacy_processed_without_plan"] != 1
-                ):
-                    raise EmailPersistenceCorruption(
-                        f"processed classification {row['id']} has no current ActionPlan"
-                    )
-                continue
-            if row["legacy_processed_without_plan"] != 0:
                 raise EmailPersistenceCorruption(
-                    f"processed classification {row['id']} has inconsistent ActionPlan state"
+                    f"processed classification {row['id']} has no current ActionPlan"
                 )
             current_plan = plans.get(row["current_action_plan_id"])
             if current_plan is None or current_plan.classification_id != row["id"]:
@@ -3454,7 +3448,6 @@ class EmailStore:
                 "actions_json": encoded_actions,
                 "action_parameters_json": encoded_parameters,
                 "authorization_snapshot_json": encoded_authorizations,
-                "legacy_serialization_pre_v16": 0,
                 "created_at": plan.created_at.isoformat(),
             },
         )
@@ -3656,7 +3649,6 @@ class EmailStore:
                     self._persist_action_plan(db, classification.action_plan, now=now)
                     update_email_classification(db, classification.classification_id, {
                         "current_action_plan_id": classification.action_plan.action_plan_id,
-                        "legacy_processed_without_plan": 0,
                     })
             else:
                 if (
@@ -7881,7 +7873,7 @@ class EmailStore:
         classification_id: int | None = None, preview_query: str = "",
     ) -> tuple[list[dict[str, Any]], int]:
         """Existing business eligibility/order without reading either input body."""
-        from app.email_canonical_definitions import CLASS_FIELDS
+        from app.current_email_definitions import CLASS_FIELDS
 
         if offset < 0 or (limit is not None and limit <= 0):
             raise ValueError("classification pagination is invalid")
@@ -8253,7 +8245,8 @@ class EmailStore:
 
     def get_classification(self, classification_id: int) -> dict[str, Any] | None:
         """Return runtime identity, business state and recipient metadata only."""
-        from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
+        from app.current_email_definitions import CLASS_FIELDS
+        from app.email_canonical_definitions import canonical_column
 
         fields = ",".join(
             f'{canonical_column("email_classifications", field, metadata_owner=True)} as "{field}"'
@@ -8368,7 +8361,8 @@ class EmailStore:
     def get_classification_by_stable_identity(
         self, stable_message_identity: str
     ) -> dict[str, Any] | None:
-        from app.email_canonical_definitions import CLASS_FIELDS, canonical_column
+        from app.current_email_definitions import CLASS_FIELDS
+        from app.email_canonical_definitions import canonical_column
 
         fields = ",".join(
             f'{canonical_column("email_classifications", field, metadata_owner=True)} as "{field}"'
@@ -10529,7 +10523,6 @@ class EmailStore:
                 set class_category=?, class_confirmed_category=?, class_status=?,
                     class_classification_source='user', class_config_version=?,
                     class_current_action_plan_id=?,
-                    class_legacy_processed_without_plan=0,
                     class_agent_result_json='null',
                     class_confirmed_at=?, class_updated_at=?
                 where classification_id=?
@@ -10736,7 +10729,6 @@ class EmailStore:
             update_email_classification(db, int(row["id"]), {
                 "current_action_plan_id": action_plan.action_plan_id,
                 "config_version": config_version,
-                "legacy_processed_without_plan": 0,
                 "updated_at": applied_at,
             })
             updated = db.execute(
@@ -10802,8 +10794,7 @@ class EmailStore:
                     "model_id": action_plan.model_id,
                     "config_version": action_plan.config_version,
                     "current_action_plan_id": action_plan.action_plan_id,
-                    "legacy_processed_without_plan": 0,
-                    "agent_result_json": agent_result_json,
+                        "agent_result_json": agent_result_json,
                     "confirmed_at": now,
                     "updated_at": now,
                 })

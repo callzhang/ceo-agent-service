@@ -47,15 +47,14 @@ def _signal_source_action_payloads():
 
 @lru_cache(maxsize=1)
 def current_action_objects():
-    from app.historical_action_options import FINAL_ACTION_OPTIONS
+    from app.current_schema_declarations import ACTION_OBJECTS
 
-    options = {key: value for key, value in FINAL_ACTION_OPTIONS.items()
-               if key != "canonical_email"}
-    options.pop("sent_result_references", None)
-    return _build_action_objects(
-        options, payloads=current_action_payloads(),
-        retired_types=RETIRED_ACTION_TYPES, signal_source_references=True,
-    )
+    objects = []
+    for name, sql in ACTION_OBJECTS.items():
+        words = sql.split()
+        kind = "index" if words[1].lower() == "unique" else words[1].lower()
+        objects.append({"type": kind, "name": name, "sql": sql})
+    return sorted(objects, key=lambda obj: (obj["type"], obj["name"]))
 
 
 @lru_cache(maxsize=1)

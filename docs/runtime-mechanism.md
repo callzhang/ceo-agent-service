@@ -4,7 +4,7 @@
 
 ## 数据库结构与迁移合同
 
-Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、Store `2026-10-28.4`→`2026-10-28.5` 的微信语音转写退役，以及仅 Email 变化的发布；其他版本一律以 `Store schema release needs a verified inverse for this transition` 或 `unsupported current Action source schema; explicit paired release required` 拒绝，较旧提交不再有自动逆迁。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。
+Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、Store `2026-10-28.5`→`2026-10-29.1` 的邮件字段退休，以及仅 Email 变化的发布；其他版本一律以 `Store schema release needs a verified inverse for this transition` 或 `unsupported current Action source schema; explicit paired release required` 拒绝，较旧提交不再有自动逆迁。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。
 
 闸门进锁并按提交复用（Derek 2026-10-28）：闸门测试在仓库互斥锁（`GitRepository.mutex`，阻塞的 flock）里面跑，和安装同一把锁；拿到锁后先看生产是否已被别人推进（是则直接返回「another deploy got there first」，有发布请求的按 `_ProductionMoved` 重来），再跑测试。通过的结果记在服务数据库同目录 `deploy-gate-passed/<sha>.json`（提交、时间、文件数、摘要行），同一提交再部署或安装失败后重试不再跑；失败、超时、检出失败都不记。10-28 当天 Codex 和两个 Claude 会话同时部署，闸门并行，9 次只过 1 次，7 次超 10 分钟、2 次撞 2 GB，这就是起因。
 清单缺失或为空、运行超过 12 分钟（`TEST_GATE_TIMEOUT_SECONDS`；测试进程自身另有 10 分钟和 2 GB 上限）、或无法检出该提交，同样拒绝。失败时保留日志并在报错里给出路径。`--restart` 不运行新代码，不受此限。实现见 `app/deploy.py` 的 `require_green_suite`。
@@ -1991,3 +1991,19 @@ Reporting policy, scoring, tenant destinations and their executable implementati
 执行造数仅在测试夹具内。Workbench 当前状态为 queued、running、completed、stopped、
 failed；已退休确认功能的 waiting_confirmation 不再进入 API 类型、计数或界面状态。
 本次不改变原生 CLI 确认、外部授权、审查、回执或恢复策略，也不重解释历史任务状态。
+
+
+### Email 输入与计划字段所有权
+
+email_classification_inputs 只持有 task_id、stable_message_identity、input_json；固定
+channel=email 是现有领域合同。完成态 JSON 不再重复 stable_message_identity，保留原
+input_sha256、input_bytes、identity_sha256 及来源引用。完成后重新打开 EmailStore 时，
+仅 done 且 input_compacted 为 JSON true 的记录使用独立身份 owner；执行中完整输入仍
+核对 JSON 身份与独立列，不提供旧格式 fallback。
+
+分类的零值 legacy_processed_without_plan 和计划的零值 legacy_serialization_pre_v16
+已退休；新 processed 分类必须有准确当前计划。显式发布先检验中性数据、身份逐值相等、
+输入 JSON 可精确逆向重建，以及没有退休确认状态或 direct_v1 来源记录，再变换三张表。
+保留计划的缺失授权快照，不转换成空的 v2 授权。当前数据 inverse 保留新增计划、结果
+和回执，并恢复旧代码要求的中性列/槽位与重复身份。显式来源使用冻结 Store28.5 catalog，
+运行时只接受当前29.1声明；不重新连接已关闭的更早自动迁移链。

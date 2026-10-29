@@ -31,18 +31,15 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
     import hashlib
     import json
     from app.current_schema_manifest import current_objects
-    from app.feedback_owner_schema_release import feedback_target_objects
 
     for email_ledger, count, digest in (
-        (False, 462, 'ded768be455ab4a82fcc6eb505e478dbff6d57cff002c715fe3afc834d1ab693'),
-        (True, 463, 'e3ea9a1a55fa459d1a4b6f096b801c53e3b972c9f022a31bca173c17df8931e4'),
+        (False, 462, '2a30a7801c7148b290e917a7c3df8a45a155068710f130b4a61f7d20ff548c96'),
+        (True, 463, '271003d51b40fa61a86fc2ff631df5138124c29b946787e8e875341aceef3758'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
         encoded = json.dumps(objects).encode()
         assert hashlib.sha256(encoded).hexdigest() == digest
-        assert objects == tuple(row for row in feedback_target_objects()
-                                if email_ledger or row[1] != 'email_schema_migrations')
 
 
 
@@ -55,7 +52,7 @@ def test_current_field_and_payload_metadata_preserves_frozen_layouts():
         "business": (CURRENT_BUSINESS_FIELDS, "9aea33ecc91ad7cec46b0db5c037e94bb06c9437d90c86608ce01fa8cad7cfba"),
         "sync": (CURRENT_SYNC_FIELDS, "6717b85c10acf98a539839ec981191cc9e1105e17b9b6be9f6d7612f5b5e1ff3"),
         "payload": ({kind: layout.fields for kind, layout in current_action_schema.current_action_payloads().layouts.items()},
-                    "289b6f3d07d4927f8feaf6aca6d0ff2d9cdd8366325f096c987bbe8e8fdc2f4f"),
+                    "6145d6a26174553c7c1de2bf99392b3befec5c447f774896d70a9539593fa69a"),
     }
     for value, digest in fields.values():
         encoded = json.dumps(value, ensure_ascii=False, sort_keys=True).encode()
@@ -77,13 +74,13 @@ def test_shared_email_writer_uses_frozen_layouts_without_historical_builder(monk
     kinds = {'email_action_plans', *lifecycle.STEP_KINDS.values(), *lifecycle.RESULT_KINDS.values(),
              *SOURCE_TO_TARGET, *SPECIALIZED_SOURCE_TO_TARGET}
     layouts = {kind: lifecycle._layout(kind).fields for kind in sorted(kinds)}
-    assert hashlib.sha256(json.dumps(layouts, sort_keys=True).encode()).hexdigest() == 'd6705e134b334b88f68e76f4ef2a86b4f09265710898c423a8038ca7e77be8e0'
+    assert hashlib.sha256(json.dumps(layouts, sort_keys=True).encode()).hexdigest() == '1f21e899a7667bbe4667e2bd75b7d364c53c75143dd834b700352272f8c55c7a'
     values = {
         'action_plan_id': 'plan', 'action_plan_version': 1, 'classification_id': 11,
         'account_id': 'account', 'category': 'work', 'classification_source': 'model',
         'confidence': 0.5, 'model_id': 'model', 'config_version': 'config',
         'actions_json': '["archive"]', 'action_parameters_json': '{}',
-        'authorization_snapshot_json': '[]', 'legacy_serialization_pre_v16': 0,
+        'authorization_snapshot_json': '[]',
         'created_at': '2026-10-12',
     }
     with sqlite3.connect(':memory:') as db:
@@ -107,11 +104,11 @@ hits = []
 original_read_bytes = Path.read_bytes
 original_read_text = Path.read_text
 def checked_read_bytes(path):
-    if path.name in {"store28_2_email54_catalog.json"}:
+    if path.name in {"store28_5_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_bytes(path)
 def checked_read_text(path, *args, **kwargs):
-    if path.name in {"store28_2_email54_catalog.json"}:
+    if path.name in {"store28_5_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_text(path, *args, **kwargs)
 Path.read_bytes = checked_read_bytes

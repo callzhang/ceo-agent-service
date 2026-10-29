@@ -549,19 +549,19 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             "'blob' then unhex(json_extract(payload_json,'$[11].v')) when 'real' then "
             "json_extract(payload_json,'$[11].m') * pow(2.0,json_extract(payload_json,'$[11].e')) when 'inf' "
             "then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[11]') end end end) "
-            'virtual,email_legacy_serialization_pre_v16 integer generated always as (case when record_type '
-            "in ('email_action_plans') then case _kind when 64 then case when "
-            "json_type(payload_json,'$[12]')='object' then case json_extract(payload_json,'$[12].t') when "
-            "'blob' then unhex(json_extract(payload_json,'$[12].v')) when 'real' then "
-            "json_extract(payload_json,'$[12].m') * pow(2.0,json_extract(payload_json,'$[12].e')) when 'inf' "
-            "then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[12]') end end end) "
-            'virtual,email_created_at text generated always as (case when record_type in '
-            "('email_action_plans','email_unsubscribe_continuations','email_unsubscribe_effects','email_unsubscribe_receipts','email_unsubscribe_steps','email_reply_receipts') "
-            "then case _kind when 64 then case when json_type(payload_json,'$[13]')='object' then case "
-            "json_extract(payload_json,'$[13].t') when 'blob' then "
-            "unhex(json_extract(payload_json,'$[13].v')) when 'real' then "
-            "json_extract(payload_json,'$[13].m') * pow(2.0,json_extract(payload_json,'$[13].e')) when 'inf' "
-            "then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[13]') end when 22 then "
+            'virtual'
+            ''
+            ''
+            ''
+            ''
+            ''
+            ",email_created_at text generated always as (case when record_type in ('email_action_plans','email_unsubscribe_continuations','email_unsubscribe_effects','email_unsubscribe_receipts','email_unsubscribe_steps','email_reply_receipts') then case _kind when 64 then case when json_type(payload_json,'$[12]')='object' then case json_extract(payload_json,'$[12].t') when 'blob' then unhex(json_extract(payload_json,'$[12].v')) when 'real' then json_extract(payload_json,'$[12].m') * pow(2.0,json_extract(payload_json,'$[12].e')) when 'inf' then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[12]') end"
+            ''
+            ''
+            ''
+            ''
+            ''
+            ' when 22 then '
             "case when json_type(payload_json,'$[4]')='object' then case json_extract(payload_json,'$[4].t') "
             "when 'blob' then unhex(json_extract(payload_json,'$[4].v')) when 'real' then "
             "json_extract(payload_json,'$[4].m') * pow(2.0,json_extract(payload_json,'$[4].e')) when 'inf' "
@@ -4261,50 +4261,50 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             "-9007199254740991 and 9007199254740991) or (json_type(payload_json,'$[11].m')='real' and "
             "json_extract(payload_json,'$[11].m')=0)) and "
             "json_remove(json_extract(payload_json,'$[11]'),'$.t','$.m','$.e')='{}'))),0) else 0 end) and "
-            "(case when json_type(payload_json,'$[12]') in ('null','text','integer','real','true','false') "
-            "then 1 when json_type(payload_json,'$[12]')='object' then "
-            "coalesce((json_type(payload_json,'$[12].t')='text' and "
-            "((json_extract(payload_json,'$[12].t')='blob' and json_type(payload_json,'$[12].v')='text' and "
-            "length(json_extract(payload_json,'$[12].v'))%2=0 and "
-            "unhex(json_extract(payload_json,'$[12].v')) is not null and "
-            "json_remove(json_extract(payload_json,'$[12]'),'$.t','$.v')='{}') or "
-            "(json_extract(payload_json,'$[12].t') in ('inf','-inf') and "
-            "json_remove(json_extract(payload_json,'$[12]'),'$.t')='{}') or "
-            "(json_extract(payload_json,'$[12].t')='real' and json_type(payload_json,'$[12].e')='integer' "
-            "and json_extract(payload_json,'$[12].e') between -1074 and 971 and "
-            "((json_type(payload_json,'$[12].m')='integer' and json_extract(payload_json,'$[12].m') between "
-            "-9007199254740991 and 9007199254740991) or (json_type(payload_json,'$[12].m')='real' and "
-            "json_extract(payload_json,'$[12].m')=0)) and "
-            "json_remove(json_extract(payload_json,'$[12]'),'$.t','$.m','$.e')='{}'))),0) else 0 end) and "
-            "(case when json_type(payload_json,'$[13]') in ('null','text','integer','real','true','false') "
-            "then 1 when json_type(payload_json,'$[13]')='object' then "
-            "coalesce((json_type(payload_json,'$[13].t')='text' and "
-            "((json_extract(payload_json,'$[13].t')='blob' and json_type(payload_json,'$[13].v')='text' and "
-            "length(json_extract(payload_json,'$[13].v'))%2=0 and "
-            "unhex(json_extract(payload_json,'$[13].v')) is not null and "
-            "json_remove(json_extract(payload_json,'$[13]'),'$.t','$.v')='{}') or "
-            "(json_extract(payload_json,'$[13].t') in ('inf','-inf') and "
-            "json_remove(json_extract(payload_json,'$[13]'),'$.t')='{}') or "
-            "(json_extract(payload_json,'$[13].t')='real' and json_type(payload_json,'$[13].e')='integer' "
-            "and json_extract(payload_json,'$[13].e') between -1074 and 971 and "
-            "((json_type(payload_json,'$[13].m')='integer' and json_extract(payload_json,'$[13].m') between "
-            "-9007199254740991 and 9007199254740991) or (json_type(payload_json,'$[13].m')='real' and "
-            "json_extract(payload_json,'$[13].m')=0)) and "
-            "json_remove(json_extract(payload_json,'$[13]'),'$.t','$.m','$.e')='{}'))),0) else 0 end) and "
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            "(case when json_type(payload_json,'$[12]') in ('null','text','integer','real','true','false') then 1 when json_type(payload_json,'$[12]')='object' then coalesce((json_type(payload_json,'$[12].t')='text' and ((json_extract(payload_json,'$[12].t')='blob' and json_type(payload_json,'$[12].v')='text' and length(json_extract(payload_json,'$[12].v'))%2=0 and unhex(json_extract(payload_json,'$[12].v')) is not null and json_remove(json_extract(payload_json,'$[12]'),'$.t','$.v')='{}') or (json_extract(payload_json,'$[12].t') in ('inf','-inf') and json_remove(json_extract(payload_json,'$[12]'),'$.t')='{}') or (json_extract(payload_json,'$[12].t')='real' and json_type(payload_json,'$[12].e')='integer' and json_extract(payload_json,'$[12].e') between -1074 and 971 and ((json_type(payload_json,'$[12].m')='integer' and json_extract(payload_json,'$[12].m') between -9007199254740991 and 9007199254740991) or (json_type(payload_json,'$[12].m')='real' and json_extract(payload_json,'$[12].m')=0)) and json_remove(json_extract(payload_json,'$[12]'),'$.t','$.m','$.e')='{}'))),0) else 0 end)"
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ''
+            ' and '
             "(case when typeof(payload_json)='blob' and json_valid(payload_json,8) then "
-            "coalesce((json_type(payload_json)='array' and json_array_length(payload_json)=14),0) else 0 "
+            "coalesce((json_type(payload_json)='array' and json_array_length(payload_json)=13),0) else 0 "
             'end) and (email_action_plan_version is not null) and (email_classification_id is not null) and '
             '(email_account_id is not null) and (email_category is not null) and '
             '(email_classification_source is not null) and (email_confidence is not null) and '
             '(email_model_id is not null) and (email_config_version is not null) and (email_actions_json is '
-            'not null) and (email_action_parameters_json is not null) and '
-            '(email_legacy_serialization_pre_v16 is not null) and (email_created_at is not null) and '
+            'not null) and (email_action_parameters_json is not null)'
+            ' and (email_created_at is not null) and '
             '((email_action_plan_version > 0)) and ((email_authorization_snapshot_json is null or json_valid '
             "( email_authorization_snapshot_json ))) and ((email_classification_source in ( 'model' , 'user' "
             ", 'agent' ))) and ((email_confidence >= 0.0 and email_confidence <= 1.0)) and ((json_valid ( "
-            'email_action_parameters_json ))) and ((json_valid ( email_actions_json ))) and '
-            '((email_legacy_serialization_pre_v16 in ( 0 , 1 '
-            "))))),check(record_type<>'email_unsubscribe_cancellations' or ((case when "
+            'email_action_parameters_json ))) and ((json_valid ( email_actions_json )))'
+            ''
+            ")),check(record_type<>'email_unsubscribe_cancellations' or ((case when "
             "json_type(payload_json,'$[0]') in ('null','text','integer','real','true','false') then 1 when "
             "json_type(payload_json,'$[0]')='object' then coalesce((json_type(payload_json,'$[0].t')='text' "
             "and ((json_extract(payload_json,'$[0].t')='blob' and json_type(payload_json,'$[0].v')='text' "
