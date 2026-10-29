@@ -41,14 +41,15 @@ class DwsVerifiedMoveActionExecutor:
                     self.dws.dws_bin, "mail", "message", "batch-update",
                     "--email", self.mailbox,
                     "--ids", str(self.context["message_id"]),
-                    "--action", "addTags", "--tags", tag_id, "--format", "json",
+                    "--action", "addTags", "--tags", tag_id,
+                    "--yes", "--format", "json",
                 ]
             else:
                 command = [
                     self.dws.dws_bin, "mail", "message", "batch-update",
                     "--email", self.mailbox,
                     "--ids", str(self.context["message_id"]),
-                    "--action", "markRead", "--format", "json",
+                    "--action", "markRead", "--yes", "--format", "json",
                 ]
             self._require_success(self.dws.run_json(command))
             after = self._read(action)
