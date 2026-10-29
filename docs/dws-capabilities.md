@@ -10,7 +10,7 @@ This project uses the `dws` CLI as the only DingTalk integration surface.
 - `dws contact user get-self --format json`
 - `dws contact user get --ids <ids> --format json`
 - `dws contact dept search --query <name> --format json`
-- `dws contact dept list-members --ids <ids> --format json`
+- `dws contact dept list-members --depts <ids> --format json`
 
 ## Write
 
