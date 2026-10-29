@@ -38,13 +38,13 @@ boolean.
 | `human_resources` | Recruiting, candidates, employment, onboarding, transfers, offboarding, compensation, performance, and employee relations. Legal disputes take `legal`. |
 | `legal` | Non-financing contracts, legal rights and obligations, lawyers, disputes, compliance, and intellectual property. Financing documents take `financing`. |
 | `financing` | Investors, fundraising, due diligence, financing legal documents, capital structure, and closing. Unsolicited valueless promotion takes `junk`. |
-| `personal` | Derek, family, personal identity, personal legal matters, and private life. Company operations take their business category. |
+| `personal` | the principal, family, personal identity, personal legal matters, and private life. Company operations take their business category. |
 | `notification` | Verification codes, security status, calendar status, system status, and automated service notices. Real project discussion takes `work`. |
 | `external_billing` | Charges, payment requests, invoices, or payment evidence issued to us by an outside party. Our invoices and internal budgets take `work`. |
 | `shopping` | Orders, logistics, refunds, and fulfillment for goods or standard consumer services. External professional-service invoices take `external_billing`. |
 | `junk` | Unwanted, suspicious, irrelevant, or no-retention-value mail, including unsolicited promotion. A link alone is not evidence of junk. |
 
-Importance, urgency, or need for Derek's attention never changes the category.
+Importance, urgency, or need for the principal's attention never changes the category.
 Never invent compound or alternate categories such as `legal_financing`,
 `promotion`, or `calendar_or_security_notification`.
 

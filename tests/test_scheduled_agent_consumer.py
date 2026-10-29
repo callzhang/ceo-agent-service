@@ -1431,17 +1431,15 @@ def test_new_ordinary_report_uses_configured_skill_and_generic_tools(tmp_path, m
         "Path('ordinary.md').write_text('New ordinary report\\n')\n"
         "print('ordinary.md')\n"
     )
-    source_scripts = tmp_path / "reviewed-skills/managed-check/scripts"
-    source_scripts.mkdir(parents=True)
-    source_script = source_scripts / "render.py"
-    source_script.write_bytes((scripts / "render.py").read_bytes())
+    catalog = tmp_path / "reviewed-skills"
+    catalog.mkdir()
     relative = b"scripts/render.py"
-    body = source_script.read_bytes()
+    body = (scripts / "render.py").read_bytes()
     tree_digest = hashlib.sha256(
         len(relative).to_bytes(4, "big") + relative
         + len(body).to_bytes(8, "big") + body
     ).hexdigest()
-    (source_scripts.parent / "consumer-scripts.json").write_text(json.dumps({
+    (catalog / "managed-check.json").write_text(json.dumps({
         "version": 1,
         "entrypoints": ["scripts/render.py"],
         "script_tree_sha256": tree_digest,

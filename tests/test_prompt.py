@@ -503,7 +503,7 @@ def test_personnel_skill_explains_first_person_single_chat_subject():
 def test_personnel_skill_delegates_candidate_evidence_to_specialist():
     skill = _personnel_skill_prose()
 
-    assert "Load `stardust-interview` for candidate evaluation" in skill
+    assert "Load the organization-configured candidate evaluation Skill for candidate evaluation" in skill
     assert "follow its evidence, role-fit, and interview workflow" in skill
     assert "Do not reproduce or replace those specialist workflows here" in skill
     assert "resume, role requirements, and interview records" not in skill

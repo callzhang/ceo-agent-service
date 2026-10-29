@@ -4,7 +4,6 @@ import hashlib
 import json
 import os
 import subprocess
-import sys
 import threading
 import time
 import zipfile
@@ -1206,16 +1205,3 @@ def test_oa_revert_task_passes_write_review():
     assert descriptor is not None
     assert descriptor.command_path == "oa approval revert-task"
     assert agent_cli._is_registered_native_write(descriptor)
-
-
-def test_weekly_report_blank_template_policy_is_skill_local():
-    import importlib.util
-    name = "weekly_template_policy"
-    path = Path(__file__).resolve().parents[1] / "ci/shared-skills/ceo-weekly-report/scripts/materials.py"
-    spec = importlib.util.spec_from_file_location(name, path)
-    module = importlib.util.module_from_spec(spec)
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    blank = module._weekly_report_jsonml_is_blank
-    assert blank(["root", {}, ["p", {}, ["span", {"data-type":"text"}, ["span", {"data-type":"leaf"}, ""]]]])
-    assert not blank(["root", {}, ["p", {}, "existing content"]])

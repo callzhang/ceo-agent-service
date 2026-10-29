@@ -9,6 +9,9 @@ from tests.support.memory_limit import MemoryLimit
 
 
 os.environ["CEO_ENV_FILE"] = "/private/tmp/ceo-agent-service-test.env.missing"
+# Unit/gate runs use the same public fixture as CI, never this host's installed
+# company packages. Explicit roots (including opt-in integration runs) still win.
+os.environ.setdefault("CEO_SKILLS_ROOT", str(Path(__file__).resolve().parents[1] / "ci/shared-skills"))
 
 
 # Derek, 2026-09-25: tests never run in the production checkout. A session

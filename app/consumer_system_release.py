@@ -32,31 +32,8 @@ MANAGED_NAMES = (
     "ceo-weekly-okr-report",
 )
 SKILL_PATHS = tuple(f"ci/shared-skills/{name}/SKILL.md" for name in MANAGED_NAMES)
-EXPECTED_SOURCES = frozenset(
-    (
-        *SKILL_PATHS,
-        "ci/shared-skills/ceo-weekly-report/README.md",
-        "ci/shared-skills/ceo-weekly-report/scripts/report_contract.py",
-        "ci/shared-skills/ceo-weekly-report/scripts/validate_run.py",
-        "ci/shared-skills/ceo-weekly-report/scripts/render_dingtalk_jsonml.py",
-        "ci/shared-skills/ceo-weekly-report/scripts/jsonml_check.py",
-        "ci/shared-skills/ceo-weekly-report/scripts/materials.py",
-        "ci/shared-skills/ceo-daily-report/scripts/window.py",
-        "ci/shared-skills/ceo-daily-report/scripts/destination.py",
-        "ci/shared-skills/ceo-weekly-okr-report/SKILL.md",
-        "ci/shared-skills/ceo-weekly-okr-report/scripts/report.py",
-        "ci/shared-skills/ceo-weekly-okr-report/scripts/destination.py",
-        "ci/shared-skills/ceo-weekly-okr-report/scripts/analysis.schema.json",
-        "ci/shared-skills/ceo-weekly-report/references/dingtalk-runbook.md",
-        "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
-        "ci/shared-skills/stardust-oa-finance-review/SKILL.md",
-        "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md",
-        "ci/shared-skills/stardust-oa-people-review/SKILL.md",
-        "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
-        "app/defaults/audit_rules.md",
-        "ci/shared-skills/ceo-wechat/SKILL.md",
-    )
-)
+EXPECTED_SOURCES = frozenset((*SKILL_PATHS, "app/defaults/audit_rules.md", "ci/shared-skills/ceo-wechat/SKILL.md"))
+
 DEFAULT_MANIFEST = Path("ci/consumer-system-contract-release.json")
 SHA256_HEX = re.compile(r"[0-9a-f]{64}\Z")
 LOAD_READBACK_TIMEOUT_SECONDS = 15 * 60

@@ -37,8 +37,6 @@ tests/test_decision_quality.py
 tests/test_decision_rules.py
 tests/test_deploy_test_gate.py
 tests/test_dingtalk_local_sso_confirm.py
-tests/test_dingtang_okr_direct_source_retry.py
-tests/test_dingteam_okr_headless_source.py
 tests/test_dingteam_okr_live_source.py
 tests/test_documentation_contract.py
 tests/test_dws_client.py
@@ -97,13 +95,7 @@ tests/test_notification_test_isolation.py
 tests/test_oa_ai_services_namespace.py
 tests/test_oa_approval.py
 tests/test_oa_audit_return_same_stage.py
-tests/test_oa_delivery_reconciliation_skill.py
-tests/test_oa_needs_human_routing_skill.py
-tests/test_oa_pending_list_page_size.py
-tests/test_oa_return_policy_skill.py
 tests/test_oa_review_skill_binding.py
-tests/test_oa_skill_identifier_integrity.py
-tests/test_okr_period_source_contract.py
 tests/test_permission.py
 tests/test_postfix_action_source.py
 tests/test_process_runner.py
@@ -119,7 +111,6 @@ tests/test_reviewed_candidates.py
 tests/test_run_storage_manifest.py
 tests/test_runs11_definitions.py
 tests/test_runtime_status.py
-tests/test_sales_weekly_report_skill.py
 tests/test_schema_objects_cache.py
 tests/test_sent_delivery_action_storage.py
 tests/test_sent_delivery_source.py
@@ -128,6 +119,7 @@ tests/test_service_codex_config.py
 tests/test_service_heartbeat.py
 tests/test_service_supervisor.py
 tests/test_skill_features.py
+tests/test_public_skill_boundary.py
 tests/test_skill_first_install.py
 tests/test_skill_first_install_flow.py
 tests/test_skill_repositories.py
@@ -136,9 +128,6 @@ tests/test_skill_installation.py
 tests/test_console_skill_installation_api.py
 tests/test_skill_feedback.py
 tests/test_skill_files.py
-tests/test_stardust_oa_attendance_oncall_leave.py
-tests/test_stardust_oa_finance_evidence_rules.py
-tests/test_stardust_oa_people_review_handover_routing.py
 tests/test_state_bulk_update.py
 tests/test_state_bulk_update_expressions.py
 tests/test_state_org_index_order.py
@@ -175,12 +164,9 @@ tests/wechat/test_sender_helper.py
 tests/wechat/test_sender_ipc.py
 tests/wechat/test_snapshot.py
 tests/test_consumer_system_release_import.py
-tests/test_daily_report_chat_coverage_contract.py
 tests/test_email_classifier_skill_wire_contract.py
 tests/test_meeting_skill_scope_eval.py
 tests/test_oa_effective_return_skill_boundary.py
-tests/test_oa_people_return_precedence.py
-tests/test_stardust_oa_project_review_skill_rules.py
 tests/test_state_upgrade_progress.py
 tests/test_calendar_skill_conversion_contract.py
 tests/test_recover_failed_okr_reviews.py
@@ -192,14 +178,11 @@ tests/test_sqlite_context_phases.py
 tests/test_outbound_postfix.py
 tests/test_signed_url_detection.py
 tests/test_inline_output_schema.py
-tests/test_oa_effective_return_rounds.py
-tests/test_weekly_report_skill_evidence_workflow.py
 tests/test_store_snapshot_connect_timing.py
 tests/test_consumer_system_release_wait.py
 tests/test_email_classifier_skill_once.py
 tests/test_native_prompt_wire_schema.py
 tests/test_native_protocol_fixture.py
-tests/test_stardust_oa_people_evidence_chronology.py
 tests/test_audit_field_facts.py
 tests/test_runtime_source_depth_budget.py
 tests/test_storage_payload.py
@@ -302,7 +285,6 @@ tests/test_drive_material_bounds.py
 tests/test_run_entity_definitions.py
 tests/test_dingtalk_message_payload_sharing.py
 tests/test_dingtalk_sheet_style_sharing.py
-tests/test_weekly_okr_report.py
 tests/test_meeting_member_precision.py
 tests/test_state_progress_binding.py
 tests/test_email_historical_candidate_schema.py
@@ -342,7 +324,6 @@ tests/test_email_account_connector.py
 tests/test_material_request_stage.py
 tests/test_reviewed_sources.py
 tests/test_agent_orchestrator_feedback_exhaustion.py
-tests/test_weekly_report_materials.py
 tests/test_state_publication_marker.py
 tests/test_agent_turn_runtime_refresh.py
 tests/test_scheduled_task_recovery.py
@@ -368,7 +349,6 @@ tests/test_email_exact_source.py
 tests/test_native_reply_reconciliation.py
 tests/test_agent_turn_runner.py
 tests/test_audit_service_postfix.py
-tests/test_scheduled_okr_agent_eval.py
 tests/test_task_agent_session.py
 tests/test_oa_return_readback.py
 tests/test_audit_generation_rotation.py

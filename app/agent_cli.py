@@ -91,7 +91,7 @@ TEXT_MATERIAL_ROOTS = SPREADSHEET_MATERIAL_ROOTS
 MAX_TASK_FILE_BYTES = 2 * 1024 * 1024
 MAX_AUDIO_UPLOAD_BYTES = 95 * 1024 * 1024  # ai_services create_audio_upload max_bytes
 _TASK_ARTIFACT_TEMP_PREFIX = ".task-artifact-"
-CONSUMER_SCRIPT_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "ci" / "shared-skills"
+CONSUMER_SCRIPT_SOURCE_ROOT = Path(__file__).resolve().parent.parent / "ci" / "reviewed-skill-scripts"
 
 
 @dataclass(frozen=True, slots=True)
@@ -1719,15 +1719,14 @@ def _read_bound_task_skill(
 
 
 def _approved_consumer_skill_script(name: str, script: str) -> Path:
-    """Resolve a reviewed script from the service-managed Skill package.
+    """Resolve an installed private or public script against its reviewed digest.
 
     The task binding selects a Skill, not every executable shipped with it.
     A package's explicit Consumer entrypoints and script-source digest
     keep sender/approval helpers outside the Consumer tool surface.
     """
-    source = CONSUMER_SCRIPT_SOURCE_ROOT / name
     installed = Path.home() / ".agents" / "skills" / name
-    manifest_path = source / "consumer-scripts.json"
+    manifest_path = CONSUMER_SCRIPT_SOURCE_ROOT / f"{name}.json"
     try:
         manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError) as exc:
@@ -1773,7 +1772,6 @@ def _approved_consumer_skill_script(name: str, script: str) -> Path:
         not selected.is_relative_to((installed / "scripts").resolve())
         or selected.suffix != ".py"
         or not selected.is_file()
-        or script_tree_digest(source) != manifest["script_tree_sha256"]
         or script_tree_digest(installed) != manifest["script_tree_sha256"]
     ):
         raise ValueError("Consumer Skill script is not reviewed")

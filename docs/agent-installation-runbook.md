@@ -714,5 +714,8 @@ are reported for resolution. Updates are not pulled automatically.
 
 First installation supplies missing generic baseline packages before the worker
 starts. The bootstrap check verifies that baseline; it is not the repository
-search installer. Enterprise-rule migration and old public-history treatment
-remain a separate release workstream.
+search installer. Company policy packages and their regression tests are authored
+in the organization's private repository; the public checkout retains generic
+templates. Install company-specific packages without replacing same-name generic
+baselines. Private-source authorship and local installed/managed revisions are
+distinct. This current-tree migration does not erase previously public history.

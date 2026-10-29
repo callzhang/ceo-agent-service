@@ -23,20 +23,16 @@ sys.path.insert(0, str(ROOT))
 import eval_consumer_audit_business as business  # noqa: E402
 
 CASES = ROOT / "evals/oa_skill_proportionality/cases.json"
-SKILLS = (
-    "ci/shared-skills/dingtalk-oa-approval/SKILL.md",
-    "ci/shared-skills/stardust-oa-people-review/SKILL.md",
-    "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md",
-)
 
 
-def skills_at(ref: str | None) -> str:
+
+def skills_at(ref: str | None, *, root: Path, paths: tuple[str, ...]) -> str:
     parts = []
-    for path in SKILLS:
+    for path in paths:
         text = (
-            subprocess.run(["git", "show", f"{ref}:{path}"], cwd=ROOT, check=True,
+            subprocess.run(["git", "show", f"{ref}:{path}"], cwd=root, check=True,
                            capture_output=True, text=True).stdout
-            if ref else (ROOT / path).read_text(encoding="utf-8")
+            if ref else (root / path).read_text(encoding="utf-8")
         )
         parts.append(f"=== {path} ===\n{text}")
     return "\n\n".join(parts)
@@ -63,18 +59,21 @@ def operations(result: dict | None) -> list[str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument("--skills-root", type=Path, required=True)
+    parser.add_argument("--skill-path", action="append", required=True)
+    parser.add_argument("--cases", type=Path, default=CASES)
     parser.add_argument("--baseline-ref", action="append", required=True)
     parser.add_argument("--repeats", type=int, default=1)
     parser.add_argument("--case", action="append")
     parser.add_argument("--with-audit", action="store_true")
     parser.add_argument("--model", help="Use the same explicit model for both variants")
     args = parser.parse_args()
-    manifest = json.loads(CASES.read_text(encoding="utf-8"))
+    manifest = json.loads(args.cases.read_text(encoding="utf-8"))
     settings = manifest["settings"]
     instructions = business.role_instructions(ROOT)
     schema = instructions["wire_schemas"]["consumer"]
-    variants = {f"baseline:{ref}": skills_at(ref) for ref in args.baseline_ref}
-    variants["candidate"] = skills_at(None)
+    variants = {f"baseline:{ref}": skills_at(ref, root=args.skills_root, paths=tuple(args.skill_path)) for ref in args.baseline_ref}
+    variants["candidate"] = skills_at(None, root=args.skills_root, paths=tuple(args.skill_path))
     rows = []
     with tempfile.TemporaryDirectory(prefix="oa-skill-replay-") as raw:
         for case in manifest["cases"]:

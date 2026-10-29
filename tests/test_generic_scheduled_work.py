@@ -1,6 +1,5 @@
 """Regression coverage for task-independent fact/script/document capabilities."""
 
-import importlib.util
 import json
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
@@ -12,87 +11,6 @@ from app import agent_cli
 from app.service_activity import scheduled_context, collect_service_activity
 
 ROOT = Path(__file__).resolve().parents[1]
-
-
-def script(skill, name):
-    spec = importlib.util.spec_from_file_location(
-        name, ROOT / "ci/shared-skills" / skill / "scripts" / (name + ".py")
-    )
-    module = importlib.util.module_from_spec(spec)
-    import sys
-
-    sys.modules[name] = module
-    spec.loader.exec_module(module)
-    return module
-
-
-@pytest.mark.parametrize(
-    "status,result,offset",
-    [("done", "completed", -2), ("done", "skipped", -1), ("failed", "failed", -1)],
-)
-def test_daily_skill_catchup_window_uses_real_completion_not_done_alone(status, result, offset):
-    end = datetime(2026, 10, 19, 13, tzinfo=UTC)
-    context = {
-        "run_id": 3,
-        "scheduled_for": end.isoformat(),
-        "history": [
-            {
-                "run_id": 1,
-                "scheduled_for": (end - timedelta(days=2)).isoformat(),
-                "task_status": "done",
-                "result_status": "completed",
-            },
-            {
-                "run_id": 2,
-                "scheduled_for": (end - timedelta(days=1)).isoformat(),
-                "task_status": status,
-                "result_status": result,
-            },
-        ],
-    }
-    window = script("ceo-daily-report", "window").report_window(context)
-    expected = end - timedelta(
-        days=1 if status == "done" and result == "completed" else 2
-    )
-    day_start = datetime(2026, 10, 18, 16, tzinfo=UTC)
-    assert datetime.fromisoformat(window["window_utc"]["start"]) == day_start
-    assert datetime.fromisoformat(window["catchup_window_utc"]["start"]) == expected
-    assert datetime.fromisoformat(window["catchup_window_utc"]["end"]) == day_start
-    assert window["source_window_utc"] == {
-        "start": expected.isoformat(),
-        "end": end.isoformat(),
-    }
-    context["history"].append(
-        {
-            "run_id": 4,
-            "scheduled_for": (end - timedelta(hours=1)).isoformat(),
-            "task_status": "done",
-            "result_status": "completed",
-        }
-    )
-    rerun = script("ceo-daily-report", "window").report_window(context)
-    assert rerun["window_utc"] == window["window_utc"]
-    assert rerun["catchup_window_utc"] is None
-    assert rerun["source_window_utc"] == rerun["window_utc"]
-
-
-def test_daily_skill_first_window_and_beijing_date():
-    end = datetime(2026, 10, 19, 17, tzinfo=UTC)
-    result = script("ceo-daily-report", "window").report_window(
-        {"run_id": 1, "scheduled_for": end.isoformat(), "history": []}
-    )
-    assert result["report_date"] == "2026-10-20"
-    assert datetime.fromisoformat(result["window_utc"]["start"]) == datetime(
-        2026, 10, 19, 16, tzinfo=UTC
-    )
-    assert result["catchup_window_utc"] == {
-        "start": (end - timedelta(days=1)).isoformat(),
-        "end": datetime(2026, 10, 19, 16, tzinfo=UTC).isoformat(),
-    }
-    assert result["source_window_utc"] == {
-        "start": (end - timedelta(days=1)).isoformat(),
-        "end": end.isoformat(),
-    }
 
 
 def test_generic_history_exposes_facts_without_report_policy():
