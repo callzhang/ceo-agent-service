@@ -141,7 +141,6 @@ def _insert_email_plan(db, plan_id, classification_id, version=1):
         "actions_json": '["archive","move","trash","label","mark_read"]',
         "action_parameters_json": "{}",
         "authorization_snapshot_json": "[]",
-        "legacy_serialization_pre_v16": 0,
         "created_at": "2026-10-12",
     })
 

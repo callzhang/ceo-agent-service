@@ -395,3 +395,7 @@ tests/test_business_legacy_owner_storage.py
 tests/test_email_progress_backlog.py
 tests/test_email_field_retirement_release.py
 tests/test_oa_history_storage.py
+tests/test_action_entity_schema_release.py
+tests/test_status_snapshot_projection.py
+tests/test_email_metadata_schema.py
+tests/test_signal_source_owner_storage.py

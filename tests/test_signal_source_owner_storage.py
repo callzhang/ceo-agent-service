@@ -192,7 +192,7 @@ def test_current_manifest_preserves_463_object_digest():
     encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
     assert len(objects) == 463
     assert hashlib.sha256(encoded).hexdigest() == (
-        "ec77e9b01dc0915a387ed8b01d8d28cd9f150d7addaed9262b3ecb9d2b129a0a"
+        "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94"
     )
 
 

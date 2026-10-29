@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from app.action_entity_transfer import _source_execution_layout
+from app.shared_action_definitions import direct_step_layout
 
 from contextlib import closing
 import json
@@ -735,9 +736,8 @@ def test_direct_email_translation_preserves_attempt_identity_and_rewrites_histor
     _source_database(path)
     with closing(sqlite3.connect(path)) as db:
         from app import action_storage
-        from app.action_storage import insert_action, _action_payload
+        from app.action_storage import _action_payload
         from app.action_email_history_storage import insert_email_history
-        from app.current_action_schema import current_action_payloads
         from app.action_entity_release_manifest import source_objects
         from app.action_entity_transfer import capture_source_facts
         import re
@@ -778,7 +778,7 @@ def test_direct_email_translation_preserves_attempt_identity_and_rewrites_histor
                 "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
                 (source_codes["email_action_plans"], str(index), _action_payload(
                     db, "email_action_plans", plan,
-                    layout=current_action_payloads().layouts["email_action_plans"])),
+                    layout=_source_execution_layout("email_action_plans"))),
             )
         direct_actions = (
             ("old-direct-action", "plan-1", "archive", "first-result"),
@@ -796,15 +796,21 @@ def test_direct_email_translation_preserves_attempt_identity_and_rewrites_histor
                 "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
                 (source_codes["email_actions"], str(22 + position), _action_payload(
                     db, "email_actions", direct,
-                    layout=current_action_payloads().layouts["email_actions"])),
+                    layout=direct_step_layout())),
             )
-            insert_action(db, "email_action_attempts", {
-                "id": 6 + position, "action_id": action_id, "attempt_number": position,
+            attempt = {
+                "action_id": action_id, "attempt_number": position,
                 "status": "done", "provider_operation": action_type.upper(),
                 "provider_target": f"mailbox:message-{position}", "provider_result_id": result_id,
                 "error": "", "started_at": f"attempt-start-{position}",
                 "finished_at": f"attempt-finish-{position}",
-            })
+            }
+            db.execute(
+                "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
+                (source_codes["email_action_attempts"], str(6 + position), _action_payload(
+                    db, "email_action_attempts", attempt,
+                    layout=_source_execution_layout("email_action_attempts"))),
+            )
         insert_email_history(db, "email_historical_operations", {
             "operation_id": "operation-1", "account_id": "account-1",
             "stable_message_identity": "message-identity", "model_id": "model-1",
@@ -851,7 +857,6 @@ def test_direct_retry_parent_retargets_only_the_covered_action_reference(tmp_pat
     _source_database(path)
     with closing(sqlite3.connect(path)) as db:
         from app.action_storage import _action_payload, _encoded_native_sqlite_value
-        from app.current_action_schema import current_action_payloads
         from app.action_email_definitions import EMAIL_COMPOSITE_KEYS
         from app.action_email_definitions import EMAIL_ACTION_PROJECTIONS
         import re
@@ -900,12 +905,12 @@ def test_direct_retry_parent_retargets_only_the_covered_action_reference(tmp_pat
             "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
             (source_codes["email_action_plans"], "1", _action_payload(
                 db, "email_action_plans", plan,
-                layout=current_action_payloads().layouts["email_action_plans"])),
+                layout=_source_execution_layout("email_action_plans"))),
         )
         db.execute(
             "insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
             (source_codes["email_actions"], "23", _action_payload(
-                db, "email_actions", direct, layout=current_action_payloads().layouts["email_actions"])),
+                db, "email_actions", direct, layout=direct_step_layout())),
         )
         retry = {
             "action_id": direct["action_id"], "attempt_number": 2,
@@ -923,7 +928,7 @@ def test_direct_retry_parent_retargets_only_the_covered_action_reference(tmp_pat
              _action_payload(db, "email_direct_retry_requests",
                              {key: value for key, value in retry.items()
                               if key not in EMAIL_COMPOSITE_KEYS["email_direct_retry_requests"]},
-                             layout=current_action_payloads().layouts["email_direct_retry_requests"])),
+                             layout=_source_execution_layout("email_direct_retry_requests"))),
         )
         projection = EMAIL_ACTION_PROJECTIONS["email_direct_retry_requests"]
         before_cursor = db.execute(projection)

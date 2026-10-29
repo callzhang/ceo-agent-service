@@ -1050,7 +1050,7 @@
   "network_and_native_cli": "refused",
   "copy": "/private/tmp/ceo-final-model-residue.OAxXjh/roundtrip5.sqlite3",
   "old_root": "/private/tmp/ceo-final-model-residue.OAxXjh/old-production-e052b814a",
-  "phase": "implemented_copy_validated_not_deployed",
+  "phase": "core_deployed_ci_fixture_cleanup_in_progress",
   "source_code_commit": "e052b814aad722caae102e6dbd5d483190383298",
   "target_store": "2026-10-29.1",
   "email_version": 54,
@@ -1092,6 +1092,22 @@
       "spec": "PASS",
       "quality": "PASS",
       "ruff": "passed"
+    },
+    "ci_model_fixture_regressions": {
+      "ci_run": 40869216831,
+      "new_failing_nodes": 7,
+      "baseline_failing_python_nodes": 4,
+      "all_four_files": {
+        "passed": 42,
+        "seconds": 48.03
+      },
+      "root_regressions": {
+        "passed": 13,
+        "seconds": 5.95
+      },
+      "spec": "PASS",
+      "quality": "PASS",
+      "changes": "Tests only: historical source layouts, current plan fixture and approved current schema assertions; no application compatibility restored."
     }
   },
   "normalization_boundary": "Original local duplicates retire only after exact-byte/type equality; differing hidden bodies reject before mutation. Historical adopted results and independent quality facts use existing Action/receipt fields with missing proof identities NULL; current unknown facts are not reinterpreted on forward replay.",
@@ -1107,6 +1123,16 @@
       "cause": "Seven historical Email parity nodes used current 13-cell writers with frozen 14-cell source declarations or a retired attempts family; runtime compatibility was not restored.",
       "production_changed": false,
       "backup_created": false
+    },
+    {
+      "commit": "1b0c36d44548b321674e7c63643cbc97f292ff9f",
+      "result": "passed",
+      "passed": 7720,
+      "skipped": 2,
+      "deselected": 1,
+      "seconds": 452.31,
+      "files": 396
     }
-  ]
+  ],
+  "deployed_commit": "1b0c36d44548b321674e7c63643cbc97f292ff9f"
 }

@@ -46,7 +46,8 @@ def test_fresh_target_has_exactly_one_owner_and_retains_independent_ids(tmp_path
     with closing(sqlite3.connect(path)) as db:
         columns = {row[1] for row in db.execute("pragma table_xinfo(emails)")}
         assert not columns & RETIRED
-        assert len(columns) == 42
+        assert "class_legacy_processed_without_plan" not in columns
+        assert len(columns) == 41
         assert _markers(db)[0][0] == STORE_SCHEMA_VERSION
         assert _markers(db)[1][-1][0] == 54
         assert {"classification_id", "message_id", "id", "class_rfc_message_id", "message_rfc_message_id",
