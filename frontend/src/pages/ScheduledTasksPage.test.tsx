@@ -315,11 +315,13 @@ describe("ScheduledTasksPage", () => {
     expect(api.listScheduledTaskRuns).toHaveBeenCalledWith(8, "", expect.any(AbortSignal));
   });
 
-  it("shows a one-line explanation instead of a visible page title", async () => {
+  it("shows the page title and concise explanation", async () => {
     renderPage();
-    expect(await screen.findByRole("heading", { name: "定时任务" })).toHaveClass("sr-only");
-    expect(screen.getByText(/配置 Cron、Agent Skills 与执行 Runtime/)).toBeInTheDocument();
-    expect(screen.queryByText("AGENT CRON")).not.toBeInTheDocument();
+    const title = await screen.findByRole("heading", { name: "定时任务" });
+    expect(title).toBeVisible();
+    expect(title).not.toHaveClass("sr-only");
+    expect(screen.getByText("用固定计划自动运行服务命令或 Agent 任务，并在这里查看每次运行结果。")).toBeInTheDocument();
+    expect(screen.getByText("AUTOMATION")).toBeVisible();
   });
 
   it("shows a compact master-detail with readable schedule and execution state", async () => {
@@ -665,13 +667,19 @@ describe("ScheduledTasksPage", () => {
     style.remove();
   });
 
-  it("lets the task list grow with the page instead of creating an inner scroll area", () => {
-    const listRules = [...workbenchStyles.matchAll(/\.scheduled-task-list\s*\{([^}]*)\}/g)]
+  it("lets the task list grow on desktop and bounds it on mobile", () => {
+    const mobileStart = workbenchStyles.lastIndexOf("@media (max-width: 760px)");
+    expect(mobileStart).toBeGreaterThan(0);
+    const mobileEnd = workbenchStyles.indexOf("\n}", mobileStart);
+    expect(mobileEnd).toBeGreaterThan(mobileStart);
+    const mobileStyles = workbenchStyles.slice(mobileStart, mobileEnd);
+    const desktopStyles = workbenchStyles.slice(0, mobileStart) + workbenchStyles.slice(mobileEnd + 2);
+    const desktopRules = [...desktopStyles.matchAll(/\.scheduled-task-list\s*\{([^}]*)\}/g)]
       .map((match) => match[1]);
-
-    expect(listRules.length).toBeGreaterThan(0);
-    expect(listRules.every((rule) => !/max-height\s*:/.test(rule))).toBe(true);
-    expect(listRules.every((rule) => !/overflow(?:-y)?\s*:/.test(rule))).toBe(true);
+    expect(desktopRules.length).toBeGreaterThan(0);
+    expect(desktopRules.every((rule) => !/max-height\s*:/.test(rule))).toBe(true);
+    expect(desktopRules.every((rule) => !/overflow(?:-y)?\s*:/.test(rule))).toBe(true);
+    expect(mobileStyles).toMatch(/\.scheduled-task-list\s*\{[^}]*max-height:\s*300px;[^}]*overflow:\s*auto;/);
   });
 
   it("keeps controls, Skill suggestions, and history readable around 390px", () => {

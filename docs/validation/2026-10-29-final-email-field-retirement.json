@@ -1108,6 +1108,25 @@
       "spec": "PASS",
       "quality": "PASS",
       "changes": "Tests only: historical source layouts, current plan fixture and approved current schema assertions; no application compatibility restored."
+    },
+    "baseline_contract_regressions": {
+      "python": {
+        "passed": 157,
+        "seconds": 20.53
+      },
+      "frontend": {
+        "files": 2,
+        "passed": 114,
+        "seconds": 5.54
+      },
+      "final_heading_regression": {
+        "passed": 1,
+        "seconds": 1.04
+      },
+      "spec": "PASS",
+      "quality": "PASS",
+      "ruff": "passed",
+      "boundary": "Tests only; current constructors use current manifest, archived State bytes retain frozen source hash, WeChat fake requires persisted prepared delivery, scheduled UI tests follow existing authorized page contract."
     }
   },
   "normalization_boundary": "Original local duplicates retire only after exact-byte/type equality; differing hidden bodies reject before mutation. Historical adopted results and independent quality facts use existing Action/receipt fields with missing proof identities NULL; current unknown facts are not reinterpreted on forward replay.",

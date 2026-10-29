@@ -103,7 +103,11 @@ def review_client(tmp_path):
     sent = []
 
     class FakeSender:
-        def send(self, delivery, scope):
+        def send(self, delivery, scope, *, prepared):
+            assert prepared.channel == "wechat"
+            assert prepared.delivery_key == f"wechat:{delivery.id}"
+            assert prepared.final_body == delivery.reply_text
+            assert store.get_outbound_postfix("wechat", prepared.delivery_key) == prepared
             store.mark_wechat_delivery_sending(delivery.id)
             store.set_wechat_delivery_status(delivery.id, "sent")
             sent.append(delivery.id)

@@ -7,7 +7,8 @@ import pytest
 
 from app.email_store import EmailStore
 from app.store import AutoReplyStore
-from app.state_schema_current import SOURCE_TABLES, TARGET_INDEXES, state_schema_is_current
+from app.state_schema_current import SOURCE_TABLES, TARGET_INDEXES
+from app.current_schema_manifest import schema_is_current
 
 
 def state_facts(path):
@@ -37,7 +38,7 @@ def test_both_constructor_orders_retire_native_state_and_reopen(tmp_path, order)
         names = {r[0] for r in db.execute("select name from sqlite_schema")}
         assert "state" in names
         assert not names.intersection(SOURCE_TABLES)
-        assert state_schema_is_current(db)
+        assert schema_is_current(db, email_ledger=True)
         assert db.execute("pragma quick_check").fetchone()[0] == "ok"
         assert db.execute("pragma foreign_key_check").fetchall() == []
 

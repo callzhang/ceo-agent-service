@@ -42,7 +42,7 @@ const validRun = {
   dispatch_status: "pending", skip_or_error_reason: "",
   execution_kind: "", execution_id: "", created_at: "2026-09-08T12:00:00Z", dispatched_at: null,
   attempts: [],
-  snapshot: { task_id: 7, task_version: 3, name: task.name, description: task.description, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, required_runtime_capabilities: task.required_runtime_capabilities, working_directory: task.working_directory, skill_refs: task.skill_refs },
+  snapshot: { task_id: 7, task_version: 3, name: task.name, description: task.description, prompt: task.prompt, command: task.command, cron_expression: task.cron_expression, timezone_name: task.timezone_name, runtime_id: task.runtime_id, runtime_options: task.runtime_options, required_runtime_capabilities: task.required_runtime_capabilities, working_directory: task.working_directory, notify_on_completion: false, skill_refs: task.skill_refs },
 } as const;
 const validOptions = {
   runtime_options: [{ route_name: "codex_oauth", runtime_kind: "codex_cli", credential_mode: "local_oauth", model: "gpt", available: true, unavailable_reason: null, supported_thinking: ["low", "medium", "high", "xhigh"], capabilities: ["local_process_execution"] }],

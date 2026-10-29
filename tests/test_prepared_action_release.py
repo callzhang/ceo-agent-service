@@ -91,11 +91,13 @@ print(json.dumps(result))
     paths = {entry["path"] for entry in manifest["files"]} - {
         "app/action_storage.py", "app/task_storage.py",
     }
-    # These helpers gained opt-in behavior, task_storage gained a current-run
-    # reader, and some manifest files have since been retired. Generated Task
-    # DDL remains compared directly above; only the manifest's remaining files
-    # are required to stay byte-exact.
+    # The archived State source remains pinned even though the current State
+    # definitions evolved. Generated historical Task DDL is compared above;
+    # remaining unchanged sources are compared to the archive below.
+    state_entry = next(entry for entry in manifest["files"] if entry["path"] == "app/state_definitions.py")
+    assert hashlib.sha256((archived_source / state_entry["path"]).read_bytes()).hexdigest() == state_entry["sha256"]
     additive_helpers = {
+        "app/state_definitions.py",
         "app/email_canonical_definitions.py",
         "app/shared_action_definitions.py",
     }
