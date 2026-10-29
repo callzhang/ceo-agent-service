@@ -685,6 +685,10 @@ IMAP 移动模式是账号级显式配置：默认 `imap_move_mode=move` 并要�
 事务内读取的 Action 当前 `started_at` 精确做 CAS，兼容仍保存空字符串的失败记录。输出只有计数（按
 move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、error），不含邮件内容。
 
+如果当前计划的 `move` 已有 `done` 的 `reconciled_dws_readback` 凭证，而同一计划的 `flag_important`
+或 `mark_read` 因 `readback_missing` 被记为 `skipped`，`POST /api/console/email/classifications/{id}/continue-after-move-readback`
+可按该 move action ID 追加当前计划版本。它只复制原计划尚未完成的加星/已读动作及其授权参数，移除已完成的 move 依赖，保留旧计划与所有回执。其他跳过原因、失败动作、退订/自动回复动作、非当前计划或缺少 DWS 读回凭证都会被拒绝。新版本由现有 Email worker 正常领取；恢复入口自身不访问邮箱，不重放 MOVE。
+
 只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
 `reply_task`，生命周期固定为 `email_unsubscribe_audited_v2`；其他动作和零动作计划不创建
 task。`auto_reply`、SMTP 和 `mailto` 发送全部禁用，不能由配置、分类结果、人工确认或 Agent
