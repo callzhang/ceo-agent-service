@@ -1,7 +1,7 @@
 # Private business Skill migration validation
 
-Status: private source published and local separation tested; actual private
-installation acceptance, independent review and standard public deployment are
+Status: private source, local separation and actual private installation
+acceptance completed; independent review and standard public deployment are
 recorded below when completed. This is not a rollout of the pending OA judgment
 candidate and does not claim historical disclosure has been erased.
 
@@ -37,9 +37,23 @@ Optional external Skill names remain supported for existing installations.
   18 passed, retaining synthetic failure/rollback/concurrent-edit assertions.
 - Public report-template tests: 56 passed; selected OA Audit/required-reference
   contracts: 2 passed after restoring the required normative-reference wording.
+  Sixteen additional documentation/gate-manifest cases passed after merging main;
+  the distinct public total is 238 passing cases across 18 files.
 - Public boundary tests observed RED for company directories, named identity,
   internal source links and legacy publication entries, then GREEN after separation.
-- Real private URL search/install/duplicate/file identity/load receipt: pending.
+- Production native private URL search returned 26/26 available packages and no
+  errors. In a separate console using shipped routes/installer and fresh local
+  state, actual UI clicks installed finance and management-reference packages;
+  the same API installed nine other company-only packages. All 35 selected files
+  match private source bytes and executable bits. Duplicate install returned 200
+  and the original revision. A real live loader process activated the pending
+  config; all 26 enabled revision hashes and 26 disk contents match its receipt.
+  Tasks, runs and business-action rows stayed zero; runtime Skill load receipts
+  are normal metadata in the shared Action table, not external business effects.
+- The searched private commit remained pinned while a manifest-only fix advanced
+  the private head; the entire Skill package tree is identical. The private CI
+  clean clone passed 60 tests after excluding five untracked pytest-cache files
+  from the manifest. No business source file changed in that correction.
 - Independent review, exact deployed commit, PID/health/queues/Attention/History:
   pending. No production package overwrite or business effect is acceptance.
 
