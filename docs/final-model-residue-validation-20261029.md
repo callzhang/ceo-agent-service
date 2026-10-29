@@ -1,6 +1,6 @@
 # 2026-10-29 最后一批业务模型残留清理验收
 
-本轮四个实施单元、测试维护、正式发布／读回及自有备份／临时清理均已收口。后续独立发布所需的新备份按其负责人明确要求保留。范围以 [实施计划](superpowers/plans/2026-10-29-final-model-residue.md) 为准，不重复前五批已完成工作。
+本轮四个实施单元、测试维护、正式发布／读回及已核实归属的备份／临时清理均已收口。后续单独批准的 JunHe 系统标记映射、同一Action显式恢复和回执读回也已完成，最新状态见文末；独立读取限制明确保留。范围以 [实施计划](superpowers/plans/2026-10-29-final-model-residue.md) 为准，不重复前五批已完成工作。
 
 ## 已实施
 
@@ -37,18 +37,38 @@
 
 本轮没有证明数据库“全局最优”；必要的显式迁移／inverse源合同继续保留，不属于运行时兼容读取。没有把逻辑内容去重或删除测试副本宣称为生产SQLite文件缩小。
 
-## JunHe 后续系统标记与显式恢复（实施验证中）
+## JunHe 系统标记与显式恢复：生产执行已核验
 
-模型精简本身的发布证据保持不变。后续邮件恢复独立保留：日期修复 ec70a75e0 已标准部署，gate 7,783 passed／2 skipped／1 deselected，402 文件、591.81 秒。独立读回 PID5099、health200、Store29.1／Email54、463 个准确声明、FK[]；前端 stamp395fce9b6。来源 RFC 日期与 DWS ISO 时刻复用原 MOVE 解析，保留原值与 10 秒条件。
+本项是 Derek 单独批准的映射与显式恢复修复。源提交 **62b608943**，合并主线 dcc7475a2，发布负责人单独集成 Attention 修复后，标准部署精确安装 **616e237ec28ad4a913ee09d2f5e3e3ef1193b727**。六个直接相关测试文件 **207 passed／98.86秒**；独立 SPEC／QUALITY 复审、Ruff 和差异检查通过。发布负责人另行复验 Attention 322项与 DWS恢复/命令38项。正式强制门禁 **7,807 passed／2 skipped／1 deselected，403文件，546.13秒**，保留10分钟／2GB预算、安静窗口、备份核验与失败回滚。
 
-日期修复后，仅调用一次原恢复入口，当前计划 v9（7041fd99…）。FLAG_IMPORTANT 127062／失败回执22181 为写后读回不匹配；MARK_READ127063仍 pending。原 MOVE111699 的回执8468／8641／21597及摘要保持不变，没有再次移动。不能把调用成功当外部效果已完成。
+### 准确映射与恢复边界
 
-真实协议取证区分了三个不同信号：自定义“重要”107、DWS系统重要11、原 FLAG_IMPORTANT 要求的 IMAP Flagged。该账号 PERMANENTFLAGS 声明 Flagged、不声明 $Important；只读交叉核对一封已有 Flagged 的邮件，其 DWS 单邮件会话标签只有1。原生 KQL tag:107 在 JunHe 上精确命中，tag:1 也精确命中；tag:important 全局零命中，不能作为系统效果证明。JunHe 同时已读。保留107及其他已有标签；代码不擅自添加11。
+原 FLAG_IMPORTANT 合同要求 IMAP Flagged。该邮箱声明 Flagged，没有声明 $Important。只读交叉核对已有 Flagged 邮件的单邮件 DWS 会话，标签为1；原生数字 KQL 查询也得到真实结果。DWS系统1、独立系统重要11、自定义“重要”107有不同含义，不能按同名替换。修复写入和读回均使用系统1；保留已有107与其他标签。每次使用当前账号只读核对原MOVE目标邮箱的要求；尚未证实映射的额外要求不被忽略。元数据失败仍处于原DWS非自动重试边界。
 
-Derek 单独批准并再次要求完成系统标记映射与显式源核验恢复。修复同一提交保持当前真实 owner：系统1写入和逐封读取一致，原始失败保留；使用现有 retry request 释放同一 Action/计划，Worker 再读，满足即 noop。额外邮箱标记要求不能忽略；factory 配置、MOVE 来源和所有失败/执行身份在事务内重验。没有 DDL、Audit、授权或自动重试政策变更。
+默认只读的显式工具重新核验当前失败、唯一历史MOVE、身份、参数、配置及依赖。只有 `--apply` 才用现有 retry request 释放同一 Action；锁内重新检查，不生成新计划或动作，不改变 Audit、授权、自动重试或数据库结构。
 
-修改前真实协议替身回归失败（1 failed，错误标记未完成）；同一 Action 显式恢复入口缺失回归失败。首轮64通过；补充共享邮箱合同、配置竞争核对和非自动重试边界后，六个直接相关测试文件207通过（98.86秒），Ruff与差异检查通过，独立SPEC／QUALITY复审通过。新增恢复测试已加入gate；只有最终精确提交、完整门禁及生产原动作回执通过后才能关闭。一次新代码只读生产 dry-run 已返回 source_verified／eligible=true／released=false／source_satisfied=true；它没有释放任务或写邮箱，不能代替最终执行回执。
+### 实际执行与回执
 
-发布与另一任务串行：本任务完成 JunHe 修复后交精确提交给发布负责人，负责人独占标准 gate/quiet/deploy，并将独立 Attention 变更保持独立提交；本任务不并行部署。发布后只释放127062，读回其追加回执及后继127063，不重发其他业务。备份仍保留到两项验收与发布依赖解除，再锁目录核验准确代次并清理。
+| 原有动作 | 最终结果 | 本次回执与行为 |
+| --- | --- | --- |
+| MOVE111699 | done | 原回执8468／8641／21597及原摘要完全不变，本次没有再次移动 |
+| FLAG_IMPORTANT127062 | done，attempt2 | 新回执**22190**，`dws_readback_noop`；原失败回执**22181**保留 |
+| MARK_READ127063 | done，attempt1 | 新回执**22191**，`dws_readback_noop` |
 
-邮件原文详情 API 此前仍为502／email_original_unavailable；不能以动作回执或摘要页面冒充原文读取恢复。该限制独立记录，不新建正文副本。
+已安装版本的只读 dry-run 返回 source_verified／eligible=true／released=false／source_satisfied=true；随后只调用一次 `--apply`。当前仍是**原v9计划7041fd99…**，127062只有一条attempt2显式请求。Worker重新读取后，两项源状态都已满足，只追加完成回执，没有调用邮箱写入、重放退订或发送。原MOVE三条回执的规范JSON摘要仍为 `415c82357828b87809fe477222a48a1f3c333a3632bfb1738cf067c30bc60802`。
+
+### 生产读回与独立限制
+
+- 源端独立查询：同一账号／发件人／完整主题／文件夹167，`tag:1 AND isRead:true`精确命中DWS邮件DzzzzzzNJ0u；收信时刻差6秒，原MOVE的会话/邮件/文件夹摘要匹配。
+- 服务PID9227，health200；前端tree与stamp均为395fce9b6e3ddd924881471c36fbb654ac6ef7dd，不需要重建。Store29.1／Email54仍为463个准确声明、schema SHA256 f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94、FK[]，无DDL。
+- 邮件列表API同一分类的两项mailbox_actions均done且error为空。实际Email页面按原发件人搜索定位该邮件，显示法务／已处理，没有当前失败徽标。为避免开信UI自动请求标已读，原文详情使用只读GET核对。
+- Attention由3项降到2项，JunHe不再出现，剩余原有业务决策保持。History实际完成第1页到第2页翻页；失败筛选选中后显示18条历史记录，没有强行清零。
+- **仍存在的独立读取限制**：原文详情GET仍返回502／email_original_unavailable；History按 `Quotation for On-Premise` 主题搜索的探针返回0条。均未作为通过项，也没有在这次标记/恢复范围内追加开发或伪造原文。历史回执在原身份下保留并已直接读回。
+
+### 已授权清理
+
+发布负责人确认无其他恢复/发布依赖，并核实 Derek 明确要求验收后清空本轮备份。部署58fe备份已由同一工作流退休；本次发现的唯一daily为inode838537660、mtime_ns1793312954687705485、514,969,600字节。持备份目录锁重新核验CEOB、完整性ok、准确schema／hash、FK[]、文件SHA及无打开引用和无活动deploy后，删除这个精确代次，随后确认目录为空。
+
+我方 `/private/tmp/ceo-junhe-flags-closeout.1rrFco` 的28个合成测试/缓存文件（28,713,263字节）已核实无外链、无打开引用并删除；已登记13个我方临时路径全部不存在。生产库、原生trajectory及其他任务原件保留。随后将更早遗留的4个干净临时Git工作树与2份已整合补丁一并清理：提交/分支保留，工作树无脏改动、无活动引用，忽略文件全部为Python/pytest/ruff缓存，使用不带force的git worktree remove。合计19个我方登记路径全都不存在。发布负责人也用git worktree remove删除其独立发布工作树 `/private/tmp/ceo-junhe-email-release`，我方再次核对缺失；本轮共20个已核实临时路径均不存在。活跃ASR原件不属于本轮清理，保持不动。本工作流两个已结束JunHe认领已移除；其他活动认领保留。纯验收文档收尾不再部署。
+
+完整结构化证据见 [生产回执、源端与UI读回](validation/2026-10-29-final-email-field-retirement.json) 和 [准确代次清理记录](validation/2026-10-29-final-model-cleanup.json)。

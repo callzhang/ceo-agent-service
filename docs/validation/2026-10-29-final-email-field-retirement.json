@@ -1294,7 +1294,7 @@
   },
   "cleanup_evidence": "2026-10-29-final-model-cleanup.json",
   "junhe_closeout_followup": {
-    "phase": "system_flag_recovery_implemented_reviewed_focused_passed_awaiting_serial_release",
+    "phase": "completed_approved_flag_mapping_and_same_action_recovery_with_verified_cleanup",
     "checked_at": "2026-10-29T20:19:52.987843+00:00",
     "installed_commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
     "health": 200,
@@ -1569,7 +1569,7 @@
       "attribution_limit": "Global tag count is not proof of this target membership; raw provider update result was not retained, receipt correctly remains failed."
     },
     "system_flag_recovery_scope": {
-      "status": "implemented_reviewed_focused_passed",
+      "status": "completed_approved_flag_mapping_and_same_action_recovery_with_verified_cleanup",
       "human_reply": "批准标记与显式恢复修复（推荐）",
       "reaffirmation": "继续按已批准的范围修正系统标记映射和显式恢复，补真实协议回归，测试通过后部署，完成 JunHe 这封邮件的执行和回执读回，再清理备份和临时文件，收尾。",
       "preserved": [
@@ -1638,7 +1638,317 @@
           "additional required signal cannot be ignored"
         ]
       },
-      "gate_addition": "tests/test_email_dws_recovery.py; current synthetic seed is created once and each test receives a committed SQLite backup copy, normal current EmailStore initialization; focused recovery+protocol38passed13.05s"
+      "gate_addition": "tests/test_email_dws_recovery.py; current synthetic seed is created once and each test receives a committed SQLite backup copy, normal current EmailStore initialization; focused recovery+protocol38passed13.05s",
+      "installed_cli_dry_run": {
+        "installed_commit": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727",
+        "result": {
+          "outcome": "source_verified",
+          "eligible": true,
+          "released": false,
+          "source_satisfied": true,
+          "source_readback_digest": "48aca886d6d0710cd00a66420eeb055ee438ca02bb50f98d2072113cc92a29f7"
+        }
+      },
+      "installed_cli_apply": {
+        "started_at": "2026-10-29T22:30:39.485604+00:00",
+        "invocations": 1,
+        "status": "returned",
+        "finished_at": "2026-10-29T22:30:47.421615+00:00",
+        "result": {
+          "outcome": "source_verified",
+          "eligible": true,
+          "released": true,
+          "source_satisfied": true,
+          "source_readback_digest": "48aca886d6d0710cd00a66420eeb055ee438ca02bb50f98d2072113cc92a29f7"
+        }
+      },
+      "production_receipt_readback": {
+        "checked_at": "2026-10-29T22:32:02.916816+00:00",
+        "actions": [
+          {
+            "action_id": 111699,
+            "action_plan_id": "email-action-plan:a38f9b61aec5b6c4e95781d78b89cf981fd9f53f00464f7c9f7758e0eb5c2463",
+            "action_type": "move",
+            "status": "done",
+            "attempt_count": 3,
+            "error": "",
+            "provider_operation": "reconciled_dws_readback",
+            "provider_result_id": "dws-readback:DzzzzzzNJ0u:167:d30bce1386e1b0f7502eb451614629c3e10bf20bb06fe6a4c77adccf68bae2d2"
+          },
+          {
+            "action_id": 127062,
+            "action_plan_id": "email-action-plan:7041fd99a52d77a797e0d3431a3fbd6d652907b4d4fdaaf5178fd28bf89c959d",
+            "action_type": "flag_important",
+            "status": "done",
+            "attempt_count": 2,
+            "error": "",
+            "provider_operation": "dws_readback_noop",
+            "provider_result_id": "dws-mail:48aca886d6d0710cd00a66420eeb055ee438ca02bb50f98d2072113cc92a29f7:flag_important"
+          },
+          {
+            "action_id": 127063,
+            "action_plan_id": "email-action-plan:7041fd99a52d77a797e0d3431a3fbd6d652907b4d4fdaaf5178fd28bf89c959d",
+            "action_type": "mark_read",
+            "status": "done",
+            "attempt_count": 1,
+            "error": "",
+            "provider_operation": "dws_readback_noop",
+            "provider_result_id": "dws-mail:7688f06ddfbb5e98204b1a92122051a2fc3b7f6dbdd6119f12584269c9414ef6:mark_read"
+          }
+        ],
+        "receipts": [
+          {
+            "id": 8468,
+            "action_id": 111699,
+            "status": "failed",
+            "operation": "startup_recovery",
+            "provider_result_id": "",
+            "attempt_number": 1,
+            "started_at": "2026-09-25T08:04:44+00:00",
+            "finished_at": "2026-09-25T08:09:49+00:00",
+            "error_text": "stale_processing_recovered"
+          },
+          {
+            "id": 8641,
+            "action_id": 111699,
+            "status": "skipped",
+            "operation": "readback_missing",
+            "provider_result_id": "message-unavailable:7ec39a2cea9ac8051821360641aa32bc",
+            "attempt_number": 2,
+            "started_at": "2026-09-25T08:29:36+00:00",
+            "finished_at": "2026-09-25T08:29:55+00:00",
+            "error_text": ""
+          },
+          {
+            "id": 21597,
+            "action_id": 111699,
+            "status": "done",
+            "operation": "reconciled_dws_readback",
+            "provider_result_id": "dws-readback:DzzzzzzNJ0u:167:d30bce1386e1b0f7502eb451614629c3e10bf20bb06fe6a4c77adccf68bae2d2",
+            "attempt_number": 3,
+            "started_at": "2026-10-29T10:45:30+00:00",
+            "finished_at": "2026-10-29T10:45:30+00:00",
+            "error_text": null
+          },
+          {
+            "id": 22181,
+            "action_id": 127062,
+            "status": "failed",
+            "operation": "dws_mail_action",
+            "provider_result_id": null,
+            "attempt_number": 1,
+            "started_at": "2026-10-29T21:28:54+00:00",
+            "finished_at": "2026-10-29T21:29:01+00:00",
+            "error_text": "dws_action_readback_mismatch:0f066469615dd4bf676eb7fbd2cf8517aad562d56bd946f1fb012eb22734e2c0"
+          },
+          {
+            "id": 22190,
+            "action_id": 127062,
+            "status": "done",
+            "operation": "dws_readback_noop",
+            "provider_result_id": "dws-mail:48aca886d6d0710cd00a66420eeb055ee438ca02bb50f98d2072113cc92a29f7:flag_important",
+            "attempt_number": 2,
+            "started_at": "2026-10-29T22:30:50+00:00",
+            "finished_at": "2026-10-29T22:30:54+00:00",
+            "error_text": null
+          },
+          {
+            "id": 22191,
+            "action_id": 127063,
+            "status": "done",
+            "operation": "dws_readback_noop",
+            "provider_result_id": "dws-mail:7688f06ddfbb5e98204b1a92122051a2fc3b7f6dbdd6119f12584269c9414ef6:mark_read",
+            "attempt_number": 1,
+            "started_at": "2026-10-29T22:30:54+00:00",
+            "finished_at": "2026-10-29T22:30:57+00:00",
+            "error_text": null
+          }
+        ],
+        "move_receipts_unchanged_sha256": "415c82357828b87809fe477222a48a1f3c333a3632bfb1738cf067c30bc60802",
+        "current_plan": {
+          "action_plan_id": "email-action-plan:7041fd99a52d77a797e0d3431a3fbd6d652907b4d4fdaaf5178fd28bf89c959d",
+          "action_plan_version": 9
+        },
+        "explicit_retry_requests": [
+          {
+            "action_id": "127062",
+            "attempt_number": 2,
+            "source_readback_digest": "b978963c025a9657e99efe23ec5376ca679788368aa8fe023715d6417b86815f",
+            "requested_at": "2026-10-29T22:30:47+00:00"
+          }
+        ],
+        "schema": {
+          "current": true,
+          "objects": 463,
+          "sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+          "fk": []
+        },
+        "/healthz": {
+          "http": 200,
+          "status": "ok"
+        },
+        "/api/console/status": {
+          "http": 200,
+          "service": {
+            "label": "com.ceo-agent-service.main",
+            "target": "gui/501/com.ceo-agent-service.main",
+            "ok": true,
+            "state": "running",
+            "detail": "running",
+            "pid": "9227",
+            "runs": "1",
+            "initialized": "1",
+            "last_terminating_signal": "",
+            "returncode": 0
+          },
+          "summary": {
+            "queue_count": 11,
+            "pending": 3,
+            "processing": 0,
+            "failed": 26,
+            "retryable": 0,
+            "attention": 2
+          }
+        },
+        "/api/console/attention?page=1&page_size=20": {
+          "http": 200,
+          "meta": {
+            "snapshot_at": "2026-10-29T22:32:53.451292Z",
+            "page": null,
+            "page_size": null,
+            "total": 2,
+            "next_cursor": "",
+            "has_more": false
+          },
+          "junhe_action_present": false,
+          "groups": [
+            {
+              "category": "本次事项选择",
+              "root_cause": "需要你选择本次事项的处理方案",
+              "error_code": "",
+              "count": 2,
+              "summary": "费用对外付款的无预算分支缺少适用标准，需确定该类合同支出是否可据合同审批。"
+            }
+          ]
+        },
+        "/api/console/history?page=1&page_size=20": {
+          "http": 200,
+          "meta": {
+            "snapshot_at": "2026-10-29T22:32:04.925727Z",
+            "page": 1,
+            "page_size": 20,
+            "total": 39524,
+            "next_cursor": "2",
+            "has_more": true
+          },
+          "items": 20
+        },
+        "gate": {
+          "commit": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727",
+          "passed_at": "2026-10-29T22:27:34+00:00",
+          "files": 403,
+          "summary": "7807 passed, 2 skipped, 1 deselected in 546.13s (0:09:06)"
+        }
+      },
+      "final_native_readback": {
+        "checked_at": "2026-10-29T22:33:56.872592+00:00",
+        "message_id": "DzzzzzzNJ0u",
+        "folder_id": "167",
+        "combined_native_query": "exact source identity AND folderId AND tag:1 AND isRead:true",
+        "exact_target_matches": 1,
+        "received_delta_seconds": 6.0,
+        "original_move_digest_matches": true,
+        "provider_writes": 0,
+        "frontend": {
+          "source_tree": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+          "stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+          "needs_build": false
+        }
+      },
+      "api_email_list_readback": {
+        "checked_at": "2026-10-29T22:37:25.114030+00:00",
+        "exact_classification_matches": 1,
+        "mailbox_actions": [
+          {
+            "type": "flag_important",
+            "status": "done",
+            "error": ""
+          },
+          {
+            "type": "mark_read",
+            "status": "done",
+            "error": ""
+          }
+        ],
+        "detail": {
+          "http": 502,
+          "code": "email_original_unavailable"
+        }
+      },
+      "ui_readback": {
+        "browser": "Codex in-app browser",
+        "agent_created_tabs_closed": [
+          8,
+          9
+        ],
+        "email_list": {
+          "search": "xup@junhe.com",
+          "matches": 6,
+          "exact_target_date_local": "2026/5/7 01:56:27",
+          "classification": "法务",
+          "state": "已处理",
+          "failed_action_badge": false,
+          "mail_open_skipped": "Opening schedules mark-read; original detail was checked using readonly GET instead."
+        },
+        "history": {
+          "loaded": true,
+          "pagination": "1-20 page1 -> 21-40 page2",
+          "state_filter": "失败 checked=true; total18",
+          "subject_search": {
+            "query": "Quotation for On-Premise",
+            "total": 0,
+            "status": "observed_only_not_claimed_as_passed; subject search coverage is outside this flag recovery scope"
+          }
+        },
+        "attention": {
+          "total": 2,
+          "junhe_absent": true,
+          "other_business_decisions_unchanged": true
+        }
+      },
+      "release": {
+        "source_commit": "62b608943",
+        "integrated_commit": "dcc7475a2aac3ccf6ec136e5723ee0b782dc5fee",
+        "installed_commit": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727",
+        "gate_passed": 7807,
+        "gate_skipped": 2,
+        "gate_deselected": 1,
+        "gate_files": 403,
+        "gate_seconds": 546.13,
+        "standard_deploy": true,
+        "skip_quiet_wait": false,
+        "publisher_attention_focused_passed": 322,
+        "publisher_dws_focused_passed": 38
+      },
+      "completed_at": "2026-10-29T22:48:36.543418+00:00",
+      "cleanup_evidence": "docs/validation/2026-10-29-final-model-cleanup.json",
+      "preserved_independent_reading_limits": [
+        {
+          "feature": "email original detail",
+          "observed": "HTTP502/email_original_unavailable",
+          "scope": "not claimed repaired by system-flag recovery"
+        },
+        {
+          "feature": "History subject search",
+          "query": "Quotation for On-Premise",
+          "observed_total": 0,
+          "scope": "observed probe, cause not diagnosed or silently fixed in this scope"
+        }
+      ],
+      "claims_closed": [
+        "codex-junhe-closeout-readback-20261029",
+        "codex-junhe-dws-actions-20261029"
+      ]
     }
   }
 }

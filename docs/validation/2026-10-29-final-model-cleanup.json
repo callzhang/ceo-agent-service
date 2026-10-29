@@ -1,5 +1,5 @@
 {
-  "phase": "complete_for_this_workflow",
+  "phase": "completed_all_verified_workflow_backup_and_temporary_paths_removed",
   "temporary_paths": [
     {
       "path": "/private/tmp/ceo-final-residue-unit1.i9NSld",
@@ -80,6 +80,84 @@
       "mtime_ns": 1793309240201921290,
       "removed": true,
       "reason": "Date repair tests and standard gate completed; no open references."
+    },
+    {
+      "path": "/private/tmp/ceo-junhe-flags-closeout.1rrFco",
+      "inode": 838282801,
+      "mtime_ns": 1793311603381284316,
+      "files": 28,
+      "bytes": 28713263,
+      "external_symlinks": 0,
+      "open_references": 0,
+      "removed": true
+    },
+    {
+      "path": "/private/tmp/ceo-minutes-direction-publish",
+      "inode": 838166164,
+      "mtime_ns": 1793308172564958442,
+      "git_head": "22a426428186640ad7a5d7da4c726474e90c1ea7",
+      "branch_preserved": "codex/minutes-direction-fix-20261029",
+      "clean_tracked_and_untracked": true,
+      "ignored_files_only_test_python_caches": 248,
+      "open_references": 0,
+      "removed": true,
+      "method": "git worktree remove without force"
+    },
+    {
+      "path": "/private/tmp/ceo-junhe-dws-yes-20261029",
+      "inode": 838036654,
+      "mtime_ns": 1793305283582905089,
+      "git_head": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
+      "branch_preserved": "codex/junhe-dws-yes-20261029",
+      "clean_tracked_and_untracked": true,
+      "ignored_files_only_test_python_caches": 292,
+      "open_references": 0,
+      "removed": true,
+      "method": "git worktree remove without force"
+    },
+    {
+      "path": "/private/tmp/ceo-junhe-release",
+      "inode": 837443576,
+      "mtime_ns": 1793275034359463863,
+      "git_head": "773376576b6d9426c1d8ca5b7576bd197ce990e8",
+      "branch_preserved": "codex/junhe-dws-move-followthrough-20261029",
+      "clean_tracked_and_untracked": true,
+      "ignored_files_only_test_python_caches": 262,
+      "open_references": 0,
+      "removed": true,
+      "method": "git worktree remove without force"
+    },
+    {
+      "path": "/private/tmp/junhe-email-reconcile",
+      "inode": 836964977,
+      "mtime_ns": 1793259229543480240,
+      "git_head": "834468271fafe6bfbfa50ef7e144fd2062492b3b",
+      "branch_preserved": "codex/junhe-email-reconcile",
+      "clean_tracked_and_untracked": true,
+      "ignored_files_only_test_python_caches": 201,
+      "open_references": 0,
+      "removed": true,
+      "method": "git worktree remove without force"
+    },
+    {
+      "path": "/private/tmp/ceo-minutes-claim.patch",
+      "inode": 838165462,
+      "mtime_ns": 1793307938689290669,
+      "bytes": 841,
+      "sha256": "6cc1fdab41593729b917b5527d723849f5a0e2c37894a59389590c018dd36209",
+      "open_references": 0,
+      "removed": true,
+      "purpose": "already-integrated temporary claim/runtime patch"
+    },
+    {
+      "path": "/private/tmp/ceo-minutes-runtime.patch",
+      "inode": 838165465,
+      "mtime_ns": 1793307938712089261,
+      "bytes": 696,
+      "sha256": "52d20f37ce3357adb4b570c9a486f64a116086c24c40456f728fde10fa25ef1a",
+      "open_references": 0,
+      "removed": true,
+      "purpose": "already-integrated temporary claim/runtime patch"
     }
   ],
   "own_predeploy_absent": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-0fa10c33-4bea-46f6-91e8-7d45f59e7338.sqlite3",
@@ -101,7 +179,7 @@
     "owner": "active JunHe recovery/deployment workflow, explicitly requested retention",
     "checked_at": "2026-10-29T13:08:03.659612+00:00"
   },
-  "checked_at": "2026-10-29T13:08:03.660166+00:00",
+  "checked_at": "2026-10-29T22:46:59.875465+00:00",
   "all_listed_temporary_paths_absent": true,
   "junhe_followup_backup": {
     "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
@@ -113,8 +191,39 @@
     "schema_current": true,
     "fk": [],
     "complete": true,
-    "retained": true,
+    "retained": false,
     "reason": "JunHe provider update readback mismatch remains unresolved after date fix; not safe to declare closeout.",
-    "checked_at": "2026-10-29T21:36:11.791005+00:00"
-  }
+    "checked_at": "2026-10-29T21:36:11.791005+00:00",
+    "later_generation": "retired by standard workflow before final observed daily generation cleanup"
+  },
+  "junhe_final_backup_cleanup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+    "inode": 838537660,
+    "mtime_ns": 1793312954687705485,
+    "bytes": 514969600,
+    "sha256": "ffe79043a7fde13ce991a96464884b3ee213828c191814d2e07e4e12c3ee0bed",
+    "complete": true,
+    "integrity": "ok",
+    "schema_current": true,
+    "schema_objects": 463,
+    "schema_sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+    "fk": [],
+    "open_references": 0,
+    "directory_lock_held": true,
+    "publisher_no_remaining_dependency": true,
+    "user_retention_exception": "Derek explicitly requested clearing this workflow backups after final execution/receipt readback",
+    "removed": true,
+    "directory_empty_after": true
+  },
+  "junhe_predeploy_58fe_observed_absent": true,
+  "peer_release_worktree": {
+    "path": "/private/tmp/ceo-junhe-email-release",
+    "owner": "publisher",
+    "removed_by_owner": true,
+    "independently_observed_absent": true
+  },
+  "all_verified_scope_paths_absent": true,
+  "preserved_active_other_work": [
+    "/private/tmp/ceo-minutes-asr.nBqyBm"
+  ]
 }
