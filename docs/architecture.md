@@ -597,6 +597,10 @@ metadata-only，没有 image/content material；只投影文件名、MIME、字�
 Email worker 的退订任务修复先扫描分类 ID 和动作身份，只为确实缺少稳定任务的记录读取完整分类行；
 修复后按该分类 ID 定点复核，不重扫所有分类。
 
+邮件处理进度将当前 ActionPlan 的 `pending`／`processing` 邮件动作计为实际队列，不设年龄窗口；
+近 24 小时动作计数仍用于完成比例，近 30 分钟仍用于吞吐。旧的待办动作不能因为超过 24 小时
+就让页面显示“队列为空”。该读数只展示队列，不触发动作、对账、重试或状态变更。
+
 退订是低风险的直接 Email worker 动作；退订不做结构化审核，也不做 Consumer 或 Audit turn。
 worker 以 task id 从
 durable 状态读取 ActionPlan 已授权的 entry，一次调用完成整件事——打开该 entry，按页面当场呈现的

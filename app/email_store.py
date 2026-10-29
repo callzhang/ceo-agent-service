@@ -9663,6 +9663,20 @@ class EmailStore:
                     (since,),
                 )
             }
+            provider_action_backlog = {
+                str(row["status"]): int(row["n"])
+                for row in db.execute(
+                    f"""
+                    select action.status, count(*) as n
+                    from ({DIRECT_EMAIL_ACTION_SQL}) as action
+                    join ({EMAIL_CLASSIFICATION_SQL}) as classifications
+                      on classifications.id=action.classification_id
+                     and classifications.current_action_plan_id=action.action_plan_id
+                    where action.status in ('pending','processing')
+                    group by action.status
+                    """
+                )
+            }
             # A failed action stays until someone deals with it, so it is
             # counted the way the list's "邮箱动作失败" filter counts it (mail
             # whose current plan has one), not only within the 24 hours.
@@ -9748,6 +9762,10 @@ class EmailStore:
                     "done", "pending", "processing", "failed", "skipped",
                     "failed_retriable", "failed_not_retriable",
                 )
+            },
+            "provider_action_backlog": {
+                key: provider_action_backlog.get(key, 0)
+                for key in ("pending", "processing")
             },
             "classification_queue": {
                 key: classification_queue.get(key, 0)

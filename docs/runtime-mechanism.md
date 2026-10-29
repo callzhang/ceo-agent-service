@@ -255,6 +255,11 @@ Claude/Friday 路线、完整冻结 Skill 正文和分类结果合同不变。
 持久化冲突等不可重试错误直接进入 `failed`。修复根因后的显式重试重置当前预算并保留任务身份。Status、Attention 和每小时 quality gate 都必须覆盖该队列，不能只用
 Email worker 的汇总健康状态代替任务状态。
 
+Email 处理进度 API 分开提供当前队列与近期活动：`provider_action_backlog` 统计当前 ActionPlan
+的全部 `pending`／`processing` 邮件动作，不因创建时间较早而遗漏；`provider_actions` 的待执行数仍是
+近 24 小时活动窗口的一部分，仅供近期完成比例。页面的队列为空判断、待执行数和刷新频率使用当前
+backlog；吞吐仍用近 30 分钟窗口。该只读投影不会领取、重试、对账或改写动作。
+
 `Settings -> Skills` 的开关位于任务生产边界。功能与业务 Skill 的多对多关系由
 `data/config/skill-features.json` 声明，运行时开关由 `data/config/skill-state.json`
 持久化；每次生产检查都会读取最新状态，因此常驻 worker 不需要因开关变更而重启。

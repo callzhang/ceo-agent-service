@@ -1009,6 +1009,7 @@ export interface EmailProcessingProgress {
   /** How fast mailbox actions are carried out end to end (claim to verified result). */
   throughput: {window_minutes: number; finished: number; per_minute: number; median_seconds: number | null};
   provider_actions: {done: number; pending: number; processing: number; failed: number; skipped: number; failed_retriable: number; failed_not_retriable: number};
+  provider_action_backlog: {pending: number; processing: number};
   classification_queue: {pending: number; processing: number};
   unsubscribe_queue: {pending: number; processing: number};
   waiting_for_owner: number;
@@ -1027,6 +1028,7 @@ export function getEmailProcessingProgress(signal?: AbortSignal) {
         median_seconds: isRecord(payload.throughput) && typeof payload.throughput.median_seconds === "number" ? payload.throughput.median_seconds : null,
       },
       provider_actions: counts(payload.provider_actions, ["done", "pending", "processing", "failed", "skipped", "failed_retriable", "failed_not_retriable"]),
+      provider_action_backlog: counts(payload.provider_action_backlog, ["pending", "processing"]),
       classification_queue: counts(payload.classification_queue, ["pending", "processing"]),
       unsubscribe_queue: counts(payload.unsubscribe_queue, ["pending", "processing"]),
       waiting_for_owner: typeof payload.waiting_for_owner === "number" ? payload.waiting_for_owner : 0,

@@ -7,7 +7,7 @@ const ACTIVE_POLL_MS = 5_000;
 const IDLE_POLL_MS = 30_000;
 
 export function backlogOf(data: Progress) {
-  return data.provider_actions.pending + data.provider_actions.processing + data.classification_queue.pending + data.classification_queue.processing + data.unsubscribe_queue.pending + data.unsubscribe_queue.processing;
+  return data.provider_action_backlog.pending + data.provider_action_backlog.processing + data.classification_queue.pending + data.classification_queue.processing + data.unsubscribe_queue.pending + data.unsubscribe_queue.processing;
 }
 
 function speedNote(
@@ -60,6 +60,7 @@ export function EmailProcessingProgress() {
     return <section className="email-progress" aria-label="邮件处理进度">{error ? <p role="alert" className="email-progress-warning">邮件处理进度读取失败：{error}</p> : <p role="status">正在读取邮件处理进度…</p>}</section>;
   }
   const actions = data.provider_actions;
+  const actionBacklog = data.provider_action_backlog;
   const planned = actions.done + actions.pending + actions.processing + actions.failed + actions.skipped;
   const percent = planned ? Math.round(((actions.done + actions.skipped) / planned) * 100) : 100;
   const backlog = backlogOf(data);
@@ -69,11 +70,11 @@ export function EmailProcessingProgress() {
     <div className="email-progress-heading">
       <strong>{heading}</strong>
       <span>近 {data.window_hours} 小时邮箱动作 {actions.done + actions.skipped}/{planned}</span>
-      <span>{speedNote(data.throughput, actions.pending + actions.processing)}</span>
+      <span>{speedNote(data.throughput, actionBacklog.pending + actionBacklog.processing)}</span>
     </div>
     <div className="email-progress-track" role="progressbar" aria-label="邮箱动作完成比例" aria-valuemin={0} aria-valuemax={100} aria-valuenow={percent}><span style={{width: `${percent}%`}}/></div>
     <div className="email-progress-counts">
-      {actions.pending + actions.processing > 0 && <span>邮箱动作待执行 {actions.pending + actions.processing}</span>}
+      {actionBacklog.pending + actionBacklog.processing > 0 && <span>邮箱动作待执行 {actionBacklog.pending + actionBacklog.processing}</span>}
       {actions.failed_not_retriable > 0 && <Link className="email-progress-warning" to="/email?tab=all&action_status=failed_not_retriable" title="在「全部」列表里查看失败且不会自动重试的邮件和原因">邮箱动作失败，不会重试 {actions.failed_not_retriable}</Link>}
       {actions.failed_retriable > 0 && <Link to="/email?tab=all&action_status=failed_retriable" title="在「全部」列表里查看失败但还会自动重试的邮件和原因">邮箱动作失败，会重试 {actions.failed_retriable}</Link>}
       {data.classification_queue.pending + data.classification_queue.processing > 0 && <span>Agent 分类排队 {data.classification_queue.pending + data.classification_queue.processing}</span>}

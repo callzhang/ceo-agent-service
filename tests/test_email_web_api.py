@@ -227,6 +227,7 @@ def test_processing_progress_reports_exact_queue_counts_and_scan_cursors(tmp_pat
     assert payload["ok"] is True
     assert payload["waiting_for_owner"] == 1
     assert payload["provider_actions"] == {"done": 0, "pending": 0, "processing": 0, "failed": 0, "skipped": 0, "failed_retriable": 0, "failed_not_retriable": 0}
+    assert payload["provider_action_backlog"] == {"pending": 0, "processing": 0}
     assert payload["classification_queue"] == {"pending": 0, "processing": 0}
     assert payload["unsubscribe_queue"] == {"pending": 0, "processing": 0}
     assert payload["throughput"] == {"window_minutes": 30, "finished": 0, "per_minute": 0.0, "median_seconds": None}
