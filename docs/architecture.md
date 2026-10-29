@@ -1932,10 +1932,8 @@ observation 的 `provider_folder_name`、`category_key`、`important`、`importa
 回退捕获的原版本历史及旧序列化形式保持准确；不覆盖数据库文件或业务记录。
 启动失败或 health/加载验证失败时，先停止可能已启动的 replacement、回退可选发布资产与 schema，
 再恢复旧代码并启动。schema 逆迁失败时保持 replacement 停止并记录
-needs_manual，不将旧代码启动在不兼容数据库上。其他 schema 变化需要
-各自验证的逆迁，不能自动套用本次索引回退。
-
-未验证的 Store／Email 同时版本变化不能合并发布。
+needs_manual，不将旧代码启动在不兼容数据库上。每次 schema 变化都需要各自验证的逆迁；未验证的
+Store／Email 同时版本变化不能合并发布。
 
 ## Canonical email action-plan reference
 
