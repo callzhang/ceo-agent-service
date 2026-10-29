@@ -78,3 +78,18 @@ def test_generic_report_publication_does_not_adopt_existing_company_sources():
         # company digest must never be its overwrite/adoption precondition.
         assert entry['old_sha256'] == entry['new_sha256']
         assert entry['old_managed_sha256'] == entry['new_sha256']
+
+
+def test_clean_unit_test_environment_uses_public_baseline_instead_of_installed_company_content():
+    import os
+    import subprocess
+    import sys
+    env = dict(os.environ)
+    env.pop('CEO_SKILLS_ROOT', None)
+    result = subprocess.run(
+        [sys.executable, '-c',
+         "import os,runpy; runpy.run_path('tests/conftest.py'); print(os.environ['CEO_SKILLS_ROOT'])"],
+        cwd=ROOT, env=env, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, result.stderr
+    assert Path(result.stdout.strip()).resolve() == BASELINE.resolve()

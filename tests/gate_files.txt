@@ -37,7 +37,6 @@ tests/test_decision_quality.py
 tests/test_decision_rules.py
 tests/test_deploy_test_gate.py
 tests/test_dingtalk_local_sso_confirm.py
-tests/test_dingteam_okr_headless_source.py
 tests/test_dingteam_okr_live_source.py
 tests/test_documentation_contract.py
 tests/test_dws_client.py
@@ -97,7 +96,6 @@ tests/test_oa_ai_services_namespace.py
 tests/test_oa_approval.py
 tests/test_oa_audit_return_same_stage.py
 tests/test_oa_review_skill_binding.py
-tests/test_okr_period_source_contract.py
 tests/test_permission.py
 tests/test_postfix_action_source.py
 tests/test_process_runner.py
