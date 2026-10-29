@@ -420,6 +420,19 @@ class FailedDirectAction:
     parameters_json: str = ""
 
 
+@dataclass(frozen=True)
+class SkippedDirectAction:
+    """One current skipped move whose provider readback was unavailable."""
+
+    action: StoredEmailAction
+    provider_operation: str
+    provider_result_id: str
+    sender: str
+    subject: str
+    received_at: str
+    parameters_json: str
+
+
 class EmailAccountConflict(RuntimeError):
     """An account ID or unshared email address conflicts with stored config."""
 
@@ -11641,6 +11654,139 @@ class EmailStore:
                 claimed_at=claimed_at)
             if updated is None:
                 raise EmailActionAttemptConflict(f"direct action claim changed for {action_id}")
+            return self._claimed_direct_action(
+                row,
+                attempt_number=expected_attempt_count + 1,
+                claimed_at=claimed_at,
+            )
+
+    def get_skipped_direct_action_for_reconciliation(
+        self, action_id: str
+    ) -> SkippedDirectAction | None:
+        """Read a current skipped MOVE with the exact missing-readback marker."""
+
+        with self._connect() as db:
+            row = db.execute(
+                f"""
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity,
+                       m.sender as source_sender, m.subject as source_subject,
+                       m.received_at as source_received_at
+                from ({DIRECT_EMAIL_ACTION_SQL}) a
+                join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
+                join ({EMAIL_MESSAGE_SQL}) m
+                  on m.account_id=c.account_id
+                 and m.stable_message_identity=c.stable_message_identity
+                where a.action_id=? and a.status='skipped'
+                  and a.action_type='move'
+                  and c.status='processed'
+                  and a.action_plan_id=c.current_action_plan_id
+                  and a.provider_operation='readback_missing'
+                  and a.provider_result_id like 'message-unavailable:%'
+                """,
+                (action_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        parameters = _json_load(
+            row["parameters_json"], field="parameters_json", expected_type=dict
+        )
+        if not isinstance(parameters.get("target_folder"), str) or not parameters[
+            "target_folder"
+        ].strip():
+            return None
+        return SkippedDirectAction(
+            action=self._claimed_direct_action(
+                row,
+                attempt_number=int(row["attempt_count"]) + 1,
+                claimed_at="",
+            ),
+            provider_operation=str(row["provider_operation"]),
+            provider_result_id=str(row["provider_result_id"]),
+            sender=str(row["source_sender"]),
+            subject=str(row["source_subject"]),
+            received_at=str(row["source_received_at"]),
+            parameters_json=str(row["parameters_json"]),
+        )
+
+    def claim_skipped_direct_action_for_reconciliation(
+        self,
+        *,
+        expected: SkippedDirectAction,
+        expected_attempt_count: int,
+        claimed_at: str,
+    ) -> StoredEmailAction | None:
+        """Claim only the unchanged current `readback_missing` skipped MOVE."""
+
+        claimed_at = _required_utc_timestamp(claimed_at, field="claimed_at")
+        action = expected.action
+        with self._connect() as db:
+            db.execute("begin immediate")
+            row = db.execute(
+                f"""
+                select a.*, c.folder, c.uidvalidity, c.uid, c.rfc_message_id,
+                       c.thread_id, c.stable_message_identity,
+                       c.current_action_plan_id,
+                       m.sender as source_sender, m.subject as source_subject,
+                       m.received_at as source_received_at
+                from ({DIRECT_EMAIL_ACTION_SQL}) a
+                join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
+                join ({EMAIL_MESSAGE_SQL}) m
+                  on m.account_id=c.account_id
+                 and m.stable_message_identity=c.stable_message_identity
+                where a.action_id=? and c.status='processed'
+                """,
+                (action.action_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["status"] != "skipped"
+                or row["action_type"] != EmailAction.MOVE.value
+                or row["action_plan_id"] != row["current_action_plan_id"]
+                or int(row["attempt_count"]) != expected_attempt_count
+                or row["provider_operation"] != expected.provider_operation
+                or row["provider_result_id"] != expected.provider_result_id
+                or row["parameters_json"] != expected.parameters_json
+                or row["source_sender"] != expected.sender
+                or row["source_subject"] != expected.subject
+                or row["source_received_at"] != expected.received_at
+            ):
+                return None
+            current = self._claimed_direct_action(
+                row,
+                attempt_number=expected_attempt_count + 1,
+                claimed_at="",
+            )
+            immutable_fields = (
+                "action_id", "action_plan_id", "classification_id", "account_id",
+                "action_type", "parameters", "config_version", "attempt_number",
+            )
+            if any(
+                getattr(current, field) != getattr(action, field)
+                for field in immutable_fields
+            ) or current.locator != action.locator:
+                return None
+            if db.execute(
+                f"select 1 from ({DIRECT_EMAIL_ACTION_SQL}) "
+                "where action_plan_id=? and status='processing'",
+                (action.action_plan_id,),
+            ).fetchone() is not None:
+                return None
+            from app.action_entity_storage import get_action
+
+            owner = get_action(db, int(action.action_id))
+            if owner is None:
+                return None
+            updated = shared_action_lifecycle.claim_direct_email_action(
+                db,
+                action_id=action.action_id,
+                expected_status="skipped",
+                expected_started_at=owner["started_at"],
+                attempt_count=expected_attempt_count,
+                claimed_at=claimed_at,
+            )
+            if updated is None:
+                return None
             return self._claimed_direct_action(
                 row,
                 attempt_number=expected_attempt_count + 1,

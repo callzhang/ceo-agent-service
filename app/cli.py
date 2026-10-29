@@ -350,6 +350,7 @@ def build_parser() -> argparse.ArgumentParser:
         "release-failed-email-unsubscribe",
         "cancel-failed-email-unsubscribe",
         "reconcile-email-actions",
+        "reconcile-skipped-email-move-from-dws",
         "retry-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
@@ -599,6 +600,9 @@ def build_parser() -> argparse.ArgumentParser:
                 default=60.0,
                 help="wall-clock allowance for one message, connect included",
             )
+        if command == "reconcile-skipped-email-move-from-dws":
+            subparser.add_argument("--action-id", type=_non_blank, required=True)
+            subparser.add_argument("--apply", action="store_true")
         if command == "retry-source-verified-email-action":
             subparser.add_argument("--account", type=_non_blank, required=True)
             subparser.add_argument("--action-id", type=_non_blank, required=True)
@@ -1896,6 +1900,31 @@ def reconcile_email_actions_command(
         ),
     )
     print(f"reconcile-email-actions account={account_id} {report.summary()}", flush=True)
+
+
+def reconcile_skipped_email_move_from_dws_command(
+    settings: WorkerSettings,
+    *,
+    action_id: str,
+    apply: bool,
+) -> None:
+    """Read DWS mail state for one skipped move and optionally record its receipt."""
+
+    from app.email_action_reconcile import reconcile_skipped_email_move_from_dws
+    from app.email_store import EmailStore
+
+    result = reconcile_skipped_email_move_from_dws(
+        EmailStore(settings.db_path),
+        DwsClient(),
+        action_id=action_id,
+        apply=apply,
+        finished_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    )
+    print(
+        "reconcile-skipped-email-move-from-dws "
+        + json.dumps(result, ensure_ascii=False, sort_keys=True),
+        flush=True,
+    )
 
 
 def skip_stale_wechat_delivery_command(
@@ -4838,6 +4867,15 @@ def main() -> None:
             after_action_id=args.after,
             pause_seconds=args.pause_seconds,
             message_timeout_seconds=args.message_timeout_seconds,
+        )
+    elif args.command == "reconcile-skipped-email-move-from-dws":
+        if args.apply and settings.dry_run:
+            raise SystemExit(
+                "--apply refused: dry-run is on (--dry-run, CEO_DRY_RUN or "
+                "CEO_NOT_SEND_MESSAGE)"
+            )
+        reconcile_skipped_email_move_from_dws_command(
+            settings, action_id=args.action_id, apply=args.apply,
         )
     elif args.command == "reconcile-failed-agent-message":
         reconcile_failed_agent_message_command(
