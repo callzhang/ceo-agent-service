@@ -1194,7 +1194,7 @@ Task Agent 会把负责人证据再结构化为 `owner_kind`（`individual` / `t
 
 **做法**（`app/minutes_todo_context.py`，由 `scan_meeting_todos` 调用）：
 
-1. 入队前读完整份逐字稿，**再读一次这场会议自己的 DingTalk 摘要**（`get_minutes_summary`，`minutes_full_summary` 取其 `result.fullSummary`）。
+1. 入队前读完整份逐字稿，DWS 正序参数使用 `--direction 0`（倒序为 `1`），并自动续读分页；**再读一次这场会议自己的 DingTalk 摘要**（`get_minutes_summary`，`minutes_full_summary` 取其 `result.fullSummary`）。
 2. 转录窗口：对每条有有效 `createdTime` 的行动项，截取包含该时刻的那一段及前 6 段、后 4 段，每句写成一行“说话人：内容”放进 `transcript_excerpts`（钉钉的 `sentenceList` 把整段当作一句，所以在句末标点处自己拆句）。
 3. 会议摘要：原样整段放进 `meeting_summary`，不做关键词或分节切片——钉钉的摘要经常直接写“行动项：**磊哥**与**周俊杰**负责代码 Review”，但可能出现在整场会议的任何位置，切片会漏掉切片规则没覆盖到的写法。
 4. 没有摘录/摘要的情况：`createdTime` 缺失或为 0、超出逐字稿的行动项在转录窗口里没有摘录；逐字稿为空、或摘要为空字符串，对应字段就不放进去。逐字稿读取失败时仍继续读会议摘要，并把 `source_transcript_unavailable=true` 标记交给 Task Agent；Agent 只能基于实际传入的行动项和摘要作判断，不得从缺失转写中推断负责人、承诺或指派。若会议摘要读取失败，才将该会议保留为未入队、未记为已见并由下一轮重读。

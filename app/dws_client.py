@@ -1600,7 +1600,7 @@ class DwsClient:
             "--id",
             task_uuid,
             "--direction",
-            "forward",
+            "0",
         ]
         if next_token:
             command.extend(["--next-token", next_token])

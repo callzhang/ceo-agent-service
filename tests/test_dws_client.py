@@ -959,7 +959,7 @@ def test_minutes_read_commands_shape():
         "--id",
         "minutes-1",
         "--direction",
-        "forward",
+        "0",
         "--format",
         "json",
     ]
@@ -1138,7 +1138,7 @@ def test_minutes_transcription_command_shape_with_next_token():
         "--id",
         "minutes-1",
         "--direction",
-        "forward",
+        "0",
         "--next-token",
         "token-2",
         "--format",
