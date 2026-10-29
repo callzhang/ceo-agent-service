@@ -31,3 +31,5 @@ service, using the personal mixed Skill repository, or a dedicated private sourc
 The first violates the requested boundary; the second mixes authoring ownership.
 Use the dedicated private source. History rewriting is deliberately excluded:
 removing current files cannot undo earlier public disclosures. Record that limit.
+
+Separately authorized implementation refinement (2026-10-28): Derek approved adapting script verification to private repository content. Keep the reviewed entrypoint/complete-tree digest catalog public, verify the installed private implementation against it, and retain normal task binding and path/dependency checks. This is a separate commit and regression suite; installation does not register arbitrary scripts.

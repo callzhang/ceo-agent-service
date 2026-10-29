@@ -167,8 +167,10 @@ def test_current_docs_describe_upgrade_backup_and_mcp_boundary() -> None:
 
     assert "MCP 配置不由该流程探测、禁用或覆盖" in architecture
     assert "只保留一个最新的已验证日备份" in architecture
-    assert "not a runtime command allowlist" in inventory
-    assert "## CEO Service Command Reference" in inventory
+    # The current CLI survey retains the capability-reference boundary under
+    # its live-catalog heading; this test must describe that current document.
+    assert "not a runtime allowlist" in inventory
+    assert "## Live Command Catalog" in inventory
     assert "Current practical allowlist" not in inventory
 
 
