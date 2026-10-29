@@ -1747,10 +1747,6 @@ Task 验收读回在 SQLite 快照内取得准确的原生引用，关闭快照�
 
 精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。
 
-## Provider identity index migration
-
-Provider 状态是单张 `provider_state` 表，以两个身份 partial unique 索引和一个 observation-folder partial 索引服务当前查询。
-
 ## Schema publication and failed-start rollback
 
 app.deploy、独立 repository_updater 模块和 CLI repository-updater 命令使用
@@ -1758,9 +1754,7 @@ ExistingSchemaUpgradeStateStore 读取部署状态，避免在 quiet/停止/备�
 构造 AutoReplyStore。数据库 publication 在 checkout 后、dependency/import
 验证前捕获旧 schema；在停止窗口迁移后再验证和启动。
 
-47→48 的回退只恢复捕获的 provider lookup 索引和准确的原版本历史，
-新增业务数据及 provider 回执原样保留。回退接受已捕获的原 47 状态或
-准确的 47+48 追加状态；遇到不兼容 schema 不删数据、不尝试旧代码启动。
+遇到不兼容 schema 时不删数据、不尝试旧代码启动。
 restart callback 调用前即标记 attempted，使部分 bootstrap 失败也会停止
 replacement。bootout 报错只有在原生 launchctl print 明确证明 label 不存在
 时接受；权限或其他停止失败仍是错误。
@@ -1771,20 +1765,13 @@ updater 不会因为 fast-forward 而获得新 callback。后续更新后的独�
 
 ## Email current plan deduplication
 
-Email schema48→49 在初始化事务内先执行现有业务状态校验和旧 action_plan_json
-精确序列化校验，再删除 email_classifications.action_plan_json。计划由
-current_action_plan_id 指向 email_action_plans 唯一读取；当前写入不保存重复 JSON。
+计划由 `current_action_plan_id` 指向 `email_action_plans` 唯一读取；当前写入不保存重复 JSON。
 分页列表一次批量查询相关计划，避免每条分类单独连接/查询。
 
 模型异常归因的存在性查询只查分类主记录，不加载计划，也不表示计划有效。扫描使用的
 原已有分类判断和完整读回继续
 校验不可变计划；已有分类的计划损坏或版本冲突必须报告持久化冲突，不能误判为尚未落库
 而回退到 Agent。对分类元数据漂移的修复不能覆盖或修复被篡改的不可变计划。
-
-正式发布49→48的逆迁在一个事务内添加旧缓存列，以当前计划重建内容，恢复原版本历史；
-只捕获旧记录的序列化区别 ID 集合，不备份正文。新分类和修订按回退时的当前计划重建，
-新增业务记录和执行回执保留。校验或逆迁失败不会部分提交，也不以部署前数据库覆盖新写入。
-该逆迁仅适用于已验证的48→49发布，与47→48索引逆迁分别匹配。
 
 ## SQLite connection lifecycle
 
