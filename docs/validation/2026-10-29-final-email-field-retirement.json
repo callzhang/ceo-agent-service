@@ -1292,5 +1292,66 @@
     "files": 402,
     "summary": "7772 passed, 2 skipped, 1 deselected in 476.17s (0:07:56)"
   },
-  "cleanup_evidence": "2026-10-29-final-model-cleanup.json"
+  "cleanup_evidence": "2026-10-29-final-model-cleanup.json",
+  "junhe_closeout_followup": {
+    "phase": "awaiting_explicit_date_identity_scope_confirmation",
+    "checked_at": "2026-10-29T20:19:52.987843+00:00",
+    "installed_commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
+    "health": 200,
+    "pid": "13358",
+    "schema_current": true,
+    "schema_objects": 463,
+    "fk": [],
+    "flag_action": {
+      "id": 127037,
+      "status": "failed",
+      "receipt_id": 22177,
+      "error": "dws_provider_error:ValueError"
+    },
+    "read_action": {
+      "id": 127038,
+      "status": "pending",
+      "receipts": 0
+    },
+    "original_move": {
+      "id": 111699,
+      "status": "done",
+      "receipt_id": 21597
+    },
+    "detail_api": {
+      "http": 502,
+      "code": "email_original_unavailable"
+    },
+    "backup_cleanup": "held until publisher final receipt and release confirmation",
+    "provider_writes_in_this_followup": false,
+    "gate": {
+      "commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
+      "passed_at": "2026-10-29T20:33:00+00:00",
+      "files": 402,
+      "summary": "7774 passed, 2 skipped, 1 deselected in 541.45s (0:09:01)"
+    },
+    "current_plan_id": "email-action-plan:caae97d1979ec2c91efbf4ba482ca61c2f7bb88c110baa4ca983975426bdc3cb",
+    "source_readback": {
+      "identity_candidates": 3,
+      "exact_target_matches": 1,
+      "original_move_proof_matches": true,
+      "important_and_read_target_matches": 0
+    },
+    "proven_failure_layer": {
+      "source_received_at": "Thu, 07 May 2026 08:56:27 +0000",
+      "current_identity_match": false,
+      "same_instant_iso_received_at": "2026-05-07T08:56:27+00:00",
+      "identity_match_with_only_date_normalized": true,
+      "dws_received_at": "2026-05-07T08:56:33Z",
+      "provider_writes": false,
+      "boundary": "Production source RFC mail date rejected by ISO-only identity parser before provider update; standalone diagnosis only, publisher owns implementation."
+    },
+    "last_checked_at": "2026-10-29T20:54:25.719081+00:00",
+    "approval_boundary": {
+      "source": "AGENTS.md:10-12; publisher explicitly treats date identity/effect reconciliation change as separate scope",
+      "requested": "Normalize legitimate RFC/ISO email date facts, preserve exact source and matching threshold/identity; regressions then standard gate/deploy, original approved actions only",
+      "excluded": "Tag mapping, Audit, authorization and retry policy",
+      "status": "pending_human_confirmation"
+    }
+  }
 }
