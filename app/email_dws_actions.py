@@ -121,6 +121,8 @@ class DwsVerifiedMoveActionExecutor:
             total = int(result.get("total", len(messages)))
         except (TypeError, ValueError) as exc:
             raise ValueError("DWS search total is invalid") from exc
+        if total == 0 and messages == [{"ccRecipients": None, "toRecipients": None}]:
+            return []
         if total != len(messages):
             raise ValueError("DWS search result is incomplete")
         return messages

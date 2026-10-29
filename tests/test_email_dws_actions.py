@@ -87,7 +87,9 @@ class FakeDws:
             candidate = message() if self.bad_message is None else self.bad_message
             if "tag:important" in query:
                 return {"total": 1 if self.important else 0,
-                        "messages": [candidate] if self.important else []}
+                        "messages": [candidate] if self.important else [
+                            {"ccRecipients": None, "toRecipients": None}
+                        ]}
             if "isRead:true" in query:
                 return {"total": 1 if self.read else 0,
                         "messages": [candidate] if self.read else []}

@@ -687,7 +687,7 @@ move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、erro
 
 如果当前计划的 `move` 已有 `done` 的 `reconciled_dws_readback` 凭证，而同一计划的 `flag_important`
 或 `mark_read` 因 `readback_missing` 被记为 `skipped`，`POST /api/console/email/classifications/{id}/continue-after-move-readback`
-可按历史 move action ID 追加当前计划版本。它只复制当前计划中因 `readback_missing` 跳过、仍待执行，或在 DWS 写入前因身份校验 ValueError 失败的加星/已读动作及其授权参数，移除已完成的 move 依赖，保留旧计划与所有回执。其他跳过原因、失败动作、退订/自动回复动作、非当前计划或缺少唯一 DWS 读回凭证都会被拒绝。新版本由现有 Email worker 正常领取；对这类有已验证 DWS 移动回执的动作，Worker 以账号、发件人、完整主题和 10 秒时间窗定位唯一邮件，并用回执 SHA-256 校验 DWS conversation ID 与字符串文件夹 ID；不把 IMAP thread ID 当作 DWS conversation ID。状态已满足时只记录读回结果，缺少时才执行原计划授权的加星/已读，然后保存动作回执。身份不唯一、哈希不符或字段不符时不写。恢复入口自身不访问邮箱，不重放 MOVE。
+可按历史 move action ID 追加当前计划版本。它只复制当前计划中因 `readback_missing` 跳过、仍待执行，或在 DWS 写入前因身份校验 ValueError 失败的加星/已读动作及其授权参数，移除已完成的 move 依赖，保留旧计划与所有回执。其他跳过原因、失败动作、退订/自动回复动作、非当前计划或缺少唯一 DWS 读回凭证都会被拒绝。新版本由现有 Email worker 正常领取；对这类有已验证 DWS 移动回执的动作，Worker 以账号、发件人、完整主题和 10 秒时间窗定位唯一邮件，并用回执 SHA-256 校验 DWS conversation ID 与字符串文件夹 ID；不把 IMAP thread ID 当作 DWS conversation ID。DWS 的空搜索结果若带 `total=0` 和固定空占位对象，只按该精确形状转为空集合。状态已满足时只记录读回结果，缺少时才执行原计划授权的加星/已读，然后保存动作回执。身份不唯一、哈希不符或字段不符时不写。恢复入口自身不访问邮箱，不重放 MOVE。
 
 只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
 `reply_task`，生命周期固定为 `email_unsubscribe_audited_v2`；其他动作和零动作计划不创建
