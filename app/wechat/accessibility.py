@@ -545,9 +545,8 @@ class MacWechatAccessibility:
             except Exception:
                 idle_seconds = 10.0
         # Selecting a chat needs WeChat briefly key (this build gates search/click
-        # on its window being active). To avoid interrupting the user mid-typing,
-        # wait until they've been idle for idle_seconds before foregrounding (up to
-        # idle_max_wait, then proceed so the reply is not starved).
+        # on its window being active). Wait for the full quiet window before
+        # foregrounding; user activity never turns an approved send into failure.
         self.idle_seconds = idle_seconds
         self.idle_max_wait = idle_max_wait
         if min_interaction_interval is None:
@@ -578,21 +577,18 @@ class MacWechatAccessibility:
             Quartz.kCGEventSourceStateHIDSystemState, Quartz.kCGAnyInputEventType
         ))
 
-    def _wait_until_idle(self, *, budget: float | None = None, sleep=None,
-                         monotonic=system_time.monotonic, idle_seconds=None) -> bool:
-        """Wait until nobody has touched the computer for ``idle_seconds``.
-
-        Never goes ahead while the user is working: when the budget runs out
-        the caller reports ``user_active`` and the delivery is tried again later
-        (Derek, 2026-10-28: 30 seconds of silence before WeChat is touched).
-        """
+    def _wait_until_idle(
+        self, *, budget: float | None = None, wait_forever: bool = False,
+        sleep=None, monotonic=system_time.monotonic, idle_seconds=None,
+    ) -> bool:
+        """Wait for a quiet window, optionally without the standalone probe limit."""
         sleep = sleep or system_time.sleep
         idle_seconds = idle_seconds or self._hid_idle_seconds
         deadline = monotonic() + (self.idle_max_wait if budget is None else budget)
         while True:
             if idle_seconds() >= self.idle_seconds:
                 return True
-            if monotonic() >= deadline:
+            if not wait_forever and monotonic() >= deadline:
                 return False
             sleep(0.3)
 
@@ -1014,12 +1010,9 @@ class MacWechatAccessibility:
                 target_fingerprint=fp,
             )
 
-        deadline = system_time.monotonic() + self.idle_max_wait
         while True:
-            if guarded and not self._wait_until_idle(
-                budget=max(0.0, deadline - system_time.monotonic()),
-            ):
-                return AccessibilityResult(False, False, failure_reason="user_active")
+            if guarded:
+                self._wait_until_idle(wait_forever=True)
             try:
                 return attempt()
             except UserActive:

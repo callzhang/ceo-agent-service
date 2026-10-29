@@ -1131,7 +1131,7 @@ def test_input_after_the_senders_own_last_event_is_the_users():
         hid_idle_seconds=0.2, seconds_since_own_input=0.3) is False
 
 
-def test_the_sender_waits_for_30_quiet_seconds_and_never_goes_ahead_while_busy():
+def test_the_standalone_idle_check_keeps_its_120_second_limit():
     runner = MacWechatAccessibility(idle_seconds=None, min_interaction_interval=0)
     assert runner.idle_seconds == 30.0
     now = [0.0]
@@ -1139,15 +1139,32 @@ def test_the_sender_waits_for_30_quiet_seconds_and_never_goes_ahead_while_busy()
     def sleep(seconds):
         now[0] += seconds
 
-    busy = runner._wait_until_idle(
+    assert runner._wait_until_idle(
         budget=5, sleep=sleep, monotonic=lambda: now[0], idle_seconds=lambda: 2.0,
-    )
-    quiet = runner._wait_until_idle(
-        budget=5, sleep=sleep, monotonic=lambda: now[0], idle_seconds=lambda: 31.0,
-    )
+    ) is False
+    assert now[0] >= 5
 
-    assert busy is False and now[0] >= 5
-    assert quiet is True
+
+def test_sender_keeps_waiting_until_user_has_been_quiet_for_30_seconds():
+    runner = MacWechatAccessibility(idle_seconds=30, min_interaction_interval=0)
+    now = [0.0]
+    waits = []
+
+    def sleep(seconds):
+        waits.append(seconds)
+        now[0] += seconds
+
+    # Simulate sustained activity for longer than the former 120-second cap,
+    # followed by the required full quiet window.
+    def hid_idle_seconds():
+        return 29.9 if now[0] < 121 else min(30.0, now[0] - 121)
+
+    assert runner._wait_until_idle(
+        wait_forever=True, sleep=sleep, monotonic=lambda: now[0],
+        idle_seconds=hid_idle_seconds,
+    ) is True
+    assert now[0] >= 151
+    assert len(waits) > 400
 
 
 def test_typing_stops_the_moment_the_user_touches_the_computer():

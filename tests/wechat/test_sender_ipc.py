@@ -153,6 +153,31 @@ def test_sender_client_round_trip_over_owner_only_socket():
         thread.join(timeout=2)
 
 
+def test_send_waits_for_response_longer_than_readiness_timeout():
+    module = _module()
+
+    class SlowAccessibility(FakeAccessibility):
+        def send(self, target_label, reply_text, **kwargs):
+            threading.Event().wait(0.2)
+            return AccessibilityResult(True, True, "fp-late")
+
+    socket_path = _short_socket_path()
+    server = module.WechatSenderUnixServer(
+        socket_path, module.WechatSenderRpcService(SlowAccessibility()),
+    )
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        client = module.WechatSenderClient(socket_path, timeout_seconds=0.05)
+        assert client.send("Morgan", "等空闲窗口") == AccessibilityResult(
+            True, True, "fp-late",
+        )
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
 def test_sender_server_serializes_accessibility_requests():
     module = _module()
 

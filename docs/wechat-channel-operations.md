@@ -194,34 +194,16 @@ causing concurrent or burst UI interaction. This affects only navigation pacing;
 it does not relax target binding, compose, or send confirmation checks.
 
 The Sender only touches WeChat after the computer has been untouched for 30
-seconds (`CEO_WECHAT_SEND_IDLE_SECONDS`, default 30; Derek, 2026-10-28), and it
-never goes ahead while the user is working: if the quiet period does not come
-within 120 seconds, the delivery records `user_active` before any UI action and
-the sender loop requeues it on its next pass without using the bounded retry
-budget. While it works, the Sender remembers when it last produced a click or
-key itself; input newer than that is the user's, and the Sender pauses at once
-— before every click, before every typed character and before Return. A pause
-empties the input box it may have started filling, hands the previous app back
-to the front, waits for another 30 quiet seconds and starts over from opening
-the chat. Sends the user starts explicitly from the console skip the quiet wait
-and the pause. The Codex computer-use alternative (virtual pointer) is kept on
-branch `experiment/wechat-codex-computer-use`: on 2026-10-28 WeChat logged the
-account out after every Codex session, even one that only clicked a chat open.
-
-Within one delivery every UI step also pauses for a randomized, person-like
-interval, because WeChat flags back-to-back events as non-human use (Derek,
-2026-09-30). The ranges are the `PAUSE_*` constants at the top of
-`app/wechat/accessibility.py`: a click moves the pointer first, hovers, holds
-the button down, and settles afterwards; typed keys are held and spaced; after
-activation, before writing the composer, and before Return the Sender waits.
-The reply is typed into the composer one character at a time with the same
-key cadence, never written in one Accessibility value write: WeChat logged the
-account out on 2026-10-28 right after a reply appeared in the composer all at
-once (Derek). A line break is inserted at the caret instead of typed, because
-Return sends. Typing costs up to about 0.31 s per character, so the
-service-side sender timeout (`CEO_WECHAT_SENDER_TIMEOUT_SECONDS`, 180 s by
-default for the 120-second idle wait plus navigation) is extended by that much
-per character of the reply.
+seconds (`CEO_WECHAT_SEND_IDLE_SECONDS`, default 30; Derek, 2026-10-28). It
+keeps waiting until that quiet period occurs; user activity never ends the
+approved send as `user_active` or consumes a retry. While it works, the Sender
+remembers when it last produced a click or key itself; input newer than that is
+the user's, and the Sender pauses at once — before every click, before every
+typed character and before Return. A pause empties the unsent draft, hands the
+previous app back to the front, waits for another 30 quiet seconds and starts
+over from opening the chat. The send IPC stays connected for the wait, while
+the executor renews the reviewed action claim. Sends the user starts explicitly
+from the console skip the quiet wait and the pause.
 
 Preflight is ready only when both a visible WeChat process window and a usable
 Accessibility `AXWindows` tree are present. A composited but inaccessible
@@ -494,11 +476,12 @@ pending.
   are static text with empty AX action lists, background clicks don't register,
   and background keystrokes land text in the search box but WeChat won't *run* the
   search unless its window is active — so full-background nav is not possible.
-  Mitigation: the sender **waits until the user has been idle for 30 quiet seconds**
-  (`CEO_WECHAT_SEND_IDLE_SECONDS`, no keyboard/mouse via
-  `CGEventSourceSecondsSinceLastEventType`; gives up after 120 s with `user_active`) before the ~1s
+  Mitigation: the sender **waits until the user has been idle for the full
+  configured quiet window** (`CEO_WECHAT_SEND_IDLE_SECONDS`, default 30; no
+  keyboard/mouse via `CGEventSourceSecondsSinceLastEventType`) before the ~1s
   foreground, then **restores the previously-frontmost app** (`restore_focus`) —
-  so it never interrupts mid-typing. Residual: needs Accessibility permission
+  so it never interrupts mid-typing. It keeps waiting until that window occurs;
+  no timeout is converted to `user_active` failure. Residual: needs Accessibility permission
   (cached at process launch — grant then relaunch the dedicated Sender app).
   Duplicate direct-chat display names are navigated with their stable target ID
   and then corroborated against the visible composer title; groups remain

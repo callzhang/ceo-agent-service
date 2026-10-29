@@ -205,6 +205,7 @@ class WechatSenderClient:
 
     def _request(
         self, method: str, params: dict | None = None, *, extra_seconds: float = 0.0,
+        wait_for_response: bool = False,
     ) -> Any:
         request = json.dumps({
             "protocol_version": PROTOCOL_VERSION,
@@ -222,6 +223,10 @@ class WechatSenderClient:
                 ) from exc
             try:
                 connection.sendall(request)
+                if wait_for_response:
+                    # Sending waits for the user's next quiet window. Keep the
+                    # request connection alive until the helper reports its result.
+                    connection.settimeout(None)
                 raw = connection.makefile("rb").readline(self.max_response_bytes + 1)
             except (OSError, TimeoutError) as exc:
                 raise SenderExecutionError(
@@ -279,6 +284,7 @@ class WechatSenderClient:
         # The reply is typed key by key, so a long one needs more time.
         return AccessibilityResult(**self._request(
             "send", params, extra_seconds=SECONDS_PER_TYPED_CHAR * len(reply_text),
+            wait_for_response=True,
         ))
 
     def recall_last_outbound(self, text: str) -> bool:

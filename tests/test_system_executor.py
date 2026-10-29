@@ -1161,6 +1161,36 @@ def test_text_emotion_creation_requires_provider_emotion_id():
     assert TextEmotionCreateHandler(Dws()).dispatch(action, action_key="key", candidate={}).status == "verified"
 
 
+def test_wechat_send_dispatch_keeps_execution_lease_alive():
+    import time
+
+    action = {
+        "description": "Send reviewed WeChat reply", "action_identity": "reply",
+        "capability": "wechat", "operation": "send_message",
+        "target": {"account_id": "account", "target_type": "direct",
+                   "target_id": "target", "conversation_id": "conversation"},
+        "payload": {"text": "reply"},
+    }
+    candidate = _candidate(actions=[action])
+    store = FakeStore(candidate)
+
+    class SlowHandler:
+        def dispatch(self, action, *, action_key, candidate):
+            time.sleep(0.7)
+            return ActionOutcome("verified", {"receipt": "confirmed"})
+
+        def reconcile(self, action, *, action_key, candidate):
+            return None
+
+    result = SystemExecutor(
+        store, {("wechat", "send_message"): SlowHandler()}, owner="worker",
+        lease_seconds=1,
+    ).execute(store.get_reply_task(1), 1, 2)
+
+    assert result.outcome == "executed"
+    assert store.events.count("renew") >= 2
+
+
 def test_sqlite_reviewed_execution_preserves_receipt_across_restart(tmp_path):
     from app.store import AgentRole, AutoReplyStore
     from app.reviewed_candidates import candidate_digest

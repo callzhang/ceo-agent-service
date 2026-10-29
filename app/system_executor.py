@@ -1,6 +1,8 @@
 """Execute only the exact persisted plan approved for the current task generation."""
 
 import json
+import logging
+import threading
 from dataclasses import dataclass
 from typing import Literal, Mapping, Protocol
 from uuid import uuid4
@@ -16,6 +18,9 @@ from app.agent_contracts import (
 from app.external_action_identity import expected_external_action
 from app.reviewed_candidates import candidate_digest
 from app.model_action_schema import candidate_option
+
+
+LOGGER = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True)
@@ -57,6 +62,41 @@ class SystemExecutor:
         self.owner = owner or f"system-executor:{uuid4()}"
         self.dry_run = dry_run
         self.lease_seconds = lease_seconds
+
+    def _dispatch_wechat_with_lease_renewal(
+        self, handler: ActionHandler, action: ProposedAction, *,
+        action_key: str, candidate: dict[str, object], execution_id: int,
+    ) -> ActionOutcome:
+        """Keep the reviewed execution claim alive while Sender waits for idle."""
+        stopped = threading.Event()
+        interval = max(0.1, self.lease_seconds / 3)
+
+        def renew_until_stopped() -> None:
+            while not stopped.wait(interval):
+                try:
+                    self.store.renew_candidate_execution_claim(
+                        execution_id, self.owner, self.lease_seconds,
+                    )
+                except Exception:
+                    LOGGER.exception(
+                        "wechat_send_execution_lease_renewal_failed execution_id=%s",
+                        execution_id,
+                    )
+                    return
+
+        heartbeat = threading.Thread(
+            target=renew_until_stopped,
+            name=f"wechat-send-lease-{execution_id}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            return handler.dispatch(
+                action, action_key=action_key, candidate=candidate,
+            )
+        finally:
+            stopped.set()
+            heartbeat.join()
 
     @staticmethod
     def _failure(code: str, summary: str, keys: list[str] | None = None, *, retryable: bool = False, source_code: str = "", source: str = "", authorization_required: bool = False, session_continuable: bool = False) -> SystemExecutionResult:
@@ -428,7 +468,17 @@ class SystemExecutor:
                         source_result = self._check_reviewed_sources(candidate, context, plan, execution_id, candidate_id)
                         if source_result is not None:
                             return source_result
-                    outcome = handler.dispatch(action, action_key=action_key, candidate={**row, "action_attempt": attempt})
+                    dispatch_candidate = {**row, "action_attempt": attempt}
+                    if action.capability == "wechat" and action.operation == "send_message":
+                        outcome = self._dispatch_wechat_with_lease_renewal(
+                            handler, action, action_key=action_key,
+                            candidate=dispatch_candidate, execution_id=execution_id,
+                        )
+                    else:
+                        outcome = handler.dispatch(
+                            action, action_key=action_key,
+                            candidate=dispatch_candidate,
+                        )
                 else:
                     outcome = ActionOutcome("failed", {"reason": "prior_action_failure"})
             except Exception as exc:
