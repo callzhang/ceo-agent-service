@@ -16,6 +16,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from email.utils import parsedate_to_datetime
+from hashlib import sha256
+import json
 import threading
 import time
 import sqlite3
@@ -28,7 +31,12 @@ from app.email_provider_actions import (
     ProviderMessageState,
     _changed_locator,
 )
-from app.email_store import EmailStore, FailedDirectAction, email_imap_configuration_snapshot
+from app.email_store import (
+    EmailStore,
+    FailedDirectAction,
+    SkippedDirectAction,
+    email_imap_configuration_snapshot,
+)
 
 RECONCILED_OPERATION = "reconciled_readback"
 RECONCILED_RESULT_PREFIX = "reconciled:"
@@ -211,6 +219,165 @@ def _examine(provider: ReconcileMailbox, failed: FailedDirectAction) -> _Finding
 
 def _utc_now() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+def _received_datetime(value: str) -> datetime:
+    try:
+        parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+    except ValueError:
+        parsed = parsedate_to_datetime(value)
+    if parsed.tzinfo is None:
+        raise ValueError("mail timestamp has no timezone")
+    return parsed.astimezone(timezone.utc)
+
+
+def _dws_sender(message: Mapping[str, Any]) -> str:
+    sender = message.get("from")
+    return str(sender.get("email", "")).strip().casefold() if isinstance(sender, Mapping) else ""
+
+
+def _matches_dws_message(
+    candidate: Mapping[str, Any], skipped: SkippedDirectAction
+) -> bool:
+    return (
+        _dws_sender(candidate) == skipped.sender.casefold()
+        and candidate.get("subject") == skipped.subject
+        and isinstance(candidate.get("conversationId"), str)
+        and bool(candidate["conversationId"].strip())
+        and abs(
+            (_received_datetime(str(candidate.get("receivedDateTime", "")))
+             - _received_datetime(skipped.received_at)).total_seconds()
+        ) <= 10
+    )
+
+
+def reconcile_skipped_email_move_from_dws(
+    store: EmailStore,
+    dws: Any,
+    *,
+    action_id: str,
+    apply: bool,
+    finished_at: str,
+) -> dict[str, Any]:
+    """Record a skipped move only after a unique DWS identity and folder readback.
+
+    DWS has a separate message identifier from the stored RFC Message-ID. This
+    one-shot path therefore binds account, sender, exact subject, DWS
+    conversation, and received time, then confirms that same DWS ID in the
+    exact target folder. It issues reads only; the normal Email worker handles
+    dependent flag/read actions after a verified receipt is stored.
+    """
+
+    skipped = store.get_skipped_direct_action_for_reconciliation(action_id)
+    if skipped is None:
+        return {"outcome": "not_eligible", "recorded": False}
+    account = store.get_account(skipped.action.account_id)
+    mailbox = "" if account is None else str(account.get("email_address", "")).strip()
+    if not mailbox:
+        return {"outcome": "account_unavailable", "recorded": False}
+
+    mailbox_result = dws.run_json(
+        [dws.dws_bin, "mail", "mailbox", "list", "--format", "json"]
+    )
+    account_matches = [
+        item for item in mailbox_result.get("emailAccounts", [])
+        if item.get("type") == "ORG"
+        and str(item.get("email", "")).casefold() == mailbox.casefold()
+    ]
+    if len(account_matches) != 1:
+        return {"outcome": "account_ambiguous", "recorded": False}
+
+    subject = skipped.subject.replace("\\", "\\\\").replace('"', '\\"')
+    search_result = dws.run_json(
+        [
+            dws.dws_bin, "mail", "message", "search", "--email", mailbox,
+            "--query", f'from:{skipped.sender} AND subject:"{subject}"',
+            "--limit", "20", "--format", "json",
+        ]
+    )
+    candidates = [
+        item for item in search_result.get("messages", [])
+        if isinstance(item, Mapping) and _matches_dws_message(item, skipped)
+    ]
+    if len(candidates) != 1:
+        return {"outcome": "identity_ambiguous", "recorded": False}
+    candidate = candidates[0]
+    message_id = str(candidate.get("id", "")).strip()
+    conversation_id = str(candidate.get("conversationId", "")).strip()
+    if not message_id:
+        return {"outcome": "identity_incomplete", "recorded": False}
+
+    target_folder = str(skipped.action.parameters.get("target_folder", ""))
+    folder_result = dws.run_json(
+        [dws.dws_bin, "mail", "folder", "list", "--email", mailbox, "--format", "json"]
+    )
+    folders = [
+        folder for folder in folder_result.get("folders", [])
+        if isinstance(folder, Mapping) and folder.get("displayName") == target_folder
+    ]
+    if len(folders) != 1 or not str(folders[0].get("id", "")).strip():
+        return {"outcome": "target_folder_ambiguous", "recorded": False}
+    folder_id = str(folders[0]["id"])
+
+    folder_result = dws.run_json(
+        [
+            dws.dws_bin, "mail", "message", "list", "--email", mailbox,
+            "--folder-id", folder_id, "--limit", "100", "--format", "json",
+        ]
+    )
+    folder_messages = folder_result.get("messages", [])
+    try:
+        complete_page = len(folder_messages) >= int(folder_result["total"])
+    except (KeyError, TypeError, ValueError):
+        complete_page = False
+    matches = [
+        item for item in folder_messages
+        if isinstance(item, Mapping)
+        and item.get("id") == message_id
+        and item.get("conversationId") == conversation_id
+        and _matches_dws_message(item, skipped)
+    ]
+    if not complete_page or len(matches) != 1:
+        return {"outcome": "target_not_verified", "recorded": False}
+
+    proof = sha256(
+        json.dumps(
+            {
+                "account": mailbox.casefold(),
+                "sender": skipped.sender.casefold(),
+                "subject": skipped.subject,
+                "conversation": conversation_id,
+                "received_at": candidate["receivedDateTime"],
+                "dws_message_id": message_id,
+                "folder_id": folder_id,
+                "action_id": action_id,
+            },
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        ).encode("utf-8")
+    ).hexdigest()
+    if not apply:
+        return {"outcome": VERIFIED, "recorded": False}
+
+    claimed = store.claim_skipped_direct_action_for_reconciliation(
+        expected=skipped,
+        expected_attempt_count=skipped.action.attempt_number - 1,
+        claimed_at=finished_at,
+    )
+    if claimed is None:
+        return {"outcome": "changed_meanwhile", "recorded": False}
+    store.complete_direct_action_attempt(
+        claimed,
+        status="done",
+        provider_operation="reconciled_dws_readback",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id=f"dws-readback:{message_id}:{folder_id}:{proof}",
+        error="",
+        finished_at=finished_at,
+        retryable=False,
+    )
+    return {"outcome": VERIFIED, "recorded": True}
 
 
 class MessageTimeout(TimeoutError):

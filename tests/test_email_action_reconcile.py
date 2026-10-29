@@ -30,8 +30,10 @@ from app.email_action_reconcile import (
     _record_done,
     read_only_provider,
     reconcile_email_actions,
+    reconcile_skipped_email_move_from_dws,
 )
 from app.email_classifier_contracts import EmailAction, EmailClassificationStatus
+from app.cli import build_parser
 from app.email_provider_actions import ImapDeterministicProvider
 from app.email_store import (
     DIRECT_EMAIL_ATTEMPT_SQL,
@@ -227,6 +229,111 @@ def test_message_verified_in_target_is_recorded_done_with_reconciliation_evidenc
         ).fetchone()
     assert (folder, uidvalidity, uid) == ("Projects", 126, 31)
     assert all(command in {"EXAMINE", "UID FETCH", "UID SEARCH"} for command in session.commands)
+
+
+def test_skipped_move_is_reconciled_from_unique_dws_identity_and_readback(
+    db_path: Path,
+) -> None:
+    store = EmailStore(db_path)
+    action_id = str(_seed_failed(store, "junhe", uid=7))
+    claimed = store.claim_failed_direct_action_for_reconciliation(
+        action_id=action_id, expected_attempt_count=1,
+        claimed_at="2026-09-25T09:11:00+00:00",
+    )
+    assert claimed is not None
+    store.complete_direct_action_attempt(
+        claimed, status="skipped", provider_operation="readback_missing",
+        provider_target=claimed.locator.stable_message_identity,
+        provider_result_id="message-unavailable:verified-source-gap", error="",
+        finished_at="2026-09-25T09:11:05+00:00", retryable=False,
+    )
+    # Keep the production account lookup in the same EmailStore path without
+    # adding IMAP credentials to this test fixture.
+    store.get_account = lambda _account_id: {"email_address": "derek@stardust.ai"}
+
+    class DwsReadOnlyFake:
+        def __init__(self):
+            self.dws_bin = "dws"
+            self.commands = []
+            self.duplicate_search = False
+
+        def run_json(self, command):
+            self.commands.append(command)
+            if command[1:4] == ["mail", "mailbox", "list"]:
+                return {
+                    "emailAccounts": [
+                        {"email": "derek@stardust.ai", "type": "ORG"}
+                    ],
+                    "success": "true",
+                }
+            if command[1:4] == ["mail", "message", "search"]:
+                messages = [{
+                    "id": "DWS-MESSAGE-1",
+                    "from": {"email": "sender@example.com"},
+                    "subject": "Need a decision",
+                    "conversationId": "dws-conversation-1",
+                    "receivedDateTime": "2026-08-29T15:59:06Z",
+                }]
+                if self.duplicate_search:
+                    messages.append(dict(messages[0]))
+                return {
+                    "messages": messages,
+                    "total": str(len(messages)),
+                    "success": "true",
+                }
+            if command[1:4] == ["mail", "folder", "list"]:
+                return {
+                    "folders": [
+                        {"id": "folder-legal", "displayName": "Projects"}
+                    ],
+                    "success": "true",
+                }
+            if command[1:4] == ["mail", "message", "list"]:
+                return {"messages": [{
+                    "id": "DWS-MESSAGE-1",
+                    "from": {"email": "sender@example.com"},
+                    "subject": "Need a decision",
+                    "conversationId": "dws-conversation-1",
+                    "receivedDateTime": "2026-08-29T15:59:06Z",
+                }], "total": "1", "success": "true"}
+            raise AssertionError(f"unexpected DWS command: {command}")
+
+    dws = DwsReadOnlyFake()
+    before = _snapshot(db_path)
+    dws.duplicate_search = True
+    ambiguous = reconcile_skipped_email_move_from_dws(
+        store, dws, action_id=action_id, apply=True,
+        finished_at="2026-09-25T09:11:30+00:00",
+    )
+    assert ambiguous == {"outcome": "identity_ambiguous", "recorded": False}
+    assert _snapshot(db_path) == before
+
+    dws = DwsReadOnlyFake()
+    result = reconcile_skipped_email_move_from_dws(
+        store, dws, action_id=action_id, apply=True,
+        finished_at="2026-09-25T09:12:00+00:00",
+    )
+
+    assert result == {"outcome": "verified", "recorded": True}
+    assert [attempt["status"] for attempt in store.list_action_attempts(action_id)] == [
+        "failed", "skipped", "done",
+    ]
+    assert store.list_action_attempts(action_id)[-1]["provider_operation"] == "reconciled_dws_readback"
+    assert all("move" not in " ".join(command[1:]).casefold() for command in dws.commands)
+
+
+def test_dws_skipped_move_reconciliation_cli_requires_one_action_id() -> None:
+    args = build_parser().parse_args(
+        [
+            "reconcile-skipped-email-move-from-dws",
+            "--action-id",
+            "111699",
+            "--apply",
+        ]
+    )
+
+    assert args.action_id == "111699"
+    assert args.apply is True
 
 
 def test_normalized_integer_action_id_can_be_recorded_after_readback(

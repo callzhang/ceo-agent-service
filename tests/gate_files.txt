@@ -265,6 +265,7 @@ tests/test_trace_prompt_compaction.py
 tests/test_email_action_unsubscribe_dao.py
 tests/test_email_unsubscribe_project_doc_prune.py
 tests/test_email_provider_actions.py
+tests/test_email_action_reconcile.py
 tests/test_reply_attempt_action_forward_inverse.py
 tests/test_work_tracking_skill.py
 tests/test_email_action_plan_direct_dao.py

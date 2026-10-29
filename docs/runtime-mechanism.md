@@ -649,6 +649,9 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 
 稳定 Message-ID 查找若在多个文件夹命中，属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试；超时、DNS 和连接错误仍可重试。身份问题解决后，才可重新处理该邮件动作。
 
+历史 move 因 `readback_missing` 成为 `skipped` 时，可针对单个 action 调用
+`reconcile-skipped-email-move-from-dws --action-id … --apply`。该命令只读 DWS：企业账号必须唯一，搜索与目标文件夹读回必须指向同一内部邮件 ID 和会话，发件人与完整主题必须精确一致，收件时间差不得超过 10 秒，且目标文件夹列表必须完整。任何一项不满足都保留原状态和回执；通过后由 EmailStore 追加 `reconciled_dws_readback` 正式回执，不重放 MOVE。依赖该动作的现有队列项再按原 worker 流程执行和读回；此路径不建立 IMAP 连接，也不作用于退订。
+
 Provider observation scan 在一个 SQLite 写事务内发布消息状态、authoritative folder 缺失项对账和
 folder generation 时间。generation 按账号和文件夹单独记录，分类状态读取仍投影该文件夹最近一次
 扫描时间；消息内容未变时不更新消息行及其索引。扫描成员先放入连接级临时表，再按
