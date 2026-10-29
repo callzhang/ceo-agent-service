@@ -1298,7 +1298,7 @@
     "checked_at": "2026-10-29T20:19:52.987843+00:00",
     "installed_commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
     "health": 200,
-    "pid": "13358",
+    "pid": "23249",
     "schema_current": true,
     "schema_objects": 463,
     "fk": [],
@@ -1346,12 +1346,51 @@
       "provider_writes": false,
       "boundary": "Production source RFC mail date rejected by ISO-only identity parser before provider update; standalone diagnosis only, publisher owns implementation."
     },
-    "last_checked_at": "2026-10-29T20:54:25.719081+00:00",
+    "last_checked_at": "2026-10-29T20:57:20.982304+00:00",
     "approval_boundary": {
       "source": "AGENTS.md:10-12; publisher explicitly treats date identity/effect reconciliation change as separate scope",
       "requested": "Normalize legitimate RFC/ISO email date facts, preserve exact source and matching threshold/identity; regressions then standard gate/deploy, original approved actions only",
       "excluded": "Tag mapping, Audit, authorization and retry policy",
       "status": "pending_human_confirmation"
+    },
+    "production_snapshot": {
+      "checked_at": "2026-10-29T20:57:20.982304+00:00",
+      "installed_commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
+      "health": {
+        "http": 200,
+        "ok": true,
+        "status": "ok"
+      },
+      "service": {
+        "label": "com.ceo-agent-service.main",
+        "target": "gui/501/com.ceo-agent-service.main",
+        "ok": true,
+        "state": "running",
+        "detail": "running",
+        "pid": "23249",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0
+      },
+      "summary": {
+        "queue_count": 11,
+        "pending": 4,
+        "processing": 0,
+        "failed": 31,
+        "retryable": 0,
+        "attention": 6
+      },
+      "schema_current": true,
+      "schema_objects": 463,
+      "schema_sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+      "fk": []
+    },
+    "initial_production_snapshot": {
+      "checked_at": "2026-10-29T20:19:52.987843+00:00",
+      "installed_commit": "5d20d32bc91bb476a5c7e4ea4c7173c3a1d976ca",
+      "pid": "13358",
+      "health": 200
     }
   }
 }
