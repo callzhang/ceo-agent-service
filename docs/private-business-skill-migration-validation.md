@@ -1,69 +1,67 @@
 # Private business Skill migration validation
 
-Status: private source, local separation and actual private installation
-acceptance completed; independent review and standard public deployment are
-recorded below when completed. This is not a rollout of the pending OA judgment
-candidate and does not claim historical disclosure has been erased.
+The private source and fresh installation acceptance are complete. The one
+independent review found four material boundary issues; one bounded correction
+pass removed remaining reporting policy, scoring implementations, tenant helpers
+and broken implicit OA policy paths. Standard public release/readback is pending.
+The prior OA judgment candidate remains unapplied; this migration changes source
+ownership, not company decision rules.
 
-## Source and public boundary
+## Source and current-tree boundary
 
-The private authoring source preserves 25 installed packages (70 source files, byte and
-executable identity verified). A separately installable management-meeting
-reference package retains the original reference body verbatim, for 26 packages
-in the private catalog. The old OA judgment candidate remains an unapplied private
-patch. No company repository URL, package body, internal source link or real
-employee approval is newly published by this validation document.
+The private source preserves all 25 installed packages / 70 original files with
+exact bytes and executable bits. One management-reference extraction and four
+independently named reporting packages bring its catalog to 30 packages / 92
+files. Report helpers retain original bytes; only Skill package/dependency
+identifiers are relocated. Frozen company policy/report tests and historical
+OKR evaluation material live privately. The original snapshots remain unchanged.
 
-Six company OA packages and their referenced rule/template/source documents move
-out of public CI assets. The public OA integration is a generic platform contract;
-the private installed package retains its original policy. Generic baseline
-identity examples and management meeting references no longer expose a named
-principal or internal document URLs. The strict explicit release source catalog
-and manifest remove five company/OA entries together; publication verification,
-transaction, rollback and Audit logic are otherwise unchanged.
+The public service retains 15 generic baseline entries, native installation,
+provider integration and synthetic runtime/transaction tests. Reporting entries
+now describe evidence and delivery workflow and load an organization package for
+its policy and helpers. The public tree contains no company reporting support
+files, scoring implementation or tenant helper. The OA replay harness takes
+explicit `--skills-root`, repeated `--skill-path` and optional `--cases`; it no
+longer reads removed company paths implicitly.
 
-Company policy tests and their frozen source fixture live privately. Their
-assertion bodies are retained; developer-specific runtime paths point to the
-private package tree instead. Public transaction, rollback, concurrency, initial
-installation, package capture and route tests remain public and use synthetic data.
-Optional external Skill names remain supported for existing installations.
+The explicit publication manifest contains nine generic source entries. For the
+three reporting entries its existing old-digest checks are scoped to the new
+generic baseline, not the installed company digests. It therefore cannot adopt
+those company packages as an overwrite precondition. No transaction, rollback,
+Audit or lifecycle algorithm changes. The separately authorized private-script
+verification change is documented in [its own contract](private-skill-script-verification.md).
 
-## Verification
+## Evidence
 
-- Private package/fixture suite: 60 passed, including full file/mode manifest and
-  verbatim management-reference extraction. The original source package files were
-  rechecked against the installed source after snapshot creation.
-- Public focused tests: 164 passed across 12 selected files. Publication tests:
-  18 passed, retaining synthetic failure/rollback/concurrent-edit assertions.
-- Public report-template tests: 56 passed; selected OA Audit/required-reference
-  contracts: 2 passed after restoring the required normative-reference wording.
-  Sixteen additional documentation/gate-manifest cases passed after merging main;
-  the distinct public total is 238 passing cases across 18 files.
-- Public boundary tests observed RED for company directories, named identity,
-  internal source links and legacy publication entries, then GREEN after separation.
-- Production native private URL search returned 26/26 available packages and no
-  errors. In a separate console using shipped routes/installer and fresh local
-  state, actual UI clicks installed finance and management-reference packages;
-  the same API installed nine other company-only packages. All 35 selected files
-  match private source bytes and executable bits. Duplicate install returned 200
-  and the original revision. A real live loader process activated the pending
-  config; all 26 enabled revision hashes and 26 disk contents match its receipt.
-  Tasks, runs and business-action rows stayed zero; runtime Skill load receipts
-  are normal metadata in the shared Action table, not external business effects.
-- The searched private commit remained pinned while a manifest-only fix advanced
-  the private head; the entire Skill package tree is identical. The private CI
-  clean clone passed 60 tests after excluding five untracked pytest-cache files
-  from the manifest. No business source file changed in that correction.
-- Independent review, exact deployed commit, PID/health/queues/Attention/History:
-  pending. No production package overwrite or business effect is acceptance.
+- Public correction pass: 238 distinct focused cases across the selected service,
+  installer, boundary, publication and generic-evaluation files; Ruff and diff checks.
+- Private checks: 65 manifest/policy cases, 190 report runtime cases and 56 frozen
+  renderer/contract cases. Tests use the open service as an explicit dependency;
+  installed snapshot bytes and original test files remain preserved separately.
+- A fresh isolated console uses the real search/installer routes, final generic
+  baseline and native Git authentication. Search returns 30 available packages.
+  The UI installed the independently named weekly report; the same API installed
+  the rest of the 15-package company profile. All 56 company files match source
+  bytes and modes. Repeat install returns the original revision. A live loader
+  activated all 30 bindings and each revision/disk hash matches its receipt.
+- All 70 existing production Skill source files remain unchanged. Three existing
+  and three independently named private report entrypoints pass the real fixed
+  complete-tree digest resolver without executing their scripts. Acceptance has
+  zero tasks, runs or business-action rows; load receipts are normal Action metadata.
+- Private CI and deployment receipts are recorded privately; the public document
+  intentionally contains no company repository URL or employee approval data.
 
-## Limits
+## Operational boundaries
 
-The native installer remains a first-install mechanism. A different source or
-commit under an existing name conflicts; this migration does not add overwrite,
-update, alias adoption or a new authorization policy. New company-only packages
-are tested in a clean console, with production private search checked separately.
-Generic templates are not an automatic update source for company customizations.
-Removing current files cannot remove previous Git history, forks or copies; no
-force push or history rewrite is part of this release. The unpublished OA
-optimization still needs its own coordinated behavior publication.
+For a fresh deployment, configure native Git access as the service account,
+search the organization repository in Settings → Skills and install its selected
+packages. On scheduled tasks select the organization reporting package explicitly;
+installation does not silently replace task selections. Restart through the
+normal deployment lifecycle when installation is pending load, then verify the
+runtime receipt. Existing same-name packages remain unchanged: Install has no
+update, overwrite or alias-adoption mode. Generic baseline distribution is not a
+company update channel.
+
+Removing current files does not erase public Git history, forks or copies. No
+history rewrite or business replay is part of this release. The pending OA
+judgment optimization still needs its separate coordinated publication.

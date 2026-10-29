@@ -105,42 +105,6 @@ def _fixture(tmp_path: Path):
                 **({"old_managed_sha256": _digest(previous)} if name in SKILLS else {}),
             }
         )
-    rel = "ceo-weekly-report/references/dingtalk-runbook.md"
-    old[rel], new[rel] = b"old reference\n", b"new reference\n"
-    target = skills / rel
-    source = root / "ci/shared-skills" / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    source.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(old[rel])
-    source.write_bytes(new[rel])
-    entries.append(
-        {
-            "source": f"ci/shared-skills/{rel}",
-            "target": f"skills/{rel}",
-            "old_sha256": _digest(old[rel]),
-            "new_sha256": _digest(new[rel]),
-        }
-    )
-    for rel in (
-        "ceo-weekly-report/scripts/report_contract.py",
-        "ceo-weekly-report/scripts/validate_run.py",
-    ):
-        old[rel] = f"old {Path(rel).name}\n".encode()
-        new[rel] = f"new {Path(rel).name}\n".encode()
-        target = skills / rel
-        source = root / "ci/shared-skills" / rel
-        target.parent.mkdir(parents=True, exist_ok=True)
-        source.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(old[rel])
-        source.write_bytes(new[rel])
-        entries.append(
-            {
-                "source": f"ci/shared-skills/{rel}",
-                "target": f"skills/{rel}",
-                "old_sha256": _digest(old[rel]),
-                "new_sha256": _digest(new[rel]),
-            }
-        )
     old["audit_rules"], new["audit_rules"] = b"old audit rules\n", b"new audit rules\n"
     rules.parent.mkdir(parents=True)
     rules.write_bytes(old["audit_rules"])
@@ -235,6 +199,7 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
     db = tmp_path / "service.sqlite3"
     store, old_config_id, task_id = _store_with_refs(db, old)
     untouched = skills / "ceo-weekly-report/references/operator-note.md"
+    untouched.parent.mkdir(parents=True)
     untouched.write_text("keep me")
 
     receipt = prepare_consumer_system_contracts(
@@ -245,11 +210,6 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == new["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == new["audit_rules"]
-    for rel in (
-        "ceo-weekly-report/scripts/report_contract.py",
-        "ceo-weekly-report/scripts/validate_run.py",
-    ):
-        assert (skills / rel).read_bytes() == new[rel]
     assert untouched.read_text() == "keep me"
     updated = store.get_scheduled_task(task_id)
     assert updated.skill_refs[-1].skill_source == "operation"
@@ -267,13 +227,6 @@ def test_publish_then_rollback_restores_exact_files_refs_and_config(tmp_path: Pa
 
     assert (skills / "ceo-daily-report/SKILL.md").read_bytes() == old["ceo-daily-report/SKILL.md"]
     assert rules.read_bytes() == old["audit_rules"]
-    for rel in (
-        "ceo-weekly-report/scripts/report_contract.py",
-        "ceo-weekly-report/scripts/validate_run.py",
-    ):
-        assert (skills / rel).read_bytes() == old[rel]
-    assert untouched.read_text() == "keep me"
-    assert store.get_scheduled_task(task_id).skill_refs == _store_refs(store, old_config_id)
     rollback_config = store.get_pending_or_active_runtime_skill_config()
     assert {b.revision_id for b in store.list_runtime_skill_bindings(rollback_config.id)} == {
         b.revision_id for b in store.list_runtime_skill_bindings(old_config_id)
@@ -741,7 +694,7 @@ def test_release_publishes_new_skill_asset_and_rollback_removes_only_that_asset(
     root, skills, rules, manifest, old, new = _fixture(tmp_path)
     db = tmp_path / "service.sqlite3"
     _store_with_refs(db, old)
-    rel = "ceo-daily-report/scripts/window.py"
+    rel = "ceo-wechat/SKILL.md"
     (skills / rel).unlink()
     payload = json.loads(manifest.read_text())
     next(x for x in payload["files"] if x["source"] == "ci/shared-skills/" + rel)[

@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "entrypoints": [
-    "scripts/window.py",
-    "scripts/destination.py"
-  ],
-  "script_tree_sha256": "0b06ae945e3d14bfa18fd942c68c7bd2b8ace89445b7bfba6b6f5b708536290b"
-}

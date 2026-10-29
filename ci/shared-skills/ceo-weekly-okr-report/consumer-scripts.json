@@ -1,8 +1,0 @@
-{
-  "version": 1,
-  "entrypoints": [
-    "scripts/report.py",
-    "scripts/destination.py"
-  ],
-  "script_tree_sha256": "7e8fb42e3d08d62d9506a1bfbb9187743f00c9ec62903c7de0a71980a203a626"
-}

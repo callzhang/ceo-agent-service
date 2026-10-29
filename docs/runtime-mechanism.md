@@ -1988,3 +1988,5 @@ unavailability.
 
 
 Reviewed Consumer Skill script implementation may live in a private installed package; the public `ci/reviewed-skill-scripts/` catalog pins its entrypoints and complete script-tree digest. Installation alone grants no script entrypoint. See [private script verification](private-skill-script-verification.md).
+
+Reporting policy, scoring, tenant destinations and their executable implementations belong to independently installable organization Skills. The public reporting baselines carry generic discovery/evidence/delivery workflow only; scheduled tasks explicitly select the organization package for normal frozen script binding. Generic report publication preconditions name the generic digest, never the existing company digest.
