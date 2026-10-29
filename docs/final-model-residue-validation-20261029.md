@@ -23,7 +23,7 @@
 
 完整 CI 暴露七个本轮受影响夹具及四个已有 Python／三个前端基线用例。修正落在测试：冻结源使用冻结布局，当前构造器使用当前准确 manifest，旧 State 字节仍对照原始归档 hash，WeChat fake 验证持久 prepared 对象，调度页面断言对齐已授权的现行页面合同。独立 SPEC／QUALITY 通过；相关 Python157项、前端114项、根代理最终标题断言1项、合并后邮件影响22项通过。四个当前 schema／来源合同文件已进入 gate。
 
-合并 tip c99e2eeda631fba1e9a7bab807d3acbb39324a9b 相对已安装773仅含测试与验收记录，不需要为测试另起部署。该提交的 [Quality run40875724251](https://github.com/callzhang/ceo-agent-service/actions/runs/40875724251) 已全部成功：51/51 作业通过，无失败。当前生产773的独立正式 gate 记录亦已核实：7,723 passed／2 skipped／1 deselected，542.24秒。
+合并 tip c99e2eeda631fba1e9a7bab807d3acbb39324a9b 相对当时已安装773仅含测试与验收记录，不需要为测试另起部署。该提交的 [Quality run40875724251](https://github.com/callzhang/ceo-agent-service/actions/runs/40875724251) 已全部成功：51/51 作业通过，无失败。中间发布773的独立正式 gate 记录亦已核实：7,723 passed／2 skipped／1 deselected，542.24秒。
 
 ## 最终生产读回与清理边界
 
