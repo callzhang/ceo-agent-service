@@ -3,7 +3,8 @@
 The private source and fresh installation acceptance are complete. The one
 independent review found four material boundary issues; one bounded correction
 pass removed remaining reporting policy, scoring implementations, tenant helpers
-and broken implicit OA policy paths. Standard public release/readback is pending.
+and broken implicit OA policy paths. Production release and readback evidence are recorded separately in the
+[release PR](https://github.com/callzhang/ceo-agent-service/pull/337).
 The prior OA judgment candidate remains unapplied; this migration changes source
 ownership, not company decision rules.
 
@@ -54,6 +55,12 @@ verification change is documented in [its own contract](private-skill-script-ver
   and three independently named private report entrypoints pass the real fixed
   complete-tree digest resolver without executing their scripts. Acceptance has
   zero tasks, runs or business-action rows; load receipts are normal Action metadata.
+- The exact migration head passed the unchanged native gate: 7,678 passed,
+  2 skipped and 1 deselected within the fixed process budget. The first merged
+  target stopped at the existing 2 GB ceiling; it was not installed. A separately
+  reproduced stale DWS prose assertion was corrected to the current document;
+  that does not establish the cause of the resource peak. Deployment must still
+  pass the unchanged gate at its exact target.
 - Private CI and deployment receipts are recorded privately; the public document
   intentionally contains no company repository URL or employee approval data.
 
