@@ -66,6 +66,7 @@ from app.email_model_registry import (
 from app.email_pipeline import apply_human_confirmation
 from app.email_store import (
     EmailAccountConflict,
+    EmailActionPlanConflict,
     EmailClassificationConflict,
     EmailFolderBindingConflict,
     EmailStore,
@@ -1578,6 +1579,41 @@ def register_email_routes(
             {"ok": True, "entry_url": entry_url},
             headers={"Cache-Control": "no-store"},
         )
+
+    @app.post(
+        "/api/console/email/classifications/{classification_id}/continue-after-move-readback"
+    )
+    async def continue_email_actions_after_move_readback(
+        classification_id: int, request: Request
+    ):
+        payload = await request.json()
+        if not isinstance(payload, dict) or not isinstance(
+            payload.get("move_action_id"), str
+        ):
+            return error_response(
+                "invalid_move_action_id",
+                "move_action_id is required",
+                400,
+            )
+        try:
+            result = require_store().continue_actions_after_reconciled_move(
+                classification_id,
+                move_action_id=payload["move_action_id"],
+                resumed_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            )
+        except EmailActionPlanConflict as exc:
+            return error_response(
+                "email_action_continuation_not_allowed",
+                str(exc),
+                409,
+            )
+        if result is None:
+            return error_response(
+                "email_classification_not_found",
+                "Email classification not found",
+                404,
+            )
+        return {"ok": True, "item": {"id": str(classification_id), **result}}
 
     def connect_signal_provider(account: dict[str, Any]) -> Any:
         if imap_provider_factory is not None:

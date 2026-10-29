@@ -10723,6 +10723,139 @@ class EmailStore:
         assert updated is not None
         return self._classification_row(updated, plan_rows)
 
+    def continue_actions_after_reconciled_move(
+        self,
+        classification_id: int,
+        *,
+        move_action_id: str,
+        resumed_at: str,
+    ) -> dict[str, Any] | None:
+        """Create a new plan for only authorized actions blocked by a verified DWS move."""
+
+        resumed_at = _required_utc_timestamp(resumed_at, field="resumed_at")
+        if not isinstance(move_action_id, str) or not move_action_id.strip():
+            raise ValueError("move_action_id must be nonblank")
+        with self._connect() as db:
+            db.execute("begin immediate")
+            classification = db.execute(
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
+                (classification_id,),
+            ).fetchone()
+            if classification is None:
+                return None
+            plan_row = db.execute(
+                f"select * from ({EMAIL_PLAN_SQL}) where action_plan_id=? and classification_id=?",
+                (classification["current_action_plan_id"], classification_id),
+            ).fetchone()
+            if plan_row is None:
+                raise EmailActionPlanConflict("current ActionPlan is unavailable")
+            plan = self._stored_action_plan(plan_row)
+            action_rows = db.execute(
+                f"select * from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=?",
+                (plan.action_plan_id,),
+            ).fetchall()
+            actions_by_type = {row["action_type"]: row for row in action_rows}
+            move = actions_by_type.get(EmailAction.MOVE.value)
+            readback_id = "" if move is None else str(move["provider_result_id"] or "")
+            if (
+                move is None
+                or str(move["action_id"]) != move_action_id
+                or move["status"] != "done"
+                or move["provider_operation"] != "reconciled_dws_readback"
+                or move["provider_target"] != classification["stable_message_identity"]
+                or re.fullmatch(r"dws-readback:[^:]+:\d+:[0-9a-f]{64}", readback_id) is None
+            ):
+                raise EmailActionPlanConflict(
+                    "current plan lacks the exact completed DWS move readback"
+                )
+            if any(row["status"] == "processing" for row in action_rows):
+                raise EmailActionPlanConflict("current ActionPlan has an active action")
+            if EmailAction.UNSUBSCRIBE in plan.actions or EmailAction.AUTO_REPLY in plan.actions:
+                raise EmailActionPlanConflict("ActionPlan contains an unrelated external action")
+
+            remaining: list[EmailAction] = []
+            for action in plan.actions:
+                if action is EmailAction.MOVE:
+                    continue
+                if action not in {EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ}:
+                    raise EmailActionPlanConflict(
+                        "only flag-important and mark-read may follow a reconciled move"
+                    )
+                row = actions_by_type.get(action.value)
+                if row is None:
+                    raise EmailActionPlanConflict("current ActionPlan action is missing")
+                if row["status"] == "done":
+                    continue
+                if row["status"] == "skipped" and (
+                    row["provider_operation"] != "readback_missing"
+                    or not str(row["provider_result_id"] or "").startswith(
+                        "message-unavailable:"
+                    )
+                ):
+                    raise EmailActionPlanConflict(
+                        "skipped dependent action was not blocked by a missing readback"
+                    )
+                if row["status"] not in {"pending", "skipped"}:
+                    raise EmailActionPlanConflict(
+                        "dependent action is not eligible for readback continuation"
+                    )
+                remaining.append(action)
+            if not remaining:
+                plan_rows = self._current_action_plan_rows(db, [classification])
+                return self._classification_row(classification, plan_rows)
+
+            action_parameters: dict[EmailAction, dict[str, object]] = {}
+            for action in remaining:
+                parameters = dict(plan.action_parameters.get(action, {}))
+                dependencies = tuple(
+                    dependency
+                    for dependency in parameters.get(ACTION_DEPENDENCY_PARAMETER, ())
+                    if EmailAction(dependency) in remaining
+                )
+                if dependencies:
+                    parameters[ACTION_DEPENDENCY_PARAMETER] = dependencies
+                else:
+                    parameters.pop(ACTION_DEPENDENCY_PARAMETER, None)
+                action_parameters[action] = parameters
+            authorizations = None
+            if plan.authorization_snapshot_format == "authorization_snapshot_v2":
+                authorizations = []
+                for authorization in plan.action_authorizations:
+                    if authorization.action_type not in remaining:
+                        continue
+                    authorizations.append(
+                        authorization.model_copy(
+                            update={"parameters": action_parameters[authorization.action_type]}
+                        )
+                    )
+            next_plan = build_versioned_email_action_plan(
+                action_plan_version=plan.action_plan_version + 1,
+                classification_id=plan.classification_id,
+                account_id=plan.account_id,
+                category=plan.category,
+                classification_source=plan.classification_source,
+                confidence=plan.confidence,
+                model_id=plan.model_id,
+                config_version=plan.config_version,
+                actions=tuple(remaining),
+                action_parameters=action_parameters,
+                created_at=datetime.fromisoformat(resumed_at),
+                action_authorizations=authorizations,
+            )
+            self._persist_action_plan(db, next_plan, now=resumed_at)
+            update_email_classification(
+                db,
+                classification_id,
+                {"current_action_plan_id": next_plan.action_plan_id, "updated_at": resumed_at},
+            )
+            updated = db.execute(
+                f"select * from ({EMAIL_CLASSIFICATION_SQL}) where id=?",
+                (classification_id,),
+            ).fetchone()
+            plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
+        assert updated is not None
+        return self._classification_row(updated, plan_rows)
+
     @staticmethod
     def _assert_no_email_reply_dispatch_in_flight(
         db: sqlite3.Connection,
