@@ -43,7 +43,7 @@ def _skill_prose() -> str:
         ),
         (
             "external_candidate_evaluation",
-            "Load both `ceo-personnel-communication` and `stardust-interview`.",
+            "Load `ceo-personnel-communication` and the organization-configured candidate evaluation Skill.",
         ),
         (
             "personnel_oa",
@@ -82,7 +82,7 @@ def test_personnel_skill_separates_subject_recipient_and_authorized_audience():
 def test_personnel_skill_reuses_specialist_skills_without_copying_workflows():
     text = _skill_prose()
 
-    assert "Load `stardust-interview` for candidate evaluation" in text
+    assert "Load the organization-configured candidate evaluation Skill for candidate evaluation" in text
     assert "Load `dingtalk-oa-approval` for approval work" in text
     assert "Load `dingtang-okr-review` only for an actual OKR review or scoring task" in text
     assert "Do not reproduce or replace those specialist workflows here" in text

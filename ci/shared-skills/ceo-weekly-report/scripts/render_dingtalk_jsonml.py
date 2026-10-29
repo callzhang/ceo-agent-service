@@ -499,7 +499,7 @@ def _metrics_table(report: dict) -> list:
 def render_meeting_document(before: list, report: dict) -> list:
     """Write the CEO parts of a 管理层周会 document and keep everything else.
 
-    Derek 2026-09-24: the report fills `CEO本周判断` and `公司级重点指标`
+    the principal 2026-09-24: the report fills `CEO本周判断` and `公司级重点指标`
     and appends its new issues to the `重点问题及待办跟踪` table. Existing
     tracking rows, the business-line sections the line owners fill in, the
     topic discussion and the report links are left as they are.

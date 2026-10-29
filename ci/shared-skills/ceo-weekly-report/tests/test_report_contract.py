@@ -211,7 +211,7 @@ class ReportContractTests(unittest.TestCase):
             ],
         }
         self.assertIn(
-            "CEO judgment lacks a verified Derek statement",
+            "CEO judgment lacks a verified principal statement",
             validate_claim(claim),
         )
 
@@ -228,7 +228,7 @@ class ReportContractTests(unittest.TestCase):
         )
 
     def test_a_metric_without_data_is_never_an_error(self):
-        # Derek 2026-10-26: no data does not block the report, not even for a
+        # the principal 2026-10-26: no data does not block the report, not even for a
         # decision-critical metric with no named owner or checkpoint.
         self.assertEqual(
             validate_metric(

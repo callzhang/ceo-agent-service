@@ -1,6 +1,6 @@
 ---
 name: ceo-daily-report
-description: Use when preparing and delivering Derek's end-of-day CEO report of important progress, risks, items needing his intervention, items to watch, and management advice for one Beijing calendar day.
+description: Use when preparing and delivering the principal's end-of-day CEO report of important progress, risks, items needing his intervention, items to watch, and management advice for one Beijing calendar day.
 metadata:
   managed_by: ceo-agent-service
   version: 1
@@ -9,7 +9,7 @@ metadata:
 # CEO Daily Report
 
 Write one evidence-backed report of what mattered today, then publish it as a
-DingTalk document and send Derek (磊哥) a short direct message pointing to it.
+DingTalk document and send the principal a short direct message pointing to it.
 
 ## Inputs
 
@@ -49,16 +49,16 @@ gap, not a reason to hold the report: write it and deliver it anyway, and list
 each such conversation in 覆盖说明 with the requested window and the exact
 error, incomplete marker or `not attempted`. This is the general rule for
 missing data in the base Developer prompt. Missing material never turns the
-run into a question for Derek.
+run into a question for the principal.
 
 ## Report
 
 Title: `CEO 每日总结 YYYY-MM-DD`, using the window script's `report_date`. Sections, in order:
 
-1. **今日要点** — three to five lines Derek should know if he reads nothing else.
+1. **今日要点** — three to five lines the principal should know if he reads nothing else.
 2. **重要事项进展** — what moved today, by project or topic.
 3. **风险** — fact, impact, suggested action for each.
-4. **需要你介入** — the decisions or actions only Derek can take, most urgent
+4. **需要你介入** — the decisions or actions only the principal can take, most urgent
    first; include every item in the facts' `waiting` and every active
    `attention` item whose category is `decision`, and say what each
    one needs from him.
@@ -84,7 +84,7 @@ with nothing in it says `无`; never pad it.
    existing document, or parent_id + workspace_id for creation. Use the returned
    provider receipt to record the write; no automatic content readback is required. Reuse
    the resolved folder URL in the direct message.
-2. Send Derek (磊哥) one direct message from his own account, not a bot:
+2. Send the principal one direct message from his own account, not a bot:
    propose it as a `dingtalk-chat` action with a direct-message operation,
    `target: {"user_id": <principal_user_id>}` and the body in
    `payload.content` — the 今日要点 lines, how many items need his

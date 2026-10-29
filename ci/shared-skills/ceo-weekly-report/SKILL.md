@@ -1,6 +1,6 @@
 ---
 name: ceo-weekly-report
-description: Use when preparing, reconciling, reviewing, validating, or publishing Derek's weekly CEO management report or its company and business-line sections from DingTalk evidence.
+description: Use when preparing, reconciling, reviewing, validating, or publishing the principal's weekly CEO management report or its company and business-line sections from DingTalk evidence.
 metadata:
   managed_by: ceo-agent-service
 ---
@@ -26,7 +26,7 @@ tried does not lower `information_completeness`, which here is the share of
 readable sources that were read; the renderer shows empty values as `无数据`
 and an unknown owner as `待确认负责人`, and rejects only input it cannot place.
 Asking the owning head for a missing number (step 5) is a normal step, not a gate.
-Do not ask Derek to supply materials already accessible to the Agent.
+Do not ask the principal to supply materials already accessible to the Agent.
 
 ## Inputs and dates
 

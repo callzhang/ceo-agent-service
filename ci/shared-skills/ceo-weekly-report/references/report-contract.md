@@ -14,9 +14,9 @@ early, use the actual run time as cutoff and display it.
    pagination completion.
 3. Read title, summary, action items, participants, and linked documents for
    every record.
-4. Read the complete transcript for records relevant to Derek's management
+4. Read the complete transcript for records relevant to the principal's management
    responsibilities or any of the four business lines.
-5. Search every accessible conversation for Derek's messages in the window and
+5. Search every accessible conversation for the principal's messages in the window and
    read sufficient surrounding context for every selected message.
 6. Read the four source reports and linked evidence without modifying them.
 7. Read current company OKR, CRM, finance, product telemetry, release, quality,
@@ -29,7 +29,7 @@ early, use the actual run time as cutoff and display it.
 | `verified_fact` | Direct authoritative evidence; publish with source and date. |
 | `participant_statement` | Attribute the status to its speaker. |
 | `forecast_or_judgment` | Label it and retain prior/current/actual/reason. |
-| `ceo_confirmed_judgment` | Derek explicitly stated it in a verified source. |
+| `ceo_confirmed_judgment` | the principal explicitly stated it in a verified source. |
 | `current_judgment` | At least two independent sources support it and counterevidence was reviewed. |
 | `hypothesis_pending_validation` | Publish only as a question or hypothesis. |
 
@@ -39,7 +39,7 @@ closure.
 
 ## Source Priority
 
-For targets and strategy: latest explicit Derek decision, current company OKR,
+For targets and strategy: latest explicit the principal decision, current company OKR,
 formally approved plan, business-line plan, department or individual OKR, then
 meeting proposal or draft. Show conflicts instead of silently overwriting them.
 

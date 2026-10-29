@@ -182,7 +182,7 @@ def _tc(value):
 
 
 class NoDataTests(unittest.TestCase):
-    """Derek 2026-10-26: no data is never a reason to block or fail a report."""
+    """the principal 2026-10-26: no data is never a reason to block or fail a report."""
 
     def report(self):
         return {

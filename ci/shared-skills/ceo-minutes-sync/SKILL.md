@@ -56,7 +56,7 @@ request-minutes-access discovered=N requested=N already_requested=N readable=N u
 - `unresolved` means the console had not resolved an owner to ask yet. Those are
   retried on the next run; nothing is wrong.
 - `session_expires_in_days` counts down the signed-in console session. When the
-  command prints `session-renewal-required`, ask Derek to run
+  command prints `session-renewal-required`, ask the principal to run
 
   ```bash
   ceo-agent renew-minutes-session
@@ -93,7 +93,7 @@ It is not a failure and needs no action.
 
 ## What needs a person
 
-- the console session needs renewing — only Derek can sign in, with
+- the console session needs renewing — only the principal can sign in, with
   `ceo-agent renew-minutes-session`, and the command prints
   `session-renewal-required` while there is still time
 - `sync-minutes-once` failed, which fails the whole run

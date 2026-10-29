@@ -2920,6 +2920,23 @@ See `orphan-meeting-run-reference-repair.md` for dated execution evidence.
 
 ### Repository Skill installation (2026-10-28)
 
+Company policy packages are authored in a separate private repository. The public
+release retains generic baseline templates and synthetic/contract tests; company
+OA rule cards, registries and policy regressions are not public release assets.
+The old explicit contract release list no longer publishes the company OA entry
+or review files. Existing installed company packages and managed revisions are
+preserved. Optional external identifiers may remain in feature configuration;
+they do not make private access a service-startup prerequisite.
+
+Use the existing Settings URL search and Install for new company packages.
+Installation preserves same-name content and is not an update/adoption command.
+An organization-specific reference package can compose with a generic baseline
+without replacing it. Policy authoring belongs in the private source; runtime
+edits still use immutable managed revisions. No automatic export to public Git
+or history rewrite is performed. Earlier public history is not erased by this
+current-tree separation.
+
+
 First deployment installs missing public managed Skill packages from the release into the installed Skill directory before startup. Existing installed content is preserved. Enterprise packages are optional and are installed separately; the initial baseline does not copy adjacent company Skill folders. Bootstrap verifies the complete generic baseline.
 
 Repository URL/name discovery resolves exact commits. Installing a selected Skill copies its complete tracked package into the installed directory and creates its immutable revision plus pending configuration through the current Configs owner in one transaction. File publication occurs inside that transaction and failed operations restore the staged package. Existing bindings and feedback capability are inherited; no external workflow is enabled. Source identity remains in the revision source field; imported optional names participate in existing edit capture without rewriting their ownership metadata. Runtime activation still requires normal startup and load evidence.

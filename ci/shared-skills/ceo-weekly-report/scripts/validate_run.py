@@ -1,6 +1,6 @@
 """Mechanical shape checks for this Skill's JSONML renderer.
 
-Derek 2026-10-26: no data is never a reason to block a report. These checks
+the principal 2026-10-26: no data is never a reason to block a report. These checks
 only reject input the renderer cannot place (wrong types, a row without the
 identity it is keyed on). A value the report could not supply may be missing
 or empty; the renderer shows it as `无数据`, and a missing owner as

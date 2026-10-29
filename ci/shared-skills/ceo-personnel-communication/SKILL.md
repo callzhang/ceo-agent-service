@@ -40,7 +40,7 @@ responsibility evidence is needed. Load `dingtalk-chat` before chat delivery.
 
 ## Specialist Composition
 
-- Load `stardust-interview` for candidate evaluation and follow its evidence,
+- Load the organization-configured candidate evaluation Skill for candidate evaluation and follow its evidence,
   role-fit, and interview workflow.
 - Load `dingtalk-oa-approval` for approval work and follow its complete-material,
   decision, action, notification, and verification workflow.
@@ -77,7 +77,7 @@ role fit, or another personnel status.
 - `internal_performance_or_compensation`: Load `ceo-personnel-communication` and treat the employee as the subject.
 - `hr_direct_chat_within_responsibility`: The recipient may receive the supported personnel information after HR responsibility and scope are established from live organization evidence.
 - `non_hr_direct_chat_about_third_party`: Do not disclose unsupported sensitive details; provide only authorized supported facts or ask for the missing authorization or purpose.
-- `external_candidate_evaluation`: Load both `ceo-personnel-communication` and `stardust-interview`.
+- `external_candidate_evaluation`: Load `ceo-personnel-communication` and the organization-configured candidate evaluation Skill.
 - `personnel_oa`: Load both `ceo-personnel-communication` and `dingtalk-oa-approval`.
 - `okr_review_or_scoring`: Load `dingtang-okr-review`; ordinary OKR discussion does not invoke that scoring workflow.
 - `named_person_in_business_work`: Keep ownership, delivery, revenue, and project-risk facts as ordinary business facts unless the requested judgment is about the person's employment or personnel status.

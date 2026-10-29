@@ -85,7 +85,7 @@ def validate_manifest(manifest: dict) -> list[str]:
             )
 
     # A business line that has not submitted its report is disclosed in the
-    # coverage gaps; it is never an error here (Derek 2026-10-26).
+    # coverage gaps; it is never an error here (the principal 2026-10-26).
     return errors
 
 
@@ -110,7 +110,7 @@ def validate_claim(claim: dict) -> list[str]:
     if claim_type == "ceo_confirmed_judgment" and not any(
         item.get("speaker_is_derek") for item in evidence
     ):
-        errors.append("CEO judgment lacks a verified Derek statement")
+        errors.append("CEO judgment lacks a verified principal statement")
     if claim_type != "hypothesis_pending_validation" and not evidence:
         errors.append("published claim has no evidence")
     return errors
@@ -119,7 +119,7 @@ def validate_claim(claim: dict) -> list[str]:
 def validate_metric(metric: dict) -> list[str]:
     """A value that is published needs its source; no data needs nothing.
 
-    Derek 2026-10-26: a metric without data is shown as `无数据` and never
+    the principal 2026-10-26: a metric without data is shown as `无数据` and never
     blocks the report. Naming the responsible person and the next checkpoint
     for a decision-critical gap is asked of the Agent, not enforced here.
     """

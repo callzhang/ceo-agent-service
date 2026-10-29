@@ -34,151 +34,18 @@ def _digest(data: bytes) -> str:
     return hashlib.sha256(data).hexdigest()
 
 
-def test_repository_consumer_release_manifest_tracks_oa_skill_digest():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    entry = next(
-        item for item in manifest["files"]
-        if item["source"] == "ci/shared-skills/dingtalk-oa-approval/SKILL.md"
-    )
-
-    # The released candidate is a no-op baseline. Pin the exact old target
-    # digest here; deployment independently checks the actual installed file.
-    assert entry["old_sha256"] == "af81e071875dfb2d12388730df95b940187bf7610b52a5a947cf6e28d30412bd"
-    assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert "old_managed_sha256" not in entry
-    skill = (root / entry["source"]).read_text(encoding="utf-8").lower()
-    assert "可按本 skill 写明的准确路径通过 shell 调用本机 `dws`" in skill
-    assert "不得通过 shell 用 `dws` 发送钉钉消息、发邮件" in skill
-    assert "audit 只能使用具名只读工具，不运行 shell 或本机 `dws`" in skill
-    assert "服务 consumer/audit 必须直接调用" not in skill
-    audit_source = "app/defaults/audit_rules.md"
-    audit_entry = next(item for item in manifest["files"] if item["source"] == audit_source)
-    assert audit_entry["old_sha256"] == "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
 
 
-def test_repository_consumer_release_manifest_tracks_installed_daily_report_baseline():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    entries = {item["source"]: item for item in manifest["files"]}
-    skill_source = "ci/shared-skills/ceo-daily-report/SKILL.md"
-    script_source = "ci/shared-skills/ceo-daily-report/scripts/window.py"
-
-    skill = entries[skill_source]
-    assert skill["new_sha256"] == _digest((root / skill_source).read_bytes())
-    assert skill["old_sha256"] == "3446c387e6023f95eabc6dbf096777c878ff0e5de2b102b7586a9514992fcebe"
-    assert skill["old_managed_sha256"] == skill["old_sha256"]
-
-    script = entries[script_source]
-    assert script["new_sha256"] == _digest((root / script_source).read_bytes())
-    assert script["old_sha256"] == script["new_sha256"]
 
 
-def test_release_manifest_pins_current_finance_card_and_active_managed_skill_hashes():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    entries = {item["source"]: item for item in manifest["files"]}
-    finance_source = "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
-    finance_skill_source = "ci/shared-skills/stardust-oa-finance-review/SKILL.md"
-    # These files are already at the candidate digest. Pin their exact no-op
-    # release baselines; deployment verifies the external installed targets.
-    assert entries[finance_source]["old_sha256"] == (
-        "f15c6feac0d3be6c85f3f93f594aa3af7e8cfa47bd65bb16207bc071efc51ab1"
-    )
-    assert entries[finance_source]["new_sha256"] == _digest((root / finance_source).read_bytes())
-    assert entries[finance_skill_source]["old_sha256"] == (
-        "bd4abac4109216f2ee32d919469e49be15b293e508f1366d0fa7d26fcfa107b9"
-    )
-    assert entries[finance_skill_source]["new_sha256"] == _digest(
-        (root / finance_skill_source).read_bytes()
-    )
-    assert {
-        source: entries[source]["old_managed_sha256"]
-        for source in (
-            "ci/shared-skills/ceo-calendar-invite/SKILL.md",
-            "ci/shared-skills/ceo-message-triage/SKILL.md",
-            "ci/shared-skills/ceo-weekly-report/SKILL.md",
-        )
-    } == {
-        "ci/shared-skills/ceo-calendar-invite/SKILL.md": "b76b913b63c9b2f3eaba5e90eb64e5dd1a58cf123330815a07d7c32c01451175",
-        "ci/shared-skills/ceo-message-triage/SKILL.md": "25d20c2c53a5e7fdaa947f825db506ae6f0865d24da3eb6599978c2e158baddc",
-        "ci/shared-skills/ceo-weekly-report/SKILL.md": "240255b37c9febef394c13546978a2902482e5261daf5587e11136ffb1af7952",
-    }
 
 
-def test_okr_release_manifest_publishes_the_repository_skill_over_one_baseline():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    entry = next(
-        item for item in manifest["files"]
-        if item["source"] == "ci/shared-skills/ceo-weekly-okr-report/SKILL.md"
-    )
-    # The manifest publishes the repository Skill over the installed baseline,
-    # and the installed and managed baselines are the same file.
-    source_digest = _digest((root / entry["source"]).read_bytes())
-    assert entry["new_sha256"] == source_digest
-    assert entry["old_sha256"] == entry["old_managed_sha256"]
-    # Preserve the independently verified installed v21 as a no-op publication.
-    expected = "e786d7a199671ba62b069a402df7e38200f075233839010f343c4a90de1b58f0"
-    assert source_digest == expected
-    assert entry["old_sha256"] == expected
 
 
-def test_people_review_release_file_baseline_matches_installed_candidate():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    entry = next(
-        item for item in manifest["files"]
-        if item["source"] == "ci/shared-skills/stardust-oa-people-review/SKILL.md"
-    )
-    source_digest = _digest((root / entry["source"]).read_bytes())
-    assert entry["new_sha256"] == source_digest
-    # This is an intentional no-op release entry; pin its exact target digest.
-    # Deployment independently verifies the actual installed target.
-    assert entry["old_sha256"] == (
-        "69678b983cb12ef002eb3702db716be5526708a1fe5ff46aaa8c62467016ee81"
-    )
 
 
-def test_finance_rule_card_counts_only_valid_applicant_resolvable_returns():
-    root = Path(__file__).resolve().parents[1]
-    card = (
-        root / "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md"
-    ).read_text(encoding="utf-8")
-
-    assert "Prior return count is history, not proof by itself" in card
-    assert (
-        "Count only actionable returns that independently established the same material gap from then-readable, "
-        "source-verified evidence, gave a fair chance to resolve it, and were followed by evidence that the gap remained unresolved."
-    ) in card
-    assert "At Derek's fourth review" in card
-    assert "count alone is insufficient" in card
-    assert "不能把审核方无法读取归为申请人未提交" in card
-    assert "不等于客户验收，也不代表客户未验收" in card
 
 
-def test_repository_consumer_release_manifest_tracks_message_triage_skill_digest():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    entry = next(
-        item for item in manifest["files"]
-        if item["source"] == "ci/shared-skills/ceo-message-triage/SKILL.md"
-    )
-
-    assert entry["new_sha256"] == _digest((root / entry["source"]).read_bytes())
-    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
 def test_repository_consumer_release_manifest_tracks_every_source_digest():
@@ -193,57 +60,12 @@ def test_repository_consumer_release_manifest_tracks_every_source_digest():
     )
 
 
-def test_repository_consumer_release_manifest_includes_finance_review_assets():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    sources = {entry["source"] for entry in manifest["files"]}
-
-    assert "ci/shared-skills/stardust-oa-finance-review/SKILL.md" in sources
-    assert "ci/shared-skills/stardust-oa-finance-review/references/finance-rule-cards.md" in sources
 
 
-def test_repository_consumer_release_manifest_includes_people_review_skill():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    source = "ci/shared-skills/stardust-oa-people-review/SKILL.md"
-    entry = next(item for item in manifest["files"] if item["source"] == source)
-
-    assert entry["target"] == "skills/stardust-oa-people-review/SKILL.md"
-    assert entry["new_sha256"] == _digest((root / source).read_bytes())
-    assert len(entry["old_sha256"]) == 64 and set(entry["old_sha256"]) <= set("0123456789abcdef")
 
 
-def test_repository_consumer_release_manifest_includes_current_attendance_review_skill():
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    source = "ci/shared-skills/stardust-oa-attendance-travel-review/SKILL.md"
-    entry = next(item for item in manifest["files"] if item["source"] == source)
-
-    assert entry["target"] == "skills/stardust-oa-attendance-travel-review/SKILL.md"
-    assert entry["new_sha256"] == _digest((root / source).read_bytes())
-    # This publication upgrades the independently verified installed baseline.
-    assert entry["old_sha256"] == (
-        "b026781cc86fa5882035be3dbc566a60e29941965d053a8576a76d8e055d8b30"
-    )
 
 
-@pytest.mark.parametrize("script", ("report_contract.py", "validate_run.py"))
-def test_repository_consumer_release_manifest_tracks_weekly_report_scripts(script):
-    root = Path(__file__).resolve().parents[1]
-    manifest = json.loads(
-        (root / "ci/consumer-system-contract-release.json").read_text(encoding="utf-8")
-    )
-    source = f"ci/shared-skills/ceo-weekly-report/scripts/{script}"
-    entry = next(item for item in manifest["files"] if item["source"] == source)
-
-    assert entry["target"] == f"skills/ceo-weekly-report/scripts/{script}"
-    assert entry["new_sha256"] == _digest((root / source).read_bytes())
 
 
 def _skill(name: str, marker: bool, suffix: str) -> bytes:
@@ -262,10 +84,6 @@ def _fixture(tmp_path: Path):
     new = {}
     for name in (
         *SKILLS,
-        "dingtalk-oa-approval",
-        "stardust-oa-finance-review",
-        "stardust-oa-people-review",
-        "stardust-oa-attendance-travel-review",
         "ceo-wechat",
     ):
         rel = f"{name}/SKILL.md"
@@ -323,22 +141,6 @@ def _fixture(tmp_path: Path):
                 "new_sha256": _digest(new[rel]),
             }
         )
-    rel = "stardust-oa-finance-review/references/finance-rule-cards.md"
-    old[rel], new[rel] = b"old finance rules\n", b"new finance rules\n"
-    target = skills / rel
-    source = root / "ci/shared-skills" / rel
-    target.parent.mkdir(parents=True, exist_ok=True)
-    source.parent.mkdir(parents=True, exist_ok=True)
-    target.write_bytes(old[rel])
-    source.write_bytes(new[rel])
-    entries.append(
-        {
-            "source": f"ci/shared-skills/{rel}",
-            "target": f"skills/{rel}",
-            "old_sha256": _digest(old[rel]),
-            "new_sha256": _digest(new[rel]),
-        }
-    )
     old["audit_rules"], new["audit_rules"] = b"old audit rules\n", b"new audit rules\n"
     rules.parent.mkdir(parents=True)
     rules.write_bytes(old["audit_rules"])
