@@ -37,12 +37,18 @@
 
 本轮没有证明数据库“全局最优”；必要的显式迁移／inverse源合同继续保留，不属于运行时兼容读取。没有把逻辑内容去重或删除测试副本宣称为生产SQLite文件缩小。
 
-## JunHe 后续发布与清理收口（日期修复已批准，待实施验收）
+## JunHe 后续系统标记与显式恢复（实施验证中）
 
-2026-10-29 13:17 PDT 开始重新核对。后续--yes提交9b95fe108已标准部署，gate为7,774 passed／2 skipped／1 deselected、402文件、541.45秒。但实际恢复仍未完成：当前计划caae97d…的flag_important动作127037／回执22177 failed（dws_provider_error:ValueError），mark_read127038 pending。原MOVE111699／回执21597仍done，没有重放MOVE。
+模型精简本身的发布证据保持不变。后续邮件恢复独立保留：日期修复 ec70a75e0 已标准部署，gate 7,783 passed／2 skipped／1 deselected，402 文件、591.81 秒。独立读回 PID5099、health200、Store29.1／Email54、463 个准确声明、FK[]；前端 stamp395fce9b6。来源 RFC 日期与 DWS ISO 时刻复用原 MOVE 解析，保留原值与 10 秒条件。
 
-已证实当前失败层：真实message_received_at是RFC邮件日期 `Thu, 07 May 2026 08:56:27 +0000`，身份匹配器只用datetime.fromisoformat，返回不匹配，第一次_read就在写入前抛ValueError。根代理用真实DWS元数据和原MOVE摘要作只读对照：原值_matches_identity=False；仅将同一时刻规范化为2026-05-07T08:56:27+00:00后=True；DWS时刻08:56:33Z，差6秒。未改数据库，也未执行provider写入。系统重要标记11与同名用户标签107的区别已登记，但没有用它替代已证实日期根因，也未批准改标签映射。
+日期修复后，仅调用一次原恢复入口，当前计划 v9（7041fd99…）。FLAG_IMPORTANT 127062／失败回执22181 为写后读回不匹配；MARK_READ127063仍 pending。原 MOVE111699 的回执8468／8641／21597及摘要保持不变，没有再次移动。不能把调用成功当外部效果已完成。
 
-邮件详情API仍明确返回502／email_original_unavailable；不能记作完整详情页面通过。生产schema仍准确463对象、FK[]、health200。原有11个临时目标全部仍缺失。
+真实协议取证区分了三个不同信号：自定义“重要”107、DWS系统重要11、原 FLAG_IMPORTANT 要求的 IMAP Flagged。该账号 PERMANENTFLAGS 声明 Flagged、不声明 $Important；只读交叉核对一封已有 Flagged 的邮件，其 DWS 单邮件会话标签只有1。原生 KQL tag:107 在 JunHe 上精确命中，tag:1 也精确命中；tag:important 全局零命中，不能作为系统效果证明。JunHe 同时已读。保留107及其他已有标签；代码不擅自添加11。
 
-发布负责人将日期身份／效果核对修复列为AGENTS.md第10—12行要求的单独范围。本聊天已向Derek请求明确确认：只修日期合同并补真实RFC回归，不改变原账号／发件人／主题／会话／10秒条件，不改标签、Audit、授权、重试政策；Derek随后明确答复“批准日期修复，继续完成收尾（推荐）”，批准已原话同步给负责人。负责人继续独占运行时代码，本任务仅核对、记录及后续清理。活动daily备份继续保留，待修复、最终回执、源状态读回及负责人释放后再校验清除；当前不宣称JunHe已恢复或整批收尾结束。
+Derek 单独批准并再次要求完成系统标记映射与显式源核验恢复。修复同一提交保持当前真实 owner：系统1写入和逐封读取一致，原始失败保留；使用现有 retry request 释放同一 Action/计划，Worker 再读，满足即 noop。额外邮箱标记要求不能忽略；factory 配置、MOVE 来源和所有失败/执行身份在事务内重验。没有 DDL、Audit、授权或自动重试政策变更。
+
+修改前真实协议替身回归失败（1 failed，错误标记未完成）；同一 Action 显式恢复入口缺失回归失败。首轮64通过；补充共享邮箱合同、配置竞争核对和非自动重试边界后，六个直接相关测试文件207通过（98.86秒），Ruff与差异检查通过，独立SPEC／QUALITY复审通过。新增恢复测试已加入gate；只有最终精确提交、完整门禁及生产原动作回执通过后才能关闭。一次新代码只读生产 dry-run 已返回 source_verified／eligible=true／released=false／source_satisfied=true；它没有释放任务或写邮箱，不能代替最终执行回执。
+
+发布与另一任务串行：本任务完成 JunHe 修复后交精确提交给发布负责人，负责人独占标准 gate/quiet/deploy，并将独立 Attention 变更保持独立提交；本任务不并行部署。发布后只释放127062，读回其追加回执及后继127063，不重发其他业务。备份仍保留到两项验收与发布依赖解除，再锁目录核验准确代次并清理。
+
+邮件原文详情 API 此前仍为502／email_original_unavailable；不能以动作回执或摘要页面冒充原文读取恢复。该限制独立记录，不新建正文副本。

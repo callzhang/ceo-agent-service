@@ -10875,48 +10875,57 @@ class EmailStore:
     def verified_dws_move_context_for_action(
         self, action: StoredEmailAction
     ) -> dict[str, Any] | None:
-        """Return an exact prior DWS MOVE receipt for this current dependent action."""
+        """Read the unique prior MOVE binding for a current processing/failed action."""
+        with self._connect() as db:
+            return self._verified_dws_move_context(db, action)
 
+    @staticmethod
+    def _verified_dws_move_context(
+        db: sqlite3.Connection, action: StoredEmailAction
+    ) -> dict[str, Any] | None:
         if action.action_type not in {EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ}:
             return None
-        with self._connect() as db:
-            current = db.execute(
-                f"""
-                select a.action_id, a.action_plan_id, a.action_type, a.status,
-                       c.account_id, c.stable_message_identity,
-                       m.sender, m.subject, m.received_at
-                from ({DIRECT_EMAIL_ACTION_SQL}) a
-                join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
-                join ({EMAIL_MESSAGE_SQL}) m
-                  on m.account_id=c.account_id
-                 and m.stable_message_identity=c.stable_message_identity
-                where a.action_id=? and a.classification_id=?
-                  and a.action_plan_id=c.current_action_plan_id
-                  and a.status='processing'
-                """,
-                (action.action_id, action.classification_id),
-            ).fetchone()
-            if (
-                current is None
-                or current["action_type"] != action.action_type.value
-                or current["account_id"] != action.account_id
-                or current["stable_message_identity"]
-                != action.locator.stable_message_identity
-            ):
-                return None
-            moves = db.execute(
-                f"""
-                select action_id, provider_result_id
-                from ({DIRECT_EMAIL_ACTION_SQL})
-                where classification_id=? and action_type='move'
-                  and status='done'
-                  and provider_operation='reconciled_dws_readback'
-                  and provider_target=?
-                order by attempt_count desc
-                """,
-                (action.classification_id, action.locator.stable_message_identity),
-            ).fetchall()
+        current = db.execute(
+            f"""
+            select a.action_id, a.action_plan_id, a.action_type, a.status,
+                   c.account_id, c.stable_message_identity,
+                   m.sender, m.subject, m.received_at
+            from ({DIRECT_EMAIL_ACTION_SQL}) a
+            join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
+            join ({EMAIL_MESSAGE_SQL}) m
+              on m.account_id=c.account_id
+             and m.stable_message_identity=c.stable_message_identity
+            where a.action_id=? and a.classification_id=?
+              and a.action_plan_id=c.current_action_plan_id
+              and a.status in ('processing','failed')
+            """,
+            (action.action_id, action.classification_id),
+        ).fetchone()
+        if (
+            current is None
+            or current["action_type"] != action.action_type.value
+            or current["account_id"] != action.account_id
+            or current["stable_message_identity"]
+            != action.locator.stable_message_identity
+        ):
+            return None
+        moves = db.execute(
+            f"""
+            select action_id, provider_result_id, parameters_json
+            from ({DIRECT_EMAIL_ACTION_SQL})
+            where classification_id=? and action_type='move'
+              and status='done'
+              and provider_operation='reconciled_dws_readback'
+              and provider_target=?
+            order by attempt_count desc
+            """,
+            (action.classification_id, action.locator.stable_message_identity),
+        ).fetchall()
         if len(moves) != 1:
+            return None
+        parameters = _json_load(moves[0]["parameters_json"], field="parameters_json", expected_type=dict)
+        target_folder = parameters.get("target_folder")
+        if not isinstance(target_folder, str) or not target_folder.strip():
             return None
         receipt = str(moves[0]["provider_result_id"] or "")
         match = re.fullmatch(r"dws-readback:([^:]+):(\d+):([0-9a-f]{64})", receipt)
@@ -10924,6 +10933,7 @@ class EmailStore:
             return None
         return {
             "move_action_id": str(moves[0]["action_id"]),
+            "target_folder": target_folder,
             "message_id": match.group(1),
             "folder_id": match.group(2),
             "receipt_digest": match.group(3),
@@ -11741,8 +11751,44 @@ class EmailStore:
             or not source_revision.strip() or not failed.parameters_json
         ):
             raise ValueError("exact move/trash source verification is required")
+        return self._release_source_verified_retry(
+            failed, source_locator=source_locator, source_revision=source_revision,
+            requested_at=requested_at, apply=apply,
+            account_configuration_snapshot=account_configuration_snapshot,
+        )
+
+    def release_source_verified_dws_action(
+        self, failed: FailedDirectAction, *, dws_context: dict[str, Any],
+        source_revision: str, requested_at: str, apply: bool,
+        account_configuration_snapshot: str,
+    ) -> bool:
+        """Explicitly release one DWS readback mismatch; do not infer no effect."""
+        if (
+            failed.action.action_type not in (EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ)
+            or failed.provider_operation != "dws_mail_action"
+            or re.fullmatch(r"dws_action_readback_mismatch:[0-9a-f]{64}", failed.error) is None
+            or re.fullmatch(r"[0-9a-f]{64}", source_revision) is None
+            or not dws_context or not failed.parameters_json
+        ):
+            return False
+        return self._release_source_verified_retry(
+            failed, source_locator=failed.action.locator, source_revision=source_revision,
+            requested_at=requested_at, apply=apply,
+            account_configuration_snapshot=account_configuration_snapshot,
+            dws_context=dws_context,
+        )
+
+    def _release_source_verified_retry(
+        self, failed: FailedDirectAction, *, source_locator: StoredEmailLocator,
+        source_revision: str, requested_at: str, apply: bool,
+        account_configuration_snapshot: str, dws_context: dict[str, Any] | None = None,
+    ) -> bool:
+        requested_at = _required_utc_timestamp(requested_at, field="requested_at")
+        expected = failed.action
         with self._connect() as db:
             db.execute("begin immediate" if apply else "begin")
+            if dws_context is not None and self._verified_dws_move_context(db, expected) != dws_context:
+                return False
             account = db.execute(f"select * from ({config_projection('email_accounts')}) where account_id=?", (expected.account_id,)).fetchone()
             if account is None:
                 return False
@@ -11775,6 +11821,7 @@ class EmailStore:
                 ).fetchone() is not None
                 or row["error"] != failed.error
                 or row["provider_operation"] != failed.provider_operation
+                or (dws_context is not None and bool(row["provider_result_id"]))
                 or db.execute(
                     f"select 1 from ({DIRECT_EMAIL_ACTION_SQL}) where action_plan_id=? and status='processing'",
                     (expected.action_plan_id,),
@@ -11788,6 +11835,7 @@ class EmailStore:
                     "locator": asdict(source_locator), "revision": source_revision,
                     "plan": expected.action_plan_id, "config": expected.config_version,
                     "parameters": failed.parameters_json,
+                    **({"dws_move": dws_context} if dws_context is not None else {}),
                 }, sort_keys=True).encode("utf-8")).hexdigest()
                 insert_action(
                     db,

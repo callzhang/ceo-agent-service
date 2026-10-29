@@ -2,15 +2,21 @@
 
 from __future__ import annotations
 
+from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from app.email_classifier_contracts import EmailAction
 from app.email_action_reconcile import _received_datetime
-from app.email_provider_actions import ProviderActionResult
-from app.email_store import StoredEmailAction
+from app.email_provider_actions import DeterministicEmailActionExecutor, ProviderActionResult
+from app.email_store import EmailStore, email_imap_configuration_snapshot, StoredEmailAction
+
+
+# DWS system follow-up flag maps to IMAP \Flagged. System important (11) and
+# same-named custom labels are different signals, not substitutes.
+DWS_FLAGGED_TAG_ID = "1"
 
 
 class DwsVerifiedMoveActionExecutor:
@@ -22,21 +28,22 @@ class DwsVerifiedMoveActionExecutor:
         *,
         mailbox: str,
         context: dict[str, Any],
+        important_signals_reader: Callable[[], frozenset[str]],
     ):
         self.dws = dws
         self.mailbox = mailbox.strip()
         self.context = context
+        self.important_signals_reader = important_signals_reader
 
     def execute(self, action: StoredEmailAction) -> ProviderActionResult:
         if action.action_type not in {EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ}:
             return self._failed(action, "unsupported_dws_action")
         try:
-            self._validate_context(action)
-            before = self._read(action)
+            before = self.read_verified_state(action)
             if before["satisfied"]:
                 return self._done(action, "dws_readback_noop", before)
             if action.action_type is EmailAction.FLAG_IMPORTANT:
-                tag_id = self._important_tag_id()
+                tag_id = DWS_FLAGGED_TAG_ID
                 command = [
                     self.dws.dws_bin, "mail", "message", "batch-update",
                     "--email", self.mailbox,
@@ -52,7 +59,7 @@ class DwsVerifiedMoveActionExecutor:
                     "--action", "markRead", "--yes", "--format", "json",
                 ]
             self._require_success(self.dws.run_json(command))
-            after = self._read(action)
+            after = self.read_verified_state(action)
             if not after["satisfied"]:
                 return self._failed(action, "dws_action_readback_mismatch", after)
             return self._done(action, "dws_verified_readback", after)
@@ -76,14 +83,18 @@ class DwsVerifiedMoveActionExecutor:
         if not str(c.get("subject") or "").strip() or not str(c.get("received_at") or "").strip():
             raise ValueError("source message identity is incomplete")
 
-    def _read(self, action: StoredEmailAction) -> dict[str, Any]:
+    def read_verified_state(self, action: StoredEmailAction) -> dict[str, Any]:
+        """Read the exact receipt-bound message without issuing a provider write."""
+        self._validate_context(action)
+        if action.action_type is EmailAction.FLAG_IMPORTANT and self.important_signals_reader() != frozenset({"\\Flagged"}):
+            raise ValueError("DWS cannot prove the mailbox required important signals")
         query = self._identity_query()
         result = self._messages(query)
         exact = [m for m in result if self._matches_identity(m)]
         if len(exact) != 1:
             raise ValueError("DWS message identity is not unique")
         if action.action_type is EmailAction.FLAG_IMPORTANT:
-            state_query = query + " AND tag:important"
+            state_query = query + f" AND tag:{DWS_FLAGGED_TAG_ID}"
         else:
             state_query = query + " AND isRead:true"
         state_messages = self._messages(state_query)
@@ -94,6 +105,7 @@ class DwsVerifiedMoveActionExecutor:
             "conversation_id": self.context.get("conversation_id", ""),
             "action": action.action_type.value,
             "satisfied": satisfied,
+            "system_tag_id": DWS_FLAGGED_TAG_ID if action.action_type is EmailAction.FLAG_IMPORTANT else None,
             "received_at": exact[0].get("receivedDateTime"),
         }
         digest = sha256(
@@ -165,22 +177,6 @@ class DwsVerifiedMoveActionExecutor:
         ).hexdigest()
         return proof == self.context["receipt_digest"]
 
-    def _important_tag_id(self) -> str:
-        result = self.dws.run_json([
-            self.dws.dws_bin, "mail", "tag", "list",
-            "--email", self.mailbox, "--format", "json",
-        ])
-        tags = result.get("tags", result.get("items", [])) if isinstance(result, dict) else result
-        if not isinstance(tags, list):
-            raise ValueError("DWS tag list is incomplete")
-        matches = [
-            str(tag.get("id")) for tag in tags
-            if isinstance(tag, dict) and tag.get("name") == "重要" and str(tag.get("id") or "").isdigit()
-        ]
-        if len(matches) != 1:
-            raise ValueError("DWS important tag is missing or ambiguous")
-        return matches[0]
-
     @staticmethod
     def _require_success(result: Any) -> None:
         if not isinstance(result, dict) or result.get("success") is False or result.get("ok") is False:
@@ -209,3 +205,44 @@ class DwsVerifiedMoveActionExecutor:
             error=f"{reason}{suffix}",
             retryable=False,
         )
+
+
+def release_dws_source_verified_retry(
+    store: EmailStore, *, account_id: str, action_id: str, dws: Any, apply: bool,
+    imap_provider_factory: Callable[[], Any],
+) -> dict[str, Any]:
+    """Operator-only source verification; the normal worker owns any execution."""
+    rows = store.list_failed_direct_actions(
+        account_id=account_id, action_id=action_id,
+        action_types=(EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ), limit=1,
+    )
+    if not rows:
+        return {"outcome": "not_current_failed", "eligible": False, "released": False}
+    failed = rows[0]
+    account = store.get_account(account_id)
+    if account is None or not account.get("enabled"):
+        return {"outcome": "account_unavailable", "eligible": False, "released": False}
+    configuration_snapshot = getattr(imap_provider_factory, "account_configuration_snapshot", None)
+    if configuration_snapshot is None:
+        return {"outcome": "configuration_evidence_missing", "eligible": False, "released": False}
+    if configuration_snapshot != email_imap_configuration_snapshot(account):
+        return {"outcome": "configuration_changed", "eligible": False, "released": False}
+    context = store.verified_dws_move_context_for_action(failed.action)
+    if context is None:
+        return {"outcome": "move_binding_unavailable", "eligible": False, "released": False}
+    state = DwsVerifiedMoveActionExecutor(
+        dws, mailbox=str(account["email_address"]), context=context,
+        important_signals_reader=lambda: DeterministicEmailActionExecutor(
+            imap_provider_factory()
+        ).required_important_signals(context["target_folder"]),
+    ).read_verified_state(failed.action)
+    eligible = store.release_source_verified_dws_action(
+        failed, dws_context=context, source_revision=state["digest"],
+        requested_at=datetime.now(timezone.utc).isoformat(timespec="seconds"),
+        apply=apply, account_configuration_snapshot=configuration_snapshot,
+    )
+    return {
+        "outcome": "source_verified", "eligible": eligible,
+        "released": eligible and apply, "source_satisfied": state["satisfied"],
+        "source_readback_digest": state["digest"],
+    }

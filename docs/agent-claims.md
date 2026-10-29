@@ -51,7 +51,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-junhe-closeout-readback-20261029 | app/email_dws_actions.py approved date parsing only; tests/test_email_dws_actions.py; matching architecture/runtime date paragraphs; own closeout/evidence docs; integration of peer22a426428 | Derek explicitly approved RFC/ISO date contract fix, preserving raw values/identity/10s/tag/Audit/authorization/retry. Publisher explicitly handed date implementation and sole integration/deploy to root; no concurrent deploy or Task7 replay. Root verifies receipts and cleans released artifacts. | Active handoff 2026-10-29. |
+| codex-junhe-closeout-readback-20261029 | app/email_dws_actions.py; shared mailbox flag contract in app/email_provider_actions.py and DWS worker plumbing in app/email_worker.py; narrow explicit DWS recovery in app/email_store.py and app/cli.py; corresponding tests and tests/gate_files.txt; matching architecture/runtime paragraphs; own closeout/evidence docs | Derek approved exact system-flag mapping, readback and explicit source-verified recovery of the current JunHe failure; preserve original MOVE/failed receipts/custom labels, authorization/Audit and automatic retry policy. Sole JunHe deploy/recovery coordinated with publisher. No DDL or unrelated replay. | Active 2026-10-29; date fix ec70 deployed, new mapping/recovery approval confirmed. |
 
 
 

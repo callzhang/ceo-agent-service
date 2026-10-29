@@ -106,7 +106,18 @@ def _provider_operation(action_type: EmailAction) -> str:
         ) from exc
 
 
+def _required_important_signals(permanent_flags) -> frozenset[str]:
+    required = {"\\Flagged"}
+    if permanent_flags.advertised and "$important" in {
+        flag.casefold() for flag in permanent_flags.flags
+    }:
+        required.add("$Important")
+    return frozenset(required)
+
+
 class DeterministicEmailProvider(Protocol):
+    def required_important_signals(self, folder: str) -> frozenset[str]: ...
+
     def list_folders(self) -> tuple[ProviderFolder, ...]: ...
 
     def create_folder_exact(self, name: str) -> None: ...
@@ -171,6 +182,16 @@ class DeterministicEmailActionExecutor:
             self._discard_session(provider)
         else:
             _close_provider(provider)
+
+    def required_important_signals(self, folder: str) -> frozenset[str]:
+        """Read the mailbox contract, releasing the checked-out session."""
+        try:
+            required = self.provider.required_important_signals(folder)
+        except Exception:
+            self._release(self.provider, keep=False)
+            raise
+        self._release(self.provider, keep=True)
+        return required
 
     def execute(self, action: StoredEmailAction) -> ProviderActionResult:
         operation = _provider_operation(action.action_type)
@@ -849,6 +870,10 @@ class ImapDeterministicProvider:
         )
         _require_ok(status, "IMAP UID STORE failed", data)
 
+    def required_important_signals(self, folder: str) -> frozenset[str]:
+        self._select(folder, readonly=True)
+        return _required_important_signals(self._permanent_flags())
+
     def _permanent_flags(self) -> _PermanentFlagsState:
         response = self.session.response("PERMANENTFLAGS")
         if response is None:
@@ -933,12 +958,9 @@ class ImapDeterministicProvider:
         )
         required_important_signal_names: set[str] = set()
         if action_type is EmailAction.FLAG_IMPORTANT:
-            permanent_flags = self._permanent_flags()
-            required_important_signal_names.add("\\Flagged")
-            if permanent_flags.advertised and "$important" in {
-                flag.casefold() for flag in permanent_flags.flags
-            }:
-                required_important_signal_names.add("$Important")
+            required_important_signal_names.update(
+                _required_important_signals(self._permanent_flags())
+            )
         mailbox_flags = self._cached_mailbox_flags(locator.folder)
         observed_locator = StoredEmailLocator(
             account_id=locator.account_id,

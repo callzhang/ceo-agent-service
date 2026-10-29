@@ -220,6 +220,7 @@ def test_claimed_dependent_action_exposes_only_its_verified_dws_move_binding(tmp
 
     assert binding == {
         "move_action_id": str(move.action_id),
+        "target_folder": "法务",
         "message_id": "DzzzzzzNJ0u",
         "folder_id": "167",
         "receipt_digest": "a" * 64,

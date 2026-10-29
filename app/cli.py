@@ -352,6 +352,7 @@ def build_parser() -> argparse.ArgumentParser:
         "reconcile-email-actions",
         "reconcile-skipped-email-move-from-dws",
         "retry-source-verified-email-action",
+        "retry-dws-source-verified-email-action",
         "reconcile-failed-agent-message",
         "skip-stale-wechat-delivery",
         "backfill-minutes-owners",
@@ -603,7 +604,7 @@ def build_parser() -> argparse.ArgumentParser:
         if command == "reconcile-skipped-email-move-from-dws":
             subparser.add_argument("--action-id", type=_non_blank, required=True)
             subparser.add_argument("--apply", action="store_true")
-        if command == "retry-source-verified-email-action":
+        if command in {"retry-source-verified-email-action", "retry-dws-source-verified-email-action"}:
             subparser.add_argument("--account", type=_non_blank, required=True)
             subparser.add_argument("--action-id", type=_non_blank, required=True)
             subparser.add_argument("--apply", action="store_true")
@@ -4828,6 +4829,21 @@ def main() -> None:
             ),
             flush=True,
         )
+    elif args.command == "retry-dws-source-verified-email-action":
+        if args.apply and settings.dry_run:
+            raise SystemExit("--apply refused: dry-run is on")
+        from app.email_action_reconcile import ExistingReadOnlyEmailStore, build_gmail_read_only_provider_factory
+        from app.email_dws_actions import release_dws_source_verified_retry
+        from app.email_store import EmailStore
+
+        store = (EmailStore(settings.db_path) if args.apply
+                 else ExistingReadOnlyEmailStore(settings.db_path))
+        result = release_dws_source_verified_retry(
+            store, account_id=args.account, action_id=args.action_id,
+            dws=DwsClient(), apply=args.apply,
+            imap_provider_factory=build_gmail_read_only_provider_factory(store, args.account, os.environ),
+        )
+        print(json.dumps(result, ensure_ascii=False))
     elif args.command == "retry-source-verified-email-action":
         if args.apply and settings.dry_run:
             raise SystemExit("--apply refused: dry-run is on")

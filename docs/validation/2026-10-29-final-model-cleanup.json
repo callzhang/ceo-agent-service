@@ -73,6 +73,13 @@
       "inode": 837072054,
       "mtime_ns": 1793277830689880809,
       "bytes": 3192449556
+    },
+    {
+      "path": "/private/tmp/ceo-junhe-date-closeout.EjSEmK",
+      "inode": 838174368,
+      "mtime_ns": 1793309240201921290,
+      "removed": true,
+      "reason": "Date repair tests and standard gate completed; no open references."
     }
   ],
   "own_predeploy_absent": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-0fa10c33-4bea-46f6-91e8-7d45f59e7338.sqlite3",
@@ -95,5 +102,19 @@
     "checked_at": "2026-10-29T13:08:03.659612+00:00"
   },
   "checked_at": "2026-10-29T13:08:03.660166+00:00",
-  "all_listed_temporary_paths_absent": true
+  "all_listed_temporary_paths_absent": true,
+  "junhe_followup_backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+    "inode": 838260530,
+    "mtime_ns": 1793309339632045045,
+    "bytes": 514969600,
+    "sha256": "913a4ece52dfd9afc1b19c6b5849201d3a13240b60f451938e630d683384f93d",
+    "integrity": "ok",
+    "schema_current": true,
+    "fk": [],
+    "complete": true,
+    "retained": true,
+    "reason": "JunHe provider update readback mismatch remains unresolved after date fix; not safe to declare closeout.",
+    "checked_at": "2026-10-29T21:36:11.791005+00:00"
+  }
 }

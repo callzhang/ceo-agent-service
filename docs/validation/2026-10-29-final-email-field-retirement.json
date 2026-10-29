@@ -1294,7 +1294,7 @@
   },
   "cleanup_evidence": "2026-10-29-final-model-cleanup.json",
   "junhe_closeout_followup": {
-    "phase": "date_scope_approved_publisher_implementation_pending",
+    "phase": "system_flag_recovery_implemented_reviewed_focused_passed_awaiting_serial_release",
     "checked_at": "2026-10-29T20:19:52.987843+00:00",
     "installed_commit": "9b95fe10853bbf038265028cbbfd03f5df3ff3ad",
     "health": 200,
@@ -1392,6 +1392,253 @@
       "installed_commit": "5d20d32bc91bb476a5c7e4ea4c7173c3a1d976ca",
       "pid": "13358",
       "health": 200
+    },
+    "date_fix": {
+      "commit": "ec70a75e004125533914e8b37f591977470fd87d",
+      "parser": "app.email_action_reconcile._received_datetime",
+      "red": "test_rfc_source_date_preserves_identity_and_raw_source_value failed before implementation (failed != done)",
+      "focused": {
+        "passed": 47,
+        "seconds": 36.62
+      },
+      "review": "Independent readonly SPEC/QUALITY PASS",
+      "ruff": "passed",
+      "preserved": "raw source value, account/sender/subject/conversation/digest, <=10s, tag selection, Audit/auth/retry",
+      "ddl": "unchanged:463/f5cd/FK[]",
+      "gate": {
+        "commit": "ec70a75e004125533914e8b37f591977470fd87d",
+        "passed_at": "2026-10-29T21:27:19+00:00",
+        "files": 402,
+        "summary": "7783 passed, 2 skipped, 1 deselected in 591.81s (0:09:51)"
+      }
+    },
+    "minutes_fix": {
+      "source_commit": "22a426428",
+      "integrated_commit": "150ee62a1",
+      "peer_focused_passed": 350,
+      "root_command_regressions_passed": 2,
+      "provider_result_before_release": "B_QUERY_MINUTES_PARAGRAPH_LIST_FAILED; not claimed restored"
+    },
+    "original_move_before_resume": {
+      "receipt_ids": [
+        8468,
+        8641,
+        21597
+      ],
+      "receipt_count": 3,
+      "sha256": "415c82357828b87809fe477222a48a1f3c333a3632bfb1738cf067c30bc60802"
+    },
+    "deployed_date_snapshot": {
+      "checked_at": "2026-10-29T21:28:03.989591+00:00",
+      "installed_commit": "ec70a75e004125533914e8b37f591977470fd87d",
+      "/healthz": {
+        "http": 200,
+        "ok": true,
+        "status": "ok"
+      },
+      "/api/console/status": {
+        "http": 200,
+        "service": {
+          "label": "com.ceo-agent-service.main",
+          "target": "gui/501/com.ceo-agent-service.main",
+          "ok": true,
+          "state": "running",
+          "detail": "running",
+          "pid": "5099",
+          "runs": "1",
+          "initialized": "1",
+          "last_terminating_signal": "",
+          "returncode": 0
+        },
+        "summary": {
+          "queue_count": 11,
+          "pending": 4,
+          "processing": 0,
+          "failed": 31,
+          "retryable": 0,
+          "attention": 6
+        }
+      },
+      "/api/console/attention": {
+        "http": 200,
+        "count": 4,
+        "meta": {
+          "snapshot_at": "2026-10-29T21:28:06.221071Z",
+          "page": null,
+          "page_size": null,
+          "total": 6,
+          "next_cursor": "",
+          "has_more": false
+        }
+      },
+      "/api/console/history?page_size=5": {
+        "http": 200,
+        "count": 5,
+        "meta": {
+          "snapshot_at": "2026-10-29T21:28:07.021895Z",
+          "page": 1,
+          "page_size": 5,
+          "total": 39513,
+          "next_cursor": "2",
+          "has_more": true
+        }
+      },
+      "schema_current": true,
+      "objects": 463,
+      "schema_sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+      "fk": [],
+      "before_resume_plan": "email-action-plan:caae97d1979ec2c91efbf4ba482ca61c2f7bb88c110baa4ca983975426bdc3cb",
+      "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+      "frontend_needs_build": false
+    },
+    "recovery_entrypoint": {
+      "invoked_at": "2026-10-29T21:28:52.777207+00:00",
+      "previous_plan": "email-action-plan:caae97d1979ec2c91efbf4ba482ca61c2f7bb88c110baa4ca983975426bdc3cb",
+      "entrypoint_calls": 1,
+      "http": 200,
+      "ok": true,
+      "current_plan": "email-action-plan:7041fd99a52d77a797e0d3431a3fbd6d652907b4d4fdaaf5178fd28bf89c959d",
+      "version": 9,
+      "actions": [
+        {
+          "owner_id": 127062,
+          "action_type": "flag_important",
+          "status": "pending"
+        },
+        {
+          "owner_id": 127063,
+          "action_type": "mark_read",
+          "status": "pending"
+        }
+      ]
+    },
+    "after_date_recovery": {
+      "checked_at": "2026-10-29T21:35:52.363502+00:00",
+      "current_plan": "email-action-plan:7041fd99a52d77a797e0d3431a3fbd6d652907b4d4fdaaf5178fd28bf89c959d",
+      "version": 9,
+      "actions": [
+        {
+          "owner_id": 127062,
+          "action_type": "flag_important",
+          "status": "failed",
+          "attempt_count": 1,
+          "provider_operation": "dws_mail_action",
+          "provider_result_id": "",
+          "error": "dws_action_readback_mismatch:0f066469615dd4bf676eb7fbd2cf8517aad562d56bd946f1fb012eb22734e2c0"
+        },
+        {
+          "owner_id": 127063,
+          "action_type": "mark_read",
+          "status": "pending",
+          "attempt_count": 0,
+          "provider_operation": "",
+          "provider_result_id": "",
+          "error": ""
+        }
+      ],
+      "receipts": [
+        {
+          "id": 22181,
+          "action_id": 127062,
+          "status": "failed",
+          "operation": "dws_mail_action",
+          "provider_result_id": null,
+          "error_text": "dws_action_readback_mismatch:0f066469615dd4bf676eb7fbd2cf8517aad562d56bd946f1fb012eb22734e2c0",
+          "started_at": "2026-10-29T21:28:54+00:00",
+          "finished_at": "2026-10-29T21:29:01+00:00"
+        }
+      ],
+      "original_move_unchanged": true,
+      "original_move_after_resume": {
+        "receipt_ids": [
+          8468,
+          8641,
+          21597
+        ],
+        "receipt_count": 3,
+        "sha256": "415c82357828b87809fe477222a48a1f3c333a3632bfb1738cf067c30bc60802"
+      },
+      "entrypoint_calls": 1,
+      "additional_provider_write_or_retry_after_failure": false
+    },
+    "post_update_source_readback": {
+      "system_important_target_matches": 0,
+      "read_target_matches": 1,
+      "named_tag_107_global_count_before": 2,
+      "named_tag_107_global_count_after": 3,
+      "attribution_limit": "Global tag count is not proof of this target membership; raw provider update result was not retained, receipt correctly remains failed."
+    },
+    "system_flag_recovery_scope": {
+      "status": "implemented_reviewed_focused_passed",
+      "human_reply": "批准标记与显式恢复修复（推荐）",
+      "reaffirmation": "继续按已批准的范围修正系统标记映射和显式恢复，补真实协议回归，测试通过后部署，完成 JunHe 这封邮件的执行和回执读回，再清理备份和临时文件，收尾。",
+      "preserved": [
+        "MOVE111699 and receipts",
+        "existing custom labels",
+        "failed receipts",
+        "Audit and authorization",
+        "automatic retry policy"
+      ],
+      "ddl_change": false,
+      "before_release": {
+        "checked_at": "2026-10-29T22:07:42.885582+00:00",
+        "installed_commit": "ec70a75e004125533914e8b37f591977470fd87d",
+        "schema_current": true,
+        "schema_objects": 463,
+        "schema_sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+        "fk": []
+      },
+      "mapping_evidence": {
+        "imap_advertised_required_signals": [
+          "\\Flagged"
+        ],
+        "imap_advertised_dollar_important": false,
+        "native_reference": "DWS mail message batch-update: system1 follow-upflag; system11 important; custom107 is separate",
+        "readonly_existing_flagged_sample": {
+          "unique_sender_subject_dws_match": true,
+          "dws_single_message_thread": true,
+          "dws_tags": [
+            "1"
+          ],
+          "header_date_to_received_delta_seconds": 92,
+          "limit": "Header Date is send time, not arrival time; this sample does not change JunHe identity time tolerance."
+        },
+        "junhe_exact_tag1_matches": 1,
+        "junhe_exact_tag107_matches": 1,
+        "literal_tag_important_global_total": 0,
+        "dws_tags11_global_total": 14,
+        "custom107_global_total": 3
+      },
+      "local_readonly_dry_run": {
+        "outcome": "source_verified",
+        "eligible": true,
+        "released": false,
+        "source_satisfied": true,
+        "source_readback_digest": "48aca886d6d0710cd00a66420eeb055ee438ca02bb50f98d2072113cc92a29f7",
+        "boundary": "Read-only hypothesis verification; final installed CLI dry-run and action receipts still required."
+      },
+      "review": "Independent readonly SPEC/QUALITY PASS after factory snapshot race and nonretryable probe boundary corrections",
+      "focused": {
+        "files": [
+          "tests/test_email_dws_actions.py",
+          "tests/test_email_dws_recovery.py",
+          "tests/test_email_dws_move_continuation.py",
+          "tests/test_email_provider_actions.py",
+          "tests/test_email_readback_retry.py",
+          "tests/test_email_action_reconcile.py"
+        ],
+        "passed": 207,
+        "seconds": 98.86,
+        "provider": "substitutes_only",
+        "ruff": "passed",
+        "diff_check": "passed",
+        "red": [
+          "protocol-distinguishing fake exposes old tag107/readback mismatch",
+          "explicit same-action release entrypoint missing",
+          "additional required signal cannot be ignored"
+        ]
+      },
+      "gate_addition": "tests/test_email_dws_recovery.py; current synthetic seed is created once and each test receives a committed SQLite backup copy, normal current EmailStore initialization; focused recovery+protocol38passed13.05s"
     }
   }
 }

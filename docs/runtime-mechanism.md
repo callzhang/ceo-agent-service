@@ -689,6 +689,11 @@ move/trash 分：verified、in_source、elsewhere、not_found、ambiguous、erro
 或 `mark_read` 因 `readback_missing` 被记为 `skipped`，`POST /api/console/email/classifications/{id}/continue-after-move-readback`
 可按历史 move action ID 追加当前计划版本。它只复制当前计划中因 `readback_missing` 跳过、仍待执行，或在 DWS 写入前因身份校验 ValueError 失败的加星/已读动作及其授权参数，移除已完成的 move 依赖，保留旧计划与所有回执。其他跳过原因、失败动作、退订/自动回复动作、非当前计划或缺少唯一 DWS 读回凭证都会被拒绝。新版本由现有 Email worker 正常领取；对这类有已验证 DWS 移动回执的动作，Worker 以账号、发件人、完整主题和 10 秒时间窗定位唯一邮件；两个时刻复用原 MOVE 核对的日期解析合同，支持合法 RFC／ISO 表示、拒绝无时区或无效值、统一为 UTC且不改写原始来源值；再用回执 SHA-256 校验 DWS conversation ID 与字符串文件夹 ID；不把 IMAP thread ID 当作 DWS conversation ID。DWS 的空搜索结果若带 `total=0` 和固定空占位对象，只按该精确形状转为空集合。状态已满足时只记录读回结果，缺少时才执行原计划授权的加星/已读；非交互 `batch-update` 命令传全局 `--yes` 以通过 CLI 确认，再保存写入后动作回执并读回核实。身份不唯一、哈希不符或字段不符时不写。恢复入口自身不访问邮箱，不重放 MOVE。
 
+DWS `FLAG_IMPORTANT` 沿用原邮箱的标记合同：系统标签 `1` 对应 IMAP `\Flagged`；系统“重要”标签 `11` 和同名自定义标签不是该信号的替代。写入用 `addTags --tags 1`，逐封读回用同一精确身份查询加 `tag:1`，不按显示名称选择标签，也不使用示例字符串 `tag:important`。执行器通过当前账号连接只读 EXAMINE 原 MOVE 参数中的目标文件夹，复用 IMAP 原有 PERMANENTFLAGS 要求；只有要求恰为 `\Flagged` 时可由这条 DWS 映射证明完成。若邮箱还声明 `$Important` 等尚未核实映射的要求，明确失败且不写、不忽略信号。元数据探测发生在 DWS 执行器的原有非自动重试错误边界内；不改变自动重试政策。
+
+`retry-dws-source-verified-email-action --account <account> --action-id <id>` 是独立的显式恢复工具，默认只读 dry-run，`--apply` 才登记一次请求。它只接受当前计划上 `dws_mail_action` 的写后读回不匹配失败，重新核验唯一历史 MOVE 凭证、目标邮件及账号标记要求；factory 配置快照必须与当前账号一致。写锁内再次比较计划、动作、尝试数、参数、失败、来源/MOVE 与配置，确认无并发动作且前序依赖完成后，使用现有 retry request owner 释放同一个 Action。原计划、原 MOVE、失败回执和已有标签保留，不把写后失败解释成无效果，不追加计划、不放开自动重试。普通 Worker 领取后再次核验：状态满足就追加 `dws_readback_noop` 回执；缺少时只执行原授权动作并读回。缺失/变化/不完整的来源证明不释放。
+
+
 只有确认后不可变 `ActionPlan` 中授权的 `unsubscribe` 创建 `channel=email` 的
 `reply_task`，生命周期固定为 `email_unsubscribe_audited_v2`；其他动作和零动作计划不创建
 task。`auto_reply`、SMTP 和 `mailto` 发送全部禁用，不能由配置、分类结果、人工确认或 Agent

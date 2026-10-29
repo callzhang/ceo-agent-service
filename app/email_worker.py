@@ -2813,6 +2813,9 @@ def _run_next_direct_action(
                 DwsClient(),
                 mailbox=str(account.get("email_address") or ""),
                 context=dws_move_context,
+                important_signals_reader=lambda: executor_factory(
+                    action.account_id
+                ).required_important_signals(dws_move_context["target_folder"]),
             )
         else:
             executor = executor_factory(action.account_id)
