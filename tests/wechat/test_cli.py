@@ -299,3 +299,26 @@ def test_automatic_once_commands_reject_ready_account_without_self_id(
 
     assert command(SimpleNamespace(db=str(db))) == 1
     assert "no single ready account" in capsys.readouterr().out
+
+
+def test_reader_errors_print_one_line_instead_of_a_traceback(tmp_path, monkeypatch, capsys):
+    from app.wechat.reader_ipc import ReaderIpcError
+
+    class RefusingReader:
+        def discover_accounts(self):
+            raise ReaderIpcError(
+                "CEO WeChat Reader runs code version unstamped but this service expects 5c13bccbf8bef27b; "
+                "rebuild and reinstall the Reader app.",
+                code="reader_version_mismatch",
+            )
+
+    monkeypatch.setattr(cli, "_reader", lambda: RefusingReader())
+
+    code = cli.main(["status", "--db", str(tmp_path / "worker.sqlite3")])
+
+    out = capsys.readouterr().out
+    assert code == 1
+    assert out.count("\n") == 1
+    assert out.startswith("WeChat Reader error (reader_version_mismatch): ")
+    assert "rebuild and reinstall" in out
+    assert "Traceback" not in out

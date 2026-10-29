@@ -26,6 +26,8 @@ throwaway clone and is refused if a single test fails (Derek, 2026-10-25);
 from __future__ import annotations
 
 import argparse
+from datetime import datetime, timezone
+import json
 import os
 from pathlib import Path
 import plistlib
@@ -209,8 +211,32 @@ TEST_GATE_TIMEOUT_SECONDS = 12 * 60
 _TEST_GATE_ENV_KEYS = ("PATH", "HOME", "USER", "LANG", "LC_ALL", "TMPDIR", "VIRTUAL_ENV")
 
 
-def require_green_suite(root: Path, commit: str, *, run=subprocess.run) -> None:
-    """Run the whole test suite at ``commit``; stop the deploy unless it passes."""
+def gate_pass_record(database_path: Path, commit: str) -> Path:
+    """Where a passed gate for ``commit`` is remembered: next to the service
+    database, which every session's deploy shares."""
+    return Path(database_path).parent / "deploy-gate-passed" / f"{commit}.json"
+
+
+def require_green_suite(
+    root: Path, commit: str, *, run=subprocess.run, database_path: Path | None = None,
+) -> str:
+    """Run the gate suite at ``commit``; stop the deploy unless it passes.
+
+    Derek, 2026-10-28: a pass is remembered per commit and reused, so a second
+    deploy of the same commit (another session, or a retry after the install
+    step failed) does not run the ten-minute suite again. Only passes are
+    recorded; a refused or stopped run leaves nothing to reuse. The caller runs
+    this inside the repository mutex, so two deploys never gate at once.
+    """
+    record = gate_pass_record(database_path, commit) if database_path is not None else None
+    if record is not None and record.is_file():
+        try:
+            passed_at = str(json.loads(record.read_text(encoding="utf-8")).get("passed_at") or "")
+        except (OSError, ValueError):
+            passed_at = ""
+        note = f"gate already passed at {commit[:8]} ({passed_at or 'time unknown'}); not re-run"
+        print(note, flush=True)
+        return note
     workdir = Path(tempfile.mkdtemp(prefix="deploy-test-gate."))
     log_path = workdir / "pytest.log"
     clone = workdir / "checkout"
@@ -252,6 +278,18 @@ def require_green_suite(root: Path, commit: str, *, run=subprocess.run) -> None:
                 f"the gate suite fails at {commit[:8]} ({summary[0]}); nothing was deployed. "
                 f"Fix the tests, then deploy again. Log: {log_path}"
             )
+        summary = log_path.read_text(errors="replace").strip().splitlines()[-1:] or [""]
+        if record is not None:
+            record.parent.mkdir(parents=True, exist_ok=True)
+            record.write_text(json.dumps({
+                "commit": commit,
+                "passed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+                "files": len(files),
+                "summary": summary[0],
+            }, indent=2) + "\n", encoding="utf-8")
+        note = f"gate passed at {commit[:8]} ({summary[0]})"
+        print(note, flush=True)
+        return note
     finally:
         if not keep:
             shutil.rmtree(workdir, ignore_errors=True)
@@ -336,9 +374,9 @@ def _deploy_once(
             f"Commits only in production (move them to main, then reset production to origin/{BRANCH}):\n{stray}"
         )
     if TEST_GATE_ENABLED:
-        require_green_suite(root, target)
-        # The gate tested exactly this commit; main may have moved during the run.
-        # Install what was tested, not whatever main is now.
+        # The gate (run below, inside the repository mutex) tests exactly this
+        # commit; main may move while it runs. Install what was tested, not
+        # whatever main is by then.
         target_commit = target
     operation = UpgradeOperation(
         operation_id=operation_id or f"deploy-{uuid4()}",
@@ -433,27 +471,42 @@ def _deploy_once(
                 category="deploy_target_doc_recovery",
             )
 
-    updater = RepositoryUpdater(
-        root,
-        ExistingSchemaUpgradeStateStore(database_path),
-        remote=REMOTE,
-        branch=BRANCH,
-        database_path=database_path,
-        wait_for_quiet=quiet,
-        stop=stop_once,
-        restart=start,
-        dependency_sync=lambda: build_frontend(root, changed),
-        verification=lambda: verify_imports(root),
-        health=wait_for_health,
-        publication=publication,
-        database_publication=lambda backup: prepare_database_schema_release(root, database_path, recovery_source_path=backup),
-        pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
-        pin_target_commit=target_commit is not None,
-    )
-    # Unlocked for exactly the checkout + build + verify window; the source
-    # tree is locked again in `finally` whether this succeeds, rolls back, or
-    # raises, so a deploy that dies mid-way never leaves it writable.
+    def build_updater() -> RepositoryUpdater:
+        return RepositoryUpdater(
+            root,
+            ExistingSchemaUpgradeStateStore(database_path),
+            remote=REMOTE,
+            branch=BRANCH,
+            database_path=database_path,
+            wait_for_quiet=quiet,
+            stop=stop_once,
+            restart=start,
+            dependency_sync=lambda: build_frontend(root, changed),
+            verification=lambda: verify_imports(root),
+            health=wait_for_health,
+            publication=publication,
+            database_publication=lambda backup: prepare_database_schema_release(root, database_path, recovery_source_path=backup),
+            pre_checkout_cleanup=restore_interrupted_target_docs if target_doc_changes else None,
+            pin_target_commit=target_commit is not None,
+        )
+
+    # The mutex covers the gate as well as the install (Derek, 2026-10-28):
+    # on 2026-10-28 several sessions deployed at once, their gate suites ran
+    # in parallel on one laptop, and seven of nine runs hit the ten-minute
+    # limit. A deploy now waits for the lock, checks that nobody installed
+    # meanwhile, and only then spends the gate's time. The source tree is
+    # unlocked for exactly the checkout + build + verify window and locked
+    # again in `finally` whether this succeeds, rolls back, or raises.
     with repository.mutex():
+        if TEST_GATE_ENABLED:
+            moved = repository.resolve_ref(f"refs/heads/{BRANCH}")
+            if moved != current:
+                # Another session deployed while this one waited for the lock.
+                if publish_contracts or publish_prompt_templates:
+                    raise _ProductionMoved(moved)
+                return f"another deploy got there first; production is at {moved[:8]}"
+            require_green_suite(root, target, database_path=database_path)
+        updater = build_updater()
         unlock_source_tree(root)
         try:
             try:

@@ -118,7 +118,7 @@ def deploy_test_gate_does_not_run_the_suite_inside_the_suite(monkeypatch):
     """
     import app.deploy as deploy_module
 
-    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit: None)
+    monkeypatch.setattr(deploy_module, "require_green_suite", lambda root, commit, **kwargs: "gate stubbed")
 
 
 @pytest.fixture(autouse=True)
