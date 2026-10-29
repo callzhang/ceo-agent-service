@@ -530,8 +530,9 @@ class SystemExecutor:
                 code, status = "external_action_uncertain", "uncertain"
             else:
                 code, status = "external_action_failed", "failed"
+            reason = str(outcome.provider_result.get("reason") or "")
             result = self._failure(
-                code, f"Action {action.action_identity} was not verified", completed,
+                code, f"未能确认：{action.description}" + (f"（原因：{reason}）" if reason else ""), completed,
                 retryable=status in ("retry", "uncertain"),
                 source_code=str(outcome.provider_result.get("source_code") or ""),
                 source=str(outcome.provider_result.get("source") or ""),

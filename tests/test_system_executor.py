@@ -223,6 +223,21 @@ def test_failed_preparation_is_read_back_before_action_key_can_be_reused():
     assert handler.calls == ["first"]
 
 
+def test_failed_action_summary_is_description_and_provider_reason_not_the_identity():
+    class FailingHandler(Handler):
+        def dispatch(self, action, *, action_key, candidate):
+            return ActionOutcome("failed", {"reason": "accessibility_not_trusted"})
+
+    store = FakeStore(_candidate())
+    result = SystemExecutor(store, {("test", "act"): FailingHandler()}, owner="worker").execute(
+        store.get_reply_task(1), 1, 2,
+    )
+
+    assert result.outcome == "failed"
+    assert result.summary == "未能确认：Act（原因：accessibility_not_trusted）"
+    assert "first" not in result.summary
+
+
 def test_reconciliation_only_requires_an_existing_uncertain_oa_return():
     from tests.test_oa_return_readback import action
 
