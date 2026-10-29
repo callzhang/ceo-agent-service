@@ -1921,7 +1921,7 @@ def update_task_delivery_action(db: sqlite3.Connection, kind: str, public_id, va
         predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
         identity_args = [kind, public_id]
         if where_sql:
-            projection = task_delivery_projection(kind, source_variant="actual")
+            projection = task_delivery_projection(kind)
             predicate += (" and cast(legacy_key as integer) in "
                           f"(select {('job_id' if kind == 'meeting_alignment_delivery_claims' else 'id')} "
                           f"from ({projection}) where {('job_id' if kind == 'meeting_alignment_delivery_claims' else 'id')}=? "

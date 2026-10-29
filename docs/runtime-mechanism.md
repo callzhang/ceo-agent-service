@@ -1795,7 +1795,7 @@ page cache (`pragma shrink_memory`) and keeps only the parsed schema.
 
 ## Task2D7B Workbench Turn native execution
 
-Workbench runtime lifecycle and exact readers use canonical decimal `tasks.id` for Turn DTO/API identity. `tasks(kind='workbench_turn')` owns lifecycle status and lease; `workbench_turns(task_id)` owns source-backed Turn control and request fields. Parent archive fencing, create/idempotency, claim, lease renewal, stop, completion, stale recovery, event sequencing, timeline/SSE, artifacts and statistics read or write native owners. Events and artifacts use native Turn Task foreign keys. The executor/runtime-attempt contract is `workload_kind='workbench'` with `workload_key` equal to that canonical Turn Task ID; native trajectory is hydrated from the selected RuntimeAttempt session/range, and no logical Run or duplicate UUID alias is created. Historical `waiting_confirmation` is readable and countable without a new active-turn or confirmation workflow. Source artifact event `payload.artifact_id` is the one translated typed reference: migration resolves it through the Task identity map, while inverse consumes explicit source-public identity metadata and checks the artifact's Turn owner. A newly native-created artifact receives a numeric source `legacy_key` from the artifact kind's source rowid allocator; its public UUID remains separate. Other payload members remain unchanged. Feedback Workbench references at public API boundaries are canonical decimal strings; optional empty item associations remain accepted as before.
+Workbench runtime lifecycle and exact readers use canonical decimal `tasks.id` for Turn DTO/API identity. `tasks(kind='workbench_turn')` owns lifecycle status and lease; `workbench_turns(task_id)` owns source-backed Turn control and request fields. Parent archive fencing, create/idempotency, claim, lease renewal, stop, completion, stale recovery, event sequencing, timeline/SSE, artifacts and statistics read or write native owners. Events and artifacts use native Turn Task foreign keys. The executor/runtime-attempt contract is `workload_kind='workbench'` with `workload_key` equal to that canonical Turn Task ID; native trajectory is hydrated from the selected RuntimeAttempt session/range, and no logical Run or duplicate UUID alias is created. The current Turn contract no longer exposes `waiting_confirmation`; the retired confirmation workflow has no current status or API entrypoint. Source artifact event `payload.artifact_id` is the one translated typed reference: migration resolves it through the Task identity map, while inverse consumes explicit source-public identity metadata and checks the artifact's Turn owner. A newly native-created artifact receives a numeric source `legacy_key` from the artifact kind's source rowid allocator; its public UUID remains separate. Other payload members remain unchanged. Feedback Workbench references at public API boundaries are canonical decimal strings; optional empty item associations remain accepted as before.
 
 ### Full document native output delivery
 
@@ -1982,3 +1982,12 @@ unavailability.
 Reviewed Consumer Skill script implementation may live in a private installed package; the public `ci/reviewed-skill-scripts/` catalog pins its entrypoints and complete script-tree digest. Installation alone grants no script entrypoint. See [private script verification](private-skill-script-verification.md).
 
 Reporting policy, scoring, tenant destinations and their executable implementations belong to independently installable organization Skills. The public reporting baselines carry generic discovery/evidence/delivery workflow only; scheduled tasks explicitly select the organization package for normal frozen script binding. Generic report publication preconditions name the generic digest, never the existing company digest.
+
+
+### 当前投影与退休的 Workbench 确认状态
+
+当前 Task delivery 与 Feedback 投影仅使用现行字段，不接受历史来源变体；历史转换的
+字段顺序固定在显式来源投影模块。执行进度只由原生 Consumer Run owner 写入，旧计划
+执行造数仅在测试夹具内。Workbench 当前状态为 queued、running、completed、stopped、
+failed；已退休确认功能的 waiting_confirmation 不再进入 API 类型、计数或界面状态。
+本次不改变原生 CLI 确认、外部授权、审查、回执或恢复策略，也不重解释历史任务状态。

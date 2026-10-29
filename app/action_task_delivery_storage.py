@@ -6,7 +6,8 @@ import sqlite3
 
 from app import action_storage as storage
 from app.action_task_delivery_definitions import TASK_DELIVERY_KINDS
-from app.action_task_delivery_definitions import TASK_DELIVERY_PARENTS, task_delivery_projection
+from app.action_task_delivery_definitions import TASK_DELIVERY_PARENTS
+from app.action_historical_projections import historical_task_delivery_projection
 from app.action_email_storage import _columns, _insert_rows, _set_sequence, _create_main_index, _restore_triggers
 from app.action_followup_sync_storage import (
     _require_fk_off, _configs_action_triggers, _drop_configs_triggers,
@@ -171,7 +172,7 @@ def _types(db, table, columns):
 
 
 def _projection(db, kind, variant):
-    query = task_delivery_projection(kind, source_variant=variant).replace(
+    query = historical_task_delivery_projection(kind, source_variant=variant).replace(
         "from actions a", "from main.actions a")
     columns = tuple(item[0] for item in db.execute(f"select * from ({query}) limit 0").description)
     names = ",".join(map(_quote, columns))

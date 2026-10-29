@@ -5,7 +5,8 @@ from contextlib import closing
 from functools import lru_cache
 
 from app import action_storage as storage
-from app.action_feedback_definitions import FEEDBACK_FIELDS, FEEDBACK_FRESH_EVENTS, FEEDBACK_KINDS, feedback_projection
+from app.action_feedback_definitions import FEEDBACK_FIELDS, FEEDBACK_KINDS, feedback_projection
+from app.action_historical_projections import FEEDBACK_FRESH_EVENTS, historical_feedback_projection
 from app.action_email_storage import _columns, _insert_rows, _set_sequence, _create_main_index, _restore_triggers, _external_dependencies
 from app.action_followup_sync_storage import _require_fk_off, _configs_action_triggers, _drop_configs_triggers, _restore_configs_triggers, _exact_email_blockers
 from app.action_task_delivery_storage import _source_declaration, _quote, _exact_sync_legacy_triggers
@@ -201,7 +202,7 @@ def _source_facts(db, kind, variant):
 
 
 def _projected_facts(db, kind, variant):
-    query = feedback_projection(kind, source_variant=variant, with_rowid=True).replace(
+    query = historical_feedback_projection(kind, source_variant=variant, with_rowid=True).replace(
         "from actions a", "from main.actions a")
     columns = ("_source_rowid", *(FEEDBACK_FRESH_EVENTS if kind == "feedback_events" and variant == "fresh" else FEEDBACK_FIELDS[kind]))
     names = ",".join(map(_quote, columns))

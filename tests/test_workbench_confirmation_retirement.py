@@ -14,10 +14,8 @@ from app.workbench.runtime import RuntimeEvent, RuntimeRegistry
 def test_current_workbench_contract_removes_confirmation_resources():
     assert not hasattr(models, "ConfirmationStatus")
     assert not hasattr(models, "WorkbenchConfirmation")
-    # waiting_confirmation stays a readable/countable historical status
-    # (docs/runtime-mechanism.md) but no confirmation workflow remains.
     assert {item.value for item in models.TurnStatus} == {
-        "queued", "running", "completed", "stopped", "failed", "waiting_confirmation"
+        "queued", "running", "completed", "stopped", "failed"
     }
     assert not hasattr(WorkbenchExecutor, "confirm")
     assert not hasattr(WorkbenchExecutor, "cancel")

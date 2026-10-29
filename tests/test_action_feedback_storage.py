@@ -515,3 +515,14 @@ def test_feedback_autoincrement_full_rolls_back_caller_transaction():
             assert db.execute("select count(*) from " +
                               ("actions where record_type='feedback_events'" if use_actions else
                                "feedback_events")).fetchone()[0] == 0
+
+
+def test_current_and_historical_feedback_projections():
+    from app.action_historical_projections import historical_feedback_projection
+
+    for kind in FEEDBACK_KINDS:
+        for with_rowid in (False, True):
+            assert feedback_projection(kind, with_rowid=with_rowid) == historical_feedback_projection(kind, source_variant="actual", with_rowid=with_rowid)
+    assert historical_feedback_projection("feedback_events", source_variant="fresh") != feedback_projection("feedback_events")
+    with pytest.raises(TypeError):
+        feedback_projection("feedback_events", source_variant="actual")

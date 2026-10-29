@@ -972,7 +972,6 @@ def test_runtime_capabilities_and_stats_are_public_stable_models(tmp_path: Path)
         "completed": 0,
         "stopped": 0,
         "failed": 0,
-        "waiting_confirmation": 0,
     }
     assert "confirmations" not in stats.json()
     assert "database_path" not in stats.json()

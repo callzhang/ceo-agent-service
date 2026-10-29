@@ -8,10 +8,6 @@ TASK_DELIVERY_FIELDS = {
     "task_memory_write_events": ("id", "reply_task_id", "execution_generation", "consumer_run_id", "memories_json", "written_memory_ids_json", "status", "attempts", "available_at", "error", "skip_reason", "lease_owner", "lease_expires_at", "started_at", "created_at", "updated_at"),
     "wechat_deliveries": ("id", "reply_task_id", "account_id", "target_type", "target_id", "conversation_id", "reply_text", "execution_generation", "status", "action_started_at", "pre_action_failure", "evidence_json", "error", "created_at", "updated_at"),
 }
-TASK_DELIVERY_FRESH_FIELDS = dict(TASK_DELIVERY_FIELDS)
-TASK_DELIVERY_FRESH_FIELDS["meeting_memory_write_events"] = (
-    "id", "meeting_job_id", "execution_generation", "payload_json", "status", "attempts", "available_at", "error", "memory_id", "lease_owner", "lease_expires_at", "started_at", "created_at", "updated_at",
-)
 TASK_DELIVERY_KINDS = tuple(TASK_DELIVERY_FIELDS)
 TASK_DELIVERY_AUTOINCREMENT = TASK_DELIVERY_KINDS[1:]
 TASK_DELIVERY_PARENTS = {
@@ -103,10 +99,10 @@ def task_delivery_schema_parts(existing_references, reply_variant, *, payloads=N
     return generated, checks, indexes, triggers
 
 
-def task_delivery_projection(kind, *, source_variant="actual"):
-    if kind not in TASK_DELIVERY_KINDS or source_variant not in ("actual", "fresh"):
+def task_delivery_projection(kind):
+    if kind not in TASK_DELIVERY_KINDS:
         raise ValueError("unsupported task delivery projection")
-    columns = (TASK_DELIVERY_FIELDS if source_variant == "actual" else TASK_DELIVERY_FRESH_FIELDS)[kind]
+    columns = TASK_DELIVERY_FIELDS[kind]
     parent, target, _ = TASK_DELIVERY_PARENTS[kind]
     identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
     select = ",".join((f"cast(a.legacy_key as integer) as {field}" if field == identity else

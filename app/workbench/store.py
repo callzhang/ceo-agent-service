@@ -48,7 +48,6 @@ _TURN_TRANSITIONS = {
     TurnStatus.COMPLETED: set(),
     TurnStatus.STOPPED: set(),
     TurnStatus.FAILED: set(),
-    TurnStatus.WAITING_CONFIRMATION: set(),
 }
 
 _DEFAULT_WORKBENCH_TASK_TITLE = "新任务"

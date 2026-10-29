@@ -903,7 +903,7 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 ### Workbench Turn native execution ownership
 
-Workbench public parent and Turn IDs are decimal strings backed by canonical `tasks.id`; Turn-specific control facts remain on `workbench_turns(task_id)`. Claims, leases, stop/recovery/completion, native events and artifact reads/writes use that Task owner directly. Workbench RuntimeAttempts use the exact `workload_kind='workbench'` and canonical Turn Task ID key; no logical Run or UUID execution alias is created. Historical `waiting_confirmation` remains readable/countable and is not added to the active-turn fence or given new confirmation actions.
+Workbench public parent and Turn IDs are decimal strings backed by canonical `tasks.id`; Turn-specific control facts remain on `workbench_turns(task_id)`. Claims, leases, stop/recovery/completion, native events and artifact reads/writes use that Task owner directly. Workbench RuntimeAttempts use the exact `workload_kind='workbench'` and canonical Turn Task ID key; no logical Run or UUID execution alias is created. The retired confirmation workflow and `waiting_confirmation` status are absent from the current Turn contract; no production Turn uses that status.
 
 ### Workbench 启动恢复竞争
 
@@ -2273,3 +2273,12 @@ Source-shaped unsupported inputs are rejected locally, while supported HTTPS/SSH
 Reviewed Consumer Skill script implementation may live in a private installed package; the public `ci/reviewed-skill-scripts/` catalog pins its entrypoints and complete script-tree digest. Installation alone grants no script entrypoint. See [private script verification](private-skill-script-verification.md).
 
 Reporting policy, scoring, tenant destinations and their executable implementations belong to independently installable organization Skills. The public reporting baselines carry generic discovery/evidence/delivery workflow only; scheduled tasks explicitly select the organization package for normal frozen script binding. Generic report publication preconditions name the generic digest, never the existing company digest.
+
+
+### 当前投影与退休的 Workbench 确认状态
+
+当前 Task delivery 与 Feedback 投影仅使用现行字段，不接受历史来源变体；历史转换的
+字段顺序固定在显式来源投影模块。执行进度只由原生 Consumer Run owner 写入，旧计划
+执行造数仅在测试夹具内。Workbench 当前状态为 queued、running、completed、stopped、
+failed；已退休确认功能的 waiting_confirmation 不再进入 API 类型、计数或界面状态。
+本次不改变原生 CLI 确认、外部授权、审查、回执或恢复策略，也不重解释历史任务状态。

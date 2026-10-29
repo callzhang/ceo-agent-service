@@ -100,7 +100,7 @@ def test_populated_external_result_is_transferred_to_common_action(tmp_path, mon
     with closing(sqlite3.connect(path)) as db:
         from app.action_storage import insert_action
         from app import action_storage
-        from app.execution_owner_storage import create_plan_execution
+        from tests.support.frozen_execution_owner import create_plan_execution
         from app.run_storage import insert_run
         from app.task8_storage import register_task8_functions, task8_insert_parts
         import re
@@ -223,7 +223,7 @@ def _orphan_candidate_source(path, monkeypatch, targets):
     """Build legitimate candidate executions with no canonical result owner."""
     from app.action_storage import insert_action
     from app import action_storage
-    from app.execution_owner_storage import create_plan_execution
+    from tests.support.frozen_execution_owner import create_plan_execution
     from app.run_storage import insert_run
     from app.task8_storage import register_task8_functions, task8_insert_parts
     from app.action_entity_release_manifest import source_objects
@@ -363,7 +363,7 @@ def test_inverse_keeps_colliding_public_ids_in_their_source_families(tmp_path, m
     with closing(sqlite3.connect(path)) as db:
         from app.action_storage import insert_action
         from app import action_storage
-        from app.execution_owner_storage import create_plan_execution
+        from tests.support.frozen_execution_owner import create_plan_execution
         from app.run_storage import insert_run
         from app.task8_storage import register_task8_functions, task8_insert_parts
         from app.action_entity_release_manifest import source_objects
@@ -479,7 +479,7 @@ def test_populated_prepared_sent_and_observer_facts_keep_distinct_receipts(tmp_p
     with closing(sqlite3.connect(path)) as db:
         from app.action_storage import insert_action
         from app import action_storage
-        from app.execution_owner_storage import create_plan_execution
+        from tests.support.frozen_execution_owner import create_plan_execution
         from app.run_storage import insert_run
         from app.task8_storage import register_task8_functions, task8_insert_parts
         from app.action_entity_release_manifest import source_objects
@@ -975,7 +975,7 @@ def test_conflicting_identity_aborts_without_mutation(tmp_path, monkeypatch):
     with closing(sqlite3.connect(path)) as db:
         from app.action_storage import insert_action
         from app import action_storage
-        from app.execution_owner_storage import create_plan_execution
+        from tests.support.frozen_execution_owner import create_plan_execution
         from app.run_storage import insert_run
         from app.task8_storage import register_task8_functions, task8_insert_parts
         import re

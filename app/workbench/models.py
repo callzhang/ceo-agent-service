@@ -11,7 +11,6 @@ class StrictModel(BaseModel):
 class TurnStatus(StrEnum):
     QUEUED = "queued"
     RUNNING = "running"
-    WAITING_CONFIRMATION = "waiting_confirmation"
     COMPLETED = "completed"
     STOPPED = "stopped"
     FAILED = "failed"

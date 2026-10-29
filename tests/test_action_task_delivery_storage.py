@@ -108,7 +108,8 @@ def _update_task_delivery_text(db, kind, public_id, values, *, where_sql="", par
         identity_args = [kind, public_id]
         identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
         if where_sql:
-            projection = action_storage.task_delivery_projection(
+            from app.action_historical_projections import historical_task_delivery_projection
+            projection = historical_task_delivery_projection(
                 kind, source_variant="actual" if action_storage._reply_variant_for(db) == "actual_no_memory_fk" else "fresh",
             )
             predicate += (" and cast(legacy_key as integer) in "
@@ -694,3 +695,14 @@ def test_four_families_round_trip_current_facts_and_allocator(variant, monkeypat
             db, "native_reply_dispatches", ("dingtalk", "new"),
         ).rowcount == 1
         db.rollback()
+
+
+def test_current_and_historical_task_delivery_projections():
+    from app.action_task_delivery_definitions import TASK_DELIVERY_KINDS, task_delivery_projection
+    from app.action_historical_projections import historical_task_delivery_projection
+
+    for kind in TASK_DELIVERY_KINDS:
+        assert task_delivery_projection(kind) == historical_task_delivery_projection(kind, source_variant="actual")
+    assert historical_task_delivery_projection("meeting_memory_write_events", source_variant="fresh") != task_delivery_projection("meeting_memory_write_events")
+    with pytest.raises(TypeError):
+        task_delivery_projection("wechat_deliveries", source_variant="actual")

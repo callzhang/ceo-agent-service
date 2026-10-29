@@ -12,8 +12,6 @@ FEEDBACK_FIELDS = {
                                         "workbench_task_id", "workbench_turn_id", "created_at"),
     "feedback_iteration_decision_items": ("decision_id", "feedback_key", "round_id"),
 }
-FEEDBACK_FRESH_EVENTS = (*FEEDBACK_FIELDS["feedback_events"][:9], "resolved_at",
-                         *FEEDBACK_FIELDS["feedback_events"][9:12])
 FEEDBACK_KINDS = tuple(FEEDBACK_FIELDS)
 FEEDBACK_PARENTS = {
     "decision_id": ("feedback_iteration_decisions__id", "feedback_iteration_decisions"),
@@ -88,10 +86,10 @@ def feedback_schema_parts(unused_references, *, payloads=None):
     return generated, checks, indexes, tuple(triggers)
 
 
-def feedback_projection(kind, *, source_variant="actual", with_rowid=False):
-    if kind not in FEEDBACK_KINDS or source_variant not in ("actual", "fresh"):
+def feedback_projection(kind, *, with_rowid=False):
+    if kind not in FEEDBACK_KINDS:
         raise ValueError("unsupported Feedback projection")
-    fields = FEEDBACK_FRESH_EVENTS if kind == "feedback_events" and source_variant == "fresh" else FEEDBACK_FIELDS[kind]
+    fields = FEEDBACK_FIELDS[kind]
     prefix = "fb_event" if kind == "feedback_events" else "fb_transition"
     select = ["cast(a.legacy_key as integer) as _source_rowid"] if with_rowid else []
     for field in fields:

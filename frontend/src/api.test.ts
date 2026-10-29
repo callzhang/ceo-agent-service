@@ -201,7 +201,7 @@ describe("workbench API", () => {
   it("accepts statistics without confirmation counts or the retired waiting status", async () => {
     const payload = {
       tasks: { total: 1, active: 1, archived: 0 },
-      turns: { queued: 0, running: 1, completed: 0, stopped: 0, failed: 0, waiting_confirmation: 0 },
+      turns: { queued: 0, running: 1, completed: 0, stopped: 0, failed: 0 },
       events: { tool_completed: 1 }, attachments: 2, artifacts: 3,
       duration: { completed_count: 0, total_seconds: 0, average_seconds: 0 },
     };

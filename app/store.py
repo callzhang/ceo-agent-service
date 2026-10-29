@@ -12359,7 +12359,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def _native_wechat_delivery(db, delivery_id: int):
         from app.action_task_delivery_definitions import task_delivery_projection
 
-        projection = task_delivery_projection("wechat_deliveries", source_variant="actual")
+        projection = task_delivery_projection("wechat_deliveries")
         return db.execute(
             f"select * from ({projection}) where id=?", (delivery_id,),
         ).fetchone()
