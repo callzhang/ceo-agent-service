@@ -1,0 +1,87 @@
+{
+  "scope": "Email original readonly lookup and History subject-search diagnosis",
+  "baseline": {
+    "at": "2026-10-29T23:29:19.936284+00:00",
+    "schema": {
+      "objects": 463,
+      "sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+      "fk": []
+    },
+    "installed_sha": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727",
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "completed_actions": [
+      {
+        "action_id": 111699,
+        "status": "done",
+        "attempt_count": 3
+      },
+      {
+        "action_id": 127062,
+        "status": "done",
+        "attempt_count": 2
+      },
+      {
+        "action_id": 127063,
+        "status": "done",
+        "attempt_count": 1
+      }
+    ]
+  },
+  "original_detail": {
+    "before_http": 502,
+    "code": "email_original_unavailable",
+    "root_cause": "IMAP HEADER Message-ID search indexes original case while current canonical locator lowercases the domain; the exact original exists in observed folder.",
+    "location": {
+      "folder": "法务",
+      "uid": 60
+    },
+    "source_validation": {
+      "identity_exact": true,
+      "utf8_bytes": 6417,
+      "sha256": "433b59b10bdf2d3ca9557761e86845e514e7f5f5fd663bafba2124c3bfae5d66"
+    },
+    "fix": "Header-only UID enumeration with existing canonical identity and generation/uniqueness checks; no source fallback/cache/write."
+  },
+  "history": {
+    "query": "Quotation for On-Premise",
+    "all_status_total": 44,
+    "failed_total": 0,
+    "all_failed_total": 18,
+    "root_cause": "No current failed item matches the subject; completed actions do not regain failed status from preserved failed attempt receipts.",
+    "sql_changed": false
+  },
+  "validation": {
+    "regression_red": {
+      "file": "tests/test_email_original_location.py",
+      "failed_before_fix": 2,
+      "passed_before_fix": 4
+    },
+    "focused_tests": {
+      "passed": 201,
+      "runs": [
+        "166 passed (the other two assertions in the initial 168-test run were test-fixture ID expectations, then corrected)",
+        "35 passed (History subject regressions plus pagination)"
+      ]
+    },
+    "ruff": "passed",
+    "diff_check": "passed",
+    "independent_review": {
+      "spec": "pass",
+      "quality": "pass",
+      "limitation": "Relocation scans all Message-ID headers in batches of 50; large-folder latency not measured."
+    }
+  },
+  "release": {
+    "status": "pending_standard_deploy"
+  },
+  "readback": {
+    "status": "pending"
+  },
+  "cleanup": {
+    "status": "pending",
+    "task_temp_root": "/private/tmp/ceo-email-original-history.yeKpso"
+  }
+}

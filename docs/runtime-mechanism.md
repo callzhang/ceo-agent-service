@@ -1784,6 +1784,13 @@ updater 不会因为 fast-forward 而获得新 callback。后续更新后的独�
 
 ## Email current plan deduplication
 
+原文详情需要重新定位时，当前只读 IMAP adapter 枚举已观察文件夹的 UID，
+每批最多 50 条读取 Message-ID 头字段，并按既有域名规范化/完整身份合同唯一匹配。
+不依赖 provider 的 HEADER 索引大小写行为，不读取候选正文；定位后的完整读取继续
+核对 UIDVALIDITY、稳定身份及已有原文版本摘要，读取不写数据库或邮箱。
+History 的主题搜索与当前状态筛选取交集：已完成动作不会因保留了失败尝试回执而
+重新出现在 failed 筛选下。原失败回执仍通过详情查询；不改写历史结果或搜索 SQL。
+
 计划由 `current_action_plan_id` 指向 `email_action_plans` 唯一读取；当前写入不保存重复 JSON。
 分页列表一次批量查询相关计划，避免每条分类单独连接/查询。
 

@@ -1932,6 +1932,14 @@ Task2D6 的 Email 分类运行时拥有原生 `tasks(kind='email_classification'
 
 ## Email provider identity lookup storage
 
+邮件原文定位只使用当前账号、已观察到的文件夹与既有 RFC Message-ID 身份。
+Message-ID 的域名按现行合同转为小写；IMAP 服务端 HEADER 索引不能作为该规范身份
+是否存在的依据。需要重新定位时，使用只读 UID SEARCH ALL，每批至多 50 个 UID
+读取 Message-ID 头字段，按同一规范化合同逐值全等比较；唯一匹配且 UIDVALIDITY
+未变化才读取完整正文。不同域名、不同本地部分、重复身份和缺失原文仍明确失败。
+不按主题/发件人猜测，不添加 DWS 或旧结构回退，也不缓存正文或在读取中修补坐标。
+该定位成本随目标文件夹邮件数增长；已知 UID 的正常读取仍使用原来的直接读取。
+
 Email provider 库存存于单表 `provider_state`（`record_type` 为 observation 或 folder_generation），
 按 observation 身份、folder generation 身份、observation folder 三个 partial 索引定位；
 observation 的 `provider_folder_name`、`category_key`、`important`、`important_signals_json`

@@ -232,9 +232,7 @@ def test_observed_same_folder_relocates_an_expired_uid_by_exact_message_id(store
         "uid",
         "SEARCH",
         None,
-        "HEADER",
-        "Message-ID",
-        "<source@example.test>",
+        "ALL",
     ) in session.calls
     assert (
         stored.get_email_source_location("a", LOCATOR.stable_message_identity)["uid"]

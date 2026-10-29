@@ -71,6 +71,12 @@ class FakeImapSession:
         if command != "FETCH":
             raise AssertionError(f"mailbox write attempted: {command}")
         uid, query = args
+        if query == '(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])':
+            result = []
+            for item in uid.split(b','):
+                result.extend([(b'1 (UID ' + item + b' BODY[HEADER.FIELDS (MESSAGE-ID)] {'
+                                + str(len(self.headers)).encode() + b'}', self.headers), b')'])
+            return 'OK', result
         if query == "(FLAGS)":
             if "," in str(uid):
                 return "OK", [

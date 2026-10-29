@@ -154,7 +154,7 @@ def test_moved_message_locator_requires_one_exact_message_id_in_observed_folder(
     else:
         with pytest.raises(LookupError):
             adapter.locate_message(LOCATOR, folder='Archive')
-    assert ('uid', 'SEARCH', None, 'HEADER', 'Message-ID', '<source@example.test>') in session.calls
+    assert ('uid', 'SEARCH', None, 'ALL') in session.calls
     if uids != b'7':
         assert not any('BODY.PEEK[1]' in str(call) for call in session.calls)
 

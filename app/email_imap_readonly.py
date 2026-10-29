@@ -526,27 +526,37 @@ class ImapReadonlyAdapter:
         status, _ = self.session.select(mailbox, readonly=True)
         _require_ok(status, "IMAP readonly select failed")
         generation = _uidvalidity(self.session.response("UIDVALIDITY"))
-        status, data = self.session.uid("SEARCH", None, "HEADER", "Message-ID", locator.rfc_message_id)
-        _require_ok(status, "IMAP Message-ID search failed")
+        # Message-ID domains are canonicalized locally. Some providers index
+        # HEADER by the exact original spelling, so a normalized search can
+        # miss a message that is present. Read header-only candidates and apply
+        # the existing canonical identity contract, rather than guessing case
+        # variants or accepting a sender/subject match.
+        status, data = self.session.uid("SEARCH", None, "ALL")
+        _require_ok(status, "IMAP UID search failed")
+        uids = _search_uids(data)
         matches = []
-        for uid in _search_uids(data):
-            status, header_data = self.session.uid("FETCH", uid, _HEADER_FETCH)
-            _require_ok(status, "IMAP header fetch failed")
-            _require_exact_fetch_uid(header_data, uid)
-            headers = email.message_from_bytes(_fetch_payload(header_data), policy=email.policy.default)
-            observed = EmailProviderLocator(
-                account_id=self.account_id, folder=folder, uidvalidity=generation, uid=int(uid),
-                rfc_message_id=_decode_header(headers.get("Message-ID", "")),
-                thread_id=locator.thread_id,
+        for start in range(0, len(uids), 50):
+            batch = uids[start:start + 50]
+            status, header_data = self.session.uid(
+                "FETCH", b','.join(batch), '(UID BODY.PEEK[HEADER.FIELDS (MESSAGE-ID)])',
             )
-            if observed.rfc_message_id == locator.rfc_message_id:
-                matches.append(observed)
-        if len(matches) != 1:
-            raise LookupError("email source Message-ID is missing or ambiguous")
+            _require_ok(status, "IMAP header fetch failed")
+            records = _split_exact_fetch_records(header_data, {int(uid) for uid in batch})
+            for uid, record in records.items():
+                headers = email.message_from_bytes(_fetch_payload(record), policy=email.policy.default)
+                observed = EmailProviderLocator(
+                    account_id=self.account_id, folder=folder, uidvalidity=generation, uid=uid,
+                    rfc_message_id=_decode_header(headers.get("Message-ID", "")),
+                    thread_id=locator.thread_id,
+                )
+                if observed.rfc_message_id == locator.rfc_message_id:
+                    matches.append(observed)
         status, _ = self.session.select(mailbox, readonly=True)
         _require_ok(status, "IMAP readonly select failed")
         if _uidvalidity(self.session.response("UIDVALIDITY")) != generation:
             raise LookupError("email source generation changed")
+        if len(matches) != 1:
+            raise LookupError("email source Message-ID is missing or ambiguous")
         return matches[0]
 
     def fetch_message(
