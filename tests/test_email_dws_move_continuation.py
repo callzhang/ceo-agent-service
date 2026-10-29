@@ -221,12 +221,46 @@ def test_claimed_dependent_action_exposes_only_its_verified_dws_move_binding(tmp
     assert binding == {
         "move_action_id": str(move.action_id),
         "message_id": "DzzzzzzNJ0u",
-        "folder_id": 167,
+        "folder_id": "167",
         "receipt_digest": "a" * 64,
         "account_id": "dingtalk_primary",
         "stable_message_identity": action.locator.stable_message_identity,
         "sender": "xup@junhe.com",
         "subject": "JunHe test mail",
         "received_at": "2026-05-07T08:56:27+00:00",
-        "conversation_id": "junhe-thread",
     }
+
+
+def test_exact_dws_prewrite_failure_can_continue_as_new_immutable_plan(tmp_path):
+    store, persisted, _ = _store_with_move_and_dependents(tmp_path)
+    move, _ = _complete_move_and_skip_flag(store, persisted)
+    first = store.continue_actions_after_reconciled_move(
+        int(persisted["id"]),
+        move_action_id=str(move.action_id),
+        resumed_at="2026-10-29T11:02:00+00:00",
+    )
+    assert first is not None
+    old_plan = first["current_action_plan_id"]
+    flag = store.claim_next_direct_action(claimed_at="2026-10-29T11:02:01+00:00")
+    assert flag is not None
+    store.complete_direct_action_attempt(
+        flag,
+        status="failed",
+        provider_operation="dws_mail_action",
+        provider_target=flag.locator.stable_message_identity,
+        provider_result_id="",
+        error="dws_provider_error:ValueError",
+        finished_at="2026-10-29T11:02:02+00:00",
+        retryable=False,
+    )
+
+    resumed = store.continue_actions_after_reconciled_move(
+        int(persisted["id"]),
+        move_action_id=str(move.action_id),
+        resumed_at="2026-10-29T11:03:00+00:00",
+    )
+
+    assert resumed is not None
+    assert resumed["action_plan"]["action_plan_version"] == 3
+    assert resumed["action_plan"]["actions"] == ["flag_important", "mark_read"]
+    assert set(store.direct_action_statuses_for_plan(old_plan).values()) == {"failed", "pending"}

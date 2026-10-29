@@ -2,19 +2,20 @@ from app.email_classifier_contracts import EmailAction
 from app.email_dws_actions import DwsVerifiedMoveActionExecutor
 from app.email_store import StoredEmailAction, StoredEmailLocator
 from app import email_worker
+from hashlib import sha256
+import json
 
 
 CONTEXT = {
     "move_action_id": "111699",
     "message_id": "DzzzzzzNJ0u",
     "folder_id": 167,
-    "receipt_digest": "a" * 64,
+    "receipt_digest": "",
     "account_id": "dingtalk_primary",
     "stable_message_identity": "dingtalk_primary:message-id:<junhe@example.com>",
     "sender": "xup@junhe.com",
     "subject": "回复: Quotation for On-Premise Labeling Platform with Customer Cloud_225.pdf",
     "received_at": "2026-05-07T08:56:27+00:00",
-    "conversation_id": "DzzzzyK-vA1---.hRXZG19",
 }
 
 
@@ -28,6 +29,23 @@ def message(**overrides):
     }
     value.update(overrides)
     return value
+
+
+def proof(candidate=None):
+    candidate = candidate or message()
+    return sha256(json.dumps({
+        "account": "derek@stardust.ai",
+        "sender": CONTEXT["sender"].casefold(),
+        "subject": CONTEXT["subject"],
+        "conversation": candidate["conversationId"],
+        "received_at": candidate["receivedDateTime"],
+        "dws_message_id": CONTEXT["message_id"],
+        "folder_id": "167",
+        "action_id": CONTEXT["move_action_id"],
+    }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode("utf-8")).hexdigest()
+
+
+CONTEXT["receipt_digest"] = proof()
 
 
 def action(kind=EmailAction.FLAG_IMPORTANT):

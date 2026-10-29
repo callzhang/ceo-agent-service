@@ -128,10 +128,10 @@ class DwsVerifiedMoveActionExecutor:
     def _matches_identity(self, message: dict[str, Any]) -> bool:
         sender = message.get("from")
         sender_email = sender.get("email") if isinstance(sender, dict) else ""
+        conversation_id = str(message.get("conversationId") or "")
         if not (
             str(message.get("id") or "") == str(self.context["message_id"])
-            and str(message.get("conversationId") or "")
-            == str(self.context.get("conversation_id") or "")
+            and bool(conversation_id)
             and str(sender_email).casefold() == str(self.context["sender"]).casefold()
             and str(message.get("subject") or "") == str(self.context["subject"])
         ):
@@ -145,7 +145,26 @@ class DwsVerifiedMoveActionExecutor:
             ).astimezone(timezone.utc)
         except (KeyError, TypeError, ValueError):
             return False
-        return abs((actual - expected).total_seconds()) <= 10
+        if abs((actual - expected).total_seconds()) > 10:
+            return False
+        proof = sha256(
+            json.dumps(
+                {
+                    "account": self.mailbox.casefold(),
+                    "sender": str(self.context["sender"]).casefold(),
+                    "subject": str(self.context["subject"]),
+                    "conversation": conversation_id,
+                    "received_at": message["receivedDateTime"],
+                    "dws_message_id": str(self.context["message_id"]),
+                    "folder_id": str(self.context["folder_id"]),
+                    "action_id": str(self.context["move_action_id"]),
+                },
+                ensure_ascii=False,
+                sort_keys=True,
+                separators=(",", ":"),
+            ).encode("utf-8")
+        ).hexdigest()
+        return proof == self.context["receipt_digest"]
 
     def _important_tag_id(self) -> str:
         result = self.dws.run_json([

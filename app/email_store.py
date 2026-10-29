@@ -10802,7 +10802,16 @@ class EmailStore:
                     raise EmailActionPlanConflict(
                         "skipped dependent action was not blocked by a missing readback"
                     )
-                if row["status"] not in {"pending", "skipped"}:
+                if row["status"] == "failed":
+                    if (
+                        row["provider_operation"] != "dws_mail_action"
+                        or str(row["provider_result_id"] or "")
+                        or row["error"] != "dws_provider_error:ValueError"
+                    ):
+                        raise EmailActionPlanConflict(
+                            "failed dependent action lacks a no-effect DWS readback failure"
+                        )
+                elif row["status"] not in {"pending", "skipped"}:
                     raise EmailActionPlanConflict(
                         "dependent action is not eligible for readback continuation"
                     )
@@ -10875,7 +10884,7 @@ class EmailStore:
                 f"""
                 select a.action_id, a.action_plan_id, a.action_type, a.status,
                        c.account_id, c.stable_message_identity,
-                       m.sender, m.subject, m.received_at, m.thread_identity
+                       m.sender, m.subject, m.received_at
                 from ({DIRECT_EMAIL_ACTION_SQL}) a
                 join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
                 join ({EMAIL_MESSAGE_SQL}) m
@@ -10916,14 +10925,13 @@ class EmailStore:
         return {
             "move_action_id": str(moves[0]["action_id"]),
             "message_id": match.group(1),
-            "folder_id": int(match.group(2)),
+            "folder_id": match.group(2),
             "receipt_digest": match.group(3),
             "account_id": str(current["account_id"]),
             "stable_message_identity": str(current["stable_message_identity"]),
             "sender": str(current["sender"]),
             "subject": str(current["subject"]),
             "received_at": str(current["received_at"]),
-            "conversation_id": str(current["thread_identity"]),
         }
 
     @staticmethod
