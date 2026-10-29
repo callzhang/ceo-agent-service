@@ -4,6 +4,7 @@ from app.email_store import StoredEmailAction, StoredEmailLocator
 from app import email_worker
 from hashlib import sha256
 import json
+import pytest
 
 
 CONTEXT = {
@@ -129,6 +130,52 @@ def test_read_action_is_noop_when_exact_message_is_already_read():
 
     assert result.status == "done"
     assert result.provider_operation == "dws_readback_noop"
+    assert not any(c[1:4] == ["mail", "message", "batch-update"] for c in dws.commands)
+
+
+def test_rfc_source_date_preserves_identity_and_raw_source_value():
+    context = {**CONTEXT, "received_at": "Thu, 07 May 2026 08:56:27 +0000"}
+    dws = FakeDws(important=False)
+
+    result = DwsVerifiedMoveActionExecutor(
+        dws, mailbox="derek@stardust.ai", context=context
+    ).execute(action())
+
+    assert result.status == "done"
+    assert result.provider_operation == "dws_verified_readback"
+    assert context["received_at"] == "Thu, 07 May 2026 08:56:27 +0000"
+
+
+@pytest.mark.parametrize("received_at", [
+    "2026-05-07T08:56:27+00:00",
+    "Thu, 07 May 2026 08:56:27 +0000",
+    "Thu, 07 May 2026 10:56:27 +0200",
+    "Thu, 07 May 2026 08:56:23 +0000",
+])
+def test_source_date_representations_allow_existing_read_state_without_write(received_at):
+    dws = FakeDws(read=True)
+    result = DwsVerifiedMoveActionExecutor(
+        dws, mailbox="derek@stardust.ai", context={**CONTEXT, "received_at": received_at}
+    ).execute(action(EmailAction.MARK_READ))
+
+    assert result.status == "done"
+    assert result.provider_operation == "dws_readback_noop"
+    assert not any(c[1:4] == ["mail", "message", "batch-update"] for c in dws.commands)
+
+
+@pytest.mark.parametrize("received_at", [
+    "not-a-date",
+    "2026-05-07T08:56:27",
+    "Thu, 07 May 2026 08:56:27",
+    "Thu, 07 May 2026 08:56:22 +0000",
+])
+def test_invalid_unzoned_or_outside_window_source_date_never_writes(received_at):
+    dws = FakeDws(important=False)
+    result = DwsVerifiedMoveActionExecutor(
+        dws, mailbox="derek@stardust.ai", context={**CONTEXT, "received_at": received_at}
+    ).execute(action())
+
+    assert result.status == "failed"
     assert not any(c[1:4] == ["mail", "message", "batch-update"] for c in dws.commands)
 
 

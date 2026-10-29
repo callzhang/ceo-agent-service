@@ -2,13 +2,13 @@
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
 from hashlib import sha256
 import json
 import re
 from typing import Any
 
 from app.email_classifier_contracts import EmailAction
+from app.email_action_reconcile import _received_datetime
 from app.email_provider_actions import ProviderActionResult
 from app.email_store import StoredEmailAction
 
@@ -140,12 +140,8 @@ class DwsVerifiedMoveActionExecutor:
         ):
             return False
         try:
-            actual = datetime.fromisoformat(
-                str(message["receivedDateTime"]).replace("Z", "+00:00")
-            ).astimezone(timezone.utc)
-            expected = datetime.fromisoformat(
-                str(self.context["received_at"]).replace("Z", "+00:00")
-            ).astimezone(timezone.utc)
+            actual = _received_datetime(str(message["receivedDateTime"]))
+            expected = _received_datetime(str(self.context["received_at"]))
         except (KeyError, TypeError, ValueError):
             return False
         if abs((actual - expected).total_seconds()) > 10:
