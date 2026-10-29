@@ -3,6 +3,7 @@ import json
 import pytest
 
 import app.approval_history as approval_history_module
+from app.schema_sources import oa_history_28_5 as historical_oracle
 
 from app.agent_contracts import (
     AgentError,
@@ -305,6 +306,7 @@ def _confirmed_audit(
     )
 
 
+
 @pytest.mark.parametrize(
     ("argv", "expected"),
     [
@@ -360,7 +362,7 @@ def test_confirmed_structured_result_uses_native_dws_command_descriptor(argv, ex
 
     attempt = _attempt(oa_process_instance_id="process", oa_task_id="task")
 
-    assert resolve_approval_history_result(attempt, [consumer, audit]) is expected
+    assert historical_oracle.resolve_approval_history_result(attempt, [consumer, audit]) is expected
 
 
 @pytest.mark.parametrize(
@@ -389,7 +391,7 @@ def test_unrecognized_or_mismatched_native_command_is_unknown(argv):
         parent_agent_run_id=consumer.id,
     )
 
-    result = resolve_approval_history_result(
+    result = historical_oracle.resolve_approval_history_result(
         _attempt(
             oa_process_instance_id="process",
             oa_task_id="task",
@@ -420,7 +422,7 @@ def test_confirmed_comment_does_not_require_task_identifier():
     )
 
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(oa_process_instance_id="process", oa_task_id="task"),
             [consumer, audit],
         )
@@ -454,7 +456,7 @@ def test_confirmed_structured_action_requires_persisted_process_identifier():
     )
 
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(
                 oa_process_instance_id="",
                 oa_task_id="task",
@@ -529,7 +531,7 @@ def test_confirmed_audit_result_uses_typed_result_without_side_effect_projection
         parent_agent_run_id=consumer.id,
     )
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(oa_process_instance_id="process", oa_task_id="task"),
             [consumer, audit],
         )
@@ -619,7 +621,7 @@ def test_conflicting_confirmed_approval_actions_are_unknown():
         parent_agent_run_id=consumer_reject.id,
     )
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(oa_process_instance_id="process", oa_task_id="task"),
             [consumer_approve, audit_approve, consumer_reject, audit_reject],
         )
@@ -634,7 +636,7 @@ def test_non_approval_attempt_returns_none():
 def test_failed_direct_receipt_does_not_yield_success():
     for receipt in ("not-json", json.dumps({"success": False}), json.dumps({"errcode": 1})):
         assert (
-            resolve_approval_history_result(
+            historical_oracle.resolve_approval_history_result(
                 _attempt(
                     oa_action="approve",
                     send_status="closed",
@@ -665,7 +667,7 @@ def test_terminal_direct_action_without_receipt_is_unknown():
 )
 def test_generic_direct_receipt_confirms_persisted_approval_while_pending(receipt):
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=receipt),
             [],
         )
@@ -698,7 +700,7 @@ def test_confirmed_structured_action_precedes_workflow_status():
         parent_agent_run_id=consumer.id,
     )
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(
                 send_status="processing",
                 oa_process_instance_id="process",
@@ -719,7 +721,7 @@ def test_confirmed_structured_action_precedes_workflow_status():
 )
 def test_nested_generic_receipt_confirms_persisted_approval(payload):
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=json.dumps(payload)),
             [],
         )
@@ -737,7 +739,7 @@ def test_commented_legacy_return_is_a_pending_comment_not_a_return():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.COMMENTED_PENDING
     )
 
@@ -750,7 +752,7 @@ def test_generic_success_uses_persisted_direct_approval_action():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.APPROVED
     )
 
@@ -767,7 +769,7 @@ def test_typed_legacy_agree_receipt_is_strong_approval_evidence():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.APPROVED
     )
 
@@ -795,7 +797,7 @@ def test_typed_legacy_receipt_with_any_explicit_failure_is_unknown(failure):
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.UNKNOWN
     )
 
@@ -809,7 +811,7 @@ def test_commented_status_with_explicitly_failed_receipt_is_unknown():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.UNKNOWN
     )
 
@@ -849,7 +851,7 @@ def test_confirmed_running_comment_receipt_is_pending_comment():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.COMMENTED_PENDING
     )
 
@@ -880,7 +882,7 @@ def test_direct_receipt_all_identifier_spellings_must_match(identifiers):
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.UNKNOWN
     )
 
@@ -906,7 +908,7 @@ def test_salvaged_typed_legacy_agree_receipt_is_strong_approval_evidence():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.APPROVED
     )
 
@@ -933,7 +935,7 @@ def test_typed_redirect_process_receipt_is_strong_return_evidence():
     )
 
     assert (
-        resolve_approval_history_result(attempt, [])
+        historical_oracle.resolve_approval_history_result(attempt, [])
         is ApprovalHistoryResult.RETURNED
     )
 
@@ -966,7 +968,7 @@ def test_conflicting_structured_and_direct_evidence_on_same_attempt_is_unknown()
     )
 
     assert (
-        resolve_approval_history_result(attempt, [consumer, audit])
+        historical_oracle.resolve_approval_history_result(attempt, [consumer, audit])
         is ApprovalHistoryResult.UNKNOWN
     )
 
@@ -975,10 +977,25 @@ def _resolve_group(
     attempts: list[ReplyAttempt],
     runs_by_attempt: dict[int, list[AgentRun]] | None = None,
 ) -> ApprovalHistoryResult:
-    return approval_history_module.resolve_approval_history_group_result(
-        attempts,
-        runs_by_attempt or {},
-    )
+    runs_by_attempt = runs_by_attempt or {}
+    operations = {"approved": "approve", "rejected": "reject", "returned": "revert_task", "commented_pending": "comment"}
+    recorded = []
+    for attempt in attempts:
+        runs = runs_by_attempt.get(attempt.id, [])
+        consumers = [r for r in runs if r.role is AgentRole.CONSUMER]
+        results = historical_oracle._confirmed_business_results(
+            attempt, runs, consumer_runs={r.id: r for r in consumers},
+            consumer_results=historical_oracle._consumer_results(consumers),
+        )
+        for result in results:
+            if result is ApprovalHistoryResult.COMMENTED_PENDING and not attempt.oa_action_result_json.strip():
+                continue
+            recorded.append({"attempt_id": attempt.id, "status": "done", "operation": operations[str(result)],
+                             "target": json.dumps({"process_instance_id": attempt.oa_process_instance_id, "task_id": attempt.oa_task_id})})
+    expected = historical_oracle.resolve_approval_history_group_result(attempts, runs_by_attempt)
+    actual = approval_history_module.resolve_approval_history_group_result(attempts, runs_by_attempt, recorded_actions=recorded)
+    assert actual is expected
+    return actual
 
 
 def test_group_uses_newer_persisted_approval_with_generic_success():
@@ -1253,7 +1270,7 @@ def test_group_noncompleted_latest_consumer_keeps_older_terminal_result():
 )
 def test_inconsistent_or_invalid_direct_receipts_do_not_confirm(payload):
     assert (
-        resolve_approval_history_result(
+        historical_oracle.resolve_approval_history_result(
             _attempt(oa_action="approve", send_status="pending", oa_action_result_json=json.dumps(payload)),
             [],
         )
@@ -1314,3 +1331,13 @@ def test_confirmed_evidence_must_match_persisted_approval_invariants(case):
 
     audit = _run(2, AgentRole.AUDIT, audit_result, **audit_kwargs)
     assert resolve_approval_history_result(attempt, [consumer, audit]) is ApprovalHistoryResult.PROCESSING
+
+
+def test_runtime_invalid_latest_consumer_is_not_bypassed_by_recorded_fact():
+    attempt = _attempt(oa_process_instance_id='process', oa_task_id='task')
+    consumer = _run(1, AgentRole.CONSUMER, '{invalid')
+    action = {'attempt_id': attempt.id, 'operation': 'approve', 'status': 'done',
+              'target': json.dumps({'process_instance_id': 'process', 'task_id': 'task'})}
+    assert approval_history_module.resolve_approval_history_group_result(
+        [attempt], {attempt.id: [consumer]}, recorded_actions=[action]
+    ) is ApprovalHistoryResult.UNKNOWN

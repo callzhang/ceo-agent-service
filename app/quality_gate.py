@@ -475,17 +475,25 @@ def _check_reply_attempts(
               and not exists (
                 select 1 from ({REPLY_ATTEMPT_COMMON_SQL}) resolved
                 where resolved.oa_process_instance_id=a.oa_process_instance_id
-                  and json_valid(resolved.oa_action_result_json)
-                  and coalesce(
-                    json_extract(resolved.oa_action_result_json, '$.success'),
-                    json_extract(resolved.oa_action_result_json, '$.result.success'),
-                    json_extract(resolved.oa_action_result_json, '$.dws_action_result.success')
-                  )=1
-                  and upper(coalesce(
-                    json_extract(resolved.oa_action_result_json, '$.taskStatus'),
-                    json_extract(resolved.oa_action_result_json, '$.result.taskStatus'),
-                    ''
-                  ))='COMPLETED'
+                  and exists (
+                    select 1 from actions owner
+                    join reply_attempt_receipt_refs ref on ref.attempt_id=owner.id
+                    join action_receipts body on body.id=ref.receipt_id
+                    join action_receipts fact on fact.action_id=body.action_id and fact.provider_receipt_id=body.id
+                    where owner.record_type='reply_attempts' and cast(owner.legacy_key as integer)=resolved.id
+                      and body.provider_result_json is not null and fact.provider_result_json is null
+                      and fact.agent_run_id is null and fact.execution_run_id is null and fact.action_index is null
+                      and fact.provider_result_id is null and json_valid(fact.target)
+                      and json_extract(fact.target, '$.process_instance_id')=resolved.oa_process_instance_id
+                      and json_extract(fact.target, '$.task_id')=resolved.oa_task_id
+                      and case when json_valid(fact.outcome_json) then
+                        json_type(fact.outcome_json)='object'
+                        and json_type(fact.outcome_json, '$.success') is not null
+                        and json_type(fact.outcome_json, '$.taskStatus') is not null
+                      else 0 end
+                      and json_extract(fact.outcome_json, '$.success')=1
+                      and upper(coalesce(json_extract(fact.outcome_json, '$.taskStatus'),''))='COMPLETED'
+                  )
               )
               and not exists (
                 select 1 from ({REPLY_TASK_SQL}) t

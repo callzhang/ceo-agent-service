@@ -1176,6 +1176,10 @@ def test_history_approval_card_uses_confirmed_structured_business_result(
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_confirmed_approval_attempt(store)
 
+    from app.oa_history_normalization import normalize_oa_history
+    with store._connect() as db:
+        normalize_oa_history(db)
+
     html = render_attempt_list(
         store,
         include_chart=False,
@@ -1220,9 +1224,11 @@ def test_history_batches_structured_approval_run_summaries_once(
 
     bulk_calls: list[list[int]] = []
     history_bulk_calls: list[list[str]] = []
+    recorded_bulk_calls: list[list[int]] = []
     agent_run_calls: list[int] = []
     bulk_method = getattr(store, "list_agent_run_summaries_for_terminal_runs", None)
     history_bulk_method = store.list_oa_attempt_histories
+    recorded_bulk_method = store.list_recorded_oa_results
     original_agent_runs = audit_web_module._agent_runs_for_attempt
 
     def track_bulk(run_ids: list[int]):
@@ -1236,6 +1242,10 @@ def test_history_batches_structured_approval_run_summaries_once(
     def track_history_bulk(process_ids: list[str]):
         history_bulk_calls.append(process_ids)
         return history_bulk_method(process_ids)
+
+    def track_recorded_bulk(attempt_ids: list[int]):
+        recorded_bulk_calls.append(attempt_ids)
+        return recorded_bulk_method(attempt_ids)
 
     def reject_single_history(*args, **kwargs):
         raise AssertionError("History cards must not load approval attempts one process at a time")
@@ -1252,7 +1262,12 @@ def test_history_batches_structured_approval_run_summaries_once(
         track_legacy_agent_runs,
     )
     monkeypatch.setattr(store, "list_oa_attempt_histories", track_history_bulk)
+    monkeypatch.setattr(store, "list_recorded_oa_results", track_recorded_bulk)
     monkeypatch.setattr(store, "list_oa_attempt_history", reject_single_history)
+
+    from app.oa_history_normalization import normalize_oa_history
+    with store._connect() as db:
+        normalize_oa_history(db)
 
     html = render_attempt_list(
         store,
@@ -1277,6 +1292,8 @@ def test_history_batches_structured_approval_run_summaries_once(
         first_business.agent_run_id,
         second_business.agent_run_id,
     }
+    assert len(recorded_bulk_calls) == 1
+    assert set(recorded_bulk_calls[0]) == {first_business_id, second_business_id, *latest_ids}
     assert agent_run_calls == []
 
 
@@ -1307,6 +1324,10 @@ def test_history_approval_cards_show_direct_return_and_unknown_results(tmp_path:
         oa_action="review",
         send_status="completed",
     )
+
+    from app.oa_history_normalization import normalize_oa_history
+    with store._connect() as db:
+        normalize_oa_history(db)
 
     html = render_attempt_list(
         store,
@@ -1401,6 +1422,10 @@ def test_history_approval_cards_merge_business_evidence_with_latest_system_state
         audit_summary="Approval retry failed.",
         send_status="failed",
     )
+
+    from app.oa_history_normalization import normalize_oa_history
+    with store._connect() as db:
+        normalize_oa_history(db)
 
     html = render_attempt_list(
         store,

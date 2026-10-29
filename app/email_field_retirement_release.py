@@ -183,6 +183,8 @@ class EmailFieldRetirementRelease:
                     raise ValueError("Email field retirement source FK findings changed")
                 _validate_source_data(db)
                 _rebuild(db, inverse=False)
+                from app.oa_history_normalization import normalize_oa_history
+                normalize_oa_history(db)
                 _write_marker(db, TARGET_STORE_VERSION, datetime.now(timezone.utc).isoformat())
                 if (not schema_is_current(db) or _foreign_keys(db) != self.source_fk
                         or db.execute("pragma quick_check").fetchone()[0] != "ok"):

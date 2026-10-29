@@ -19472,6 +19472,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from app.reply_receipt_reference import add_reference
                 add_reference(db, attempt_id=attempt_id, receipt_id=oa_action_receipt_id,
                               expected_body=oa_action_result_json)
+                from app.oa_history_storage import record_current_oa_facts
+                record_current_oa_facts(
+                    db, attempt_id=attempt_id, receipt_id=oa_action_receipt_id,
+                    expected_body=oa_action_result_json,
+                    process_instance_id=persisted_process_id, task_id=persisted_task_id,
+                )
                 update_action(db, "reply_attempts", attempt_id, {"oa_action_result_json": ""})
             self._record_memory_write_events_in_connection(
                 db,
@@ -20806,6 +20812,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             review_candidate_id=review_candidate_id,
             supplement_instruction=supplement_instruction,
         )
+
+    def list_recorded_oa_results(
+        self, attempt_ids: Sequence[int]
+    ) -> list[dict[str, object]]:
+        """Read factual receipt metadata through each exact Attempt reference."""
+        from app.oa_history_storage import list_recorded_oa_results
+        with self._connect() as db:
+            return list_recorded_oa_results(db, attempt_ids)
 
     def get_reply_attempt(self, attempt_id: int) -> ReplyAttempt | None:
         with self._connect() as db:

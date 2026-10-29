@@ -1487,6 +1487,10 @@ status and attempt-count checks are unchanged, and no stored value is rewritten.
 
 Email worker startup does not inventory or rewrite retired direct-v1 unsubscribe tasks. The explicit Email field retirement release preflight refuses a database containing that source; failed and skipped task history remains unchanged at worker startup.
 
+OA History 的历史结果从同一 Attempt 精确引用的原始回执及同 Action 的事实投影读取；旧 provider JSON 和旧 executed-Audit 格式只在显式迁移中解析。缺失的运行、审核及 provider 证明身份保持 NULL，历史采纳结果不能充当当前 verified 执行证明。迁移前比较实际内联正文与引用正文，存在不同的非空本地结果就拒绝，原文和引用均不改动。已归一的当前事实在回退后再次迁移时保持原结论，不按旧正文重新推断成功。
+
+质量检查独立读取回执投影中原有的 success/taskStatus 值，继续使用 SQLite 的 =1 与 upper(...)=COMPLETED 判定，不以 History 的批准结论或 done 状态替代。旧嵌套路径仅由离线来源转换器提取；当前 finalizer 在绑定精确回执的原事务内只投影当前扁平字段。两个字段都属于事实投影结构，NULL 值保留为 NULL；没有历史采纳结果的投影不新增外部执行状态。
+
 # Task Evidence Repair And Retired Anchors
 
 Meeting claims order attempts by the later of `eligible_at` and `available_at`,

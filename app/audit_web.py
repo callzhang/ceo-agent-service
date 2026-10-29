@@ -6496,6 +6496,7 @@ def _render_attempt_list(
             and attempt.send_status.strip().lower() in {"failed", "needs_human"}
         ]
     )
+    recorded_approval_actions = store.list_recorded_oa_results(list(approval_evidence_attempts))
     approval_runs_by_attempt_id = {
         attempt.id: history_agent_run_summaries.get(attempt.agent_run_id, [])
         for attempt in approval_evidence_attempts.values()
@@ -6564,6 +6565,7 @@ def _render_attempt_list(
             approval_result = resolve_approval_history_group_result(
                 group_attempts,
                 approval_runs_by_attempt_id,
+                recorded_actions=recorded_approval_actions,
                 verified_actions=[
                     action
                     for group_attempt in group_attempts

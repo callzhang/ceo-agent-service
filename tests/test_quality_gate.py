@@ -1336,6 +1336,9 @@ def test_quality_gate_deduplicates_oa_failure_after_agent_receipt_success(tmp_pa
                 **values,
             })
 
+        from app.oa_history_normalization import normalize_oa_history
+        normalize_oa_history(db)
+
     report = scan_hourly_quality(store.path, now=NOW)
 
     assert report.ok
@@ -1808,3 +1811,28 @@ def test_feedback_after_the_task_finished_stays_an_error(tmp_path):
         tmp_path, send_status="failed",
         task_updated_at="2026-08-07 00:15:00", received_at="2026-08-07T00:20:00+00:00",
     ) == ([("unresolved", 1)], [])
+
+
+def test_oa_quality_ignores_unrelated_receipt_metadata(tmp_path):
+    from app.action_entity_storage import create_action, append_action_receipt
+    from app.oa_history_normalization import normalize_oa_history
+    from app.reply_receipt_reference import add_reference
+    store = AutoReplyStore(tmp_path / 'state.sqlite3')
+    attempt_id = store.record_reply_attempt(
+        conversation_id='c', conversation_title='group', trigger_message_id='m',
+        trigger_sender='s', trigger_text='t', action='oa_approval', sensitivity_kind='normal',
+        oa_process_instance_id='p', oa_task_id='t', oa_action_result_json='{"success":false}',
+        send_status='failed',
+    )
+    with store._connect() as db:
+        action = create_action(db, values={})
+        receipt = append_action_receipt(db, action['id'], values={'provider_result_json': '{"success":false}'})
+        add_reference(db, attempt_id=attempt_id, receipt_id=receipt, expected_body='{"success":false}')
+        append_action_receipt(db, action['id'], values={
+            'provider_receipt_id': receipt, 'operation': 'approve', 'status': 'done',
+            'target': '{"process_instance_id":"p","task_id":"t"}',
+            'outcome_json': '{"success":1}',
+        })
+        normalize_oa_history(db)
+    report = scan_hourly_quality(store.path, now=NOW)
+    assert any(issue.source == 'reply_attempts' for issue in report.violations)

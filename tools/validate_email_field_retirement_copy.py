@@ -7,9 +7,52 @@ import os
 from pathlib import Path
 import subprocess
 import sys
+import sqlite3
 
 from app.email_field_retirement_release import prepare_email_field_retirement_release
+from app.oa_history_normalization import normalize_oa_history
+from app.task8_storage import register_task8_functions
 from tools import native_copy_validation as native
+from tools import oa_history_copy_validation as oa
+
+
+def _new_current_oa(path):
+    from app.store import AutoReplyStore
+    from app.action_entity_storage import create_action, append_action_receipt
+    from app.action_storage import update_action
+    from app.reply_receipt_reference import add_reference
+    from app.oa_history_storage import record_current_oa_facts
+    store = AutoReplyStore(path)
+    raw = '{"success":true}'
+    attempt_id = store.record_reply_attempt(
+        conversation_id='copy-oa', conversation_title='Synthetic OA',
+        trigger_message_id='copy-oa-current', trigger_sender='fixture', trigger_text='Synthetic',
+        action='oa_approval', sensitivity_kind='normal', oa_action='approve',
+        oa_process_instance_id='copy-oa-process', oa_task_id='copy-oa-task',
+        send_status='closed', oa_action_result_json=raw,
+    )
+    with store._connect() as db:
+        action = create_action(db, values={'operation': 'approve'})
+        receipt = append_action_receipt(db, action['id'], values={'provider_result_json': raw})
+        add_reference(db, attempt_id=attempt_id, receipt_id=receipt, expected_body=raw)
+        record_current_oa_facts(db, attempt_id=attempt_id, receipt_id=receipt, expected_body=raw,
+                               process_instance_id='copy-oa-process', task_id='copy-oa-task')
+        update_action(db, 'reply_attempts', attempt_id, {'oa_action_result_json': ''})
+    return attempt_id
+
+
+def _check_current_oa(path, attempt_id):
+    from app.approval_history import resolve_approval_history_result
+    from app.oa_history_normalization import load_oa_history_source
+    from app.oa_history_storage import list_recorded_oa_results
+    with sqlite3.connect(path) as db:
+        register_task8_functions(db)
+        attempts, _ = load_oa_history_source(db)
+        attempt = next(a for a in attempts if a.id == attempt_id)
+        facts = list_recorded_oa_results(db, [attempt_id])
+        assert str(resolve_approval_history_result(attempt, [], recorded_actions=facts)) == 'unknown'
+        assert len(facts) == 1 and facts[0]['status'] is None
+        assert attempt.oa_action_result_json == '{"success":true}'
 
 
 PROGRAM = r'''
@@ -112,33 +155,62 @@ def main():
     root = Path(__file__).resolve().parents[1]
     native._copy_source(source, copy)
     before = native.fact_digest(copy)
+    with sqlite3.connect(copy) as db:
+        register_task8_functions(db)
+        db.execute('begin immediate')
+        oa_before = oa.capture(db, normalized=False)
+        normalization = normalize_oa_history(db)
+        oa_after = oa.capture(db, normalized=True)
+        assert oa_before == oa_after, 'OA outcomes, quality predicate or exact bodies changed'
+        repeated = normalize_oa_history(db)
+        assert repeated['facts'] == repeated['bodies'] == 0, 'OA normalization is not idempotent'
+    normalized_source = native.fact_digest(copy)
+    for table in ('tasks', 'runs', 'runtime_attempts', 'run_adopted_results', 'run_adopted_reviews'):
+        assert before[table] == normalized_source[table], 'OA normalization created or changed execution proof'
     identities = native._identities(copy)
     original = native.fact_digest(copy, original_identities=identities)
     release = prepare_email_field_retirement_release(copy)
     release.publish()
     release.verify_loaded()
+    current_oa = _new_current_oa(copy)
+    _check_current_oa(copy, current_oa)
     first = _cold_write(root, copy, [])
     target = native.fact_digest(copy)
     release.rollback()
     inverse = native.fact_digest(copy)
     assert native.fact_digest(copy, original_identities=identities) == original
+    with sqlite3.connect(copy) as db:
+        register_task8_functions(db)
+        for normalized in (False, True):
+            observed = oa.capture(db, normalized=normalized)
+            for key, population in oa_before.items():
+                assert {identity: observed[key][identity] for identity in population} == population
+    _check_current_oa(copy, current_oa)
     second = _cold_write(old, copy, [first])
     after_old = native.fact_digest(copy)
     again = prepare_email_field_retirement_release(copy)
     again.publish()
     again.verify_loaded()
+    _check_current_oa(copy, current_oa)
     again.rollback()
     assert native.fact_digest(copy) == after_old
     final = prepare_email_field_retirement_release(copy)
     final.publish()
     final.finalize()
+    _check_current_oa(copy, current_oa)
     third = _cold_write(root, copy, [first, second])
     report = {
         "status": "passed", "checked_at": datetime.now(timezone.utc).isoformat(),
         "native_tables_including_sequence": len(before), "source_fact_hashes": before,
+        "normalized_source_fact_hashes": normalized_source,
+        "oa_normalization": normalization,
+        "oa_semantics": oa.summary(oa_before),
+        "oa_attempt_group_quality_and_exact_body_equivalence": True,
+        "oa_normalization_idempotent_and_no_execution_proof_changes": True,
+        "new_current_unknown_oa_stays_unknown_across_inverse_reforward": True,
         "new_target_fact_hashes": target, "first_inverse_fact_hashes": inverse,
         "old_cold_write_fact_hashes": after_old,
-        "original_cohort_typed_facts_preserved": True,
+        "normalized_original_cohort_typed_facts_preserved": True,
         "new_target_inputs_plans_results_and_fake_receipts_survive_inverse": True,
         "actual_old_code_cold_read_write": True, "second_inverse_exact_including_new_old_writes": True,
         "email_constructor_validation": "validate_rows=False, matching actual Email worker; schema/account validation retained",
@@ -149,7 +221,8 @@ def main():
     args.report.write_text(json.dumps(report, ensure_ascii=False, indent=2) + "\n")
     print(json.dumps({key: value for key, value in report.items()
                       if key not in {"source_fact_hashes", "new_target_fact_hashes", "first_inverse_fact_hashes",
-                                     "old_cold_write_fact_hashes", "current_old_current_cold_writes"}}))
+                                     "old_cold_write_fact_hashes", "normalized_source_fact_hashes",
+                                     "current_old_current_cold_writes"}}))
 
 
 if __name__ == "__main__":

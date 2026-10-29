@@ -51,7 +51,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-stored-email-category-20261029 | app/email_classifier_contracts.py; app/email_store.py stored category read methods; tests/test_email_classifier_contracts.py; new focused stored category test; exact email contract documentation paragraph | Parent-coordinated stored-fact category contract cleanup; no DDL or release. | 2026-10-29 |
 
 
 | Owner | Files | What | Since |
