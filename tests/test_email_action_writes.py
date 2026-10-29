@@ -44,12 +44,43 @@ def _databases(*, include_skill_config_receipts=False, compact_payload=True):
     return source, target
 
 
-def test_all_thirteen_native_inserts_project_same_values_and_types():
+def _seed_historical_parent(source, target, kind):
+    """Copy one frozen parent into the historical target, without a legacy writer."""
+    from app.action_email_definitions import EMAIL_FIELDS
+    from app.action_storage import ACTION_RECORD_TYPES, _action_payload
+    from app.storage_payload import PayloadLayout
+
+    values = _cases()[kind]
+    cursor = source.execute(
+        f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
+        tuple(values.values()),
+    )
+    fields = EMAIL_FIELDS[kind]
+    row = source.execute(f"select {','.join(fields)} from {kind} where rowid=?", (cursor.lastrowid,)).fetchone()
+    layout = PayloadLayout(fields)
+    payload = _action_payload(target, kind, dict(zip(fields, row, strict=True)), layout=layout)
+    target.execute("insert into actions(_kind,legacy_key,payload_json) values(?,?,?)",
+                   (ACTION_RECORD_TYPES.code(kind), str(cursor.lastrowid), payload))
+
+
+def _seed_step_parents(source, target):
+    from app.action_storage import insert_email_action
+    _seed_historical_parent(source, target, "email_action_plans")
+    values = _cases()["email_unsubscribe_claims"]
+    source.execute(f"insert into email_unsubscribe_claims({','.join(values)}) values({','.join('?' for _ in values)})", tuple(values.values()))
+    insert_email_action(target, "email_unsubscribe_claims", values)
+
+
+def test_retained_native_inserts_project_same_values_and_types():
     from app.action_storage import insert_action, insert_email_action
 
     source, target = _databases()
     with closing(source), closing(target):
+        _seed_historical_parent(source, target, "email_action_plans")
+        _seed_historical_parent(source, target, "email_actions")
         for kind, values in _cases().items():
+            if kind in ("email_action_plans", "email_actions", "email_action_attempts"):
+                continue
             fields = tuple(c["name"] for c in _source_tables("actual")[kind]["columns"])
             native = source.execute(
                 f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
@@ -114,33 +145,20 @@ def test_nullable_public_key_and_signed_rowid_allocation_match_native():
         )
 
 
-def test_email_auto_ids_keep_independent_watermarks_after_deleted_high():
+def test_unsubscribe_step_auto_id_keeps_watermark_after_deleted_high():
     from app.action_storage import insert_action, delete_action
 
     source, target = _databases()
     with closing(source), closing(target):
-        cases = _cases()
-        for kind in ("email_action_plans", "email_actions"):
-            values = cases[kind]
-            source.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
-                           tuple(values.values()))
-            from app.action_storage import insert_email_action
-            insert_email_action(target, kind, values)
-        for kind, values in (("email_action_attempts", cases["email_action_attempts"]),
-                             ("email_unsubscribe_steps", cases["email_unsubscribe_steps"])):
-            if kind == "email_unsubscribe_steps":
-                claim = cases["email_unsubscribe_claims"]
-                source.execute(f"insert into email_unsubscribe_claims({','.join(claim)}) values({','.join('?' for _ in claim)})",
-                               tuple(claim.values()))
-                insert_email_action(target, "email_unsubscribe_claims", claim)
-            native = source.execute(f"insert into {kind}(id,{','.join(values)}) values(50,{','.join('?' for _ in values)})",
-                                    tuple(values.values()))
-            result = insert_action(target, kind, {"id": 50} | values)
-            assert native.lastrowid == result.lastrowid == 50
-            source.execute(f"delete from {kind} where id=50")
-            delete_action(target, kind, 50)
-            assert source.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
-                                  tuple(values.values())).lastrowid == insert_action(target, kind, values).lastrowid == 51
+        _seed_step_parents(source, target)
+        kind = "email_unsubscribe_steps"
+        values = _cases()[kind]
+        native = source.execute(f"insert into {kind}(id,{','.join(values)}) values(50,{','.join('?' for _ in values)})", tuple(values.values()))
+        result = insert_action(target, kind, {"id": 50} | values)
+        assert native.lastrowid == result.lastrowid == 50
+        source.execute(f"delete from {kind} where id=50")
+        delete_action(target, kind, 50)
+        assert source.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})", tuple(values.values())).lastrowid == insert_action(target, kind, values).lastrowid == 51
 
 
 def test_ignored_explicit_auto_id_advances_native_watermark_but_update_does_not():
@@ -148,26 +166,21 @@ def test_ignored_explicit_auto_id_advances_native_watermark_but_update_does_not(
 
     source, target = _databases()
     with closing(source), closing(target):
+        _seed_step_parents(source, target)
         cases = _cases()
-        for kind in ("email_action_plans", "email_actions"):
-            values = cases[kind]
-            source.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
-                           tuple(values.values()))
-            from app.action_storage import insert_email_action
-            insert_email_action(target, kind, values)
-        kind = "email_action_attempts"
+        kind = "email_unsubscribe_steps"
         values = cases[kind]
         columns = ",".join(values)
         marks = ",".join("?" for _ in values)
         source.execute(f"insert into {kind}(id,{columns}) values(1,{marks})", tuple(values.values()))
         insert_action(target, kind, {"id": 1} | values)
-        invalid = {"id": 900, **values, "attempt_number": 1}
+        invalid = {"id": 900, **values, "sequence": 1}
         source.execute(f"insert or ignore into {kind}(id,{columns}) values(?,{marks})", (900, *values.values()))
         assert insert_action(target, kind, invalid, ignore=True).rowcount == 0
         native_seq = source.execute("select seq from sqlite_sequence where name=?", (kind,)).fetchone()[0]
         target_seq = target.execute("select seq from sqlite_sequence where name=?", ("actions:" + kind,)).fetchone()[0]
         assert target_seq == native_seq
-        bad_check = values | {"id": 950, "status": "invalid"}
+        bad_check = values | {"id": 950, "sequence": 0}
         bad_columns = ",".join(bad_check)
         source.execute(f"insert or ignore into {kind}({bad_columns}) values({','.join('?' for _ in bad_check)})",
                        tuple(bad_check.values()))
@@ -175,7 +188,7 @@ def test_ignored_explicit_auto_id_advances_native_watermark_but_update_does_not(
         native_seq = source.execute("select seq from sqlite_sequence where name=?", (kind,)).fetchone()[0]
         target_seq = target.execute("select seq from sqlite_sequence where name=?", ("actions:" + kind,)).fetchone()[0]
         assert target_seq == native_seq
-        automatic_bad = values | {"status": "invalid"}
+        automatic_bad = values | {"sequence": 0}
         native_columns = ",".join(automatic_bad)
         source.execute(f"insert or ignore into {kind}({native_columns}) values({','.join('?' for _ in automatic_bad)})",
                        tuple(automatic_bad.values()))
@@ -186,7 +199,7 @@ def test_ignored_explicit_auto_id_advances_native_watermark_but_update_does_not(
         source.execute(f"update {kind} set id=1000 where id=1")
         update_action(target, kind, 1, {"id": 1000})
         assert target.execute("select seq from sqlite_sequence where name=?", ("actions:" + kind,)).fetchone()[0] == native_seq
-        newer = values | {"attempt_number": 2}
+        newer = values | {"sequence": 2}
         assert source.execute(f"insert into {kind}({columns}) values({marks})", tuple(newer.values())).lastrowid == insert_action(
             target, kind, newer
         ).lastrowid
@@ -310,31 +323,21 @@ def test_two_connections_allocate_distinct_rowids_and_preserve_updates(isolation
 
 
 def test_integer_update_predicate_and_no_target_binding_match_source():
-    from app.action_storage import insert_action, insert_email_action, update_action
+    from app.action_storage import insert_action, update_action
 
     source, target = _databases()
     with closing(source), closing(target):
-        cases = _cases()
-        for kind in ("email_action_plans", "email_actions"):
-            values = cases[kind]
-            source.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})",
-                           tuple(values.values()))
-            insert_email_action(target, kind, values)
-        values = cases["email_action_attempts"]
-        source.execute(f"insert into email_action_attempts({','.join(values)}) values({','.join('?' for _ in values)})",
-                       tuple(values.values()))
-        insert_action(target, "email_action_attempts", values)
-        assert update_action(target, "email_action_attempts", 1, {"error": "changed"},
-                             where_sql="status=?", parameters=("missing",)).rowcount == 0
-        assert update_action(target, "email_action_attempts", 1, {"error": "changed"},
-                             where_sql="status=?", parameters=("done",)).rowcount == 1
-        source.execute("update email_action_attempts set error='changed' where id=1 and status='done'")
-        assert target.execute(email_action_projection("email_action_attempts")).fetchone() == source.execute(
-            "select id,action_id,attempt_number,status,provider_operation,provider_target,"
-            "provider_result_id,error,started_at,finished_at from email_action_attempts"
-        ).fetchone()
+        _seed_step_parents(source, target)
+        kind = "email_unsubscribe_steps"
+        values = _cases()[kind]
+        source.execute(f"insert into {kind}({','.join(values)}) values({','.join('?' for _ in values)})", tuple(values.values()))
+        insert_action(target, kind, values)
+        assert update_action(target, kind, 1, {"reference": "changed"}, where_sql="state=?", parameters=("missing",)).rowcount == 0
+        assert update_action(target, kind, 1, {"reference": "changed"}, where_sql="state=?", parameters=("state",)).rowcount == 1
+        source.execute(f"update {kind} set reference='changed' where id=1 and state='state'")
+        assert target.execute(email_action_projection(kind)).fetchone() == source.execute(f"select * from {kind}").fetchone()
         with pytest.raises(sqlite3.ProgrammingError):
-            update_action(target, "email_action_attempts", 999, {"error": object()})
+            update_action(target, kind, 999, {"reference": object()})
 
 
 def test_ignore_invalid_check_and_retry_duplicate_match_native():
@@ -434,7 +437,7 @@ def test_autoincrement_max_aborts_whole_caller_transaction_like_source():
         source.execute("pragma foreign_keys=off")
         target.execute("pragma foreign_keys=off")
         maximum = 2**63 - 1
-        kind = "email_action_attempts"
+        kind = "email_unsubscribe_steps"
         values = _cases()[kind]
         fields = ",".join(values)
         marks = ",".join("?" for _ in values)

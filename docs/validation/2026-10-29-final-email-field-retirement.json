@@ -1079,7 +1079,34 @@
       "passed": 1,
       "seconds": 0.72
     },
-    "earlier_unit2": "See feature commit525fa7e60"
+    "earlier_unit2": "See feature commit525fa7e60",
+    "source_fixture_repair": {
+      "passed": 15,
+      "seconds": 3.09,
+      "files": [
+        "tests/test_email_action_writes.py",
+        "tests/test_email_action_unsubscribe_dao.py",
+        "tests/test_email_action_plan_direct_dao.py"
+      ],
+      "boundary": "Retained SQLite writer behavior remains covered; frozen parent rows are fixture-only; one retired direct-operation conflict case removed.",
+      "spec": "PASS",
+      "quality": "PASS",
+      "ruff": "passed"
+    }
   },
-  "normalization_boundary": "Original local duplicates retire only after exact-byte/type equality; differing hidden bodies reject before mutation. Historical adopted results and independent quality facts use existing Action/receipt fields with missing proof identities NULL; current unknown facts are not reinterpreted on forward replay."
+  "normalization_boundary": "Original local duplicates retire only after exact-byte/type equality; differing hidden bodies reject before mutation. Historical adopted results and independent quality facts use existing Action/receipt fields with missing proof identities NULL; current unknown facts are not reinterpreted on forward replay.",
+  "mandatory_gate_attempts": [
+    {
+      "commit": "303f87ff44a327c96b2c88f372332f67a131118e",
+      "result": "failed_before_install",
+      "passed": 7714,
+      "failed": 7,
+      "skipped": 2,
+      "deselected": 1,
+      "seconds": 463.83,
+      "cause": "Seven historical Email parity nodes used current 13-cell writers with frozen 14-cell source declarations or a retired attempts family; runtime compatibility was not restored.",
+      "production_changed": false,
+      "backup_created": false
+    }
+  ]
 }

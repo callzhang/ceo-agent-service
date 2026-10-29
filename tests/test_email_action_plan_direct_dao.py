@@ -5,62 +5,6 @@ import sqlite3
 
 import pytest
 
-from app.action_storage import insert_email_action
-from tests.test_email_action_storage import _cases
-from tests.test_email_action_writes import _databases
-
-
-def test_operation_conflict_target_ignores_only_existing_plan_type():
-    source, target = _databases(compact_payload=True)
-    with closing(source), closing(target):
-        for db in (source, target):
-            values = _cases()["email_action_plans"]
-            if db is source:
-                db.execute(
-                    f"insert into email_action_plans({','.join(values)}) values({','.join('?' for _ in values)})",
-                    tuple(values.values()),
-                )
-            else:
-                insert_email_action(db, "email_action_plans", values)
-        values = _cases()["email_actions"]
-
-        def write(db, values, *, source_rowid=None):
-            if db is source:
-                if source_rowid is not None:
-                    values = {"rowid": source_rowid, **values}
-                return db.execute(
-                    f"insert into email_actions({','.join(values)}) values({','.join('?' for _ in values)}) on conflict(action_plan_id,action_type) do nothing",
-                    tuple(values.values()),
-                )
-            return insert_email_action(
-                db,
-                "email_actions",
-                values,
-                source_rowid=source_rowid,
-                ignore_plan_action_conflict=True,
-            )
-
-        for db in (source, target):
-            assert write(db, values).rowcount == 1
-            assert (
-                write(db, values | {"action_id": "different-public-key"}).rowcount == 0
-            )
-            assert write(db, values, source_rowid=2**63 - 1).rowcount == 0
-            for changed in (
-                {
-                    "action_type": "mark_read"
-                },  # Different chosen key; duplicate public PK.
-                {"status": "discarded"},  # CHECK precedes chosen-key conflict.
-                {"created_at": None},  # NOT NULL precedes chosen-key conflict.
-                {"action_id": "missing-parent", "action_plan_id": "absent"},
-            ):
-                with pytest.raises(sqlite3.IntegrityError):
-                    write(db, values | changed)
-            appended = write(
-                db,
-                values | {"action_id": "fresh-operation", "action_type": "mark_read"},
-            )
-            assert appended.rowcount == 1 and appended.lastrowid == 2
 
 
 def _genuine_old_source(tmp_path, request):

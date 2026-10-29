@@ -7,14 +7,15 @@ import pytest
 
 from app.action_storage import insert_email_action
 from tests.test_email_action_storage import _cases
-from tests.test_email_action_writes import _databases
+from tests.test_email_action_writes import _databases, _seed_historical_parent
 
 
 def test_continuation_native_upsert_preserves_locator_created_at_and_scalar_codec():
     source, target = _databases()
     with closing(source), closing(target):
+        _seed_historical_parent(source, target, "email_action_plans")
         for db in (source, target):
-            for kind in ("email_action_plans", "email_unsubscribe_claims"):
+            for kind in ("email_unsubscribe_claims",):
                 values = _cases()[kind]
                 if db is source:
                     db.execute(
