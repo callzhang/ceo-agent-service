@@ -128,7 +128,7 @@ Email provider actions 当前显示10个失败项（8个可重试、2个不可�
 文档读回、Audit 决策和通知回执也分别核实。
 
 2026-10-20 UTC。原七案例的决策与独立正文/动作草稿验收已通过，详见
-[原验收记录](scheduled-task-generic-agent-validation.md)。本记录补充 OKR 的完整
+[原验收记录](archive/records/scheduled-task-generic-agent-validation.md)。本记录补充 OKR 的完整
 Skill 工作流、恢复、部分来源失败和真实报告读回。最终四场景 **4/4 通过**，
 每项同时满足全部机械核查与独立 Audit approve。新版自然发布仍待到期。
 

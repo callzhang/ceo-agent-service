@@ -12,7 +12,7 @@
 `load_project_task_detail`，History／反馈／跟进链接使用同一明确身份路径。
 历史页面只读展示来源、事实、待办、更新、跟进结果和钉钉回执，标明历史状态；
 不按旧 active 状态创建任务、不重发待办、不按相同整数 ID 合并正式 Task。
-逐字段与退休清单见[历史读取归一](business-model-history-read-unification.md)。
+逐字段与退休清单见[历史读取归一](archive/records/business-model-history-read-unification.md)。
 
 ## 当前任务运行机制
 
@@ -681,7 +681,7 @@ updater 在共享 Git 锁内重新校验指纹，必要时按用户确认的分�
 
 备份共用目录锁；持锁时先清理仅由本流程生成的 `.ceo-backup-stage-*.tmp` 半成品及其 sidecar，保留其它临时文件，再在同目录生成一个候选文件：完成 SQLite backup、DELETE journal、integrity_check、完成标记提交并关闭连接，再读回完成标记，才原子替换目标文件并清理旧备份及该目录中残留的候选文件。复制或验证失败只清理本次候选，原已验证备份保持不变；替换后清理失败仍保留新完整文件并明确报错。验证期间允许新旧两份共存，成功后仅保留最新一份。原子文件名替换不等于已验证突然断电后的持久性；没有新增 fsync 保证。
 
-部署在新备份创建后、服务仍停止时取得同一目录锁，持续持有至健康／加载验证、发布收尾或失败回退结束，防止刚启动的日备份线程提前删除回退所需的来源。日备份是独立组件线程，等待该锁不阻塞 API 启动。部署备份失败时不切换代码，沿用既有失败恢复流程。每小时日备份循环确认当天副本完整后，继续清理数据库目录中超过24小时的 `auto-reply.sqlite3.pre-*` 及其 sidecar。下一次日备份可以用更新的当前快照替换部署前快照；本策略不长期保留旧 schema 数据。随后沿用既有依赖、构建、启动与健康验证流程。收尾验证见[迁移收尾](database-migration-closeout-validation.md)。
+部署在新备份创建后、服务仍停止时取得同一目录锁，持续持有至健康／加载验证、发布收尾或失败回退结束，防止刚启动的日备份线程提前删除回退所需的来源。日备份是独立组件线程，等待该锁不阻塞 API 启动。部署备份失败时不切换代码，沿用既有失败恢复流程。每小时日备份循环确认当天副本完整后，继续清理数据库目录中超过24小时的 `auto-reply.sqlite3.pre-*` 及其 sidecar。下一次日备份可以用更新的当前快照替换部署前快照；本策略不长期保留旧 schema 数据。随后沿用既有依赖、构建、启动与健康验证流程。收尾验证见[迁移收尾](archive/records/database-migration-closeout-validation.md)。
 等待静默期间，updater 不向共享 SQLite 写部署进度，避免与仍在运行的业务写事务争锁；服务静默并停止后，才用不触发 schema 初始化的窄状态存储记录后续阶段。该短写仍对意外的并发 SQLite 锁做有限次数重试。
 升级后验证失败时只对本次安装的精确 commit 做 compare-and-swap 回滚；无法证明仓库仍归本次
 操作所有时进入 `needs_manual`，不执行破坏性 Git 操作。MCP 配置不由该流程探测、禁用或覆盖，
@@ -997,7 +997,7 @@ CEO 业务 Skill（下表为 Consumer 按需发现的主要几个，完整清单
 
 ### 项目为中心的工作跟踪（已发布；业务验收部分完成）
 
-验收状态见 `docs/task-project-centered-validation.md`。
+验收状态见 `docs/archive/records/task-project-centered-validation.md`。
 
 #### 来源、项目与任务
 
@@ -1094,7 +1094,7 @@ Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
 语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。 acceptance_polarity 与 acceptance_target_signal_id 的 transition 不变量由字段级校验报告到 `task_decisions[i].<field>`，使该修正轮能定位应调整的字段；接受动作及引用证据要求保持不变。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
 新建、候选及 skip 决定携带 `status` 或 `business_relevance` 时，校验明确要求省略这两个初始字段；只有既有 Task 的 `update_task` 配合 `update_fields` 才能修改它们。该诊断不放宽来源、身份或业务校验。
-Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/task-guidance-dedup-evidence.md，按需读取对照见 docs/task-skill-on-demand-validation.md。
+Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/archive/records/task-guidance-dedup-evidence.md，按需读取对照见 docs/archive/records/task-skill-on-demand-validation.md。
 
 ProjectSelector 使用既有 anchor_id 或零基 project_decision_index 二选一；后者指向顶层
 Project 决定，不是 Task 列表。Task 用 project 与 project_link_evidence 明确归属，复用真正已有
@@ -1843,11 +1843,11 @@ Consumer 的代码生成「Capability Instructions」只说明当前角色的工
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 `project_doc_max_bytes=0` 关闭 CLI 自动加载项目目录 `AGENTS.md`；共享及项目指令只由 Audit 的服务 Developer 段按固定路径预载，Consumer 不接收这两段。全局 `~/.codex/AGENTS.md` 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
-Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。`read_task_skill` 的 MCP 回执只提交一份含 name、完整 content 和 sha256 的 JSON 文本，不再同时附上内容相同的 structuredContent；冻结来源、角色权限和业务结果不变。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/task-skill-native-output-validation.md`。
+Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。`read_task_skill` 的 MCP 回执只提交一份含 name、完整 content 和 sha256 的 JSON 文本，不再同时附上内容相同的 structuredContent；冻结来源、角色权限和业务结果不变。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/archive/records/task-skill-native-output-validation.md`。
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；目录以 provider-neutral 的 `read_system_action_contract` 工具名指向 Runtime Context 中声明的原生入口（Codex 为 `mcp__agent_cli__read_system_action_contract`，Claude 为 `agent_cli.read_system_action_contract`）。该工具保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。
 
-Audit 传输结果的 `feedback` 在 `approve` 或 `failed` 时可省略，解析为 `None`；在 `return` 或 `reject` 时仍必须提供完整反馈。批准结果若携带非空反馈仍拒绝。服务绑定的候选、审查业务模型、结果校验、审核决策和外部动作权限不变。这个字段语义对齐针对两次完整轨迹中唯一的格式错误，验证见 `docs/audit-null-feedback-validation.md`。
+Audit 传输结果的 `feedback` 在 `approve` 或 `failed` 时可省略，解析为 `None`；在 `return` 或 `reject` 时仍必须提供完整反馈。批准结果若携带非空反馈仍拒绝。服务绑定的候选、审查业务模型、结果校验、审核决策和外部动作权限不变。这个字段语义对齐针对两次完整轨迹中唯一的格式错误，验证见 `docs/archive/records/audit-null-feedback-validation.md`。
 
 运行输入的分段来源由同一装配函数提供：每段记录 name、source、placement（Developer/Task）及脱敏正文 characters，长度不含段间分隔符。runtime.prompt 是运行期 RAM 中的准备/调用回执；终态不另存正文副本。Settings 公共预览使用当前角色装配，任务绑定预览区分当前 Developer 与该角色实际保存的 Task。历史预览读取选定 runtime attempt 的原生输入范围：Codex 只取带 generic.developer_instructions 与 user.text 标记的服务消息，排除 CLI 基础指令、AGENTS、环境、工具和历史；续会话明确标记 session 先前保存的 Developer，不冒充本轮配置提交回执。Claude 读取本轮原生服务合并消息的既有 Developer/Task 封装。没有细分来源、配置指纹或渲染时间时保持未记录，不用当前配置补齐。尝试列表保留不可读来源的准确 ID/路线；最新或选定来源缺失时明确不可用，不改显示较早输入。读取不重跑任务、修改数据库或保存原文副本。日历时区解释流程位于 ceo-calendar-invite Skill，Runtime Context 仅保留显式参与者时区事实。
 
@@ -1857,7 +1857,7 @@ Audit 传输结果的 `feedback` 在 `approve` 或 `failed` 时可省略，解�
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；无参数调用返回授权目录内的全部 name 和路径，不重复所有用途描述；按主题 `query` 查询返回匹配项的完整 name、用途和路径元数据，均不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。Runtime Context 缩短工具说明；Codex CodeMode 的可用工具清单显示原生 `mcp__server__tool` 可调用名称，Claude 保持 `server.tool` 表示法，其他环境事实不变。Task 中的 Skill 调用提示仍使用服务命名空间的 `agent_cli.read_*` 表示法；该提示与清单的区别在 `docs/runtime-mcp-tool-name-validation.md` 记录。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；无参数调用返回授权目录内的全部 name 和路径，不重复所有用途描述；按主题 `query` 查询返回匹配项的完整 name、用途和路径元数据，均不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具，仍直接使用完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。Runtime Context 缩短工具说明；Codex CodeMode 的可用工具清单显示原生 `mcp__server__tool` 可调用名称，Claude 保持 `server.tool` 表示法，其他环境事实不变。Task 中的 Skill 调用提示仍使用服务命名空间的 `agent_cli.read_*` 表示法；该提示与清单的区别在 `docs/archive/records/runtime-mcp-tool-name-validation.md` 记录。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -1943,11 +1943,11 @@ Store／Email 同时版本变化不能合并发布。
 
 ### Task 原生 Skill 目录
 
-Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 的动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；本机 Codex/Claude CLI 以绝对路径和版本摘要按需读取当前 Work Tracking Skill，远端 Friday Runtime 继续收到完整正文。Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。目录验证见 `docs/task-native-skill-catalog-validation.md`。
+Task 的 command factory 将当前 `ceo-work-tracking` 选择传到既有 Codex adapter，使用 CLI 原生 `skills.config` 限制目录。目录只启用明确选择的 Skill 和既有默认 Memory 插件，不再从正文的名称提及或 `dws` 命令推断递归依赖；相关依赖继续由 Agent 按需读取。未选中 Skill 的文件和既有读取权限不变。Consumer/Audit 使用空选择时，生成的配置与变更前逐字符相同。Task 的动态事实、输出 schema、业务校验、session 与路线选择保持原有行为；本机 Codex/Claude CLI 以绝对路径和版本摘要按需读取当前 Work Tracking Skill，远端 Friday Runtime 继续收到完整正文。Claude/Friday 的单消息装配不受该 Codex 配置影响。Codex 自带系统 Skill 仍由 CLI 决定，不将目录配置数量冒充实际显示数量。目录验证见 `docs/archive/records/task-native-skill-catalog-validation.md`。
 
 ### Full document native output delivery
 
-Consumer/Audit Codex commands use the existing per-tool native output budget of30,000 for `agent_cli.read_dingtalk_document_full`, on cold and continued turns. The server's complete result can otherwise be clipped in the native model-visible output. This preserves the selected JSONML/revision result without substituting Markdown, changing all-tool budgets or adding prompt rules. The source may still exceed that finite budget; server complete=true alone is not proof of complete model visibility. Regression/native evidence is recorded in `docs/document-native-output-validation.md`.
+Consumer/Audit Codex commands use the existing per-tool native output budget of30,000 for `agent_cli.read_dingtalk_document_full`, on cold and continued turns. The server's complete result can otherwise be clipped in the native model-visible output. This preserves the selected JSONML/revision result without substituting Markdown, changing all-tool budgets or adding prompt rules. The source may still exceed that finite budget; server complete=true alone is not proof of complete model visibility. Regression/native evidence is recorded in `docs/archive/records/document-native-output-validation.md`.
 
 Consumer 通用 Skill 约定只规定独立选择并应用适用 Skill；每轮 Task 发现入口统一决定何时读取，避免通用层的读取措辞与冻结来源复用条件冲突。安装来源和未选择 Skill 的既有读取入口不变，不新增缓存或读取回执。
 
@@ -2014,7 +2014,7 @@ persists, the typed failure remains visible to normal recovery and Attention.
 
 ## Claude native attempt coordinates
 
-Claude attempt start/end coordinates use the native Claude JSONL line counter, including resumed, completed, cancelled and interrupted turns. Streamed Claude references use claude_session; stdout event counts are not native transcript coordinates. Codex/Friday bookkeeping and task/session/routing policies are unchanged. Historical incorrect ranges are not rewritten or reconstructed. Original anonymous native evidence and current-main regression results are documented in docs/native-input-evidence-release-validation.md.
+Claude attempt start/end coordinates use the native Claude JSONL line counter, including resumed, completed, cancelled and interrupted turns. Streamed Claude references use claude_session; stdout event counts are not native transcript coordinates. Codex/Friday bookkeeping and task/session/routing policies are unchanged. Historical incorrect ranges are not rewritten or reconstructed. Original anonymous native evidence and current-main regression results are documented in docs/archive/records/native-input-evidence-release-validation.md.
 
 ## Consumer purpose 动作输出和权限重试
 
@@ -2135,7 +2135,7 @@ remain available. Explicit retry-after-root-cause-fix resets the input's current
 attempt budget, while preserving its existing Task Agent run history. Normal
 provider-outage deferral, Audit behavior and external-action identity/recovery
 are unchanged. Regression and release evidence is in
-`docs/work-summary-retry-budget-validation.md`.
+`docs/archive/records/work-summary-retry-budget-validation.md`.
 
 ### Email classification retry budget
 
@@ -2157,8 +2157,8 @@ The Console retry endpoint accepts only a failed task with no saved result,
 requeues that selected task through its stable message identity, and confirms
 the original input was retained. It cannot reopen a pending, running or done
 task; discovery does not automatically reopen failed records. See
-`docs/email-classification-retry-budget-validation.md` for automatic budget
-evidence and `docs/email-classification-retry-api-validation.md` for the Console
+`docs/archive/records/email-classification-retry-budget-validation.md` for automatic budget
+evidence and `docs/archive/records/email-classification-retry-api-validation.md` for the Console
 retry contract.
 
 When the original IMAP UID no longer returns a message, classification readback
@@ -2181,7 +2181,7 @@ The shared account connector passes the same 90-second read timeout as the
 readonly adapter, rather than inheriting the deterministic provider constructor's
 20-second default. Classification owner-example reads use the existing shared account connector
 through the supplied source reader, avoiding a separate connection registry.
-See `docs/email-classification-source-repair-validation.md`.
+See `docs/archive/records/email-classification-source-repair-validation.md`.
 
 ### 原生输出格式与解码契约一致
 
@@ -2210,7 +2210,7 @@ remain available when there is no recorded Meeting execution attempt; failed or
 running execution attempts remain unavailable. OKR exact-parent/session semantics
 are unchanged. History metadata search and Meeting-native candidate enumeration
 remain distinct; metadata membership/order/session binding and FTS/embedding are
-unchanged. See `native-reference-reader-unification.md`.
+unchanged. See `archive/records/native-reference-reader-unification.md`.
 
 ### DWS document permission pagination (2026-10-26)
 

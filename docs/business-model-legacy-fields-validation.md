@@ -1,8 +1,8 @@
 # 旧业务九字段退休验证
 
-> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](archive/records/database-gpt6-release-validation.md). See [current execution progress](archive/records/business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
 
-2026-10-20，本地候选 Store `2026-10-19.11`／Email53 已完成九字段退休、当前事实中性逆迁及相关历史 reader 的有界实现验证。此记录不表示已部署，不把 provider 替身或本地 fixture 当作原生/生产证据。根任务随后完成独立 SPEC / QUALITY、两套实际全量副本往返、容量和只读浏览器验证，详见[根任务验收](business-model-legacy-fields-root-acceptance.md)；标准生产发布仍未执行。此前 A5 的两个原生 FAIL 仍为 FAIL，不由本批测试改写。
+2026-10-20，本地候选 Store `2026-10-19.11`／Email53 已完成九字段退休、当前事实中性逆迁及相关历史 reader 的有界实现验证。此记录不表示已部署，不把 provider 替身或本地 fixture 当作原生/生产证据。根任务随后完成独立 SPEC / QUALITY、两套实际全量副本往返、容量和只读浏览器验证，详见[根任务验收](archive/records/business-model-legacy-fields-root-acceptance.md)；标准生产发布仍未执行。此前 A5 的两个原生 FAIL 仍为 FAIL，不由本批测试改写。
 
 ## 批准与来源
 
@@ -73,4 +73,4 @@ release保存的字段是root/path、原marker/clock、Email账本、reply声明
 
 全量容量、真实来源原生轨迹、独立副本浏览器与provider替身结果、标准发布及生产readback由根任务记录。浏览器副本若只做GET走查，应停用应用lifespan，避免启动真实scheduler/recovery；这是验证启动方式，不改变产品运行策略。没有新的audit、授权、重放或安全策略加入本功能。
 
-上述副本与浏览器契约已完成，结果及限制见[根任务验收](business-model-legacy-fields-root-acceptance.md)。原生 A5 两次 FAIL 仍保留；不以替身、页面可见或 schema 往返代替该证据。
+上述副本与浏览器契约已完成，结果及限制见[根任务验收](archive/records/business-model-legacy-fields-root-acceptance.md)。原生 A5 两次 FAIL 仍保留；不以替身、页面可见或 schema 往返代替该证据。

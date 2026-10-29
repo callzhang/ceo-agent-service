@@ -1,6 +1,6 @@
 # 旧业务九字段处置与当前字段映射
 
-> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](database-gpt6-release-validation.md). See [current execution progress](business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
+> Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](archive/records/database-gpt6-release-validation.md). See [current execution progress](archive/records/business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
 
 Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字段，不保存其旧值副本；schema inverse 只恢复这些字段的声明及中性默认值。其余业务事实、来源、关系和 provider 回执保留当前 SQL 值与类型。Store `2026-10-19.11`／Email53 实现这一边界。
 

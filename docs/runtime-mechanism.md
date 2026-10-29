@@ -10,7 +10,7 @@ Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_d
 清单缺失或为空、运行超过 12 分钟（`TEST_GATE_TIMEOUT_SECONDS`；测试进程自身另有 10 分钟和 2 GB 上限）、或无法检出该提交，同样拒绝。失败时保留日志并在报错里给出路径。`--restart` 不运行新代码，不受此限。实现见 `app/deploy.py` 的 `require_green_suite`。
 
 正常空库直接建立当前声明；运行时只接受真正空库或精确当前声明冷启动，缺表/列/索引/触发器及版本混合均在修改前拒绝，不自动补表或回填。Store-first 可暂缺 Email 账本；Email 构造器只在准确状态下建立账本与首次默认配置。验收和边界见[Phase 1 生产验收](action-entity-production-acceptance.md)。
-当前验收见[运行时声明清理验证](runtime-current-schema-validation.md)。历史 GPT-6 原生链路证据见[此前发布验收](database-gpt6-release-validation.md)。
+当前验收见[运行时声明清理验证](archive/records/runtime-current-schema-validation.md)。历史 GPT-6 原生链路证据见[此前发布验收](archive/records/database-gpt6-release-validation.md)。
 
 Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`actions` 的 `_kind=70` 保存共同 Action，`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。生产读回、准确退休清单、copy 容量结果和剩余路线见[Phase 1 生产验收](action-entity-production-acceptance.md)。
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
@@ -24,7 +24,7 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 兼容层。当前字段、约束和类型定义见 `app/task_run_entity_definitions.py`.
 
 截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。当前部署和证据边界见
-[业务模型当前进度](business-model-execution-progress.md)。
+[业务模型当前进度](archive/records/business-model-execution-progress.md)。
 
 ## 运行角色
 
@@ -354,7 +354,7 @@ Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
 语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
 新建、候选及 skip 决定携带 `status` 或 `business_relevance` 时，校验明确要求省略这两个初始字段；只有既有 Task 的 `update_task` 配合 `update_fields` 才能修改它们。该诊断不放宽来源、身份或业务校验。
-Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/task-guidance-dedup-evidence.md，按需读取对照见 docs/task-skill-on-demand-validation.md。
+Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/archive/records/task-guidance-dedup-evidence.md，按需读取对照见 docs/archive/records/task-skill-on-demand-validation.md。
 
 #### 回执、检索及尚未完成的关注集成
 
@@ -958,7 +958,7 @@ provider 暂时不可用造成的路由暂停只留下 run 记录和路由暂停
 字节数；不把报告正文重复注入。无匹配返回时 Audit 明确看到空列表。该证据只证明服务工具
 返回了什么，不证明文档已被独立核实或报告事实正确。该交接适用于 `channel=scheduled` 的
 Agent 任务，不增加日报或周报专属规则，也不改变 Audit 的独立审查标准。
-本轮交接与真实写入回执形状的验证见 `docs/scheduled-audit-receipt-validation.md`。
+本轮交接与真实写入回执形状的验证见 `docs/archive/records/scheduled-audit-receipt-validation.md`。
 
 服务命令任务（`scheduled_tasks.command` 非空）只有第一阶段：`scheduled` adapter 领取 trigger
 后，在同一个 claim 内直接运行服务命令目录中的实现（例如 `produce-once` 是 DingTalk 消息
@@ -1050,7 +1050,7 @@ History 的回复类记录以 task 为核心：列表行带 `task_id` 与 `run_c
 
 另有一个每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”服务命令：读取听记管理后台，逐条在听记页面提交访问申请，并以页面读回状态计数；对方批准后，`20:00` 的归档任务会读取内容。该后台由服务的共享无头 Chrome 打开（`app/service_browser.launch_service_chrome`），带的是每天复制的 Derek 本人 Chrome 登录态；这份副本能把他认到「选择你管理的组织」那一步，再由代码选中组织列表里的第一个组织（Derek 2026-10-23：不写死公司名）进入控制台。每次启动都会用当天的副本覆盖 profile，控制台自己的 `access_token` 不会留到下一次，因此不会跨运行保存该令牌。登录页加载超时以及组织选择或其后的控制台跳转超时统一按登录失效处理，任务保持失败；组织选择和控制台跳转各有 10 秒上限。服务会直接启动用户的 Google Chrome 并用新窗口前置打开听记后台，供用户完成正常登录或检查组织选择，而不是只在后台留一个标签。登录后仍需让每天的 `sync-chrome-cookies` 将最新登录态复制到服务 profile，后续任务才能继续；没有通过扫码或程序保存凭据来绕过登录。申请命令结果摘要同样持久化在 scheduled run，并显示在定时任务运行记录中，包括本次发现、已申请、已可读、申请人未解析和失败数量。
 
-定时任务固定 Agent 案例在独立离线原生 CLI 中运行。评测 Consumer、Audit 和修订共享同一传输字段、标签与身份投影定义；业务规则仍来自各自精确 Skill 快照。冻结案例和评分函数，不改标历史失败；首轮、一次审核修订、实际正文/动作草稿与外部发布分别记录。参见 [Agent 验收记录](scheduled-task-generic-agent-validation.md)。评测协议不改变生产 Consumer/Audit 契约。
+定时任务固定 Agent 案例在独立离线原生 CLI 中运行。评测 Consumer、Audit 和修订共享同一传输字段、标签与身份投影定义；业务规则仍来自各自精确 Skill 快照。冻结案例和评分函数，不改标历史失败；首轮、一次审核修订、实际正文/动作草稿与外部发布分别记录。参见 [Agent 验收记录](archive/records/scheduled-task-generic-agent-validation.md)。评测协议不改变生产 Consumer/Audit 契约。
 
 OKR 报告的应用层只读取明确群名的稳定名单和明确人员/周期的实时数据及来源回执。每人一次读取、单次最多 240 秒，模型可见真实步骤结果；纯本地 `ceo-weekly-okr-report/scripts/report.py` 按稳定 userId 准备输入、计算原有精确公式并渲染。Agent 保存成员产物以恢复进度，发布管理报告、成员子页并提出群摘要消息。恢复的 Consumer turn 先读 Audit 与当前执行代的任务工件，再复用同一 scheduled run 中仍存在的名单和成员来源回执；由于没有独立摘要查询接口，刷新缺失成员来源用于发现来源变化。prepare 对照新摘要复用未变化成员的完整分析，只重做来源变化或分析未完成成员；同一 scheduled run 内已有成功回执的来源不重复读取。已保存的成员读取回执只在 userId、姓名、职级、钉钉身份和周期完全匹配时复用；回执文件缺失或明确失败时，只补读该成员，保存新回执后再 prepare。先前曾成功读取不等于当前仍有可验证回执；`source_failed` 回执不会缓存复用。来源摘要相同但带 `analysis_failure` 占位的文件不算完成、不复用。OKR Consumer 同一轮必须继续完成所有可分析成员，不得主动以部分分析结束；只有实际 turn 中断才保留有效产物并返回可重试的不完整结果。逐 KR 检索独立证据，零进度或未找到佐证仍按既有评分规则完成并说明证据缺口；领导力和文化分数须由各自行为证据支持，禁止跨维度借证，Audit逐人核对七项维度证据和分数。未评分成员保留已知职级与逐人来源缺口，不生成分数。业务 KR 的完成档位与领导力/文化行为档位分别应用；行为评分使用正式维度，70–79 为符合标准，80 分及以上须有明确超出当前职级标准的具体效果（经理日常辅导、总监在团队内复用方法本身仍可属于本职标准），90 分及以上须具备对应榜样范围证据；显示分数保留一位小数并采用通常四舍五入。每次渲染后都按当前 manifest 写入或更新并完整读回全部报告和附录，即使成员分析没变；旧标题及旧读回不能代替本次结果。群提案逐字使用当前 summary.md；这些步骤由 Skill 与现有 Audit 承担，未新增服务发布门槛。原独立周报 Agent 子任务、租约/缓存编排和星期日重复调度逻辑退出当前执行路径；历史记录保留。
 
@@ -1622,7 +1622,7 @@ Developer Prompt 只承载适用于所有任务的角色、能力、证据、系
 
 Consumer 和 Audit 每轮 Task 输入均传入当前任务已保存的专项指令，来源为「已保存任务配置」，现有运行输入快照记录该段来源和长度。Audit 不只从候选转述推断任务规则。`task_specific_instructions` 复用 Consumer 已有的精确 Skill 附录分离逻辑；只分离已知的完整末尾附录，不截断正文或按业务关键词改写。生成发现提示不重复预载，自定义 Skill 约定仍在 Skill 段保留。没有专项指令的任务不添加空段；审核权限、规则优先级、反馈和 session 行为不变。
 
-System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；目录以 provider-neutral 的 `read_system_action_contract` 工具名指向 Runtime Context 中声明的原生入口（Codex 为 `mcp__agent_cli__read_system_action_contract`，Claude 为 `agent_cli.read_system_action_contract`）。该工具保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer 使用当前 Consumer wire model 生成的 general/OA 原生 Schema；Codex Audit 使用当前 Audit wire model 生成的同一原生 Schema，选择、解码和恢复指纹与 OAuth/API 认证方式无关。动态 JSON 对象以键值条目传输，并在严格 Pydantic 校验前无损还原；Audit 的 outcome/feedback 条件与 Consumer wire 分支约束保持不变，revision、digest 和候选字段断言仍由当前 Audit 上下文及既有校验负责。候选字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；校验和审核标准不变。Claude、Friday 及其他运行时路径不变。配置路线验证状态见 `docs/native-consumer-output-validation.md`。
+System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；目录以 provider-neutral 的 `read_system_action_contract` 工具名指向 Runtime Context 中声明的原生入口（Codex 为 `mcp__agent_cli__read_system_action_contract`，Claude 为 `agent_cli.read_system_action_contract`）。该工具保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer 使用当前 Consumer wire model 生成的 general/OA 原生 Schema；Codex Audit 使用当前 Audit wire model 生成的同一原生 Schema，选择、解码和恢复指纹与 OAuth/API 认证方式无关。动态 JSON 对象以键值条目传输，并在严格 Pydantic 校验前无损还原；Audit 的 outcome/feedback 条件与 Consumer wire 分支约束保持不变，revision、digest 和候选字段断言仍由当前 Audit 上下文及既有校验负责。候选字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；校验和审核标准不变。Claude、Friday 及其他运行时路径不变。配置路线验证状态见 `docs/archive/records/native-consumer-output-validation.md`。
 
 OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要 records 只含操作结果，不能证明评论正文。恢复要求持久动作键、uncertain 状态及准确带时区的首次动作时间，并匹配 detail 中唯一的 ADD_REMARK、当前本人 ID、完整获批正文和动作开始后的毫秒时间。旧评论、其他作者、歧义或缺失证据继续保留 uncertain，绝不重新评论。回执保存原实例、原生操作类型／作者／时间与正文摘要，不编造 commentId、不复制整份审批详情；该读回不授权新的审批决定。
 
@@ -1636,7 +1636,7 @@ OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要
 
 Prompts 设置读取先返回 Developer/User 的已保存原文；某份模板验证或渲染失败时，仅该份渲染预览为空并返回明确的 `preview_errors`，编辑器仍显示原文供修正。保存仍需通过现有验证，后台角色调用仍严格验证，不自动迁移或覆盖旧模板。
 
-精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；无参数调用返回授权目录内的全部 name 和路径，不重复所有用途描述；按主题 `query` 查询返回匹配项的完整 name、用途和路径元数据，均不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具；Email 和 WeChat 保留完整冻结正文。Meeting Alignment 的 Codex 路线在有冻结托管会议 Skill 时保留其完整正文，省去已执行的操作 Skill 正文；其他路线及没有托管会议 Skill 的运行保留完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结托管 Skill 中的业务要求，因此 Codex 的精简输入仍包含该 Skill 的完整正文，不能只提交名称提示。Runtime Context 缩短工具说明；Codex CodeMode 的可用工具清单显示原生 `mcp__server__tool` 可调用名称，Claude 保持 `server.tool` 表示法，其他环境事实不变。Task 中的 Skill 调用提示仍使用服务命名空间的 `agent_cli.read_*` 表示法；该提示与清单的区别在 `docs/runtime-mcp-tool-name-validation.md` 记录。
+精简只移除重复或已由任务 Skill 承载的流程说明，不改变角色边界、身份与证据规则、完整效果判断、业务结果模型或 Pydantic 校验。Audit 的候选、source_bindings、revision 和 digest 保持完整；只有 provider、object_ref 与来源 value 按排序 JSON 完整相符（保留布尔/数值等 JSON 类型区别）时，Task 中重复的触发正文、raw payload、历史消息正文和材料 reference 指向候选的来源绑定，同一输入内仍能读到完整值。来源不同时两份全文保留。未结算的定时服务命令在 `scheduled_consumer.skill_materials` 冻结完整 managed revision 或 operation snapshot；未结算的通用 Scheduled Agent 在 `scheduled_agent_execution.v1` 顶层保存有序 `skill_names`、`skill_materials` 及其来源，原始 trigger 投影只保留结构化 Skill 身份事实，不再次复制正文。冷启动和续接都从同一未结算持久输入恢复；已结算输入改为来源摘要，冻结正文读取明确不可用。每一轮 Consumer 与 Audit Task 只列当前选中 Skill 的名称、极简用途和按需读取入口。保存输入声明该名称为冻结 Skill 时使用 `agent_cli.read_task_skill(name)`；所选冻结 Skill 的 revision_id/sha256 未变且完整正文仍在同一 session 上下文时，发现提示允许复用已读的确切内容；新会话、来源变化或全文不在上下文时仍准确读取，不新增缓存或本轮读取回执。材料重复、损坏或缺失由精确读取报告技术错误，不得改读当前磁盘版本。没有冻结声明的已选 Skill 使用目录中的实际授权绝对路径调用 `agent_cli.read_skill(path=...)`；Skill 正文引用的其他已安装 Skill 通过 `agent_cli.read_skill(name=...)` 精确读取，不把依赖目录预装进 Task。旧任务的显式 inline Task 约定仍在每轮保留。正文不复制进新 prompt，也不根据任务文字猜测来源。未选择 Skill 时 Task 只给 `agent_cli.read_skill()` 发现入口；无参数调用返回授权目录内的全部 name 和路径，不重复所有用途描述；按主题 `query` 查询返回匹配项的完整 name、用途和路径元数据，均不返回正文，Agent 再按精确 name 或 path 读取。目录查询和 name 解析沿用相同授权根，越界符号链接不会进入元数据，重名明确报错。目录 frontmatter 只提取顶层 name/description，嵌套产品 metadata 不会隐藏可用 Skill。无论有无选中 Skill，显式自定义 Task 约定都继续在每轮 Task 保留；服务生成的发现文字由结构化来源标记识别，不重复注入。新运行事实记录实际入口来源与本轮 `skill_names`；未注入的旧全量目录不再作为 `skill_protocol` 保存。Email 分类、Meeting Alignment 与独立 WeChat 没有任务内读取工具；Email 和 WeChat 保留完整冻结正文。Meeting Alignment 的 Codex 路线在有冻结托管会议 Skill 时保留其完整正文，省去已执行的操作 Skill 正文；其他路线及没有托管会议 Skill 的运行保留完整冻结正文。Email 分类的 Codex 命令按显式内联 Skill 名称，通过原生 skills.config 仅禁用同名安装副本的自动正文注入；本轮服务选定的托管或冻结正文仍完整提交。此配置不重新启用或关闭其他 Skill，不影响 Claude/Friday 的原有单条消息提交，也不改变分类规则、工具权限、路由、审批或会话绑定。会议来源预装配不能代替冻结托管 Skill 中的业务要求，因此 Codex 的精简输入仍包含该 Skill 的完整正文，不能只提交名称提示。Runtime Context 缩短工具说明；Codex CodeMode 的可用工具清单显示原生 `mcp__server__tool` 可调用名称，Claude 保持 `server.tool` 表示法，其他环境事实不变。Task 中的 Skill 调用提示仍使用服务命名空间的 `agent_cli.read_*` 表示法；该提示与清单的区别在 `docs/archive/records/runtime-mcp-tool-name-validation.md` 记录。
 
 Developer 保存先以现有渲染器验证，未知变量或不可渲染内容返回具体错误且不覆盖已保存正文；该检查属于配置格式合同。
 
@@ -1847,7 +1847,7 @@ Meeting 的 Codex CLI 每轮显式设置 `project_doc_max_bytes=0`，省去 CLI 
 
 Meeting Codex Developer 指令只保留任务特有的 DWS 群与身份只读取证提示；禁止直接对外发消息、邮件和执行审批的行为指令来自所有 Consumer 共用的同一文本。Meeting 只返回决策，由既有服务流程投递。这些指令不是 DWS 或 shell 的强制权限隔离；命令、凭据及投递实现均未改变。
 
-会议 Skill 范围（2026-10-18；2026-10-21 修正）：服务仍保存并组装本轮全部冻结材料。仅 Codex CLI 路线在存在冻结托管会议 Skill 时，使用该完整托管规则构造实际提交输入，并在原生 Skill 目录保留 `dingtalk-chat` 入口供按需调用 DWS 群读取；其他重复 Skill 仍隐藏。服务已完成听记、日历等操作读取后，不再将对应操作 Skill 全文交给会议判断轮。Claude/Friday 及缺少托管会议 Skill 的旧任务保持原输入。原生输出纠错沿本路线的实际输入继续，切换路线时改用目标路线的输入；会议结果、受众和投递契约不变。匿名固定对照及早期校验漏判见 `docs/meeting-managed-skill-scope-validation.md`；修正校验后的三轮结果见 `evals/trajectory_optimization/meeting_skill_scope_native.v3.json`。
+会议 Skill 范围（2026-10-18；2026-10-21 修正）：服务仍保存并组装本轮全部冻结材料。仅 Codex CLI 路线在存在冻结托管会议 Skill 时，使用该完整托管规则构造实际提交输入，并在原生 Skill 目录保留 `dingtalk-chat` 入口供按需调用 DWS 群读取；其他重复 Skill 仍隐藏。服务已完成听记、日历等操作读取后，不再将对应操作 Skill 全文交给会议判断轮。Claude/Friday 及缺少托管会议 Skill 的旧任务保持原输入。原生输出纠错沿本路线的实际输入继续，切换路线时改用目标路线的输入；会议结果、受众和投递契约不变。匿名固定对照及早期校验漏判见 `docs/archive/records/meeting-managed-skill-scope-validation.md`；修正校验后的三轮结果见 `evals/trajectory_optimization/meeting_skill_scope_native.v3.json`。
 
 已有外部动作的核验（2026-10-14）：System Executor 对已有 dispatched/uncertain journal 先调用具名处理器只读 reconcile；旧动作造成的来源变化不能阻止读取实际回执。该路径不再次 dispatch。所有尚未派发的新动作仍先检查原审批候选绑定的当前来源，已完成动作的身份和正文冲突检查继续执行。原生发送回执只从明确的发送返回结构读取 send-task 身份，引用的入站消息 ID 不能作为投递凭证。
 
@@ -1871,7 +1871,7 @@ Every original field, nested value, identifier and string whitespace/newline is
 preserved; only JSON separator/indentation bytes change. Consumer and Audit share
 this renderer. Candidate digest calculation, source binding, business validation,
 role/tool boundaries, session reuse and historical saved inputs remain unchanged.
-See docs/context-json-formatting-validation.md for focused verification and
+See docs/archive/records/context-json-formatting-validation.md for focused verification and
 metadata-only measurements; publication status is recorded there.
 
 ### 会议人员方案披露与成员准确率（2026-10-15）
@@ -1887,15 +1887,15 @@ Task Agent 的本机 CLI 路线当前每轮提交 Work Tracking Skill 的绝对�
 `inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
 原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。
 远端 Friday Runtime 路线继续收到完整 Skill 正文。其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
-或共享 AGENTS 配置。旧版同名入口的修复见 `docs/task-inline-skill-once-validation.md`；
-当前按需读取的验收与限制见 `docs/task-skill-on-demand-validation.md`。
+或共享 AGENTS 配置。旧版同名入口的修复见 `docs/archive/records/task-inline-skill-once-validation.md`；
+当前按需读取的验收与限制见 `docs/archive/records/task-skill-on-demand-validation.md`。
 
 Codex continuation commands retain the caller-selected workspace through the native
 global `--cd <workspace>` option before `exec resume`; cold commands are unchanged.
 Continuation no longer inherits the service process directory. Workbench inserts
 its existing model/MCP timeout options after the located exec/resume command so
 global options remain intact. Native session IDs, source, schema, credentials,
-permissions and route policy are unchanged. See `docs/codex-resume-workspace-validation.md`.
+permissions and route policy are unchanged. See `docs/archive/records/codex-resume-workspace-validation.md`.
 Attempt current failure descriptions use only the latest Agent turn or the persisted final task/execution stop. A later completed turn supersedes earlier technical failures in the current-stop projection; historical runs remain available in the runtime trajectory and are never rewritten. A final Audit return/reject keeps its actual summary, and accepted but unverified System actions retain their uncertain execution diagnosis.
 
 Audit field assertions are first bound to the exact current candidate. Only their sensitivity-check copy reuses the existing strict configured service callback-pair validation; original assertion values, candidate digests and persisted results are unchanged. Other Audit prose, malformed pairs and nonconfigured URLs retain credential detection. Fresh and recovered Audit results use the same check. Audit context identifies the service-prepared DingTalk signature and feedback postfix so Consumer is not asked to remove content the service reattaches.
