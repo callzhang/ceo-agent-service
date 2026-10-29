@@ -2792,7 +2792,30 @@ def _run_next_direct_action(
     from app.email_provider_actions import ProviderActionResult
 
     try:
-        executor = executor_factory(action.account_id)
+        dws_move_context_reader = getattr(
+            email_store, "verified_dws_move_context_for_action", None
+        )
+        dws_move_context = (
+            dws_move_context_reader(action)
+            if callable(dws_move_context_reader)
+            else None
+        )
+        if dws_move_context is not None:
+            account = email_store.get_account(action.account_id)
+            if not isinstance(account, Mapping) or not bool(account.get("enabled")):
+                raise LookupError("email DWS account is unavailable")
+            if str(account.get("account_id") or "") != action.account_id:
+                raise LookupError("email DWS account identity mismatch")
+            from app.dws_client import DwsClient
+            from app.email_dws_actions import DwsVerifiedMoveActionExecutor
+
+            executor = DwsVerifiedMoveActionExecutor(
+                DwsClient(),
+                mailbox=str(account.get("email_address") or ""),
+                context=dws_move_context,
+            )
+        else:
+            executor = executor_factory(action.account_id)
         if executor is None:
             raise LookupError("provider executor unavailable")
         result = executor.execute(action)
