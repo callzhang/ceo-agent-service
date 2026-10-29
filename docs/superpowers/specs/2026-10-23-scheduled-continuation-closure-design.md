@@ -14,7 +14,7 @@
 | --- | --- | --- |
 | 执行任务 417176 | Consumer 395970 以 `analysis_incomplete` 失败；396024 复用原 session 后完成；随后经历 Audit 396109、396125、396140，以及 Consumer 修订 396112、396135。任务状态为 `done`。 | 正向候选：检查重试与修订是否推进，以及最终业务结果是否有回执支持。状态与 session 号本身不构成验收。 |
 | 执行任务 417170 | Consumer 395882、395949、395955、395961 连续失败；后三次复用同一 session。 | 反例：定位是否重复读取而未保留或使用成果，并判断失败是否早于对应修复。 |
-| 已有共用流程证据 | [通用定时任务验收](../../scheduled-task-generic-agent-validation.md)、[OKR 验收记录](../../scheduled-okr-agent-acceptance.md)、[trajectory 验证记录](../../trajectory-optimization-validation.md)。 | 复用其中直接覆盖成果交接、反馈修订、失败边界的证据；补查一条已有日报或管理周报链，核对共用路径。缺少同类续跑轨迹则如实限定结论。 |
+| 已有共用流程证据 | [通用定时任务验收](../../archive/records/scheduled-task-generic-agent-validation.md)、[OKR 验收记录](../../archive/records/scheduled-okr-agent-acceptance.md)、[trajectory 验证记录](../../archive/records/trajectory-optimization-validation.md)。 | 复用其中直接覆盖成果交接、反馈修订、失败边界的证据；补查一条已有日报或管理周报链，核对共用路径。缺少同类续跑轨迹则如实限定结论。 |
 
 417039 的早期失败仅作必要的版本对照，不作为新增全量分析样本。不同任务或调度发生次之间不互相代替验收，不重放历史失败。
 

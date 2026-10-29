@@ -19,7 +19,7 @@ Derek于2026-10-25决定：`python -m app.deploy` 在停服务或改动任何东
 历史 D 九字段退休工具仍供明确旧版本迁移与逆迁调用，已批准的九字段逆迁仍填中性默认值，原评估值不再保存。Email48→49、49→50 的必要历史 DDL／校验已移至显式 history 模块，不由正常构造器加载。Workbench 附件文件维护属于业务行为，保留。
 当前验收见[运行时声明清理验证](runtime-current-schema-validation.md)。历史 GPT-6 原生链路证据见[此前发布验收](database-gpt6-release-validation.md)。
 字段范围、逐字段映射与证据边界见[九字段映射](business-model-legacy-fields-mapping.md)及
-[验证记录](business-model-legacy-fields-validation.md)。
+[验证记录](records/business-model-legacy-fields-validation.md)。
 B2b 观察提交、副本及原生 CLI 的独立证据见[专有动作验收](database-redesign-specialized-actions-validation.md)。
 C1 来源证据见[C1 生命周期验收](business-model-task-lifecycle-validation.md)；本候选局部验证与剩余发布门槛见[Prepared Action 归属验收](database-redesign-prepared-actions-validation.md)。
 [此前阶段验收](database-redesign-final-acceptance.md)只记录 Store14.1 的历史范围；

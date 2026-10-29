@@ -26,25 +26,25 @@ Runtime evidence is written under `data/profile-evidence/`, which is ignored by 
 Install the Nvwa persona skill before rebuilding a reviewed work profile:
 
 ```bash
-test -f ~/.agents/skills/nvwa/SKILL.md
+test -f ~/.agents/skills/nuwa/SKILL.md
 ```
 
 Expected path:
 
 ```text
-~/.agents/skills/nvwa/SKILL.md
+~/.agents/skills/nuwa/SKILL.md
 ```
 
 Checker:
 
 ```bash
-test -f ~/.agents/skills/nvwa/SKILL.md && echo "PASS nvwa skill installed"
+test -f ~/.agents/skills/nuwa/SKILL.md && echo "PASS nvwa skill installed"
 ```
 
 Satisfies when:
 
 - The command prints `PASS nvwa skill installed`.
-- The skill is local under `~/.agents/skills/nvwa/SKILL.md`.
+- The skill is local under `~/.agents/skills/nuwa/SKILL.md`.
 - No generated profile has been rebuilt yet; this check only verifies the review
   skill dependency.
 
@@ -182,14 +182,10 @@ Run the focused tests:
 
 ```bash
 cd /path/to/ceo-agent-service
-"$HOME/miniforge3/bin/pytest" tests/test_work_profile.py tests/test_prompt.py tests/test_worker.py::test_consumer_codex_command_embeds_work_profile_content -q
+"$HOME/miniforge3/bin/pytest" tests/test_work_profile.py tests/test_prompt.py -q
 ```
 
-Run the full local-service suite before committing behavior changes:
-
-```bash
-"$HOME/miniforge3/bin/pytest" -q
-```
+Before committing behavior changes run the test files that cover the change, not the whole suite.
 
 Final checker:
 

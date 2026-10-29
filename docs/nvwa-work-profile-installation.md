@@ -24,13 +24,13 @@ committed files.
 Install the internal Nvwa skill package so this file exists:
 
 ```bash
-test -f ~/.agents/skills/nvwa/SKILL.md
+test -f ~/.agents/skills/nuwa/SKILL.md
 ```
 
 Expected path:
 
 ```text
-~/.agents/skills/nvwa/SKILL.md
+~/.agents/skills/nuwa/SKILL.md
 ```
 
 If the check fails, install or sync the Nvwa skill from the internal skill

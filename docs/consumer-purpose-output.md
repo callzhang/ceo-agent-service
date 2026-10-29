@@ -3,7 +3,7 @@
 本文说明已实现的 Consumer 业务输出、OA 退回及权限等待协议。
 实现入口为 `app/consumer_purpose.py`、`app/agent_wire_contracts.py`、
 `app/consumer_purpose_retry.py` 和 `app/agent_orchestrator.py`。
-部署和验收证据见 [验证记录](consumer-purpose-actions-validation.md)。
+部署和验收证据见 [验证记录](archive/records/consumer-purpose-actions-validation.md)。
 
 ## 1. 通用业务字段
 
@@ -141,7 +141,7 @@ OA purpose 达到限制后停止自动重读，并让 Consumer 再运行一次�
 - [架构中的 Consumer purpose 协议](architecture.md#consumer-purpose-动作输出和权限重试)
 - [运行机制中的权限等待](runtime-mechanism.md#consumer-purpose-output-和有界权限等待)
 - [外部动作合同](system-action-contracts.md#consumer-purpose-action-names)
-- [测试、原生模型验证及生产发布记录](consumer-purpose-actions-validation.md)
+- [测试、原生模型验证及生产发布记录](archive/records/consumer-purpose-actions-validation.md)
 - [OA 操作 Skill 来源](../ci/shared-skills/dingtalk-oa-approval/SKILL.md)
 - [文档审阅 Skill 来源](../ci/shared-skills/ceo-document-review/SKILL.md)
 

@@ -492,7 +492,7 @@ Tasks 不再把 Project 当作所有事项的容器。来源先形成候选 Task
 
 旧 Work Project、Work Todo、Work Update 的五个 Store 创建/更新入口已退休。历史行仍由现有 reader、History 和 legacy-project 详情读取；语义导入仍须依据来源证据与已审阅清单显式执行。
 
-Store `2026-10-19.11`／Email53 进一步按明确批准永久退休九个旧运营控制/评估字段，51 个源字段保留 42 个；`follow_up_question`、`changes_json`、业务事实、来源与 provider 回执继续可读。当前 DTO/API/UI 不再暴露九字段。配对发布支持准确的19.8/19.9/19.10来源，逆迁保留当前新增事实，仅为九字段恢复中性默认值；不保存旧值副本。见[完整字段映射](docs/business-model-legacy-fields-mapping.md)和[验证边界](docs/business-model-legacy-fields-validation.md)。
+Store `2026-10-19.11`／Email53 进一步按明确批准永久退休九个旧运营控制/评估字段，51 个源字段保留 42 个；`follow_up_question`、`changes_json`、业务事实、来源与 provider 回执继续可读。当前 DTO/API/UI 不再暴露九字段。不保存旧值副本。见[完整字段映射](docs/business-model-legacy-fields-mapping.md)。
 
 Task Agent 为每个来源判断 0 到多个 Task 决定。正式任务必须有来源明确的负责人以及四种正式依据之一；明确指派不等于负责人已接受。外部钉钉 TODO 只是 Task 的镜像，只有正式、开放、已接受且有可解析承诺期限的 Task 才能排入创建队列。Agent 不直接创建、修改或完成外部 TODO；本地完成、提供者回执和有界重试按 Task ID 关联保存。跟进日期必须是来源明确的 `next_check_at`，不从通用截止日推算，也不猜收件人：群聊发回精确来源会话并提及有证据的负责人；单聊只发给来源明确指定的负责人。
 

@@ -2,7 +2,7 @@
 
 > Status reconciliation, 2026-10-21: this is a scoped historical implementation/acceptance record. Its publication-pending statements are preserved as history; the subsequent Store19.11／Email53 combined copy, inverse and production deployment are recorded in [final release evidence](archive/records/database-gpt6-release-validation.md). See [current execution progress](archive/records/business-model-execution-progress.md) for unit status; historical FAIL results are not rewritten.
 
-Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字段，不保存其旧值副本；schema inverse 只恢复这些字段的声明及中性默认值。其余业务事实、来源、关系和 provider 回执保留当前 SQL 值与类型。Store `2026-10-19.11`／Email53 实现这一边界。
+Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字段，不保存其旧值副本；schema inverse 只恢复这些字段的声明及中性默认值。其余业务事实、来源、关系和 provider 回执保留当前 SQL 值与类型。自 Store `2026-10-19.11`／Email53 起实现这一边界。
 
 批准来源绑定到 Store19.8／Email53 副本 SHA-256 `60ee5d5b88395235768868deda215b5b371facf931522932463a29d474f539a2`。该副本的严格来源导入清单 `c98c046df64a8c4c681314d2c4142dff5df047f8b2bee6f01c51049dcd2c3a6e` 将 975 个 WorkProject、3,327 个 WorkTodo 和 5,468 个 WorkUpdate（共 9,770 个有来源限定的身份）全部归为 `history_only`；逐身份处置记录绑定各自 source digest。这是该来源的结果，不是将未来记录一概归为历史的规则。
 
@@ -12,7 +12,7 @@ Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字�
 
 ## work_project：975 行，24 → 19 字段
 
-| 原字段 | 19.11 当前存储/处置 | schema inverse |
+| 原字段 | 存储/处置 | schema inverse |
 | --- | --- | --- |
 | `id` | `business.public_id` | 保留逆迁时的当前 SQL 值与类型 |
 | `title` | `business.title` | 保留逆迁时的当前 SQL 值与类型 |
@@ -41,7 +41,7 @@ Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字�
 
 ## work_todo：3,327 行，18 → 16 字段
 
-| 原字段 | 19.11 当前存储/处置 | schema inverse |
+| 原字段 | 存储/处置 | schema inverse |
 | --- | --- | --- |
 | `id` | `business.public_id` | 保留逆迁时的当前 SQL 值与类型 |
 | `project_id` | `business.payload_json.project_id` | 保留逆迁时的当前 SQL 值与类型 |
@@ -64,7 +64,7 @@ Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字�
 
 ## work_updates：5,468 行，9 → 7 字段
 
-| 原字段 | 19.11 当前存储/处置 | schema inverse |
+| 原字段 | 存储/处置 | schema inverse |
 | --- | --- | --- |
 | `id` | `actions.legacy_key` 的原公开整数投影 | 保留逆迁时的当前 SQL 值与类型 |
 | `project_id` | `actions.payload_json[0]` | 保留逆迁时的当前 SQL 值与类型 |
@@ -83,13 +83,3 @@ Derek 于 2026-10-20 明确批准永久退休九个旧运营控制或评估字�
 仅删除 `idx_business_work_project_status_priority` 和 `idx_business_work_todo_follow_up` 两个旧运营索引。历史身份索引、Todo 所属 Project/status 索引及实际关系保留。Provider link/draft 自己保存的 priority snapshot、独立 evidence candidate 的 confidence、当前语义 Task/Project/Attention 的字段和检索排序不属于这九项，保持原有含义。
 
 当前 Store DTO、typed DAO、历史 API、HTML 及前端类型/解析、历史检索文本都不输出退休字段或伪装的空值。旧 priority/risk 排序入口和旧 due-before 跟进筛选随字段退出。History 和 legacy-project 深链接仍能按原身份读取保留事实与回执。没有新归档表、改名 JSON、原始行快照或恢复旧评估值的旁路。
-
-## 迁移与逆迁
-
-`business_legacy_fields.py` 只提供一套明确的当前字段元数据与目标声明。历史 `BUSINESS_FIELDS`、`SYNC_FIELDS`、19.10 Business/Actions 工厂的默认输出冻结；生成器只在当前调用者显式传入保留字段时生成 19.11 声明。
-
-字段转换在调用者拥有的 FK-off 事务中重建 Business/Actions。Business 只移除批准的七个 JSON key；WorkUpdate 只移除两个数组 cell，六个保留 cell 的 JSONB 字节继续使用原 framing。TEMP transfer 只接收转换后的当前行，事务完成前删除；不保存九个旧值。全部其它 Business/Action kinds 的可写 SQL 值、物理 ID/ROWID、关系、sequence 行及其 ROWID/水位逐一核对。对 retained scalar 的值和 `typeof` 单独比较，并保持原 FK finding multiset。
-
-公共 paired release 明确接受 Store19.8、19.9、19.10 与 Email53。19.8 在同一事务内依次调用既有 A5 Prepared Action、C2 logical Run 原语及九字段转换；19.9 省略 A5；19.10 只做字段转换。只在最终 19.11 运行新构造器，不尝试在新代码下启动中间版本。逆迁顺序相反，保留正迁后新增的当前业务事实/Task/provider receipt，恢复原 schema、Store marker 原值及原时钟、Email 账本；九项只能得到上表中性默认值。A5 已定义的 prepared 私有子行物理 ID 例外只属于 A5 原合同，其公开事实仍需独立核对。
-
-具体代码与来源验证范围、失败基线及尚未完成的发布门槛见[验证记录](business-model-legacy-fields-validation.md)。

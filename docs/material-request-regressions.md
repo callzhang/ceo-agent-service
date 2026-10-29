@@ -16,7 +16,5 @@ store, orchestrator and OA comment executor. `tests/test_material_source_identit
 checks that missing native OA details or a canonical process ID different from
 the requested ID cannot create a source binding or dispatch a reviewed action.
 Both boundaries already existed in runtime; these tests do not add waiting
-states, source policies or triggers. Subprocess-only mutations demonstrate that
-the tests reject immediate continuation and removal of canonical OA identity
-validation. The model's choice of the continuation flag is covered separately
+states, source policies or triggers. The model's choice of the continuation flag is covered separately
 by the Consumer/Audit instructions and native business evaluation.

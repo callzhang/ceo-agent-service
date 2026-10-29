@@ -4,7 +4,7 @@ Status: the local personal-account receive/read/decide/send pipeline is implemen
 and verified on this Mac. Sending remains disabled by default in repository
 configuration, while this deployment explicitly enables automatic sending. Both
 feasibility gates are proven (see
-[research doc](wechat-channel-and-local-memory-research.md) and the plan's Task 4/5/10
+[research doc](archive/records/wechat-channel-and-local-memory-research.md) and the plan's Task 4/5/10
 correction blocks): local-DB read (1.72M messages decrypted, 0 HMAC failures) and
 Accessibility send (verified live to 文件传输助手, including background queue status
 `sent` followed by an exact outbound database readback).

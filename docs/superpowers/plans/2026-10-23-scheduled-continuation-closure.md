@@ -11,7 +11,7 @@
 
 - [x] 在独立工作树执行 `git pull --no-rebase origin main`；返回 `Already up to date`。
 - [x] 记录生产 SHA、417176/417170 的调度身份、代次、Skill/配置、路线及每轮原生 JSONL 路径和边界。
-- [x] 复用 `docs/scheduled-okr-agent-acceptance.md`、`docs/scheduled-task-generic-agent-validation.md` 的已有修复与固定评测。仅在相关内容确实改变时补查。
+- [x] 复用 `docs/archive/records/scheduled-okr-agent-acceptance.md`、`docs/archive/records/scheduled-task-generic-agent-validation.md` 的已有修复与固定评测。仅在相关内容确实改变时补查。
 
 ## 2. 逐轮核对实际推进
 
