@@ -164,3 +164,69 @@ def test_console_continuation_requires_exact_move_action_id(tmp_path):
 
     assert missing.status_code == 400
     assert missing.json()["code"] == "invalid_move_action_id"
+
+
+def test_dws_move_receipt_can_resume_after_one_continuation_was_already_created(tmp_path):
+    store, persisted, original_plan = _store_with_move_and_dependents(tmp_path)
+    move, _ = _complete_move_and_skip_flag(store, persisted)
+
+    first = store.continue_actions_after_reconciled_move(
+        int(persisted["id"]),
+        move_action_id=str(move.action_id),
+        resumed_at="2026-10-29T11:02:00+00:00",
+    )
+    assert first is not None
+    first_plan = first["current_action_plan_id"]
+    first_actions = store.direct_action_statuses_for_plan(first_plan)
+    assert set(first_actions.values()) == {"pending"}
+
+    flag = store.claim_next_direct_action(claimed_at="2026-10-29T11:02:01+00:00")
+    assert flag is not None and flag.action_type is EmailAction.FLAG_IMPORTANT
+    store.complete_direct_action_attempt(
+        flag,
+        status="skipped",
+        provider_operation="readback_missing",
+        provider_target=flag.locator.stable_message_identity,
+        provider_result_id="message-unavailable:" + "c" * 32,
+        error="",
+        finished_at="2026-10-29T11:02:02+00:00",
+    )
+
+    second = store.continue_actions_after_reconciled_move(
+        int(persisted["id"]),
+        move_action_id=str(move.action_id),
+        resumed_at="2026-10-29T11:03:00+00:00",
+    )
+
+    assert second is not None
+    assert second["action_plan"]["action_plan_version"] == 3
+    assert second["action_plan"]["actions"] == ["flag_important", "mark_read"]
+    assert store.direct_action_statuses_for_plan(original_plan)[move.action_id] == "done"
+    assert set(store.direct_action_statuses_for_plan(first_plan).values()) == {"skipped", "pending"}
+
+
+def test_claimed_dependent_action_exposes_only_its_verified_dws_move_binding(tmp_path):
+    store, persisted, _ = _store_with_move_and_dependents(tmp_path)
+    move, _ = _complete_move_and_skip_flag(store, persisted)
+    store.continue_actions_after_reconciled_move(
+        int(persisted["id"]),
+        move_action_id=str(move.action_id),
+        resumed_at="2026-10-29T11:02:00+00:00",
+    )
+
+    action = store.claim_next_direct_action(claimed_at="2026-10-29T11:02:01+00:00")
+    assert action is not None
+    binding = store.verified_dws_move_context_for_action(action)
+
+    assert binding == {
+        "move_action_id": str(move.action_id),
+        "message_id": "DzzzzzzNJ0u",
+        "folder_id": 167,
+        "receipt_digest": "a" * 64,
+        "account_id": "dingtalk_primary",
+        "stable_message_identity": action.locator.stable_message_identity,
+        "sender": "xup@junhe.com",
+        "subject": "JunHe test mail",
+        "received_at": "2026-05-07T08:56:27+00:00",
+        "conversation_id": "junhe-thread",
+    }

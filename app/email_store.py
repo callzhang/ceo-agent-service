@@ -10755,7 +10755,14 @@ class EmailStore:
                 (plan.action_plan_id,),
             ).fetchall()
             actions_by_type = {row["action_type"]: row for row in action_rows}
-            move = actions_by_type.get(EmailAction.MOVE.value)
+            move_candidates = db.execute(
+                f"""
+                select * from ({DIRECT_EMAIL_ACTION_SQL})
+                where classification_id=? and action_type='move' and action_id=?
+                """,
+                (classification_id, move_action_id),
+            ).fetchall()
+            move = move_candidates[0] if len(move_candidates) == 1 else None
             readback_id = "" if move is None else str(move["provider_result_id"] or "")
             if (
                 move is None
@@ -10855,6 +10862,69 @@ class EmailStore:
             plan_rows = self._current_action_plan_rows(db, [updated] if updated else [])
         assert updated is not None
         return self._classification_row(updated, plan_rows)
+
+    def verified_dws_move_context_for_action(
+        self, action: StoredEmailAction
+    ) -> dict[str, Any] | None:
+        """Return an exact prior DWS MOVE receipt for this current dependent action."""
+
+        if action.action_type not in {EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ}:
+            return None
+        with self._connect() as db:
+            current = db.execute(
+                f"""
+                select a.action_id, a.action_plan_id, a.action_type, a.status,
+                       c.account_id, c.stable_message_identity,
+                       m.sender, m.subject, m.received_at, m.thread_identity
+                from ({DIRECT_EMAIL_ACTION_SQL}) a
+                join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
+                join ({EMAIL_MESSAGE_SQL}) m
+                  on m.account_id=c.account_id
+                 and m.stable_message_identity=c.stable_message_identity
+                where a.action_id=? and a.classification_id=?
+                  and a.action_plan_id=c.current_action_plan_id
+                  and a.status='processing'
+                """,
+                (action.action_id, action.classification_id),
+            ).fetchone()
+            if (
+                current is None
+                or current["action_type"] != action.action_type.value
+                or current["account_id"] != action.account_id
+                or current["stable_message_identity"]
+                != action.locator.stable_message_identity
+            ):
+                return None
+            moves = db.execute(
+                f"""
+                select action_id, provider_result_id
+                from ({DIRECT_EMAIL_ACTION_SQL})
+                where classification_id=? and action_type='move'
+                  and status='done'
+                  and provider_operation='reconciled_dws_readback'
+                  and provider_target=?
+                order by attempt_count desc
+                """,
+                (action.classification_id, action.locator.stable_message_identity),
+            ).fetchall()
+        if len(moves) != 1:
+            return None
+        receipt = str(moves[0]["provider_result_id"] or "")
+        match = re.fullmatch(r"dws-readback:([^:]+):(\d+):([0-9a-f]{64})", receipt)
+        if match is None:
+            return None
+        return {
+            "move_action_id": str(moves[0]["action_id"]),
+            "message_id": match.group(1),
+            "folder_id": int(match.group(2)),
+            "receipt_digest": match.group(3),
+            "account_id": str(current["account_id"]),
+            "stable_message_identity": str(current["stable_message_identity"]),
+            "sender": str(current["sender"]),
+            "subject": str(current["subject"]),
+            "received_at": str(current["received_at"]),
+            "conversation_id": str(current["thread_identity"]),
+        }
 
     @staticmethod
     def _assert_no_email_reply_dispatch_in_flight(
