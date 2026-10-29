@@ -37,8 +37,8 @@ Baseline: isolated branch codex/retire-final-model-residue-20261029 at4b1ec3e66.
 - [x] Current/old-format history equivalence, identity mismatch and failure assertions run against fakes; SPEC then QUALITY.
 
 ## Final integration and publication
-- [ ] Check final deleted-symbol closure, direct callers, dynamic imports, fixed schema and preserved source fixtures. No added legacy aliases or runtime fallback.
-- [ ] Current-data roundtrip and real old-code cold write proof; focused tests only,2GB/10min; full gate only standard serialized deployment. No real external test sends.
-- [ ] Merge latest main normally, deploy exact pushed commit through gate/quiet/verified-backup/rollback. No skip-quiet authorization implied.
-- [ ] Read back installed SHA/PID/health/queue/Attention/History/affected Workbench+Email/OA details/schema/FK and exact historical receipts.
+- [x] Check final deleted-symbol closure, direct callers, dynamic imports, fixed schema and preserved source fixtures. No added legacy aliases or runtime fallback.
+- [x] Current-data roundtrip and real old-code cold write proof; focused tests only,2GB/10min; full gate only standard serialized deployment. No real external test sends.
+- [x] Merge latest main normally, deploy exact pushed commit through gate/quiet/verified-backup/rollback. No skip-quiet authorization implied.
+- [x] Read back installed SHA/PID/health/queue/Attention/History/affected Workbench+Email/OA details/schema/FK and exact historical receipts.
 - [ ] Verify then clean this workflow's temporary copies and backups with exact ownership/generation guard; update concise evidence/claims and push documentation without another deploy.

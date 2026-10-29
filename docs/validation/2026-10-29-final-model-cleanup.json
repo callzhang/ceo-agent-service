@@ -1,0 +1,78 @@
+{
+  "phase": "temporary_artifacts_removed_backup_owner_confirmation_pending",
+  "temporary_paths": [
+    {
+      "path": "/private/tmp/ceo-final-residue-unit1.i9NSld",
+      "removed": true,
+      "inode": 837070965,
+      "mtime_ns": 1793269097354217826
+    },
+    {
+      "path": "/private/tmp/ceo-final-residue-email.kTPBaI",
+      "removed": true,
+      "inode": 837115851,
+      "mtime_ns": 1793271644618907501
+    },
+    {
+      "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.514p4b1t",
+      "removed": true,
+      "inode": 837348372,
+      "mtime_ns": 1793273959544276684
+    },
+    {
+      "path": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5129",
+      "removed": true,
+      "inode": 837352704,
+      "mtime_ns": 1793274424855907197
+    },
+    {
+      "path": "/private/tmp/ceo_email_edit.py",
+      "removed": true,
+      "inode": 837107260,
+      "mtime_ns": 1793269408916091717,
+      "sha256": "f5626ec805914f93f8a3a98f07c874aeadeff12d2ee80d3947fca512d90af0c1"
+    },
+    {
+      "path": "/private/tmp/ceo_schema_edit.py",
+      "removed": true,
+      "inode": 837110714,
+      "mtime_ns": 1793269420592857382,
+      "sha256": "f9d801d1d952eb5d003199077899e53577e12e6ff55b2718848e779ac4b202ee"
+    },
+    {
+      "path": "/private/tmp/ceo_preserve_literals.py",
+      "removed": true,
+      "inode": 837145002,
+      "mtime_ns": 1793269587700570018,
+      "sha256": "9c5b42969721493ecceae96cc00182c741a03e9b606bc5f08b25406e3cc809ca"
+    },
+    {
+      "path": "/private/tmp/ceo_preserve_literals2.py",
+      "removed": true,
+      "inode": 837145418,
+      "mtime_ns": 1793269613931373599,
+      "sha256": "0b098cb66cbacaa28e5d6a701cd6d2537844e2f4fb532bdda8c3dd56127e53c4"
+    },
+    {
+      "path": "/private/tmp/ceo_runtime_finish.py",
+      "removed": true,
+      "inode": 837177573,
+      "mtime_ns": 1793269808155828625,
+      "sha256": "44ddce216c063804416df0a94a5fb4d22b5799b63390fd4813e88cfd9d6d4e97"
+    },
+    {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/auto-reply.sqlite3.task-run-inverse.json",
+      "removed": true,
+      "inode": 808910969,
+      "mtime_ns": 1792832913908186868,
+      "sha256": "c7861b03c070d9419f336eae278c7bb5f95f040865422c18c6c928d0ab66c33c"
+    },
+    {
+      "path": "/private/tmp/ceo-final-model-residue.OAxXjh",
+      "removed": true,
+      "inode": 837072054,
+      "mtime_ns": 1793277830689880809,
+      "bytes": 3192449556
+    }
+  ]
+}

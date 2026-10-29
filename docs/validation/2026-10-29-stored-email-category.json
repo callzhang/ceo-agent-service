@@ -1,5 +1,5 @@
 {
-  "phase": "implemented_reviewed_not_deployed",
+  "phase": "deployed_and_read_back",
   "source_commit": "dcd7f1c51",
   "scope": "Plain stored category fact contract; current new-write validators unchanged",
   "schema_sha256_default_json": "271003d51b40fa61a86fc2ff631df5138124c29b946787e8e875341aceef3758",
@@ -17,5 +17,8 @@
   },
   "immutable_plan_identity": "unchanged",
   "missing_authorization": "SQL NULL retained; never converted into permission",
-  "providers": "fake only"
+  "providers": "fake only",
+  "deployed_in": "1b0c36d44548b321674e7c63643cbc97f292ff9f",
+  "production_successor_read_back": "773376576b6d9426c1d8ca5b7576bd197ce990e8",
+  "temporary_paths": "Implementer and root integration artifacts removed; exact cleanup evidence in 2026-10-29-final-model-cleanup.json"
 }

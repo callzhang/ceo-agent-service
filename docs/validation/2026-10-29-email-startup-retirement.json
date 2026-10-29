@@ -1,5 +1,5 @@
 {
-  "phase": "implemented_reviewed_not_deployed",
+  "phase": "deployed_and_read_back",
   "baseline": "525fa7e60",
   "scope": "Retired direct-v1 startup inventory/consumer suppression and automatic persistence-error failed-to-skipped rewrite only",
   "removed_store_methods": [
@@ -26,5 +26,7 @@
   "spec": "PASS",
   "quality": "PASS after deleting exclusive unused test helper",
   "providers": "fake only",
-  "temporary_paths": "implementer task root removed; integration basetemp retained under parent task root until final cleanup"
+  "temporary_paths": "Implementer and root integration artifacts removed; exact cleanup evidence in 2026-10-29-final-model-cleanup.json",
+  "deployed_in": "1b0c36d44548b321674e7c63643cbc97f292ff9f",
+  "production_successor_read_back": "773376576b6d9426c1d8ca5b7576bd197ce990e8"
 }

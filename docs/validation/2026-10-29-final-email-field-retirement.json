@@ -1050,7 +1050,7 @@
   "network_and_native_cli": "refused",
   "copy": "/private/tmp/ceo-final-model-residue.OAxXjh/roundtrip5.sqlite3",
   "old_root": "/private/tmp/ceo-final-model-residue.OAxXjh/old-production-e052b814a",
-  "phase": "core_deployed_ci_fixture_cleanup_in_progress",
+  "phase": "deployed_read_back_ci_passed_active_release_backup_pending",
   "source_code_commit": "e052b814aad722caae102e6dbd5d483190383298",
   "target_store": "2026-10-29.1",
   "email_version": 54,
@@ -1127,6 +1127,10 @@
       "quality": "PASS",
       "ruff": "passed",
       "boundary": "Tests only; current constructors use current manifest, archived State bytes retain frozen source hash, WeChat fake requires persisted prepared delivery, scheduled UI tests follow existing authorized page contract."
+    },
+    "post_merge_email": {
+      "passed": 22,
+      "seconds": 8.78
     }
   },
   "normalization_boundary": "Original local duplicates retire only after exact-byte/type equality; differing hidden bodies reject before mutation. Historical adopted results and independent quality facts use existing Action/receipt fields with missing proof identities NULL; current unknown facts are not reinterpreted on forward replay.",
@@ -1153,5 +1157,143 @@
       "files": 396
     }
   ],
-  "deployed_commit": "1b0c36d44548b321674e7c63643cbc97f292ff9f"
+  "deployed_commit": "1b0c36d44548b321674e7c63643cbc97f292ff9f",
+  "production_readback": {
+    "store_version": "2026-10-29.1",
+    "email_version": 54,
+    "schema_current": true,
+    "schema_objects": 463,
+    "schema_sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+    "fk": [],
+    "retired_columns_absent": {
+      "emails": true,
+      "actions": true,
+      "email_classification_inputs": true
+    },
+    "duplicate_compact_identity_rows": 0,
+    "missing_plan_authorization_snapshots": 3443,
+    "failure_cohort_comparison": {
+      "tasks": {
+        "count": 19,
+        "added_ids": [],
+        "removed_ids": [],
+        "same_values": true
+      },
+      "attempts": {
+        "count": 4977,
+        "added_ids": [],
+        "removed_ids": [],
+        "same_values": true
+      }
+    },
+    "installed_commit": "773376576b6d9426c1d8ca5b7576bd197ce990e8",
+    "frontend_tree": "2a410cf4fcfc5aedfad286fad59a94b51d511047",
+    "frontend_stamp": "2a410cf4fcfc5aedfad286fad59a94b51d511047",
+    "/healthz": {
+      "http": 200,
+      "ok": true,
+      "status": "ok"
+    },
+    "/api/console/status": {
+      "http": 200,
+      "service": {
+        "label": "com.ceo-agent-service.main",
+        "target": "gui/501/com.ceo-agent-service.main",
+        "ok": true,
+        "state": "running",
+        "detail": "running",
+        "pid": "869",
+        "runs": "1",
+        "initialized": "1",
+        "last_terminating_signal": "",
+        "returncode": 0
+      },
+      "summary": {
+        "queue_count": 11,
+        "pending": 4,
+        "processing": 0,
+        "failed": 26,
+        "retryable": 0,
+        "attention": 2
+      }
+    },
+    "/api/console/attention": {
+      "http": 200,
+      "count": 1,
+      "meta": {
+        "snapshot_at": "2026-10-29T12:24:39.196248Z",
+        "page": null,
+        "page_size": null,
+        "total": 2,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    "/api/console/history?page_size=5": {
+      "http": 200,
+      "count": 5,
+      "meta": {
+        "snapshot_at": "2026-10-29T12:24:40.075079Z",
+        "page": 1,
+        "page_size": 5,
+        "total": 39473,
+        "next_cursor": "2",
+        "has_more": true
+      }
+    },
+    "schema_sha256_full_manifest": "271003d51b40fa61a86fc2ff631df5138124c29b946787e8e875341aceef3758",
+    "historical_attempt3538": {
+      "http": 200,
+      "id": 3538,
+      "status": {
+        "raw": "done",
+        "subject": "未记录事项摘要",
+        "message": "当前状态：done。",
+        "requires_decision": false,
+        "attention": {
+          "kind": "",
+          "reason": "",
+          "external_effect": "",
+          "retry_at": ""
+        }
+      },
+      "oa_decision_present": false
+    },
+    "checked_at": "2026-10-29T12:46:19.274439+00:00"
+  },
+  "production_ui": {
+    "History": "pagination page2 and approval filter passed",
+    "OA3538": "done, decision present, missing Consumer explicitly shown",
+    "Tasks": "current attention list loaded",
+    "Workbench": "current task list loaded",
+    "Email": "classification list and 1185 unsubscribe records loaded",
+    "outbound_test_effects": "none"
+  },
+  "quality_ci": {
+    "run_id": 40875724251,
+    "commit": "c99e2eeda631fba1e9a7bab807d3acbb39324a9b",
+    "status": "success",
+    "jobs": 51,
+    "url": "https://github.com/callzhang/ceo-agent-service/actions/runs/40875724251"
+  },
+  "backup_verified_before_cleanup_coordination": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+    "inode": 837613187,
+    "mtime_ns": 1793276997320014506,
+    "bytes": 514969600,
+    "integrity": "ok",
+    "complete": true,
+    "store": "2026-10-29.1",
+    "email": 54,
+    "schema_current": true,
+    "fk": [],
+    "sha256": "014dd2e9dc337e6a32554c919c9cb6958590ef9e14d579501f214f7240a7ceaf"
+  },
+  "successor_mandatory_gate": {
+    "commit": "773376576b6d9426c1d8ca5b7576bd197ce990e8",
+    "passed_at": "2026-10-29T12:27:52+00:00",
+    "files": 397,
+    "summary": "7723 passed, 2 skipped, 1 deselected in 542.24s (0:09:02)"
+  },
+  "backup_cleanup": "Daily generation inode837613187 explicitly retained at publishing owner request for the subsequent approved JunHe deployment; final deletion awaits that owner readback. All own temporary artifacts removed."
 }
