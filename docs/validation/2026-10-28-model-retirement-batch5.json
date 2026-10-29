@@ -460,9 +460,10 @@
       "successor_foreign_keys": [],
       "successor_operation": "deploy-eda6f34a-bbf1-423c-a4ad-3d3f7a9a05a1",
       "successor_deleted_by_this_task": false,
-      "reason": "Distinct concurrent release; preserve its verified generation for its owner to complete readback/cleanup."
+      "reason": "Distinct concurrent release; preserve its verified generation for its owner to complete readback/cleanup.",
+      "successor_path_now_absent": true
     },
-    "scope": "Only known task-owned artifacts; concurrent release backup generation is excluded.",
+    "scope": "Approved 10/28 workflow backup generations and known task-owned temporary artifacts are absent; later 10/29 workflow file preserved.",
     "owned_temporary_roots": [
       {
         "path": "/private/tmp/ceo-retirement-final.xv4Wg9",
@@ -480,7 +481,54 @@
       }
     ],
     "publish_worktree_unregistered": true,
-    "own_workflow_complete": true
+    "own_workflow_complete": true,
+    "final_absence_verification_20261029": {
+      "verified_at_utc": "2026-10-29T07:54:35.150307+00:00",
+      "backup_directory_lock_held": true,
+      "backup_and_sidecar_paths_absent": [
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3-wal",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3-shm",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-28.sqlite3-journal",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-1bce6d7a-8401-4949-b3ca-d32c12494047.sqlite3",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-1bce6d7a-8401-4949-b3ca-d32c12494047.sqlite3-wal",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-1bce6d7a-8401-4949-b3ca-d32c12494047.sqlite3-shm",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-1bce6d7a-8401-4949-b3ca-d32c12494047.sqlite3-journal",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-ca69085b-4289-4acb-a5f3-668c8311dba9.sqlite3",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-ca69085b-4289-4acb-a5f3-668c8311dba9.sqlite3-wal",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-ca69085b-4289-4acb-a5f3-668c8311dba9.sqlite3-shm",
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-ca69085b-4289-4acb-a5f3-668c8311dba9.sqlite3-journal"
+      ],
+      "temporary_paths_absent": [
+        "/private/tmp/ceo-feedback-owner-worktree.2UYXQJ",
+        "/private/tmp/ceo-retirement-final.xv4Wg9",
+        "/private/tmp/ceo-runner-retirement.tzwA6t",
+        "/private/tmp/closure-edit.py",
+        "/private/tmp/task6-business-retirement.NsgChc",
+        "/private/tmp/task6-projection.ExrLuB",
+        "/private/tmp/task6-coverage.pdNIE3",
+        "/private/tmp/task6-email-workbench.ryzyxO",
+        "/private/tmp/task6-receipts.BlCfwK",
+        "/private/tmp/ceo-history-closeout.iqw5Li"
+      ],
+      "old_backup_inodes_absent": [
+        832838274,
+        832916088
+      ],
+      "raw_worktree_registrations_absent": true,
+      "subsequent_workflow_files_preserved": [
+        {
+          "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+          "inode": 836951240,
+          "mtime_ns": 1793258639864404224,
+          "bytes": 514969600
+        }
+      ],
+      "production_database_retained": true,
+      "deleted_in_this_followup": [],
+      "runtime_or_deployment_changes": false,
+      "publisher_coordination": "Final cleanup facts sent to existing authorized publisher thread 01a13efe-9537-77e1-9a50-b43f2f2351c5; no new deployment or business execution requested."
+    }
   },
   "limits": {
     "memory_gib": 2,
