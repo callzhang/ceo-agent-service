@@ -41,4 +41,6 @@ Baseline: isolated branch codex/retire-final-model-residue-20261029 at4b1ec3e66.
 - [x] Current-data roundtrip and real old-code cold write proof; focused tests only,2GB/10min; full gate only standard serialized deployment. No real external test sends.
 - [x] Merge latest main normally, deploy exact pushed commit through gate/quiet/verified-backup/rollback. No skip-quiet authorization implied.
 - [x] Read back installed SHA/PID/health/queue/Attention/History/affected Workbench+Email/OA details/schema/FK and exact historical receipts.
-- [ ] Verify then clean this workflow's temporary copies and backups with exact ownership/generation guard; update concise evidence/claims and push documentation without another deploy.
+- [x] Verify then clean this workflow's temporary copies and backups with exact ownership/generation guard; update concise evidence/claims and push documentation without another deploy.
+
+Final acceptance: [2026-10-29 closeout](../../final-model-residue-validation-20261029.md). This workflow’s artifacts and backup generations are absent/retired. The separately active JunHe publisher explicitly retains its newer verified backup; no runtime ownership remains in this task.

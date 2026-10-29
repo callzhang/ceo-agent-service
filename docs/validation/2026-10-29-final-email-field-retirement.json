@@ -1050,7 +1050,7 @@
   "network_and_native_cli": "refused",
   "copy": "/private/tmp/ceo-final-model-residue.OAxXjh/roundtrip5.sqlite3",
   "old_root": "/private/tmp/ceo-final-model-residue.OAxXjh/old-production-e052b814a",
-  "phase": "deployed_read_back_ci_passed_active_release_backup_pending",
+  "phase": "complete_deployed_read_back_ci_passed_owned_cleanup_complete",
   "source_code_commit": "e052b814aad722caae102e6dbd5d483190383298",
   "target_store": "2026-10-29.1",
   "email_version": 54,
@@ -1186,9 +1186,9 @@
         "same_values": true
       }
     },
-    "installed_commit": "773376576b6d9426c1d8ca5b7576bd197ce990e8",
+    "installed_commit": "bfabd2be011d2c9d89dbd2a0adaa0b068812530a",
     "frontend_tree": "2a410cf4fcfc5aedfad286fad59a94b51d511047",
-    "frontend_stamp": "2a410cf4fcfc5aedfad286fad59a94b51d511047",
+    "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
     "/healthz": {
       "http": 200,
       "ok": true,
@@ -1196,35 +1196,35 @@
     },
     "/api/console/status": {
       "http": 200,
+      "summary": {
+        "queue_count": 11,
+        "pending": 4,
+        "processing": 0,
+        "failed": 27,
+        "retryable": 0,
+        "attention": 3
+      },
       "service": {
         "label": "com.ceo-agent-service.main",
         "target": "gui/501/com.ceo-agent-service.main",
         "ok": true,
         "state": "running",
         "detail": "running",
-        "pid": "869",
+        "pid": "60340",
         "runs": "1",
         "initialized": "1",
         "last_terminating_signal": "",
         "returncode": 0
-      },
-      "summary": {
-        "queue_count": 11,
-        "pending": 4,
-        "processing": 0,
-        "failed": 26,
-        "retryable": 0,
-        "attention": 2
       }
     },
     "/api/console/attention": {
       "http": 200,
-      "count": 1,
+      "count": 2,
       "meta": {
-        "snapshot_at": "2026-10-29T12:24:39.196248Z",
+        "snapshot_at": "2026-10-29T13:05:50.790309Z",
         "page": null,
         "page_size": null,
-        "total": 2,
+        "total": 3,
         "next_cursor": "",
         "has_more": false
       }
@@ -1233,10 +1233,10 @@
       "http": 200,
       "count": 5,
       "meta": {
-        "snapshot_at": "2026-10-29T12:24:40.075079Z",
+        "snapshot_at": "2026-10-29T13:05:51.958622Z",
         "page": 1,
         "page_size": 5,
-        "total": 39473,
+        "total": 39482,
         "next_cursor": "2",
         "has_more": true
       }
@@ -1245,21 +1245,11 @@
     "historical_attempt3538": {
       "http": 200,
       "id": 3538,
-      "status": {
-        "raw": "done",
-        "subject": "未记录事项摘要",
-        "message": "当前状态：done。",
-        "requires_decision": false,
-        "attention": {
-          "kind": "",
-          "reason": "",
-          "external_effect": "",
-          "retry_at": ""
-        }
-      },
-      "oa_decision_present": false
+      "raw_status": "done",
+      "decision_present": false
     },
-    "checked_at": "2026-10-29T12:46:19.274439+00:00"
+    "checked_at": "2026-10-29T13:05:47.447611+00:00",
+    "frontend_needs_build": false
   },
   "production_ui": {
     "History": "pagination page2 and approval filter passed",
@@ -1295,5 +1285,12 @@
     "files": 397,
     "summary": "7723 passed, 2 skipped, 1 deselected in 542.24s (0:09:02)"
   },
-  "backup_cleanup": "Daily generation inode837613187 explicitly retained at publishing owner request for the subsequent approved JunHe deployment; final deletion awaits that owner readback. All own temporary artifacts removed."
+  "backup_cleanup": "Own predeploy0fa10c33 absent and own daily inode837613187 retired by standard backup workflow. Latest inode837712864 is a verified successor owned and explicitly retained by the active JunHe recovery publisher; not deleted or counted as this workflow residue.",
+  "final_successor_mandatory_gate": {
+    "commit": "bfabd2be011d2c9d89dbd2a0adaa0b068812530a",
+    "passed_at": "2026-10-29T13:03:14+00:00",
+    "files": 402,
+    "summary": "7772 passed, 2 skipped, 1 deselected in 476.17s (0:07:56)"
+  },
+  "cleanup_evidence": "2026-10-29-final-model-cleanup.json"
 }

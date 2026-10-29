@@ -1,5 +1,5 @@
 {
-  "phase": "temporary_artifacts_removed_backup_owner_confirmation_pending",
+  "phase": "complete_for_this_workflow",
   "temporary_paths": [
     {
       "path": "/private/tmp/ceo-final-residue-unit1.i9NSld",
@@ -74,5 +74,26 @@
       "mtime_ns": 1793277830689880809,
       "bytes": 3192449556
     }
-  ]
+  ],
+  "own_predeploy_absent": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-0fa10c33-4bea-46f6-91e8-7d45f59e7338.sqlite3",
+  "own_daily_generation_retired": {
+    "inode": 837613187,
+    "mtime_ns": 1793276997320014506,
+    "path_replaced_by_peer_generation": true
+  },
+  "preserved_peer_backup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+    "inode": 837712864,
+    "mtime_ns": 1793279142781006063,
+    "bytes": 514969600,
+    "sha256": "09a06f3cee47eee39228925cf049057cde6d3b899a10be7b550d51f7485b0214",
+    "integrity": "ok",
+    "schema_current": true,
+    "fk": [],
+    "retained": true,
+    "owner": "active JunHe recovery/deployment workflow, explicitly requested retention",
+    "checked_at": "2026-10-29T13:08:03.659612+00:00"
+  },
+  "checked_at": "2026-10-29T13:08:03.660166+00:00",
+  "all_listed_temporary_paths_absent": true
 }
