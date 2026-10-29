@@ -1990,6 +1990,12 @@ failed；已退休确认功能的 waiting_confirmation 不再进入 API 类型�
 本次不改变原生 CLI 确认、外部授权、审查、回执或恢复策略，也不重解释历史任务状态。
 
 
+Stored Email classification, feedback and immutable ActionPlan category facts accept
+canonical persisted keys including important, subscription and billing; other remains
+reserved. New classification, configuration, authorization and plan builders continue
+to reject all four reserved keys. Reopening or repairing a stored plan preserves its
+identity and its original authorization snapshot, including a NULL snapshot.
+
 ### Email 输入与计划字段所有权
 
 email_classification_inputs 只持有 task_id、stable_message_identity、input_json；固定

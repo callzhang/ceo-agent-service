@@ -1,0 +1,21 @@
+{
+  "phase": "implemented_reviewed_not_deployed",
+  "source_commit": "dcd7f1c51",
+  "scope": "Plain stored category fact contract; current new-write validators unchanged",
+  "schema_sha256_default_json": "271003d51b40fa61a86fc2ff631df5138124c29b946787e8e875341aceef3758",
+  "validation": {
+    "tests": [
+      "tests/test_email_stored_category.py",
+      "tests/test_email_classifier_contracts.py",
+      "tests/test_email_legacy_schema.py"
+    ],
+    "passed": 117,
+    "seconds": 61.06,
+    "ruff": "passed",
+    "spec": "PASS",
+    "quality": "PASS"
+  },
+  "immutable_plan_identity": "unchanged",
+  "missing_authorization": "SQL NULL retained; never converted into permission",
+  "providers": "fake only"
+}

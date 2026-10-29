@@ -51,7 +51,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-email-field-runtime-20261029 | app/current_schema_metadata.py; app/current_schema_declarations.py; app/current_action_schema.py; app/email_schema_history.py; app/email_canonical_definitions.py; app/email_classification_schema.py; app/email_canonical_storage.py; app/email_store.py; app/task_run_entity_definitions.py; app/email_task_adapter.py; app/storage_maintenance.py; app/action_storage.py; app/shared_action_definitions.py; app/shared_action_lifecycle.py; app/task_run_entity_assembly.py; tests/test_email_store.py; tests/test_email_task_adapter.py; tests/test_email_body_source.py; tests/test_email_source_web_api.py; tests/test_email_classification_reader.py; tests/test_email_training_label_metadata.py; tests/test_email_selected_training_reader.py; tests/test_action_entity_contract.py; tests/test_deployment_drain.py; tests/test_quality_gate.py; tests/test_console_dashboard.py; tests/test_attention_email_query_plan.py; tests/support/email_native_fixtures.py; tests/support/historical_email_projection.py; current email declaration and field modules | Retire current email legacy fields and duplicate compact input identity; parent owns release and docs. | 2026-10-29 |
+| codex-stored-email-category-20261029 | app/email_classifier_contracts.py; app/email_store.py stored category read methods; tests/test_email_classifier_contracts.py; new focused stored category test; exact email contract documentation paragraph | Parent-coordinated stored-fact category contract cleanup; no DDL or release. | 2026-10-29 |
+
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |

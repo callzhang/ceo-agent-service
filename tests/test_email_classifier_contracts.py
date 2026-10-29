@@ -737,3 +737,13 @@ def test_processed_classification_validates_action_plan_consistency(
 def test_contract_has_no_permanent_delete_action():
     assert "EXPUNGE" not in {action.value.upper() for action in EmailAction}
     assert "permanent_delete" not in {action.value for action in EmailAction}
+
+@pytest.mark.parametrize("category", ("important", "subscription", "billing"))
+def test_stored_category_contract_preserves_historical_facts(category: str):
+    assert email_contracts.validate_stored_email_category_key(category) == category
+
+
+@pytest.mark.parametrize("category", ("other", "Work", " work", 123, None))
+def test_stored_category_contract_rejects_invalid_values(category: object):
+    with pytest.raises(ValueError):
+        email_contracts.validate_stored_email_category_key(category)

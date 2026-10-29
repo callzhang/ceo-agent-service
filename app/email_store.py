@@ -49,8 +49,7 @@ from app.email_classifier_contracts import (
     build_user_confirmation_authorizations,
     build_versioned_email_action_plan,
     effective_direct_action_dependencies,
-    rehydrate_legacy_email_action_plan_json,
-    rehydrate_legacy_email_category_key,
+    validate_stored_email_category_key,
     validate_email_category_key,
 )
 from app.email_category_config import (
@@ -2249,11 +2248,11 @@ class EmailStore:
         for row in classifications.values():
             try:
                 if row["category"] is not None:
-                    rehydrate_legacy_email_category_key(row["category"])
+                    validate_stored_email_category_key(row["category"])
                 if row["predicted_category"] is not None:
-                    rehydrate_legacy_email_category_key(row["predicted_category"])
+                    validate_stored_email_category_key(row["predicted_category"])
                 if row["confirmed_category"]:
-                    rehydrate_legacy_email_category_key(row["confirmed_category"])
+                    validate_stored_email_category_key(row["confirmed_category"])
             except ValueError as exc:
                 raise EmailPersistenceCorruption(
                     f"invalid classification category for {row['id']}"
@@ -2273,7 +2272,7 @@ class EmailStore:
             )
             try:
                 tuple(
-                    rehydrate_legacy_email_category_key(category)
+                    validate_stored_email_category_key(category)
                     for category in probabilities
                 )
             except ValueError as exc:
@@ -2476,7 +2475,7 @@ class EmailStore:
                 expected_plan_id = _validate_expected_action_plan_id(
                     row["expected_current_action_plan_id"]
                 )
-                category = rehydrate_legacy_email_category_key(row["category"])
+                category = validate_stored_email_category_key(row["category"])
             except (TypeError, ValueError) as exc:
                 raise EmailPersistenceCorruption(
                     "invalid durable email feedback request"
@@ -3185,7 +3184,7 @@ class EmailStore:
                 }
             )
         try:
-            return rehydrate_legacy_email_action_plan_json(_json_dump(payload))
+            return EmailActionPlan.model_validate_json(_json_dump(payload))
         except ValueError as exc:
             raise EmailPersistenceCorruption(
                 f"invalid immutable ActionPlan {row['action_plan_id']}"

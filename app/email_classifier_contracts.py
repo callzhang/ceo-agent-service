@@ -10,7 +10,7 @@ import math
 import re
 from collections.abc import Mapping as MappingABC, Sequence
 from types import MappingProxyType
-from typing import Annotated, Callable, Literal, Mapping
+from typing import Annotated, Literal, Mapping
 
 from pydantic import (
     AfterValidator,
@@ -19,8 +19,6 @@ from pydantic import (
     Field,
     StringConstraints,
     TypeAdapter,
-    ValidationInfo,
-    WrapValidator,
     field_serializer,
     field_validator,
     model_validator,
@@ -67,54 +65,43 @@ MODEL_OTHERS_CATEGORY_EXCLUDE = (
     "任何一个所选业务类别能够覆盖的邮件",
 )
 MODEL_OTHERS_CATEGORY_DESCRIPTION_VERSION = "others-complement-v1"
-LEGACY_EMAIL_CATEGORY_KEYS = frozenset({"important", "subscription", "billing"})
-_LEGACY_CATEGORY_CONTEXT_KEY = "allow_legacy_email_category_keys"
-
-
 def _reject_reserved_email_category_key(value: str) -> str:
     if value in RESERVED_EMAIL_CATEGORY_KEYS:
         raise ValueError(f"reserved email category key: {value}")
     return value
 
 
-def _validate_email_category_key_with_context(
-    value: object,
-    handler: Callable[[object], str],
-    info: ValidationInfo,
-) -> str:
-    if (
-        info.context
-        and info.context.get(_LEGACY_CATEGORY_CONTEXT_KEY) is True
-        and type(value) is str
-        and value in LEGACY_EMAIL_CATEGORY_KEYS
-    ):
-        return value
-    return handler(value)
+def _reject_invalid_stored_email_category_key(value: str) -> str:
+    if value == "other":
+        raise ValueError(f"reserved email category key: {value}")
+    return value
 
 
+StoredEmailCategoryKey = Annotated[
+    str,
+    StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9_]{1,63}$"),
+    AfterValidator(_reject_invalid_stored_email_category_key),
+]
 EmailCategoryKey = Annotated[
     str,
     StringConstraints(strict=True, pattern=r"^[a-z][a-z0-9_]{1,63}$"),
     AfterValidator(_reject_reserved_email_category_key),
-    WrapValidator(_validate_email_category_key_with_context),
 ]
 EmailClassificationSource = Literal["model", "user", "agent"]
 _EMAIL_CATEGORY_KEY_ADAPTER = TypeAdapter(EmailCategoryKey)
+_STORED_EMAIL_CATEGORY_KEY_ADAPTER = TypeAdapter(StoredEmailCategoryKey)
 
 
 def validate_email_category_key(value: object) -> EmailCategoryKey:
-    """Return one canonical category key without coercion or normalization."""
+    """Return one canonical current category key without normalization."""
 
     return _EMAIL_CATEGORY_KEY_ADAPTER.validate_python(value)
 
 
-def rehydrate_legacy_email_category_key(value: object) -> str:
-    """Validate persisted category history, including the three retired keys."""
+def validate_stored_email_category_key(value: object) -> StoredEmailCategoryKey:
+    """Validate a persisted category fact without changing its identity."""
 
-    return _EMAIL_CATEGORY_KEY_ADAPTER.validate_python(
-        value,
-        context={_LEGACY_CATEGORY_CONTEXT_KEY: True},
-    )
+    return _STORED_EMAIL_CATEGORY_KEY_ADAPTER.validate_python(value)
 
 
 class EmailCategory(StrEnum):
@@ -465,7 +452,7 @@ class EmailActionPlan(BaseModel):
     action_plan_version: int = Field(gt=0)
     classification_id: int = Field(gt=0)
     account_id: str = Field(min_length=1)
-    category: EmailCategoryKey
+    category: StoredEmailCategoryKey
     classification_source: EmailClassificationSource
     confidence: float = Field(ge=0.0, le=1.0)
     model_id: str = Field(min_length=1)
@@ -693,15 +680,6 @@ class EmailActionPlan(BaseModel):
     @property
     def agent_actions(self) -> tuple[EmailAction, ...]:
         return tuple(action for action in self.actions if action in AGENT_ACTIONS)
-
-
-def rehydrate_legacy_email_action_plan_json(value: str) -> EmailActionPlan:
-    """Rehydrate immutable plans written before retired categories were reserved."""
-
-    return EmailActionPlan.model_validate_json(
-        value,
-        context={_LEGACY_CATEGORY_CONTEXT_KEY: True},
-    )
 
 
 def build_versioned_email_action_plan(
