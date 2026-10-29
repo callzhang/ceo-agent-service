@@ -15,7 +15,6 @@ from threading import Barrier
 import pytest
 
 import app.email_store as email_store_module
-from app.store import REPLY_TASK_CURRENT_SQL
 from tests.email_schema_fixtures import (
     restore_action_plan_snapshot_column,
     restore_schema48_action_plan_snapshots,  # noqa: F401 - historical fixture import retained
@@ -928,120 +927,6 @@ def _fetchall(path: Path, sql: str, parameters: tuple[object, ...] = ()):
     with sqlite3.connect(path) as db:
         db.row_factory = sqlite3.Row
         return db.execute(sql, parameters).fetchall()
-
-
-def _create_legacy_terminalization_task(
-    task_store: AutoReplyStore,
-    name: str,
-    *,
-    lifecycle_version: str = "email_unsubscribe_consumer_direct_v1",
-    channel: str = "email",
-    trigger_message_json: str | None = None,
-):
-    payload = trigger_message_json or json.dumps(
-        {
-            "schema": "email_agent_action.v1",
-            "action_type": "unsubscribe",
-            "lifecycle_version": lifecycle_version,
-        },
-        sort_keys=True,
-    )
-    return task_store.ensure_reply_task(
-        channel=channel,
-        conversation_id=f"legacy-terminalization:{name}",
-        conversation_title=name,
-        single_chat=False,
-        trigger_message_id=f"legacy-terminalization:{name}",
-        trigger_create_time="2026-09-03T12:00:00+00:00",
-        trigger_sender="newsletter@example.com",
-        trigger_text="Legacy unsubscribe terminalization fixture.",
-        trigger_message_json=payload,
-        execution_generation=f"generation:{name}",
-    )
-
-
-def test_skips_failed_legacy_unsubscribe_without_agent_run(tmp_path: Path):
-    database = tmp_path / "failed-legacy-recovery.sqlite3"
-    task_store = AutoReplyStore(database)
-    EmailStore(database)
-    task = _create_legacy_terminalization_task(task_store, "failed")
-    claimed = task_store.claim_reply_task(task.id)
-    assert claimed is not None
-    task_store.fail_reply_task(
-        task.id,
-        "email_consumer_runtime_error:EmailPersistenceCorruption",
-        expected_execution_generation=claimed.execution_generation,
-    )
-
-    assert task_store.skip_failed_legacy_email_unsubscribe_tasks() == [task.id]
-    terminal = task_store.get_reply_task(task.id)
-    assert terminal is not None
-    assert terminal.status == "skipped"
-    assert terminal.error == (
-        "legacy_email_unsubscribe_recovery_skipped:"
-        "email_consumer_runtime_error:EmailPersistenceCorruption"
-    )
-
-
-def test_failed_provider_unsubscribe_is_not_legacy_recovered(tmp_path: Path):
-    database = tmp_path / "failed-provider-recovery.sqlite3"
-    task_store = AutoReplyStore(database)
-    EmailStore(database)
-    task = _create_legacy_terminalization_task(task_store, "provider")
-    claimed = task_store.claim_reply_task(task.id)
-    assert claimed is not None
-    task_store.fail_reply_task(
-        task.id,
-        "email_unsubscribe_browser_failed",
-        expected_execution_generation=claimed.execution_generation,
-    )
-
-    assert task_store.skip_failed_legacy_email_unsubscribe_tasks() == []
-    terminal = task_store.get_reply_task(task.id)
-    assert terminal is not None
-    assert terminal.status == "failed"
-    assert terminal.error == "email_unsubscribe_browser_failed"
-
-
-def test_pending_legacy_attempt_does_not_terminalize_processing_replacement(
-    tmp_path: Path,
-):
-    database = tmp_path / "legacy-status-race.sqlite3"
-    task_store = AutoReplyStore(database)
-    email_store = EmailStore(database)
-    pending = _create_legacy_terminalization_task(task_store, "status-race")
-    attempt = email_store.list_nonterminal_legacy_unsubscribe_task_attempts()[0]
-    assert attempt.task_id == pending.id
-    assert attempt.status == "pending"
-
-    processing = task_store.claim_reply_task(pending.id)
-    assert processing is not None
-    assert processing.status == "processing"
-    before = tuple(
-        _fetchall(
-            database,
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-            (pending.id,),
-        )[0]
-    )
-
-    assert (
-        task_store.terminalize_legacy_email_unsubscribe_task(
-            attempt.task_id,
-            expected_execution_generation=attempt.execution_generation,
-            expected_status=attempt.status,
-        )
-        is False
-    )
-
-    after = tuple(
-        _fetchall(
-            database,
-            f"select * from ({REPLY_TASK_CURRENT_SQL}) where id=?",
-            (pending.id,),
-        )[0]
-    )
-    assert after == before
 
 
 _UNSUBSCRIBE_OWNER_A = {

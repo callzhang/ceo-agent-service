@@ -376,15 +376,6 @@ class EmailUnsubscribeClaimConflict(RuntimeError):
 
 
 @dataclass(frozen=True)
-class LegacyEmailUnsubscribeTaskAttempt:
-    """Immutable queue attempt observed by the startup legacy inventory."""
-
-    task_id: int
-    execution_generation: str
-    status: str
-
-
-@dataclass(frozen=True)
 class StoredEmailLocator:
     """Provider coordinates plus the durable message identity used for receipts."""
 
@@ -1761,92 +1752,6 @@ class EmailStore:
                 )
                 del caller
 
-    def list_nonterminal_legacy_unsubscribe_task_attempts(
-        self,
-    ) -> tuple[LegacyEmailUnsubscribeTaskAttempt, ...]:
-        """Inventory immutable nonterminal legacy unsubscribe attempts."""
-
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select id, execution_generation, status
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                where channel='email'
-                  and status in ('pending', 'processing')
-                  and case
-                          when json_valid(trigger_message_json)
-                          then json_extract(trigger_message_json, '$.schema')
-                          else null
-                      end='email_agent_action.v1'
-                  and case
-                          when json_valid(trigger_message_json)
-                          then json_extract(trigger_message_json, '$.action_type')
-                          else null
-                      end='unsubscribe'
-                  and case
-                          when json_valid(trigger_message_json)
-                          then json_extract(
-                              trigger_message_json,
-                              '$.lifecycle_version'
-                          )
-                          else null
-                      end='email_unsubscribe_consumer_direct_v1'
-                order by id
-                """
-            ).fetchall()
-        return tuple(
-            LegacyEmailUnsubscribeTaskAttempt(
-                task_id=int(row["id"]),
-                execution_generation=str(row["execution_generation"]),
-                status=str(row["status"]),
-            )
-            for row in rows
-        )
-
-    def get_nonterminal_legacy_unsubscribe_task_attempt(
-        self,
-        task_id: int,
-    ) -> LegacyEmailUnsubscribeTaskAttempt | None:
-        """Read the current exact legacy attempt for one task, if still unsafe."""
-
-        if not isinstance(task_id, int) or isinstance(task_id, bool) or task_id <= 0:
-            raise ValueError("task_id must be positive")
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select id, execution_generation, status
-                from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                where id=?
-                  and channel='email'
-                  and status in ('pending', 'processing')
-                  and case
-                          when json_valid(trigger_message_json)
-                          then json_extract(trigger_message_json, '$.schema')
-                          else null
-                      end='email_agent_action.v1'
-                  and case
-                          when json_valid(trigger_message_json)
-                          then json_extract(trigger_message_json, '$.action_type')
-                          else null
-                      end='unsubscribe'
-                  and case
-                          when json_valid(trigger_message_json)
-                          then json_extract(
-                              trigger_message_json,
-                              '$.lifecycle_version'
-                          )
-                          else null
-                      end='email_unsubscribe_consumer_direct_v1'
-                """,
-                (task_id,),
-            ).fetchone()
-        if row is None:
-            return None
-        return LegacyEmailUnsubscribeTaskAttempt(
-            task_id=int(row["id"]),
-            execution_generation=str(row["execution_generation"]),
-            status=str(row["status"]),
-        )
 
     def _initialize(self, *, validate_rows: bool = True) -> bool:
         with self._connect(foreign_keys=False) as db:

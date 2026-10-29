@@ -1,0 +1,30 @@
+{
+  "phase": "implemented_reviewed_not_deployed",
+  "baseline": "525fa7e60",
+  "scope": "Retired direct-v1 startup inventory/consumer suppression and automatic persistence-error failed-to-skipped rewrite only",
+  "removed_store_methods": [
+    "terminalize_legacy_email_unsubscribe_task",
+    "skip_failed_legacy_email_unsubscribe_tasks"
+  ],
+  "preserved": "Current audited-v2 account/model readiness, components, reconciliation, retry, authorization, provider execution and original terminal history",
+  "validation": [
+    {
+      "selection": "test_email_worker.py -k startup/readiness/recovery/stale_claim/direct_action",
+      "passed": 37,
+      "seconds": 14.86
+    },
+    {
+      "selection": "implementer narrow bootstrap and component checks, overlapping",
+      "passed": 22
+    },
+    {
+      "selection": "new startup regression after exclusive helper removal",
+      "passed": 1
+    }
+  ],
+  "ddl": "unchanged",
+  "spec": "PASS",
+  "quality": "PASS after deleting exclusive unused test helper",
+  "providers": "fake only",
+  "temporary_paths": "implementer task root removed; integration basetemp retained under parent task root until final cleanup"
+}

@@ -1278,13 +1278,6 @@ class EmailWorkerBootstrap:
     email_store: object | None = None
 
 
-@dataclass(frozen=True)
-class LegacyReconciliationResult:
-    authoritative: bool
-    unresolved_task_ids: tuple[int, ...] = ()
-    task_count: int = 0
-
-
 def _account_id(account: Mapping[str, object]) -> str:
     value = str(account.get("account_id") or "").strip()
     return value if value else "unknown"
@@ -4621,107 +4614,6 @@ def _wait_for_configuration(wait: Callable[[], object] | None) -> None:
     Event().wait()
 
 
-def _legacy_inventory_unavailable(
-    dependencies: object,
-    *,
-    unresolved_task_ids: Sequence[int] = (),
-) -> LegacyReconciliationResult:
-    record_health = getattr(dependencies, "record_health", None)
-    if callable(record_health):
-        record_health(
-            "component:email-legacy-lifecycle",
-            {
-                "status": "degraded",
-                "error_code": "legacy_email_unsubscribe_inventory_unavailable",
-            },
-        )
-    return LegacyReconciliationResult(
-        authoritative=False,
-        unresolved_task_ids=tuple(unresolved_task_ids),
-    )
-
-
-def _fail_nonterminal_legacy_unsubscribe_tasks(
-    dependencies: object,
-) -> LegacyReconciliationResult:
-    """Fence inventoried legacy attempts and preserve inventory authority."""
-
-    email_store = getattr(dependencies, "email_store", None)
-    inventory = getattr(
-        email_store,
-        "list_nonterminal_legacy_unsubscribe_task_attempts",
-        None,
-    )
-    if not callable(inventory):
-        return _legacy_inventory_unavailable(dependencies)
-    try:
-        attempts = tuple(inventory())
-    except Exception:  # noqa: BLE001 - preserve prior conservative fencing
-        return _legacy_inventory_unavailable(dependencies)
-    if not attempts:
-        return LegacyReconciliationResult(authoritative=True)
-    isolated: list[int] = []
-    superseded: list[int] = []
-    unresolved: list[int] = []
-    terminalize = getattr(
-        dependencies.task_store,
-        "terminalize_legacy_email_unsubscribe_task",
-        None,
-    )
-    read_current = getattr(
-        email_store,
-        "get_nonterminal_legacy_unsubscribe_task_attempt",
-        None,
-    )
-    for index, attempt in enumerate(attempts):
-        task_id = attempt.task_id
-        try:
-            fenced = bool(
-                callable(terminalize)
-                and terminalize(
-                    task_id,
-                    expected_execution_generation=attempt.execution_generation,
-                    expected_status=attempt.status,
-                )
-            )
-        except Exception:  # noqa: BLE001 - isolate each unsafe legacy attempt
-            fenced = False
-        if fenced:
-            isolated.append(task_id)
-            continue
-        if not callable(read_current):
-            remaining_ids = tuple(item.task_id for item in attempts[index + 1 :])
-            return _legacy_inventory_unavailable(
-                dependencies,
-                unresolved_task_ids=(*unresolved, task_id, *remaining_ids),
-            )
-        try:
-            current = read_current(task_id)
-        except Exception:  # noqa: BLE001 - an unreadable replacement is unsafe
-            remaining_ids = tuple(item.task_id for item in attempts[index + 1 :])
-            return _legacy_inventory_unavailable(
-                dependencies,
-                unresolved_task_ids=(*unresolved, task_id, *remaining_ids),
-            )
-        (unresolved if current is not None else superseded).append(task_id)
-    dependencies.record_health(
-        "component:email-legacy-lifecycle",
-        {
-            "status": "degraded",
-            "error_code": "legacy_email_unsubscribe_lifecycle",
-            "task_count": len(attempts),
-            "isolated_count": len(isolated),
-            "superseded_count": len(superseded),
-            "unresolved_count": len(unresolved),
-        },
-    )
-    return LegacyReconciliationResult(
-        authoritative=True,
-        unresolved_task_ids=tuple(unresolved),
-        task_count=len(attempts),
-    )
-
-
 def run_email_worker(
     settings: object,
     *,
@@ -4734,14 +4626,6 @@ def run_email_worker(
     active_model: object | None = None
     try:
         bootstrap = dependencies or dependency_builder(settings)
-        skip_failed_legacy = getattr(
-            bootstrap.task_store,
-            "skip_failed_legacy_email_unsubscribe_tasks",
-            None,
-        )
-        if callable(skip_failed_legacy):
-            skip_failed_legacy()
-        final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(bootstrap)
         accounts = tuple(bootstrap.load_enabled_accounts())
         if not accounts:
             _report_waiting_configuration(
@@ -4786,23 +4670,6 @@ def run_email_worker(
         )
         if callable(reconcile_historical_once):
             reconcile_historical_once()
-        if dependencies is not bootstrap:
-            final_reconciliation = _fail_nonterminal_legacy_unsubscribe_tasks(
-                dependencies
-            )
-        unresolved_legacy_task_ids = set(final_reconciliation.unresolved_task_ids)
-        agent_consumer_allowed = (
-            final_reconciliation.authoritative and not unresolved_legacy_task_ids
-        )
-        if final_reconciliation.authoritative and final_reconciliation.task_count == 0:
-            dependencies.record_health(
-                "component:email-legacy-lifecycle",
-                {
-                    "status": "ready",
-                    "task_count": 0,
-                    "unresolved_count": 0,
-                },
-            )
         # Training maintenance reports its own health, but it may legitimately
         # take longer than the scan and consumer loops. It must not keep the
         # process-level status stuck at "starting".
@@ -4811,11 +4678,7 @@ def run_email_worker(
             "email-provider-actions",
             "email-agent-consumer",
         )
-        component_names = tuple(
-            name
-            for name in readiness_component_names
-            if not (not agent_consumer_allowed and name == "email-agent-consumer")
-        )
+        component_names = readiness_component_names
         readiness = EmailWorkerReadiness(
             component_names,
             record_health=dependencies.record_health,
@@ -4831,31 +4694,6 @@ def run_email_worker(
             active_model=active_model,
             component_ready=process_component_ready,
         )
-        if not agent_consumer_allowed:
-            components = tuple(
-                component
-                for component in components
-                if component[0] != "email-agent-consumer"
-            )
-            if final_reconciliation.authoritative:
-                dependencies.record_health(
-                    "component:email-agent-consumer",
-                    {
-                        "status": "degraded",
-                        "error_code": "legacy_email_unsubscribe_lifecycle",
-                        "unresolved_count": len(unresolved_legacy_task_ids),
-                    },
-                )
-            else:
-                dependencies.record_health(
-                    "component:email-agent-consumer",
-                    {
-                        "status": "degraded",
-                        "error_code": (
-                            "legacy_email_unsubscribe_inventory_unavailable"
-                        ),
-                    },
-                )
         runtime_loop_scopes = tuple(f"component:{name}" for name, _target in components)
         readiness.set_runtime_loop_scopes(runtime_loop_scopes)
     except EmailWorkerStartupError as exc:

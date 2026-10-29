@@ -1485,11 +1485,8 @@ inside the claim transaction, not the view's projected value. The view reports
 a pending Action's `started_at` as NULL. The
 status and attempt-count checks are unchanged, and no stored value is rewritten.
 
-Legacy unsubscribe terminalization uses the same lifecycle selector as its
-inventory: only `email_unsubscribe_consumer_direct_v1`. An inventoried object
-replaced by an `email_unsubscribe_audited_v2` task must remain untouched, even
-when its task ID, generation, and pending status otherwise match. The mutation
-checks the lifecycle again under its write transaction.
+Email worker startup does not inventory or rewrite retired direct-v1 unsubscribe tasks. The explicit Email field retirement release preflight refuses a database containing that source; failed and skipped task history remains unchanged at worker startup.
+
 # Task Evidence Repair And Retired Anchors
 
 Meeting claims order attempts by the later of `eligible_at` and `available_at`,

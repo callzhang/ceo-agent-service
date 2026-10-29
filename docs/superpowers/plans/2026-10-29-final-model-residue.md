@@ -23,9 +23,9 @@ Baseline: isolated branch codex/retire-final-model-residue-20261029 at4b1ec3e66.
 - [x] SPEC then QUALITY and focused Email storage/reader/compaction tests with fake providers.
 
 ## Unit3 — separately scoped retired Email startup lifecycle
-- [ ] Audit direct_v1 inventory and skip/fail entrypoints; current producer writes audited_v2. Source preflight must report any direct_v1 residue rather than silently changing it.
-- [ ] Remove retired direct_v1 startup scan/authority inventory gate and dedicated DAO/DTOs; remove one-off persistence-error recovery rewriting from normal worker startup. Preserve current audited_v2 queue, recovery, retry, authorization and provider-effect checks. Keep original terminal history.
-- [ ] Separate code/tests/docs/commit from unrelated cleanup, with fake inventory/account/model/worker regression covering current consumer start and all preserved recovery outcomes. SPEC then QUALITY.
+- [x] Audit direct_v1 inventory and skip/fail entrypoints; current producer writes audited_v2. Source preflight must report any direct_v1 residue rather than silently changing it.
+- [x] Remove retired direct_v1 startup scan/authority inventory gate and dedicated DAO/DTOs; remove one-off persistence-error recovery rewriting from normal worker startup. Preserve current audited_v2 queue, recovery, retry, authorization and provider-effect checks. Keep original terminal history.
+- [x] Separate code/tests/docs/commit from unrelated cleanup, with fake inventory/account/model/worker regression covering current consumer start and all preserved recovery outcomes. SPEC then QUALITY.
 
 ## Unit4 — historical category, plan and OA history read ownership
 - [ ] Locate complete current source/consumer contracts before edits. Keep historical reserved category values and null authorization as facts; never remap category, fabricate snapshots or make old unbound plans executable.
