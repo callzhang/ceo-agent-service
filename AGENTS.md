@@ -40,7 +40,9 @@ provide, raise that with Derek instead of working around it.
 
 Several agents edit this repository at the same time (Claude Code sessions and
 Codex). Before editing, read `docs/agent-claims.md`, claim the files you are
-about to change, and stage only your own hunks. Never revert or rewrite a
+about to change, and stage only your own hunks. When your work is committed and
+pushed, delete your own row. A row with no activity for one day is abandoned and
+any agent may delete it. Never revert or rewrite a
 commit you did not author: build on top of it, or record the disagreement in
 your claim row.
 
