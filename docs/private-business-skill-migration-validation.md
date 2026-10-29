@@ -38,7 +38,7 @@ verification change is documented in [its own contract](private-skill-script-ver
   390 public-source contract cases passed after closing the remaining provider/window
   dependencies, plus 69 targeted default-source/execution cases; these are overlapping
   suites and are not added into a combined count. Ruff and diff checks passed.
-- Private checks: 66 manifest/policy cases, 257 report/provider runtime cases and 56 frozen
+- Private checks: 66 manifest/policy cases, 275 report/provider runtime cases and 56 frozen
   renderer/contract cases. Tests use the open service as an explicit dependency;
   installed snapshot bytes and original test files remain preserved separately.
   Public unit tests default to the repository baseline exactly as CI does, while
