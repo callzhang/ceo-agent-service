@@ -2,7 +2,7 @@
 
 Survey of the local `dws` CLI used by the CEO service, re-done on 2026-10-28
 with read-only probes only (`--help`, `dws schema`, `version`, `doctor`).
-It is a capability reference, not a runtime allowlist and not a second review
+It is a capability reference, not a runtime command allowlist and not a second review
 gate: Agent review and the business result contract own execution decisions.
 
 Observed: `dws` `v1.0.65+ceo-docfmt.6747c671` (MCP static endpoint mode; upstream
@@ -108,3 +108,24 @@ Reading messages must not mark them read. Sends happen only behind the
 service's live-send controls (see `docs/dws-capabilities.md`); OA approval
 actions are never part of exploratory probing.
 Do not copy command output (user data, IDs, tokens) into this file.
+
+## CEO Service Command Reference
+
+Command families the service uses, as examples. They are reference, not an
+exhaustive or enforced allowlist: the service does not classify an otherwise
+valid Agent result by command name, MCP tool name, or whether a command appears
+here.
+
+| Purpose | Command family (v1.0.65) |
+| --- | --- |
+| List unread conversations | `dws chat message list-unread-conversations` |
+| Read group context | `dws chat message list --group ... --direction newer\|older` |
+| Search messages / groups | `dws chat +search-msg`, `dws chat +chat-search`, `dws chat search-common` |
+| Read DingTalk online docs | `dws doc read --node ...` |
+| Locate ordinary files | `dws doc` / `dws drive` read and download commands only |
+| Resolve current user / users / departments | `dws contact user get-self`, `get`, `search`; `dws contact dept search`, `list-members --depts` |
+| Send a reviewed reply | `dws chat +messages-send --as user (--group \| --user \| --open-dingtalk-id) ...` behind the live-send gate |
+| DING handoff notification | `dws ding message send --robot-code ...` behind the live-send gate |
+| Recall a bot message | `dws chat message recall-by-bot --robot-code ...` from the audit UI / gate only |
+| Review an OA approval | `dws oa` read and detail commands plus referenced attachments and documents |
+| Execute an OA approval | not allowed in automation by default; needs an explicit human request |
