@@ -28,10 +28,11 @@ Accessibility send (verified live to 文件传输助手, including background qu
 | `scheduled_command.py` | `wechat-produce-once`: the producer pass as an in-process scheduled service command (no Agent), with reader-health reporting |
 | `scripts/wechat_key_probe.py` | Fingerprint-only key/schema gate |
 
-Store isolation: `reply_tasks`/`reply_attempts`/`sent_replies` gain a `channel`
-column (default `dingtalk`); claims are channel-filtered so the DingTalk worker
-never claims WeChat work. New tables: `wechat_read_state`,
-`wechat_reply_scopes`, `wechat_deliveries`, `wechat_memory_candidates`.
+Store isolation: reply tasks, reply attempts and sent replies carry a `channel`
+field (default `dingtalk`); claims are channel-filtered so the DingTalk worker
+never claims WeChat work. WeChat data lives as record types of the unified
+tables: `wechat_read_state` in `state`, `wechat_reply_scopes` in `configs`,
+`wechat_deliveries` in `actions`, `wechat_memory_candidate` in `business`.
 
 WeChat reply tasks follow the generic Consumer → Audit flow and its retry rules (see `docs/architecture.md`); there is no WeChat-specific consumer.
 

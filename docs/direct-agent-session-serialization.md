@@ -16,9 +16,9 @@ credentials are not stored in that diagnostic field.
 
 Consumer and Audit results are validated locally after Codex exits. Codex-route Consumer and Audit
 commands use the native output schema (Claude uses its JSON schema option) and the
-result is still validated locally. Audit B's OA receipts must place
-the verified read-back payload in `oa_action_receipt.result` so the completed
-action can be persisted and reconciled.
+result is still validated locally. A completed OA action's provider result is
+persisted as a verified action receipt (`provider_result_json`) tied to the
+task; it is not a field of the Audit result.
 
 The service also does not force a Codex reasoning-summary setting. Model
 providers negotiate supported response fields themselves; forcing a setting

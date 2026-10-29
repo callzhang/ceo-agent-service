@@ -352,9 +352,9 @@ project_link_proposal、attention_proposal。历史运行只保存原生执行�
 Codex CLI 路径通过 `--output-schema` 使用 `app/schemas/task_agent_decision.schema.json`，
 该文件由 `TaskAgentDecision.model_json_schema()` 生成并由测试校验一致；strict schema
 要求每个对象显式返回全部属性，省略值用其契约允许的 `null` 表示。服务仍运行本地 Pydantic
-语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude／Friday 由现有运行适配器将同一份完整 schema 拼入单条消息。Skill、事实、业务规则和会话绑定保持不变。
+语义校验，失败时最多在同一 session 修正一次；结构化输出不取代业务校验。Task 任务正文不重复附加完整 schema；Codex 使用上述原生通道，Claude 由现有运行适配器将同一份完整 schema 拼入单条消息（Friday 不具备 Task 所需能力，不执行 Task）。Skill、事实、业务规则和会话绑定保持不变。
 新建、候选及 skip 决定携带 `status` 或 `business_relevance` 时，校验明确要求省略这两个初始字段；只有既有 Task 的 `update_task` 配合 `update_fields` 才能修改它们。该诊断不放宽来源、身份或业务校验。
-Task 业务指导以当前 `ceo-work-tracking` Skill 为主；本机 CLI 路线的每轮包装只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。远端 Friday Runtime 继续接收完整 Skill 正文。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/archive/records/task-guidance-dedup-evidence.md，按需读取对照见 docs/archive/records/task-skill-on-demand-validation.md。
+Task 业务指导以当前 `ceo-work-tracking` Skill 为主；每轮包装对所有可执行 Task 的路线只给出该文件的绝对路径和 SHA-256，不复制完整正文。Agent 冷启动先读全文；续会话仅在相同版本全文仍处于当前上下文时复用，否则重新读取。包装保留 Skill 未完整描述的输出约束：assessment 选择器、顺序依赖建议、状态更新 transition、晋升 suggestion、owner_evidence 结构、Attention 决定成员与相同事实提案去重。动态来源、时间、visible_ranges 和当前 Project/Task 上下文保持完整。不新增读取工具、权限或路线；原先完整注入阶段的固定对照见 docs/archive/records/task-guidance-dedup-evidence.md，按需读取对照见 docs/archive/records/task-skill-on-demand-validation.md。
 
 #### 回执、检索及尚未完成的关注集成
 
@@ -1882,11 +1882,11 @@ metadata-only measurements; publication status is recorded there.
 
 标题合同升级不会改写旧的已准备正文：旧决策未核验标题时采用中性标题；如已有未确认的准备正文与之不符，沿现有正文一致性检查停止，需通过原有重新决策流程生成新版本。已确认的精确回执仍按原动作核对，不重发以获取新标题。
 
-Task Agent 的本机 CLI 路线当前每轮提交 Work Tracking Skill 的绝对路径和 SHA-256；冷启动读取全文，
+Task Agent 每轮提交 Work Tracking Skill 的绝对路径和 SHA-256（所有可执行 Task 的路线相同）；冷启动读取全文，
 续会话只在同版本全文仍在上下文时复用，否则重读。Codex 命令复用现有
 `inlined_skill_names` 元数据，由适配器把已有路径筛选和同名隐藏规则合成一份
 原生 `skills.config` 数组，避免重复配置键覆盖。仅隐藏同名安装副本的目录项。
-远端 Friday Runtime 路线继续收到完整 Skill 正文。其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
+其余目录选择、工具权限、输出 schema、路由与 session 绑定保持原样；不修改全局 Skill
 或共享 AGENTS 配置。旧版同名入口的修复见 `docs/archive/records/task-inline-skill-once-validation.md`；
 当前按需读取的验收与限制见 `docs/archive/records/task-skill-on-demand-validation.md`。
 

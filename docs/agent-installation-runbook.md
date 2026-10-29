@@ -267,6 +267,9 @@ authorize a replay.
 
 ### Optional Friday Runtime fallback
 
+Status: not enabled by default. `CEO_AGENT_RUNTIME_ROUTES` defaults to `codex_oauth` only, so the
+`friday_runtime` route exists only when it is listed there; it cannot run Task Agents.
+
 Friday Runtime can be placed after the Codex routes when provider-specific APIs
 (for example MiniMax Chat Completions) are configured inside Friday. CEO Agent
 only sends a prompt to the existing Friday project; it does not receive or
