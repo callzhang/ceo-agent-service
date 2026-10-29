@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import FrozenSet
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 
 class RuntimeKind(StrEnum):
@@ -50,6 +50,22 @@ class RuntimeRoute(BaseModel):
     # A service-API route carries its own provider endpoint, so several routes
     # of one kind can point at different providers.
     base_url: str = ""
+    # Whether the route's provider serves Codex's automatic reviewer model
+    # (`codex-auto-review`). Unset follows the credential mode: the OpenAI-hosted
+    # login has it, a provider reached with an API key does not unless the
+    # operator says so.
+    automatic_review: bool = True
+
+    @model_validator(mode="before")
+    @classmethod
+    def default_automatic_review(cls, data: object) -> object:
+        if isinstance(data, dict) and "automatic_review" not in data:
+            mode = data.get("credential_mode")
+            data = {
+                **data,
+                "automatic_review": mode != CredentialMode.SERVICE_API,
+            }
+        return data
 
     @field_validator("name", "model")
     @classmethod

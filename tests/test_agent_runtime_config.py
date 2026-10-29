@@ -153,6 +153,49 @@ def test_added_codex_route_rejects_an_unsupported_reasoning_effort():
         })
 
 
+def test_automatic_review_follows_the_credential_mode_unless_the_route_says_so():
+    config = load_runtime_config(
+        {
+            "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,qwen_gpu4,hosted",
+            "CEO_RUNTIME_QWEN_GPU4_KIND": "codex_api",
+            "CEO_RUNTIME_QWEN_GPU4_BASE_URL": "https://qwen.example.com/v1",
+            "CEO_RUNTIME_QWEN_GPU4_MODEL": "qwen3.8-27b",
+            "CEO_RUNTIME_QWEN_GPU4_API_KEY": "gateway-key",
+            "CEO_RUNTIME_HOSTED_KIND": "codex_api",
+            "CEO_RUNTIME_HOSTED_BASE_URL": "https://reviewer.example.com/v1",
+            "CEO_RUNTIME_HOSTED_MODEL": "gpt-x",
+            "CEO_RUNTIME_HOSTED_API_KEY": "hosted-key",
+            "CEO_RUNTIME_HOSTED_AUTOMATIC_REVIEW": "true",
+        }
+    )
+
+    routes = {route.name: route for route in config.routes}
+    assert routes["codex_oauth"].automatic_review is True
+    assert routes["qwen_gpu4"].automatic_review is False
+    assert routes["hosted"].automatic_review is True
+
+
+def test_automatic_review_setting_is_codex_only_and_true_or_false():
+    base = {
+        "CEO_AGENT_RUNTIME_ROUTES": "extra",
+        "CEO_RUNTIME_EXTRA_BASE_URL": "https://qwen.example.com/v1",
+        "CEO_RUNTIME_EXTRA_MODEL": "m",
+        "CEO_RUNTIME_EXTRA_API_KEY": "key",
+    }
+    with pytest.raises(ValueError, match="CEO_RUNTIME_EXTRA_AUTOMATIC_REVIEW"):
+        load_runtime_config({
+            **base,
+            "CEO_RUNTIME_EXTRA_KIND": "codex_api",
+            "CEO_RUNTIME_EXTRA_AUTOMATIC_REVIEW": "maybe",
+        })
+    with pytest.raises(ValueError, match="CEO_RUNTIME_EXTRA_AUTOMATIC_REVIEW"):
+        load_runtime_config({
+            **base,
+            "CEO_RUNTIME_EXTRA_KIND": "claude_api",
+            "CEO_RUNTIME_EXTRA_AUTOMATIC_REVIEW": "true",
+        })
+
+
 def test_route_order_is_the_failover_order():
     config = load_runtime_config(
         {
@@ -415,3 +458,17 @@ def test_gpt_6_models_are_selectable_for_both_codex_routes(model):
         "codex_oauth": model,
         "codex_api": model,
     }
+
+
+def test_a_route_built_directly_gets_the_credential_mode_default():
+    from app.agent_runtime_contracts import CredentialMode, RuntimeKind, RuntimeRoute
+
+    def route(mode, **extra):
+        return RuntimeRoute(
+            name="r", runtime_kind=RuntimeKind.CODEX_CLI,
+            credential_mode=mode, model="m", **extra,
+        )
+
+    assert route(CredentialMode.LOCAL_OAUTH).automatic_review is True
+    assert route(CredentialMode.SERVICE_API).automatic_review is False
+    assert route(CredentialMode.SERVICE_API, automatic_review=True).automatic_review is True

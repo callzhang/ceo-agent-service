@@ -30,7 +30,7 @@ ADDED_ROUTE_KINDS = ("codex_oauth", "codex_api", "claude_oauth", "claude_api")
 # and no credential of its own.
 ADDED_ROUTE_KINDS_WITH_KEY = ("codex_api", "claude_api")
 ADDED_ROUTE_SETTING_SUFFIXES = (
-    "KIND", "BASE_URL", "MODEL", "REASONING_EFFORT", "API_KEY"
+    "KIND", "BASE_URL", "MODEL", "REASONING_EFFORT", "AUTOMATIC_REVIEW", "API_KEY"
 )
 # The only routes with fixed names (Derek 2026-09-24). Every other name in
 # CEO_AGENT_RUNTIME_ROUTES is an added route that describes itself through
@@ -268,6 +268,15 @@ def _added_route(
         if kind in ADDED_ROUTE_KINDS_WITH_KEY
         else CredentialMode.LOCAL_OAUTH
     )
+    # Empty keeps the credential mode's default (see RuntimeRoute).
+    automatic_review = env.get(f"{prefix}AUTOMATIC_REVIEW", "").strip().lower()
+    if automatic_review and (
+        not kind.startswith("codex") or automatic_review not in ("true", "false")
+    ):
+        raise ValueError(f"{prefix}AUTOMATIC_REVIEW is unsupported")
+    review_option = (
+        {"automatic_review": automatic_review == "true"} if automatic_review else {}
+    )
     # Only the Codex CLI takes a provider endpoint; the Claude CLI reads its
     # endpoint from its own installation.
     base_url = (
@@ -283,6 +292,7 @@ def _added_route(
             model=model,
             base_url=base_url,
             reasoning_effort=reasoning_effort,
+            **review_option,
         ),
         secret,
     )

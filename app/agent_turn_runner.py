@@ -32,7 +32,6 @@ from app.reviewed_sources import ReviewedSourceReadError
 from app.task_artifacts import task_artifact_directory
 from app.agent_runtime_config import AgentRuntimeConfig, load_runtime_config
 from app.agent_runtime_contracts import (
-    CredentialMode,
     ROLE_BOUND_AGENT_TOOLS,
     RuntimeFailureClass,
     RuntimeKind,
@@ -1300,9 +1299,9 @@ class AgentTurnProcess(Generic[ResultT]):
                         ),
                     )
                     configure_command(command)
-                    if route.credential_mode is CredentialMode.SERVICE_API:
-                        # The automatic reviewer model only exists on the
-                        # OpenAI-hosted route; a service-API provider rejects it.
+                    if not route.automatic_review:
+                        # The route's provider does not serve the automatic
+                        # reviewer model, so a review request would be rejected.
                         disable_automatic_review(command)
                     command_env = self.codex_adapter.build_env(route)
                 if command_env is not None:

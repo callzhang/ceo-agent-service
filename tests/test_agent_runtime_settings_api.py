@@ -284,3 +284,33 @@ def test_a_newly_typed_token_replaces_the_stored_one(tmp_path: Path, env_path: P
     env_text = env_path.read_text(encoding="utf-8")
     assert "CEO_RUNTIME_KKSJ_API_KEY=sk-a-brand-new-token-0000" in env_text
     assert LONG_KEY not in env_text
+
+
+def test_saving_keeps_a_routes_stored_automatic_review_setting(
+    tmp_path: Path, env_path: Path
+):
+    _seed_route(env_path)
+    with env_path.open("a", encoding="utf-8") as handle:
+        handle.write("CEO_RUNTIME_KKSJ_AUTOMATIC_REVIEW=true\n")
+
+    with _client(tmp_path) as client:
+        fields = client.get(ENDPOINT).json()["item"]["fields"]
+        fields.pop("CEO_RUNTIME_KKSJ_AUTOMATIC_REVIEW", None)
+        saved = client.post(ENDPOINT, json={"fields": {**fields, **BASE_FIELDS}})
+
+    assert saved.status_code == 200, saved.json()
+    assert "CEO_RUNTIME_KKSJ_AUTOMATIC_REVIEW=true" in env_path.read_text(encoding="utf-8")
+
+
+def test_an_unsupported_automatic_review_value_is_refused(
+    tmp_path: Path, env_path: Path
+):
+    _seed_route(env_path)
+
+    with _client(tmp_path) as client:
+        fields = client.get(ENDPOINT).json()["item"]["fields"]
+        fields["CEO_RUNTIME_KKSJ_AUTOMATIC_REVIEW"] = "sometimes"
+        saved = client.post(ENDPOINT, json={"fields": {**fields, **BASE_FIELDS}})
+
+    assert saved.status_code == 400
+    assert "automatic review" in saved.json()["message"]

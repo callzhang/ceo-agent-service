@@ -280,6 +280,17 @@ def _added_routes(
             raise AgentRuntimeSettingsError(
                 f"Runtime {name} has an unsupported reasoning effort."
             )
+        # The console form has no field for this; keep what is saved.
+        automatic_review = (
+            str(fields.get(f"{prefix}AUTOMATIC_REVIEW") or "").strip().lower()
+            or persisted.get(f"{prefix}AUTOMATIC_REVIEW", "").strip().lower()
+        )
+        if automatic_review and (
+            not kind.startswith("codex") or automatic_review not in ("true", "false")
+        ):
+            raise AgentRuntimeSettingsError(
+                f"Runtime {name} has an unsupported automatic review setting."
+            )
         api_key = ""
         if kind in ADDED_ROUTE_KINDS_WITH_KEY:
             api_key = submitted("API_KEY") or persisted.get(f"{prefix}API_KEY", "").strip()
@@ -298,6 +309,7 @@ def _added_routes(
                 "base_url": base_url,
                 "model": model,
                 "reasoning_effort": reasoning_effort,
+                "automatic_review": automatic_review,
                 "api_key": api_key,
             }
         )
@@ -316,6 +328,7 @@ def _added_route_updates(
         updates[f"{prefix}BASE_URL"] = route["base_url"]
         updates[f"{prefix}MODEL"] = route["model"]
         updates[f"{prefix}REASONING_EFFORT"] = route["reasoning_effort"]
+        updates[f"{prefix}AUTOMATIC_REVIEW"] = route["automatic_review"]
         updates[f"{prefix}API_KEY"] = route["api_key"]
     kept = {route["name"] for route in added_routes}
     previous = set(_names(persisted.get("CEO_AGENT_RUNTIME_ROUTES", "")))

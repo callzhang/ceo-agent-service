@@ -1311,7 +1311,7 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 - Codex Consumer 保留 `workspace-write` 沙箱，但审批改为 CLI 原生 auto：`approval_policy="on-failure"`（Codex 实际按 on-request 运行）加 `approvals_reviewer="auto_review"`，由 turn 构造方设置，`make_role_agent_command` 对 Consumer 不再覆盖成 `never`。命令在沙箱里失败后，Agent 以 `sandbox_permissions="require_escalated"` 加理由重新请求，自动审查（`codex-auto-review` 模型）放行后在沙箱外执行。Audit 仍是 `read-only` 加 `never`。
 - Claude Consumer 的 shell 沙箱把 `allowUnsandboxedCommands` 设为 `true`，权限模式本来就是 `auto`；沙箱内失败的命令可由 Agent 以 `dangerouslyDisableSandbox` 重试，由 auto 模式的分类器逐次决定。
 - Agent 不会自己发现要提权：两个 CLI 都只在提示里明说「失败就提权重试」才这样做，所以需要钥匙串的工具必须由对应 Skill 写明运行方式。
-- `service_api` 路由（第三方 OpenAI 兼容 provider）没有 `codex-auto-review` 模型，`disable_automatic_review` 仍把它的 `approval_policy` 设为 `never`：该路由上的 Consumer 仍被沙箱限制，不能提权。需要沙箱外权限的任务不应路由到该路由，这是该路由已声明的能力差距，不在本次变更里绕过。
+- 路由设置 `automatic_review` 声明该路由的 provider 是否提供 `codex-auto-review` 模型；未设置时按凭据模式取默认（本机登录路由为是，`service_api` 路由为否），自己加的 `codex_api` 路由可用 `CEO_RUNTIME_<NAME>_AUTOMATIC_REVIEW=true|false` 改。为否的路由由 `disable_automatic_review` 把 `approval_policy` 设为 `never`：该路由上的 Consumer 仍全自动运行，不申请提权，沙箱限制照旧。需要沙箱外权限的任务不应路由到该路由，这是该路由已声明的能力差距，不在本次变更里绕过。
 - 不变：终态外发动作仍走 proposal → Audit → SystemExecutor，Audit 只读，Consumer 禁用工具清单有效；`dws` 仍用沙箱内的 `~/.dws` 和网络设置。
 
 ### 微信发送放行：只认标准审核（Derek 2026-10-24 方案 G2；原微信审核于 2026-10-25 退休）
