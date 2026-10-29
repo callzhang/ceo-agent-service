@@ -55,3 +55,5 @@
 - [ ] Record current-tree/history limits and clean only owned temporary artifacts.
 
 Separately approved refinement: private script implementation verification is isolated in its own commit and seven regressions; no other authorization or Audit behavior changes.
+
+Implementation/acceptance execution evidence and production release readback are maintained in PR337. The task ledger preserves exact test and deployment outcomes; no failed or resource-stopped gate counts as a deployment.
