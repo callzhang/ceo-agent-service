@@ -1,0 +1,8 @@
+{
+  "version": 1,
+  "entrypoints": [
+    "scripts/materials.py",
+    "scripts/render_dingtalk_jsonml.py"
+  ],
+  "script_tree_sha256": "49f5fedad3a77db2aa4ac422fba47207ef9e542f89fa83a278cc91ab8c2fde19"
+}
