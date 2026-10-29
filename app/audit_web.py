@@ -3401,18 +3401,6 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             ("failed",),
         ),
         (
-            "WeChat delivery",
-            "wechat_deliveries",
-            "status",
-            "coalesce(nullif(target_type, ''), target_id, conversation_id)",
-            "coalesce(nullif(reply_text, ''), nullif(error, ''), nullif(target_id, ''), target_type)",
-            "updated_at",
-            "case when pre_action_failure=1 then "
-            "'The send failed before any action (' || error || '); no message was sent. "
-            "A fresh target check is required before retry.' else error end",
-            ("failed",),
-        ),
-        (
             "Meeting",
             "meeting_alignment_jobs",
             "status",
