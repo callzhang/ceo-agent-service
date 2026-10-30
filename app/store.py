@@ -13300,17 +13300,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     expected={"status": task["status"]}, changes={"updated_at": db.execute("select current_timestamp").fetchone()[0]},
                     parameters={**task["parameters"], **parameters})
             if results:
-                db.execute(
-                    "insert into task_results(task_id,result_kind,decision_json,target_kind,target_id,target_title,"
-                    "mentions_json,final_message,send_result_json,calendar_summary_status,calendar_summary_result_json) "
-                    "values(?,'meeting_alignment','{}','','','','[]','','{}','not_started','{}') on conflict do nothing",
-                    (job_id,),
-                )
-                columns = ["task_id", "result_kind", *results]
+                inserted = {
+                    "task_id": job_id, "result_kind": "meeting_alignment",
+                    "decision_json": "{}", "target_kind": "", "target_id": "", "target_title": "",
+                    "mentions_json": "[]", "final_message": "", "send_result_json": "{}",
+                    "calendar_summary_status": "not_started", "calendar_summary_result_json": "{}",
+                    **results,
+                }
+                columns = list(inserted)
                 db.execute(
                     f"insert into task_results({','.join(columns)}) values({','.join('?' for _ in columns)}) "
                     f"on conflict(task_id,result_kind) do update set {','.join(f'{name}=excluded.{name}' for name in results)}",
-                    (job_id, "meeting_alignment", *results.values()),
+                    tuple(inserted.values()),
                 )
         if settled_status in {"sent", "skipped"}:
             self.compact_meeting_consumer_input(job_id)

@@ -150,22 +150,13 @@ def test_consumer_parent_contract_rejects_standalone_in_all_existing_refs(tmp_pa
         store.claim_agent_runtime_attempt(standalone, "route", "codex_cli", "local_oauth", "model")
 
 
-def test_source_absent_fields_are_rejected_without_a_write(tmp_path):
-    from app import logical_run_storage
-    store = AutoReplyStore(tmp_path / "source-absent.sqlite3")
-    summary = store.enqueue_work_summary_input("local_file", "absent-range", "{}")
-    request = store.create_okr_review_request(
-        conversation_id="c", conversation_title="OKR", trigger_message_id="m",
-        trigger_sender="s", trigger_sender_user_id="u", trigger_text="review",
-        period_label="period", period_start="", period_end="", okr_source_json="{}",
-    )
+def test_native_run_rejects_unknown_fields_without_a_write(tmp_path):
+    from app.run_entity_storage import create_run
+
+    store = AutoReplyStore(tmp_path / "unknown-run-field.sqlite3")
+    task = store.enqueue_work_summary_input("local_file", "unknown-field", "{}")
     with store._connect() as db:
-        for source, parent, fields in (
-            ("task_agent_runs", summary, {"status": "completed", "codex_transcript_end_line": 9}),
-            ("okr_review_runs", request, {"status": "completed"}),
-            ("okr_review_runs", request, {"error": "not a stored source field"}),
-        ):
-            before = db.total_changes
-            with pytest.raises(ValueError, match="absent from source"):
-                logical_run_storage.create_logical_run(db, source, parent, **fields)
-            assert db.total_changes == before
+        before = db.total_changes
+        with pytest.raises(ValueError, match="unknown Run fields"):
+            create_run(db, values={"task_id": task, "codex_transcript_end_line": 9})
+        assert db.total_changes == before

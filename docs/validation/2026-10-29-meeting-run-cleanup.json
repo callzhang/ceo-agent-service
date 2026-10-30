@@ -1,0 +1,98 @@
+{
+  "status": "local_verified_release_pending",
+  "baseline": "29c891346f396c18095c6b86a351016a83a3c9be",
+  "tests": {
+    "red": {
+      "failed": 2,
+      "cause": "Two INSERT statements for one Meeting result update"
+    },
+    "focused": {
+      "passed": 165,
+      "meeting_seconds": 29.69,
+      "run_validator_seconds": 5.96
+    },
+    "ruff": "passed",
+    "spec": "passed",
+    "quality": "passed"
+  },
+  "schema_before": {
+    "installed": "676770955ac6019f96f4315d7ead70aa12a5bd9c",
+    "schema_count": 464,
+    "schema_sha256": "9188be45ccf5967c560fef01b1e13462d30673d58c7884575dc31fd0835b1690",
+    "fk": []
+  },
+  "copy": {
+    "checks": [
+      {
+        "url": "/api/console/history?page=1&page_size=20&include_chart=false",
+        "http": 200,
+        "items": 20
+      },
+      {
+        "url": "/api/console/history?page=2&page_size=20&include_chart=false",
+        "http": 200,
+        "items": 20
+      },
+      {
+        "url": "/api/console/history?object_type=meeting&page_size=10&include_chart=false",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/attention",
+        "http": 200,
+        "items": 1
+      },
+      {
+        "url": "/api/console/dashboard/queues",
+        "http": 200,
+        "items": 3
+      },
+      {
+        "url": "/api/console/tasks/all?page_size=5",
+        "http": 200,
+        "items": 5
+      },
+      {
+        "url": "/api/console/tasks/projects?page_size=5",
+        "http": 200,
+        "items": 5
+      },
+      {
+        "url": "/api/console/tasks/sent-todos?page_size=10",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/tasks/items/862",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/meeting-attempts/400681",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/history/16397",
+        "http": 200,
+        "items": 0
+      },
+      {
+        "url": "/api/console/email/classifications?status=all&page_size=10",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/email/classifications/3776854744566163860",
+        "http": 502,
+        "items": 0
+      }
+    ],
+    "persisted_values_unchanged": true,
+    "provider_substitute_reads": 1,
+    "real_sends": 0,
+    "lifespan_started": false,
+    "meeting_run_id": 400681
+  }
+}
