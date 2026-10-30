@@ -10749,7 +10749,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         step. The retry budget is keyed by stable action identity so generation
         rotation cannot reset it. The original failed Attempt remains History.
         """
-        from app.email_unsubscribe import TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+        from app.email_unsubscribe import (
+            TRANSIENT_BROWSER_ERROR_CODES,
+            TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
+        )
 
         if not expected_execution_generation.strip():
             raise ValueError("expected execution generation is required")
@@ -10786,11 +10789,31 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if db.execute("select 1 from runs where task_id=? limit 1", (task_id,)).fetchone():
                 raise ValueError("task has AgentRun history and is not effect-free")
             marker_key = f"email_unsubscribe_execution_pending:v1:{action_identity}"
-            if db.execute(
-                f"select 1 from ({state_projection('service_state')}) where key=?",
+            marker_row = db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?",
                 (marker_key,),
-            ).fetchone():
-                raise ValueError("unsubscribe execution marker requires reconciliation")
+            ).fetchone()
+            if marker_row is not None:
+                try:
+                    marker = json.loads(str(marker_row["value"]))
+                    marker_retry_count = marker.get("retry_count") if isinstance(marker, dict) else None
+                except (TypeError, json.JSONDecodeError):
+                    marker = None
+                    marker_retry_count = None
+                if (
+                    not isinstance(marker, dict)
+                    or marker.get("state") != "retryable"
+                    or marker.get("task_id") != task_id
+                    or marker.get("action_identity") != action_identity
+                    or marker.get("input_version") != task["input_version"]
+                    or marker.get("input_digest") != hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+                    or marker.get("error_code") not in TRANSIENT_BROWSER_ERROR_CODES
+                    or not isinstance(marker_retry_count, int)
+                    or isinstance(marker_retry_count, bool)
+                    or marker_retry_count < 0
+                    or marker_retry_count > TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+                ):
+                    raise ValueError("unsubscribe execution marker requires reconciliation")
             for record_type in (
                 "email_unsubscribe_claims", "email_unsubscribe_receipts",
                 "email_unsubscribe_effects", "email_unsubscribe_steps",

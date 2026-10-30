@@ -236,3 +236,32 @@ def test_task_retry_api_preserves_unresolved_email_unsubscribe_marker(tmp_path: 
     assert current.execution_generation == task.execution_generation
     assert store.get_service_state(marker_key) == marker
 
+
+def test_task_retry_api_continues_exact_bounded_retryable_marker(tmp_path: Path):
+    import hashlib
+    import json
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _failed_effect_free_email_unsubscribe(store)
+    marker_key = f"email_unsubscribe_execution_pending:v1:{task.trigger_message_id}"
+    marker = json.dumps({
+        "task_id": task.id,
+        "action_identity": task.trigger_message_id,
+        "execution_generation": task.execution_generation,
+        "input_version": task.input_version,
+        "input_digest": hashlib.sha256(task.trigger_message_json.encode()).hexdigest(),
+        "state": "retryable",
+        "retry_count": 1,
+        "error_code": "email_unsubscribe_browser_timeout",
+    }, sort_keys=True)
+    store.set_service_state(marker_key, marker)
+
+    response = _client(store).post(f"/api/console/history/tasks/{task.id}/retry")
+
+    assert response.status_code == 200, response.text
+    current = store.get_reply_task(task.id)
+    assert current is not None
+    assert current.status == "pending"
+    assert current.execution_generation != task.execution_generation
+    assert store.get_service_state(marker_key) == marker
+
