@@ -218,6 +218,7 @@ tests/test_external_failures.py
 tests/test_email_unsubscribe_page_judge.py
 tests/test_email_unsubscribe.py
 tests/test_email_unsubscribe_direct.py
+tests/test_email_unsubscribe_legacy_retry.py
 tests/test_worker_retry_contract.py
 tests/test_config_runtime_paths.py
 tests/test_agent_context_provenance.py

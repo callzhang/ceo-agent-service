@@ -4806,32 +4806,62 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
 
 
 @pytest.mark.parametrize(
-    ("candidate_source", "audit_summary", "should_recover"),
+    ("candidate_source", "audit_summary", "task_error", "should_recover", "expected_error_code"),
     [
         (
             "body_html_https",
             "failed_browser: category=operation_failed;detail=Page.goto: net::ERR_TIMED_OUT at [url];operation=open_entry",
+            "email_unsubscribe_browser_failed: category=operation_failed",
             True,
+            "email_unsubscribe_browser_failed",
         ),
         (
             "header_https",
-            "failed_browser: category=operation_failed;detail=Page.goto: net::ERR_TIMED_OUT at [url];operation=open_entry",
-            False,
+            "failed_browser: category=operation_timeout;detail=browser timed out;operation=follow_redirect",
+            "email_unsubscribe_browser_timeout",
+            True,
+            "email_unsubscribe_browser_timeout",
+        ),
+        (
+            "body_text_https",
+            "failed_browser: category=form_response_rejected;detail=provider response;operation=submit_form",
+            "email_unsubscribe_browser_failed: category=form_response_rejected",
+            True,
+            "email_unsubscribe_browser_failed",
+        ),
+        (
+            "header_mailto",
+            "failed_browser: category=control_unavailable;detail=control absent;operation=click_confirmation",
+            "email_unsubscribe_browser_failed: category=control_unavailable",
+            True,
+            "email_unsubscribe_browser_failed",
         ),
         (
             "body_html_https",
-            "failed_browser: category=operation_timeout;detail=browser timed out;operation=read_page",
+            "failed_browser: category=page_state_unknown;detail=state unavailable;operation=read_page",
+            "unsubscribe_operation_rejected:ValueError",
             False,
+            "",
         ),
         (
             "body_html_https",
-            "failed_browser: category=operation_failed;detail=connection reset;operation=open_entry",
+            "failed_browser: category=operation_timeout;detail=browser timed out;operation=not_a_supported_operation",
+            "email_unsubscribe_browser_timeout",
             False,
+            "",
+        ),
+        (
+            "not_a_supported_source",
+            "failed_browser: category=operation_timeout;detail=browser timed out;operation=open_entry",
+            "email_unsubscribe_browser_timeout",
+            False,
+            "",
         ),
     ],
 )
 def test_retry_failed_email_unsubscribe_recovers_legacy_fence_from_typed_attempt_evidence(
-    tmp_path: Path, candidate_source: str, audit_summary: str, should_recover: bool,
+    tmp_path: Path, candidate_source: str, audit_summary: str, task_error: str,
+    should_recover: bool, expected_error_code: str,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     action_identity = "email-action:legacy-timeout"
@@ -4866,7 +4896,7 @@ def test_retry_failed_email_unsubscribe_recovers_legacy_fence_from_typed_attempt
         _update_current_task8(
             db,
             "reply_tasks",
-            {"status": "failed", "error": "unsubscribe_operation_rejected:ValueError"},
+            {"status": "failed", "error": task_error},
             where_sql="and id=?",
             parameters=(task.id,),
         )
@@ -4920,7 +4950,7 @@ def test_retry_failed_email_unsubscribe_recovers_legacy_fence_from_typed_attempt
         ).fetchone()[0])
     if should_recover:
         assert marker["state"] == "retryable"
-        assert marker["error_code"] == "email_unsubscribe_browser_timeout"
+        assert marker["error_code"] == expected_error_code
         assert marker["retry_count"] == 1
     else:
         assert "state" not in marker

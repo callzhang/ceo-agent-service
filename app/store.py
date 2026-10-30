@@ -10608,30 +10608,25 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         are retryable only when the immutable action payload is intact and no
         claim, receipt, effect, browser step, or Agent run was persisted. A
         legacy execution marker is recoverable only when it binds to the same
-        task and input and an earlier failed Attempt contains typed transient
-        navigation evidence at the entry-opening stage. This upgrades the
+        task and input and an earlier failed Attempt contains a typed external
+        transient failure at a supported operation. This upgrades the
         marker to the existing bounded retry state; all other markers remain
         reconciliation fences.
         """
-        retryable_errors = (
-            "email_unsubscribe_browser_failed:%",
-            "email_unsubscribe_browser_timeout",
-            "unsubscribe_operation_rejected:%",
-        )
+        from app.external_failures import external_task_error_sql
         from app.email_unsubscribe import (
             TRANSIENT_BROWSER_ERROR_CODES,
             TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
-            UnsubscribeEntrySource,
         )
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""
                 select tasks.id, tasks.execution_generation, tasks.trigger_message_id,
-                       tasks.trigger_message_json, tasks.input_version
+                       tasks.trigger_message_json, tasks.input_version, tasks.error
                 from ({REPLY_TASK_CURRENT_SQL}) as tasks
                 where tasks.channel='email'
                   and tasks.status='failed'
-                  and (tasks.error like ? or tasks.error=? or tasks.error like ?)
+                  and {external_task_error_sql('tasks.error')}
                   and json_valid(tasks.trigger_message_json)
                   and json_extract(tasks.trigger_message_json, '$.schema')='email_agent_action.v1'
                   and json_extract(tasks.trigger_message_json, '$.action_type')='unsubscribe'
@@ -10647,7 +10642,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_steps')}) where action_identity=tasks.trigger_message_id)
                 order by tasks.id
                 """,
-                (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
             ).fetchall()
             recovered: list[int] = []
             from app import task_entity_storage
@@ -10690,30 +10684,35 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                             continue
                         recovered_marker = marker
                     elif "state" not in marker:
-                        payload = json.loads(str(row["trigger_message_json"]))
-                        parameters = payload.get("action_parameters", {})
-                        entries = payload.get("unsubscribe_entries", [])
+                        from app.email_unsubscribe import UnsubscribeEntrySource
+
+                        try:
+                            payload = json.loads(str(row["trigger_message_json"]))
+                        except (TypeError, json.JSONDecodeError):
+                            continue
+                        action_parameters = payload.get("action_parameters")
                         candidate_reference = (
-                            parameters.get("candidate_reference")
-                            if isinstance(parameters, dict) else None
+                            action_parameters.get("candidate_reference")
+                            if isinstance(action_parameters, dict) else None
                         )
-                        entry_sources = [
-                            entry.get("source") for entry in entries
-                            if isinstance(entry, dict)
-                            and entry.get("reference") == candidate_reference
+                        candidate_source = (
+                            action_parameters.get("candidate_source")
+                            if isinstance(action_parameters, dict) else None
+                        )
+                        entries = payload.get("unsubscribe_entries")
+                        referenced_sources = [
+                            item.get("source") for item in entries
+                            if isinstance(item, dict)
+                            and item.get("reference") == candidate_reference
                         ] if isinstance(entries, list) else []
+                        supported_sources = {item.value for item in UnsubscribeEntrySource}
                         if (
-                            not isinstance(parameters, dict)
-                            or parameters.get("candidate_source")
-                            != UnsubscribeEntrySource.BODY_HTML_HTTPS.value
-                            or len(entry_sources) != 1
-                            or entry_sources[0] != UnsubscribeEntrySource.BODY_HTML_HTTPS.value
+                            candidate_source not in supported_sources
+                            or referenced_sources != [candidate_source]
                         ):
                             continue
-                        transient_attempt_count = (
-                            self._legacy_open_entry_timeout_attempt_count(
-                                db, action_identity
-                            )
+                        transient_attempt_count = self._legacy_transient_browser_failure_attempt_count(
+                            db, action_identity
                         )
                         if (
                             transient_attempt_count == 0
@@ -10723,7 +10722,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         marker.update(
                             state="retryable",
                             retry_count=transient_attempt_count,
-                            error_code="email_unsubscribe_browser_timeout",
+                            error_code=str(row["error"]).partition(":")[0],
                             recovered_from_legacy_attempt=True,
                         )
                         recovered_marker = marker
@@ -10756,16 +10755,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return recovered
 
     @staticmethod
-    def _legacy_open_entry_timeout_attempt_count(
+    def _legacy_transient_browser_failure_attempt_count(
         db: sqlite3.Connection, action_identity: str,
     ) -> int:
-        """Count historical failures with typed transient navigation evidence."""
-        from app.email_unsubscribe import (
-            CHROMIUM_NAVIGATION_TIMEOUT_MARKER,
-            UnsubscribeBrowserFailure,
-            UnsubscribeOperationKind,
-        )
-
+        """Count historical attempts with a classified external browser failure."""
         attempts = db.execute(
             f"""
             select audit_summary from ({REPLY_ATTEMPT_COMMON_SQL})
@@ -10775,26 +10768,33 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             """,
             (action_identity,),
         ).fetchall()
-        count = 0
-        for attempt in attempts:
-            summary = str(attempt["audit_summary"] or "")
-            fields: dict[str, str] = {}
-            for part in summary.split(";"):
-                key, separator, value = part.partition("=")
-                if separator:
-                    fields[key.strip()] = value.strip()
-            category = summary.partition("category=")[2].partition(";")[0].strip()
-            detail = fields.get("detail", "")
-            if (
-                fields.get("operation") == UnsubscribeOperationKind.OPEN_ENTRY.value
-                and (
-                    category == UnsubscribeBrowserFailure.OPERATION_TIMEOUT.value
-                    or category == UnsubscribeBrowserFailure.OPERATION_FAILED.value
-                    and CHROMIUM_NAVIGATION_TIMEOUT_MARKER in detail
-                )
-            ):
-                count += 1
-        return count
+        return sum(
+            AutoReplyStore._legacy_attempt_has_external_transient_failure(
+                str(attempt["audit_summary"] or "")
+            )
+            for attempt in attempts
+        )
+
+    @staticmethod
+    def _legacy_attempt_has_external_transient_failure(summary: str) -> bool:
+        """Classify a historical attempt using shared error and operation types."""
+        from app.email_unsubscribe import UnsubscribeBrowserFailure, UnsubscribeOperationKind
+        from app.external_failures import is_external_task_error
+
+        fields: dict[str, str] = {}
+        for part in summary.split(";"):
+            key, separator, value = part.partition("=")
+            if separator:
+                fields[key.strip()] = value.strip()
+        operation = fields.get("operation", "")
+        if operation not in {item.value for item in UnsubscribeOperationKind}:
+            return False
+        category = summary.partition("category=")[2].partition(";")[0].strip()
+        return (
+            category in {item.value for item in UnsubscribeBrowserFailure}
+            and bool(category)
+            and is_external_task_error(f"failed_browser: category={category}")
+        )
 
     def terminalize_exhausted_pending_reply_tasks(
         self,

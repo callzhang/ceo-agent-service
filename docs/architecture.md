@@ -629,8 +629,7 @@ acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 `email_unsubscribe_outcome_unresolved` 记录为外部结果未确认，而非内部 `ValueError`；它仍保持失败并等待
 只读回执核对，不会自动重放。浏览器步骤本身不升级为
 `needs_human`，技术失败保留为失败；有浏览器步骤但没有 receipt 不再升级为 needs_human，重试资格由上述明确标记和错误码决定。
-旧格式执行标记只有在与当前 Task、稳定 Action identity 和完整输入摘要一致，且历史失败 Attempt 以结构化字段证明
-`body_html_https` 候选在 `open_entry` 阶段发生瞬时导航超时时，才可升级为同一全局 `retryable` 退避状态；其他标记继续作为对账围栏。
+旧格式执行标记只有在与当前 Task、稳定 Action identity 和完整输入摘要一致，且 Task 错误匹配共享外部瞬时失败分类、历史 Attempt 记录了有效退订操作时，才可升级为同一全局 `retryable` 退避状态；判定覆盖所有支持的入口来源和操作阶段，不按站点或单个案例分支。错误/阶段身份不匹配、未知结果或预算耗尽时，其他标记继续作为对账围栏。
 启动时若终态退订回执已落库而对应任务仍失败，符合恢复条件的任务按同一动作身份投影为 `done` 或
 `skipped`，不再次调用邮箱提供商；带回执的更新只读取该任务自己的持久化字段。
 
