@@ -1,5 +1,5 @@
 {
-  "status": "copy_and_scoped_review_passed_release_pending",
+  "status": "final_review_and_copy_passed_standard_release_pending",
   "checked_at": "2026-10-30T10:26:43.335101+00:00",
   "implementation_head": "563a40633",
   "source": {
@@ -80,7 +80,7 @@
     "overlap": "Counts overlap; not a sum of distinct cases. Fixed2GiB10min per process.",
     "spec": "PASS",
     "quality": "PASS",
-    "whole_branch_review": "pending"
+    "whole_branch_review": "SPEC PASS; QUALITY PASS; zero open Important findings (b6123940b..e0aa4ab81)"
   },
   "query_profiles": {
     "source": {

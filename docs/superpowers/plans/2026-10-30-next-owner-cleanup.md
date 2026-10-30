@@ -114,4 +114,4 @@ Files: app/action_entity_definitions.py、app/action_entity_storage.py、app/sha
 
 实现563a40633已通过独立SPEC／QUALITY；当前生产派生副本48张表、749748条原记录完成正向→新合成邮件／分类及原生Plan/Action／失败回执→逆迁→固定旧代码57c75b0c0完整Store和EmailStore冷启动读写→再次正向。原始和全部新增cohort的事实、类型、身份、序列和FK[]通过；精确目标463对象、仅Actions三generated列及原有三阻挡触发器变化，无索引增删。第一次副本试跑曾因合成Plan身份无效失败，已保留失败记录；修正后使用全新副本完整通过，未取消校验。源参数TEXT精确比较，只有外层Action JSON键顺序不作为事实。
 
-同原始群体claim/completed/account保护查询都有索引路径；计时仅诊断样本，不作为吞吐承诺。测试不启动worker、不调用模型或真实发送。完整机器证据见[Unit2验收JSON](../../validation/2026-10-30-next-owner-unit2.json)。整分支审查、标准gate／自然quiet部署、生产只读验收和本轮产物清理仍待完成。
+同原始群体claim/completed/account保护查询都有索引路径；计时仅诊断样本，不作为吞吐承诺。测试不启动worker、不调用模型或真实发送。完整机器证据见[Unit2验收JSON](../../validation/2026-10-30-next-owner-unit2.json)。整分支审查SPEC／QUALITY均PASS，无未关闭Important；标准gate／自然quiet部署、生产只读验收和本轮产物清理仍待完成。
