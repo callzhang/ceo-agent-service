@@ -105,3 +105,7 @@ Files: app/action_entity_definitions.py、app/action_entity_storage.py、app/sha
 ## 执行与交付边界
 
 先做单元1并独立部署，再做单元2迁移；每个单元分别记录代码、测试、部署、生产功能、业务回执及清理证据。没有授权执行前，本文件仅是计划，不修改生产或开始部署。全过程不新增业务字段或运行时旧结构兼容；不声称全库最优。
+
+## 单元1已上线
+
+2026-10-30标准部署57c75b0c0，门禁8164PASS／2skip／1按规则未运行，486.24秒；自然quiet，无中断。schema463对象/hash和FK[]不变，3条历史bugfix事实指纹不变。公开Attempt16429数据API200、旧物理127430数据API404；SPA页面壳HTML200不等于详情存在，未做旧ID转换。History分页/筛选及回执22354读回通过；临时测试产物在全计划结束统一清理。准确备份代次清理见[Unit1验收JSON](../../validation/2026-10-30-next-owner-unit1.json)。
