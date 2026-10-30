@@ -15,6 +15,8 @@ Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_d
 Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`actions` 的 `_kind=70` 保存共同 Action，`action_receipts` 保存逐次 provider/execution 事实，`action_observers` 保存多个 Run 的观察关系，typed identity map 保留精确旧身份。创建、CAS 领取和结果更新由 `app.action_entity_storage` 提供，调用方持有事务。生产读回、准确退休清单、copy 容量结果和剩余路线见[Phase 1 生产验收](action-entity-production-acceptance.md)。
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
+Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一持有。局部结果更新使用一次明确指向该主键的 UPSERT：首次插入使用现有默认值，已有行只更新本次提供的结果字段，不覆盖其他已保存的消息、发送回执或日历结果。专业运行详情与副本验收通过原生 `runs.id` 和 `run_provenance` 读取，不再使用旧 Run 容器的 writer／projection。
+
 当前 native `tasks` 表的 `kind` 合同包含九类：`reply`、`work_summary`、
 `meeting_alignment`、`okr_review`、`okr_analysis`、`workbench_turn`、
 `email_classification`、`feedback_processing` 和 `wechat_import`。Task 的生命周期

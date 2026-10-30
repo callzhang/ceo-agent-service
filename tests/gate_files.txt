@@ -74,6 +74,9 @@ tests/test_hourly_dry_run_launchd.py
 tests/test_leak_check.py
 tests/test_main_launchd_resource_class.py
 tests/test_meeting_alignment.py
+tests/test_meeting_result_storage.py
+tests/test_logical_run_owner.py
+tests/test_validate_database_closeout_copy.py
 tests/test_meeting_alignment_source.py
 tests/test_meeting_alignment_agent.py
 tests/test_meeting_alignment_delivery.py

@@ -2,6 +2,9 @@
 
 > 本文只放现行合同。已退役／历史章节和日期化迁移实施记录原样存于 [archive/architecture-superseded-notes.md](archive/architecture-superseded-notes.md)；新增日期化变更说明写完即并入对应现行小节，不再堆在文件顶部。
 
+Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一持有。局部结果更新使用一次明确指向该主键的 UPSERT：首次插入使用现有默认值，已有行只更新本次提供的结果字段，不覆盖其他已保存的消息、发送回执或日历结果。专业运行详情与副本验收通过原生 `runs.id` 和 `run_provenance` 读取，不再使用旧 Run 容器的 writer／projection。
+
+
 ## 数据库结构与迁移合同
 
 当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-28.5／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
