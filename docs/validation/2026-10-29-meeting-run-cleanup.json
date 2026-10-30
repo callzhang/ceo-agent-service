@@ -1,5 +1,5 @@
 {
-  "status": "local_verified_release_pending",
+  "status": "complete",
   "baseline": "29c891346f396c18095c6b86a351016a83a3c9be",
   "tests": {
     "red": {
@@ -93,7 +93,9 @@
     "provider_substitute_reads": 1,
     "real_sends": 0,
     "lifespan_started": false,
-    "meeting_run_id": 400681
+    "meeting_run_id": 400681,
+    "fingerprinted_tables": 49,
+    "fingerprinted_rows": 747456
   },
   "initial_gate": {
     "commit": "e90567bd04401b8b12d5fb03aad094576c58d189",
@@ -109,5 +111,194 @@
     "tests_passed": 99,
     "seconds": 0.66,
     "review": "SPEC/QUALITY passed"
+  },
+  "production": {
+    "installed": "d68ffd943b2201b302f652d09c57d0747268ad74",
+    "pid": [
+      "pid = 95719"
+    ],
+    "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "schema_count": 464,
+    "schema_sha256": "9188be45ccf5967c560fef01b1e13462d30673d58c7884575dc31fd0835b1690",
+    "schema_equal": true,
+    "fk": [],
+    "checks": [
+      {
+        "url": "/healthz",
+        "http": 200
+      },
+      {
+        "url": "/api/console/dashboard/queues",
+        "http": 200,
+        "counts": {
+          "active": 0,
+          "queued": 4
+        }
+      },
+      {
+        "url": "/api/console/attention",
+        "http": 200,
+        "items": 1
+      },
+      {
+        "url": "/api/console/history?page=1&page_size=10&include_chart=false",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/history?page=2&page_size=10&include_chart=false",
+        "http": 200,
+        "items": 10
+      },
+      {
+        "url": "/api/console/history?object_type=meeting&page_size=10&include_chart=false",
+        "http": 200
+      },
+      {
+        "url": "/api/console/meeting-attempts/400690",
+        "http": 200,
+        "run_id": 400690,
+        "item_keys": [
+          "id",
+          "task_id",
+          "source_job_id",
+          "task_available",
+          "title",
+          "type",
+          "status",
+          "conversation",
+          "metadata",
+          "input",
+          "decision",
+          "output",
+          "trigger",
+          "audit_explanation",
+          "generated_reply",
+          "audit_summary",
+          "tool_uses",
+          "native_available",
+          "native_reason",
+          "tool_events_available",
+          "tool_events_reason",
+          "runtime",
+          "actions"
+        ]
+      }
+    ],
+    "task_status_counts": {
+      "completed": 214,
+      "done": 14397,
+      "failed": 19,
+      "needs_human": 1,
+      "no_action": 85,
+      "processing": 6,
+      "resolved": 48,
+      "sent": 748,
+      "skipped": 4629,
+      "stopped": 4
+    },
+    "meeting": [
+      400690,
+      417904
+    ],
+    "frozen_sent_meeting_result": {
+      "task_id": 417899,
+      "sha256": "f63b3b9a228b65e79f8ed653cc63c444160716ec7ff7ee091a8dc594b6085c37"
+    }
+  },
+  "gate": {
+    "commit": "d68ffd943b2201b302f652d09c57d0747268ad74",
+    "passed": 7990,
+    "skipped": 2,
+    "deselected": 1,
+    "seconds": 439.41,
+    "owner": "coordinated publisher",
+    "standard_quiet": true,
+    "memory_limit_bytes": 2147483648,
+    "time_limit_seconds": 600,
+    "record": {
+      "commit": "d68ffd943b2201b302f652d09c57d0747268ad74",
+      "passed_at": "2026-10-30T03:56:06+00:00",
+      "files": 412,
+      "summary": "7990 passed, 2 skipped, 1 deselected in 439.41s (0:07:19)"
+    }
+  },
+  "ui": {
+    "meeting_run_id": 400681,
+    "task_id": 417899,
+    "status": "sent",
+    "history_pagination": "page2 21-40",
+    "meeting_filter": "/history?object_type=meeting;2897items",
+    "temporary_tab_closed": true
+  },
+  "cleanup": {
+    "failed_gate_and_templates": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.py0kz80h",
+        "bytes": 123768230,
+        "inode": 839348341
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.9zhdiisg",
+        "bytes": 2850816,
+        "inode": 839371659
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.n1xoy7v8",
+        "bytes": 2850816,
+        "inode": 839351938
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.1p08g5ny",
+        "bytes": 5722112,
+        "inode": 839359102
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.v7ahq0fd",
+        "bytes": 5722112,
+        "inode": 839379343
+      }
+    ],
+    "owned_test_and_sdd_roots": [
+      {
+        "path": "/private/tmp/ceo-meeting-run-cleanup.QBoW7P",
+        "inode": 839338554,
+        "bytes": 548597154
+      },
+      {
+        "path": "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/.superpowers/sdd/meeting-run-cleanup-plan-20261029",
+        "inode": 839338551,
+        "bytes": 26956
+      }
+    ],
+    "all_owned_temporary_paths_absent": true,
+    "shared_gate_template": {
+      "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.ew6z0_ov",
+      "inode": 839451175,
+      "bytes": 5787648,
+      "task_and_run_counts_verified_empty": true
+    },
+    "shared_backup": {
+      "verified_and_deleted_by": "coordinated publisher",
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+      "inode": 839526085,
+      "mtime_ns": 1793332688212989325,
+      "size": 514969600,
+      "complete_marker": true,
+      "integrity": "ok",
+      "publisher_schema_equal": true,
+      "publisher_fk_violations": 0,
+      "root_locked_absence": {
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3-wal": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3-shm": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3-journal": true
+      }
+    }
+  },
+  "final_health_recheck": {
+    "http": 200,
+    "listener_pid": 95723,
+    "meaning": "Independent elevated localhost and lsof readback; no absent listener observed"
   }
 }
