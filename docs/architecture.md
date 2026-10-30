@@ -842,6 +842,8 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   那样链到执行详情：`channel='scheduled'` 的队列行链到它所属定时任务的运行记录
   `/scheduled-tasks?id=<任务>`（映射来自 `scheduled_task_runs` 里 `execution_kind='reply_task'`
   且 `execution_id` 等于该 reply task id 的那一行，`AutoReplyStore.scheduled_task_ids_for_reply_tasks`），
+启动时的 Reply pre-Agent orphan recovery 只处理由 Agent 执行通道拥有的任务；由专用 worker
+消费的其他通道继续由各自 worker 的租约恢复负责，不会因不存在 AgentRun 被重置。
   其余渠道链到 `/workers`（Derek 2026-09-27：点开原来一律落到 Status 页，看起来像详情坏了）。
 - History 以 task 为核心（Derek 2026-10-23）：回复类记录的每一行带它所属的 `task_id` 和该 task 的
   `run_count`（Agent run 总数），行内链接指向 `/history/tasks/<task_id>`，而不是直接指向某个

@@ -10667,6 +10667,33 @@ def test_recover_orphaned_processing_reply_tasks_is_generation_aware(
     assert store.get_reply_task(task_ids[2]).status == "processing"
 
 
+def test_pre_agent_orphan_recovery_leaves_non_agent_channel_task_processing(
+    tmp_path: Path,
+) -> None:
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.enqueue_reply_task(
+        conversation_id="email-thread:worker-owned",
+        conversation_title="Email action",
+        single_chat=False,
+        trigger_message_id="email-action:worker-owned",
+        trigger_create_time="2026-10-30 09:00:00",
+        trigger_sender="sender@example.com",
+        trigger_text="Process this queued email action.",
+        channel="email",
+    )
+    claimed = store.claim_reply_tasks(1, channel="email")
+    assert len(claimed) == 1
+    assert claimed[0].status == "processing"
+
+    recovered = store.recover_orphaned_processing_reply_tasks(limit=10)
+
+    assert recovered == []
+    current = store.get_reply_task(claimed[0].id)
+    assert current is not None
+    assert current.status == "processing"
+    assert current.error == ""
+
+
 def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
     tmp_path: Path,
 ) -> None:

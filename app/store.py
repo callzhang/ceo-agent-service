@@ -9932,6 +9932,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from tasks join task_inputs canonical on canonical.id=tasks.current_input_id
                     and canonical.task_id=tasks.id
                 where tasks.kind='reply' and tasks.status='processing'
+                  and canonical.channel <> 'email'
                   and not exists (
                       select 1
                       from runs
@@ -9951,7 +9952,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     set status='pending',attempts=max(attempts-1,0),locked_at=null,
                         available_at='',error=?,updated_at=current_timestamp
                     where reply_tasks.kind='reply' and id=? and status='processing'
-                      and execution_generation=? and not exists (
+                      and execution_generation=? and exists (
+                          select 1
+                          from task_inputs current_input
+                          where current_input.id=reply_tasks.current_input_id
+                            and current_input.task_id=reply_tasks.id
+                            and current_input.channel<>'email'
+                      ) and not exists (
                           select 1
                           from runs agent_runs
                           where task_id=reply_tasks.id

@@ -63,6 +63,8 @@ reverts committed work they did not author.
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
 
+| codex-reply-orphan-channel-ownership-20261030 | `app/store.py::recover_orphaned_processing_reply_tasks`; `tests/test_store.py`; `docs/architecture.md`; `docs/runtime-mechanism.md`; this claim row | Startup pre-Agent recovery must not reset Reply Tasks owned by a non-Agent channel worker. Scope uses channel ownership generically, preserving AgentRun orphan recovery and task/effect data; no provider action or status fabrication. | Active. |
+
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
