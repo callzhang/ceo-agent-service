@@ -3681,6 +3681,15 @@ def run_meeting_delivery_loop(
                     "meeting_alignment_delivery",
                     resolution="recovered by later successful meeting delivery cycle",
                 )
+                store.set_service_health_component(
+                    "meeting-delivery",
+                    state="healthy",
+                    status="running",
+                    detail="",
+                    latest_tick_at=datetime.now(timezone.utc).isoformat(),
+                    latest_error="",
+                    latest_error_at="",
+                )
             except Exception as exc:
                 if not _is_dws_transient_dependency_error(exc):
                     store.record_error("", "", "meeting_alignment_delivery", str(exc))
