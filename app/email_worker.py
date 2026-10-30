@@ -4311,8 +4311,9 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
             raise ValueError("email unsubscribe account is unavailable")
         source = source_factory(account)
         try:
+            current_locator = source.locate_message_across_folders(locator)
             message = source.fetch_message(
-                locator,
+                current_locator,
                 stable_message_identity=locator.stable_message_identity,
             )
             entries = extract_unsubscribe_entries(

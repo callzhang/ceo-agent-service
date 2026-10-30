@@ -5178,10 +5178,24 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     private_url = "https://news.example.com/unsubscribe?token=runtime-only"
     entry = extract_unsubscribe_entries(list_unsubscribe=f"<{private_url}>")[0]
     source_events = []
+    moved_locator = EmailProviderLocator(
+        account_id="account-1",
+        folder="Archive",
+        uidvalidity=43,
+        uid=19,
+        rfc_message_id="<mail-7@example.com>",
+        thread_id="thread-7",
+    )
 
     class Source:
         def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
             raise AssertionError("known UID must use exact source read")
+
+        def locate_message_across_folders(self, locator):
+            source_events.append(
+                ("locate_unique", locator.account_id, locator.rfc_message_id)
+            )
+            return moved_locator
 
         def fetch_message(self, locator, *, stable_message_identity):
             source_events.append(
@@ -5278,10 +5292,15 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     # rather than really logging out -- see _ConnectorBackedSource.
     assert source_events == [
         (
+            "locate_unique",
+            "account-1",
+            "<mail-7@example.com>",
+        ),
+        (
             "fetch_exact",
-            "INBOX",
-            42,
-            7,
+            "Archive",
+            43,
+            19,
             "<mail-7@example.com>",
             "account-1:message-id:<mail-7@example.com>",
         )
@@ -5380,6 +5399,9 @@ def test_execution_resolves_selected_candidate_before_executing(
     )
 
     class Source:
+        def locate_message_across_folders(self, locator):
+            return locator
+
         def fetch_message(self, locator, *, stable_message_identity):
             assert locator.uid == 8
             assert stable_message_identity == locator.stable_message_identity
@@ -5477,6 +5499,9 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
     )[0]
 
     class Source:
+        def locate_message_across_folders(self, locator):
+            return locator
+
         def fetch_message(self, locator, *, stable_message_identity):
             assert locator.uid == 7
             assert stable_message_identity == locator.stable_message_identity
@@ -5717,6 +5742,10 @@ def test_production_unsubscribe_task_reload_and_audit_preserve_opaque_bindings(
     class Source:
         def __init__(self, message):
             self.message = message
+
+        def locate_message_across_folders(self, locator):
+            assert locator.rfc_message_id == self.message["messageId"]
+            return locator
 
         def fetch_uid_batch(self, *_args, **_kwargs):
             return SimpleNamespace(
