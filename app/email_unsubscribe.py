@@ -3462,6 +3462,7 @@ class PlaywrightUnsubscribeBrowser:
                     retryable_navigation_stop = (
                         "timeout" in type(exc).__name__.casefold()
                         or "ERR_ABORTED" in str(exc)
+                        or "net::ERR_TIMED_OUT" in str(exc)
                     )
                     current_url = str(getattr(self.page, "url", ""))
                     if (
@@ -3611,7 +3612,13 @@ class PlaywrightUnsubscribeBrowser:
         except (UnsubscribeBrowserError, UnsubscribeProviderAuthError):
             raise
         except Exception as exc:
-            if "timeout" in type(exc).__name__.casefold():
+            if (
+                "timeout" in type(exc).__name__.casefold()
+                or (
+                    operation.kind is UnsubscribeOperationKind.OPEN_ENTRY
+                    and "net::ERR_TIMED_OUT" in str(exc)
+                )
+            ):
                 raise UnsubscribeBrowserError(
                     UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
                     f"browser operation timed out: {type(exc).__name__}: {exc}",

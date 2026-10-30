@@ -1422,6 +1422,91 @@ def test_open_entry_timeout_on_blank_page_remains_a_timeout() -> None:
     assert failure.value.category is UnsubscribeBrowserFailure.OPERATION_TIMEOUT
 
 
+def test_open_entry_chromium_navigation_timeout_is_a_typed_timeout() -> None:
+    class Page:
+        url = "about:blank"
+
+        def goto(self, _url: str, **_kwargs: object) -> None:
+            raise RuntimeError("Page.goto: net::ERR_TIMED_OUT")
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser.timeout_ms = 1_000
+    browser._document_url = ""
+    browser._blocked_popup = False
+    browser._blocked_download = False
+
+    with pytest.raises(UnsubscribeBrowserError) as failure:
+        browser.execute_operation(
+            _effect(),
+            TOKEN_URL,
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],
+        )
+
+    assert failure.value.category is UnsubscribeBrowserFailure.OPERATION_TIMEOUT
+
+
+def test_open_entry_chromium_navigation_timeout_reads_committed_page_once() -> None:
+    class Page:
+        url = "about:blank"
+
+        def __init__(self) -> None:
+            self.goto_calls = 0
+
+        def goto(self, url: str, **_kwargs: object) -> None:
+            self.goto_calls += 1
+            self.url = url
+            raise RuntimeError("Page.goto: net::ERR_TIMED_OUT")
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser.timeout_ms = 1_000
+    browser._document_url = ""
+    browser._blocked_popup = False
+    browser._blocked_download = False
+    observation = UnsubscribeObservation(
+        state=UnsubscribePageState.DONE,
+        state_reference="state-after-chromium-navigation-timeout",
+        receipt=_terminal_receipt(_effect()),
+        visible_text="You have unsubscribed.",
+    )
+    browser.inspect_current_state = lambda *_args: observation
+
+    result = browser.execute_operation(
+        _effect(),
+        TOKEN_URL,
+        _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],
+    )
+
+    assert result is observation
+    assert browser.page.goto_calls == 1
+    assert browser._document_url == TOKEN_URL
+
+
+def test_open_entry_unrelated_navigation_error_is_not_reclassified_as_timeout() -> None:
+    class Page:
+        url = "about:blank"
+
+        def goto(self, _url: str, **_kwargs: object) -> None:
+            raise RuntimeError("Page.goto: net::ERR_CONNECTION_RESET")
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser.timeout_ms = 1_000
+    browser._document_url = ""
+    browser._blocked_popup = False
+    browser._blocked_download = False
+
+    with pytest.raises(UnsubscribeBrowserError) as failure:
+        browser.execute_operation(
+            _effect(),
+            TOKEN_URL,
+            _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],
+        )
+
+    assert failure.value.category is UnsubscribeBrowserFailure.OPERATION_FAILED
+
+
 def test_open_entry_abort_reads_committed_page_without_requesting_unsubscribe_url_again() -> None:
     class Page:
         url = "about:blank"
