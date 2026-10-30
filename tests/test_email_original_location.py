@@ -1,8 +1,14 @@
 """Locate current originals despite provider HEADER-search case semantics."""
 
+from types import SimpleNamespace
+
 import pytest
 
-from app.email_imap_readonly import EmailSourceMessageMissing, ImapReadonlyAdapter
+from app.email_imap_readonly import (
+    EmailSourceMessageMissing,
+    ImapReadonlyAdapter,
+)
+from app.external_retry import is_transient_external_error
 from tests.test_email_exact_source import HEADERS, LOCATOR, STRUCTURE, read
 from tests.test_email_imap_readonly import FakeImapSession
 
@@ -84,3 +90,42 @@ def test_original_location_batches_headers_and_checks_generation():
     session.uid = changed
     with pytest.raises(LookupError, match='generation changed'):
         adapter.locate_message(LOCATOR, folder='Archive')
+
+
+def test_cross_folder_missing_exact_source_is_a_retryable_external_read(monkeypatch):
+    adapter = ImapReadonlyAdapter(HeaderSession({}), account_id='a')
+    monkeypatch.setattr(
+        adapter,
+        'list_folders',
+        lambda: [SimpleNamespace(display_name='Inbox'), SimpleNamespace(display_name='Archive')],
+    )
+
+    def missing(_locator, *, folder):
+        raise EmailSourceMessageMissing(f'missing in {folder}')
+
+    monkeypatch.setattr(adapter, 'locate_message', missing)
+
+    with pytest.raises(EmailSourceMessageMissing) as caught:
+        adapter.locate_message_across_folders(LOCATOR)
+
+    assert is_transient_external_error(caught.value)
+
+
+def test_cross_folder_ambiguous_exact_source_remains_nonretryable(monkeypatch):
+    adapter = ImapReadonlyAdapter(HeaderSession({}), account_id='a')
+    monkeypatch.setattr(
+        adapter,
+        'list_folders',
+        lambda: [SimpleNamespace(display_name='Inbox'), SimpleNamespace(display_name='Archive')],
+    )
+    monkeypatch.setattr(
+        adapter,
+        'locate_message',
+        lambda _locator, *, folder: LOCATOR.model_copy(update={'folder': folder}),
+    )
+
+    with pytest.raises(LookupError, match='ambiguous') as caught:
+        adapter.locate_message_across_folders(LOCATOR)
+
+    assert type(caught.value) is LookupError
+    assert not is_transient_external_error(caught.value)

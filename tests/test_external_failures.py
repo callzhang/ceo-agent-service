@@ -47,8 +47,14 @@ def test_detailed_internal_unsubscribe_failure_stays_in_internal_attention():
     ).fetchone()[0]
 
 
-def test_terminal_provider_transport_failure_is_classified_as_external():
-    error = "email_provider_transient:TimeoutError:4"
+@pytest.mark.parametrize(
+    "error",
+    (
+        "email_provider_transient:TimeoutError:4",
+        "email_provider_transient:EmailSourceMessageMissing",
+    ),
+)
+def test_terminal_provider_read_failure_is_classified_as_external(error):
 
     assert is_external_task_error(error)
 

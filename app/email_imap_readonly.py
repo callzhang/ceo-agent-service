@@ -48,6 +48,8 @@ IMAP_READ_TIMEOUT_SECONDS = 90.0
 class EmailSourceMessageMissing(LookupError):
     """An exact RFC Message-ID is absent from one observed folder."""
 
+    retryable_external_dependency = True
+
 
 @dataclass(frozen=True)
 class ImapUidBatch:
@@ -581,8 +583,10 @@ class ImapReadonlyAdapter:
                 )
             except EmailSourceMessageMissing:
                 continue
-        if len(matches) != 1:
-            raise LookupError("email source Message-ID is missing or ambiguous")
+        if not matches:
+            raise EmailSourceMessageMissing("email source Message-ID is missing")
+        if len(matches) > 1:
+            raise LookupError("email source Message-ID is ambiguous")
         return matches[0]
 
     def fetch_message(

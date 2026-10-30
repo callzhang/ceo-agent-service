@@ -19,6 +19,7 @@ from app.email_classifier_contracts import (
     EmailClassificationStatus,
     build_versioned_email_action_plan,
 )
+from app.email_imap_readonly import EmailSourceMessageMissing
 from app.email_store import (
     EMAIL_UNSUBSCRIBE_EFFECT_SQL,
     EMAIL_UNSUBSCRIBE_RECEIPT_LOCATOR_SQL,
@@ -637,6 +638,29 @@ def test_source_message_unavailable_is_not_retryable(tmp_path: Path) -> None:
     assert result["status"] == "failed"
     assert result["error"]["code"] == "unsubscribe_operation_rejected:ValueError"
     assert result["error"]["retryable"] is False
+
+
+def test_exact_source_absence_uses_bounded_retry_before_any_effect(tmp_path: Path) -> None:
+    operation, task, email_store, browser = _operation(tmp_path, [])
+
+    def missing_exact_source(*_args, **_kwargs):
+        raise EmailSourceMessageMissing("email source Message-ID is missing")
+
+    operation.resolve_entries = missing_exact_source
+
+    result = operation.execute(task.id)
+
+    assert result["status"] == "failed"
+    assert result["error"]["code"] == "email_provider_transient:EmailSourceMessageMissing"
+    assert result["error"]["retryable"] is True
+    assert browser.calls == []
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
+    with sqlite3.connect(email_store.path) as db:
+        marker = db.execute(
+            f"select value from ({state_projection('service_state')}) where key=?",
+            (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+        ).fetchone()
+    assert marker is None
 
 
 def test_transient_source_provider_timeout_is_retryable_before_execution_marker(
