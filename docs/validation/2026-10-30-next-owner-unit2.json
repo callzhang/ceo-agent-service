@@ -1,0 +1,253 @@
+{
+  "status": "final_review_and_copy_passed_standard_release_pending",
+  "checked_at": "2026-10-30T10:26:43.335101+00:00",
+  "implementation_head": "563a40633",
+  "source": {
+    "store": "2026-10-29.2",
+    "email": 54,
+    "schema_sha256": "f691c5e632c662948c94b8cc6112632d34331e57bbb58956d0422ea156382d02"
+  },
+  "target": {
+    "objects": 463,
+    "sha256": "6e3244bb571073026a3256b7cfbac6cd547477331e2d4f0fc37d37273275951e",
+    "fk": [],
+    "quick_check": "ok"
+  },
+  "schema_delta": {
+    "same_object_keys": true,
+    "source_objects": 463,
+    "target_objects": 463,
+    "changed_keys": [
+      [
+        "table",
+        "actions",
+        "actions"
+      ],
+      [
+        "trigger",
+        "trg_configs_direct_account_delete",
+        "configs"
+      ],
+      [
+        "trigger",
+        "trg_configs_direct_account_update",
+        "configs"
+      ],
+      [
+        "trigger",
+        "trg_emails_direct_action_blocks_plan_switch",
+        "emails"
+      ]
+    ],
+    "target_sha256": "6e3244bb571073026a3256b7cfbac6cd547477331e2d4f0fc37d37273275951e"
+  },
+  "copy": {
+    "foreign_key_findings": [],
+    "forward_inverse_reforward_facts_equal": true,
+    "native_cli_invoked": false,
+    "old_code": {
+      "action_id": 127452,
+      "cold_read_write_passed": true,
+      "receipt_id": 22433,
+      "store_and_email_constructors": true
+    },
+    "old_code_sha": "57c75b0c05b12153027fbd1ef9d384cec5385ed1",
+    "original_rows": 749748,
+    "original_tables": 48,
+    "real_sends": 0,
+    "synthetic": {
+      "action_id": 127451,
+      "classification_id": 9220938145839983094,
+      "email_id": 9220784336150632751,
+      "plan_id": "email-action-plan:e1686a99d68cf3f43445359cefd68166d809ed208dd36f80e6b4f1e0c8ae9b07",
+      "receipt_id": 22432
+    },
+    "watermarks_preserved": true,
+    "workers_started": false
+  },
+  "previous_copy_attempt": {
+    "result": "FAILED",
+    "cause": "Synthetic Plan ID did not match native immutable identity; fixed by native builder and separate classification current version pointer. Full round2 started from fresh production-derived copy; no validation disabled."
+  },
+  "tests": {
+    "focused_runs": [
+      121,
+      265,
+      17,
+      4
+    ],
+    "final_validator_and_release": 17,
+    "overlap": "Counts overlap; not a sum of distinct cases. Fixed2GiB10min per process.",
+    "spec": "PASS",
+    "quality": "PASS",
+    "whole_branch_review": "SPEC PASS; QUALITY PASS; zero open Important findings (b6123940b..e0aa4ab81)"
+  },
+  "query_profiles": {
+    "source": {
+      "claim_candidates": {
+        "milliseconds": [
+          8.736,
+          8.57,
+          8.741
+        ],
+        "rows": 17,
+        "error": null,
+        "index_steps": [
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "SEARCH a USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)",
+          "SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 (classification_id=?)"
+        ],
+        "scan_steps": []
+      },
+      "completed_12_same_ids": {
+        "milliseconds": [
+          101.75,
+          100.057,
+          100.017
+        ],
+        "rows": 10,
+        "error": null,
+        "index_steps": [
+          "SEARCH emails USING INDEX idx_emails_class_status (class_status=?)",
+          "SEARCH inputs USING COVERING INDEX sqlite_autoindex_email_classification_inputs_1 (stable_message_identity=?)",
+          "SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)",
+          "MULTI-INDEX OR",
+          "INDEX 1",
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "INDEX 2",
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)"
+        ],
+        "scan_steps": []
+      },
+      "account_guard": {
+        "milliseconds": [
+          7.535,
+          7.468,
+          7.369
+        ],
+        "rows": 0,
+        "error": null,
+        "index_steps": [
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)"
+        ],
+        "scan_steps": []
+      }
+    },
+    "target_original_cohort": {
+      "claim_candidates": {
+        "milliseconds": [
+          226.723,
+          7.656,
+          8.038
+        ],
+        "rows": 17,
+        "error": null,
+        "index_steps": [
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "SEARCH a USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)",
+          "SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 (classification_id=?)"
+        ],
+        "scan_steps": []
+      },
+      "completed_12_same_ids": {
+        "milliseconds": [
+          130.945,
+          119.542,
+          115.719
+        ],
+        "rows": 10,
+        "error": null,
+        "index_steps": [
+          "SEARCH emails USING INDEX idx_emails_class_status (class_status=?)",
+          "SEARCH inputs USING COVERING INDEX sqlite_autoindex_email_classification_inputs_1 (stable_message_identity=?)",
+          "SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)",
+          "MULTI-INDEX OR",
+          "INDEX 1",
+          "SEARCH a USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)",
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "INDEX 2",
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)"
+        ],
+        "scan_steps": []
+      },
+      "account_guard": {
+        "milliseconds": [
+          7.477,
+          7.214,
+          7.445
+        ],
+        "rows": 0,
+        "error": null,
+        "index_steps": [
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "SEARCH p EXISTS USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)"
+        ],
+        "scan_steps": []
+      }
+    },
+    "target_all_including_synthetic": {
+      "claim_candidates": {
+        "milliseconds": [
+          120.465,
+          8.254,
+          7.873
+        ],
+        "rows": 18,
+        "error": null,
+        "index_steps": [
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "SEARCH a USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)",
+          "SEARCH main.emails USING INDEX sqlite_autoindex_emails_1 (classification_id=?)"
+        ],
+        "scan_steps": []
+      },
+      "completed_12_same_ids": {
+        "milliseconds": [
+          123.557,
+          100.802,
+          94.614
+        ],
+        "rows": 10,
+        "error": null,
+        "index_steps": [
+          "SEARCH emails USING INDEX idx_emails_class_status (class_status=?)",
+          "SEARCH inputs USING COVERING INDEX sqlite_autoindex_email_classification_inputs_1 (stable_message_identity=?)",
+          "SEARCH tasks USING INDEX idx_tasks_claim_due (kind=?)",
+          "MULTI-INDEX OR",
+          "INDEX 1",
+          "SEARCH a USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)",
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "INDEX 2",
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)"
+        ],
+        "scan_steps": []
+      },
+      "account_guard": {
+        "milliseconds": [
+          6.771,
+          6.606,
+          6.588
+        ],
+        "rows": 0,
+        "error": null,
+        "index_steps": [
+          "SEARCH a USING INDEX idx_actions_email_public_key (record_type=?)",
+          "SEARCH p EXISTS USING INDEX idx_actions_email_email_action_plans_1 (email_action_plan_id=?)"
+        ],
+        "scan_steps": []
+      }
+    },
+    "boundary": "Target original-cohort claim excludes exact synthetic classification; other queries use same original IDs/account. Three timings are a bounded diagnostic, not a production throughput benchmark. No persistent index was added or removed."
+  },
+  "scope": {
+    "real_sends": 0,
+    "model_calls": 0,
+    "workers_started": false,
+    "native_cli_invoked": false,
+    "unit1": "Independently deployed and read back; see2026-10-30-next-owner-unit1.json.",
+    "ui_browser": "Previously disabled by Work settings; API readback required after release; no browser acceptance claimed."
+  },
+  "production": null,
+  "backup_cleanup": null,
+  "temporary_cleanup": null
+}

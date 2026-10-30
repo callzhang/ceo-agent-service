@@ -122,13 +122,14 @@ def create_direct_email_action(db, values):
         raise ValueError('direct email Action creation requires caller-owned transaction')
     if values['action_type'] not in {action.value for action in DIRECT_ACTIONS}:
         raise ValueError('only executable direct email operations have Action owners')
+    plan = _fetch(db, 'select actions_json from (' + email_projection('email_action_plans') + ') where action_plan_id=?',
+                  (values['action_plan_id'],))
+    if plan is None or values['action_type'] not in json.loads(plan['actions_json']):
+        raise ValueError('direct email Action requires the exact Plan and operation')
     fields = {
         'operation': values['action_type'],
-        'parameters_json': values['parameters_json'],
         'status': values['status'],
         'action_plan_id': values['action_plan_id'],
-        'classification_id': values['classification_id'],
-        'account_id': values['account_id'],
         'external_action_key': None,
         'next_attempt_at': values.get('next_attempt_at'),
         'started_at': values.get('started_at'),

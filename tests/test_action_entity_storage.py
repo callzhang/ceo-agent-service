@@ -40,7 +40,7 @@ def test_existing_action_schema_with_missing_children_is_rejected_without_repair
 def test_create_claim_result_uses_one_action():
     db = entity_db()
     created = create_action(db, values={
-        "operation": "send", "parameters_json": "{}", "status": "pending",
+        "operation": "send", "prepared_body": "{}", "status": "pending",
         "external_action_key": "effect-1", "created_at": "created",
         "updated_at": "updated",
     })
@@ -82,8 +82,8 @@ def test_one_effect_multiple_observers():
 
 def test_equal_body_different_effects_stay_distinct():
     db = entity_db()
-    left = create_action(db, values={"operation": "send", "parameters_json": '{"body":"same"}', "external_action_key": "effect-a"})
-    right = create_action(db, values={"operation": "send", "parameters_json": '{"body":"same"}', "external_action_key": "effect-b"})
+    left = create_action(db, values={"operation": "send", "prepared_body": '{"body":"same"}', "external_action_key": "effect-a"})
+    right = create_action(db, values={"operation": "send", "prepared_body": '{"body":"same"}', "external_action_key": "effect-b"})
     assert left["id"] != right["id"]
     assert left["external_action_key"] != right["external_action_key"]
 
@@ -201,11 +201,11 @@ def test_execution_slot_has_one_current_observation_but_provider_versions_remain
 
 def test_null_text_null_and_empty_json_remain_distinct():
     db = entity_db()
-    action = create_action(db, values={"operation": "send", "parameters_json": "null", "status": None})
+    action = create_action(db, values={"operation": "send", "prepared_body": "null", "status": None})
     null_receipt = append_action_receipt(db, action["id"], values={"provider_result_json": None})
     text_receipt = append_action_receipt(db, action["id"], values={"provider_result_json": "null"})
     empty_receipt = append_action_receipt(db, action["id"], values={"provider_result_json": "{}"})
-    assert get_action(db, action["id"])["parameters_json"] == "null"
+    assert get_action(db, action["id"])["prepared_body"] == "null"
     assert get_action(db, action["id"])["status"] is None
     values = [tuple(row) for row in db.execute(
         "select typeof(provider_result_json),provider_result_json from action_receipts where id in (?,?,?) order by id",

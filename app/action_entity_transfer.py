@@ -435,13 +435,27 @@ def _transfer_observers(db: sqlite3.Connection, facts: dict[str, list[dict]], se
 
 
 def _transfer_email(db: sqlite3.Connection, facts: dict[str, list[dict]]) -> None:
+    from app.action_storage import email_action_projection
+
     owners = {}
     receipts = {}
     for source in facts["email_actions"]:
+        rows = db.execute(
+            "select classification_id,account_id,coalesce(json_extract(action_parameters_json,'$.'||?), '{}'), actions_json, "
+            "json_type(action_parameters_json),json_type(action_parameters_json,'$.'||?) "
+            "from (" + email_action_projection('email_action_plans') + ") where action_plan_id=?",
+            (source['action_type'], source['action_type'], source['action_plan_id']),
+        ).fetchall()
+        if (len(rows) != 1 or source['action_type'] not in json.loads(rows[0][3])
+                or rows[0][4] != 'object' or rows[0][5] not in (None, 'object')
+                or any(type(actual) is not type(expected) or actual != expected
+                                 for actual, expected in zip(
+                                     (source['classification_id'], source['account_id'], source['parameters_json']),
+                                     rows[0][:3], strict=True))):
+            raise ValueError('historical Email Action differs from its exact Plan')
         action_id = create_action(db, values={
-            "action_plan_id": source["action_plan_id"], "classification_id": source["classification_id"],
-            "account_id": source["account_id"], "operation": source["action_type"],
-            "parameters_json": source["parameters_json"], "status": source["status"],
+            "action_plan_id": source["action_plan_id"], "operation": source["action_type"],
+            "status": source["status"],
             "next_attempt_at": source["next_attempt_at"], "started_at": source["started_at"],
             "created_at": source["created_at"], "updated_at": source["updated_at"],
         })["id"]

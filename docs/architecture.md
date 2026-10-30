@@ -9,7 +9,7 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 
 Attempt HTML／JSON详情只接受当前公开Attempt ID；不再把Actions物理ID转换成公开ID或重定向。History链接沿用公开身份。旧service-bugfix候选的生产／查询入口及DTO已退休，其唯一历史记录保留在原存储中，不形成当前待执行任务。同步outbox与跟进回执的应用读取只保留真实运行调用；单元测试使用测试目录内的当前投影窄查询，不在应用中保留测试专用DAO。
 
-当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-29.1／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
+当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-29.2／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
 
 ### 历史业务读取归一（2026-10-25）
 
@@ -2000,7 +2000,7 @@ OA pending scan query bounds are normalized to `Asia/Shanghai` before DWS applie
 
 An unchanged daily OA scan may revisit an approval whose prior review completed without a decision, so it remains visible to the reviewer. It must not reopen a terminally failed technical review for the same evidence and selected-Skill revision: doing so would rotate the reply-task execution generation and refund the Consumer/Audit retry budget. A new DWS evidence revision or selected-Skill revision starts a new review round with a fresh budget; a successful no-action review retains its normal daily revisit behavior.
 
-OA History reads adopted historical outcomes through the exact Attempt reference to its original body receipt and same-Action fact metadata. It does not decode retired provider response variants or historical executed-Audit output during a page read. The explicit Store28.5-to-29.1 release projects those existing conclusions once; original bodies remain byte-exact and referenced, and missing Task/Run/Audit/provider identities remain NULL. A fact projection is not a new verified execution receipt. Current verified execution, workflow ordering, conflicts and comment/terminal precedence retain their existing meaning. Current unknown facts remain unknown when schema inverse is followed by forward migration. A nonempty local body that differs from its referenced body rejects normalization before any write.
+OA History reads adopted historical outcomes through the exact Attempt reference to its original body receipt and same-Action fact metadata. It does not decode retired provider response variants or historical executed-Audit output during a page read. The completed historical Store28.5-to-29.1 release projected those existing conclusions once; that converter is no longer a current publication tool; original bodies remain byte-exact and referenced, and missing Task/Run/Audit/provider identities remain NULL. A fact projection is not a new verified execution receipt. Current verified execution, workflow ordering, conflicts and comment/terminal precedence retain their existing meaning. Current unknown facts remain unknown when schema inverse is followed by forward migration. A nonempty local body that differs from its referenced body rejects normalization before any write.
 
 History may reopen a skipped OA review only when fresh reviewer feedback exists and the prior Attempt remains unresolved, has no OA effect, and matches the same OA task. Once the Attempt has a resolution timestamp and resolution evidence, the History rerun entry and POST route stay closed even if the local task row is still `done` or `skipped`; this preserves verified terminal or superseding-source readback. A still-actionable OA review can be reconsidered through a new pending scan when its source evidence or selected Skill changes.
 
@@ -2329,6 +2329,9 @@ failed；已退休确认功能的 waiting_confirmation 不再进入 API 类型�
 Store29.1/Email54 的分类不保存 legacy_processed_without_plan，当前 processed 分类始终
 引用已持久化 ActionPlan；计划的 legacy_serialization_pre_v16 零值槽位及虚拟列也已移除。
 NULL authorization snapshot 和历史 category 仍是原有事实，计划 ID、正文来源及回执不改变。
-显式 Store28.5→29.1 发布先核实零值/NULL、固定 channel、可精确重建的重复输入身份，
-未知或非中性事实在修改前拒绝。当前数据 inverse 从现有 owner 重建这些已证明的中性
-副本，不另存旧正文；更早已关闭的 Feedback/微信缓存发布链退出当前发布入口。
+已完成的 Store28.5→29.1 发布曾核实零值/NULL、固定 channel 及重复输入身份，
+其转换器已退休；当前发布入口只支持 Store29.2→30.1。历史转换不另存旧正文。
+
+### 直接邮件 Action 的字段归属
+
+直接邮件 Action 以 Plan ID 和 operation 定位不可变 Plan；classification、account 和对应 operation 参数从该 Plan 投影，Action 本身只保存执行状态等自身事实。账号变更和分类计划切换的 processing 阻挡经相同 Plan 关联检查。Store29.2 到 Store30.1 发布对全部源值及类型作精确核对，逆迁按同一 Plan 还原；其他 Action、回执和 Attempt payload 保留。

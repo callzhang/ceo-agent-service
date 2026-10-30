@@ -478,7 +478,7 @@ def _definitions():
     )
     for short, kind, status, error in blockers:
         for event in ("update", "delete"):
-            identity_column = "action_account_id" if kind == "action" else "email_account_id"
+            identity_match = ("exists(select 1 from actions p where p.record_type='email_action_plans' and p.email_action_plan_id=a.action_action_plan_id and p.email_account_id=old.public_key)" if kind == "action" else "a.email_account_id=old.public_key")
             status_column = "action_status" if kind == "action" else "email_status"
             operations = (
                 " and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')"
@@ -488,7 +488,7 @@ def _definitions():
                 f"create trigger trg_configs_{short}_account_{event} "
                 f"before {event} on configs when old.record_type='email_accounts' "
                 "and exists(select 1 from actions a "
-                f"where a.record_type='{kind}' and a.{identity_column}=old.public_key{operations} "
+                f"where a.record_type='{kind}' and {identity_match}{operations} "
                 f"and a.{status_column}='{status}') "
                 f"begin select raise(abort,'{error}'); end"
             )

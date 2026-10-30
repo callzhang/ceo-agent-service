@@ -142,7 +142,7 @@ def email_metadata_declaration(*, metadata_owner: bool = False, action_owner: bo
         triggers = tuple(
             sql.replace(
                 "a.record_type='email_actions' and a.email_classification_id=old.classification_id and a.email_status='processing'",
-                "a.record_type='action' and a.action_classification_id=old.classification_id and a.action_status='processing' and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')",
+                "a.record_type='action' and exists(select 1 from actions p where p.record_type='email_action_plans' and p.email_action_plan_id=a.action_action_plan_id and p.email_classification_id=old.classification_id) and a.action_status='processing' and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')",
             ) if sql.startswith("create trigger trg_emails_direct_action_blocks_plan_switch ") else sql
             for sql in triggers
         )

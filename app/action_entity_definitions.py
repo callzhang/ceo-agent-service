@@ -5,14 +5,13 @@ from app.storage_payload import ACTION_RECORD_TYPES
 ACTION_KIND = "action"
 ACTION_KIND_CODE = ACTION_RECORD_TYPES.code(ACTION_KIND)
 ACTION_FIELDS = (
-    "operation", "parameters_json", "status", "action_plan_id", "classification_id",
-    "account_id", "external_action_key", "next_attempt_at", "started_at", "created_at",
+    "operation", "status", "action_plan_id", "external_action_key", "next_attempt_at", "started_at", "created_at",
     "updated_at", "prepared_body", "prepared_at", "delivery_channel", "delivery_key",
     "feedback_token", "postfix_version", "delivery_receipt_id", "conversation_id", "trigger_message_id", "recall_key",
     "prepared_receipt_id", "recall_status", "recall_error", "recalled_at", "agent_run_id", "business_object_key",
     "action_identity",
 )
-ACTION_INTEGER_FIELDS = frozenset({"classification_id", "agent_run_id", "delivery_receipt_id", "prepared_receipt_id"})
+ACTION_INTEGER_FIELDS = frozenset({"agent_run_id", "delivery_receipt_id", "prepared_receipt_id"})
 ACTION_ALLOWED_FIELDS = frozenset(ACTION_FIELDS)
 
 RECEIPT_FIELDS = (

@@ -1,0 +1,120 @@
+{
+  "status": "unit1_deployed_readback_passed",
+  "code_commits": [
+    "e944b6762",
+    "57c75b0c0"
+  ],
+  "tests": {
+    "focused_runs": [
+      47,
+      78,
+      6
+    ],
+    "spec": "PASS",
+    "quality": "PASS"
+  },
+  "gate": {
+    "passed": 8164,
+    "skipped": 2,
+    "deselected": 1,
+    "seconds": 486.24
+  },
+  "production": {
+    "checked_at": 1793353563.089864,
+    "installed": "57c75b0c05b12153027fbd1ef9d384cec5385ed1",
+    "frontend_tree": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "schema_current": true,
+    "schema_count": 463,
+    "schema_sha256": "f691c5e632c662948c94b8cc6112632d34331e57bbb58956d0422ea156382d02",
+    "schema_unchanged": true,
+    "fk": [],
+    "bugfix_rows": 3,
+    "bugfix_fact_sha256": "074fad361db23b4f066e3e623df24aee4d688fe48e6b4b5768249086d2f5179c",
+    "bugfix_facts_unchanged": true,
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.015
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.405
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.781
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.984,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.629,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&status=failed&include_chart=false",
+        "status": 200,
+        "seconds": 1.27,
+        "items": 5
+      },
+      {
+        "path": "/attempts/16429",
+        "status": 200,
+        "seconds": 0.004
+      },
+      {
+        "path": "/attempts/127430",
+        "status": 200,
+        "seconds": 0.003
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.573,
+        "receipt_id": 22414,
+        "provider_available": true
+      },
+      {
+        "path": "/api/console/history/127430",
+        "status": 404,
+        "seconds": 0.002
+      },
+      {
+        "path": "/api/console/history/16410",
+        "status": 200,
+        "seconds": 0.376,
+        "receipt_id": 22354,
+        "provider_available": true
+      },
+      {
+        "path": "/service-bugfix-candidates",
+        "status": 200,
+        "seconds": 0.003
+      }
+    ]
+  },
+  "production_listener_pid": 98934,
+  "html_contract": "SPA HTML shell returns200; public data API resolves only publicIDs, physical-only ID404; no conversion or redirect",
+  "scope": "Unit1 noDDL, no productiontesttasks or outboundreplay; Unit2 migration pending",
+  "backup_cleanup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3",
+    "inode": 840718752,
+    "mtime_ns": 1793353601919972456,
+    "size": 514969600,
+    "integrity": "ok",
+    "complete": true,
+    "schema_current": true,
+    "fk": [],
+    "deleted": true,
+    "predeployment_backup": "already_retired_by_verified_daily_backup_workflow"
+  }
+}
