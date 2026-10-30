@@ -1,5 +1,5 @@
 {
-  "status": "tasks1_3_review_passed_final_review_pending",
+  "status": "final_review_passed_standard_release_pending",
   "approved_tasks": [
     1,
     2,
@@ -10,7 +10,8 @@
     "5a2089750",
     "ae488a93b",
     "91a5fcc7e",
-    "256f2a34b"
+    "256f2a34b",
+    "c67a0d3ce"
   ],
   "per_task_review": {
     "task1": "SPEC PASS; QUALITY PASS",
@@ -62,7 +63,6 @@
   },
   "retired_symbol_application_scan_matches": 0,
   "pending": [
-    "finalwholebranchreview",
     "standardgate/deploy",
     "productionreadback",
     "verifiedbackup/tasktempcleanup"
@@ -75,5 +75,17 @@
     "fix_commit": "256f2a34b",
     "status": "closed_by_scopedreview"
   },
-  "lint_all_changed_python": "PASS"
+  "lint_all_changed_python": "PASS",
+  "final_review": {
+    "base": "d2ffd0a49",
+    "initial_head": "add8fd578",
+    "initial_result": "FunctionalSPEC PASS; QUALITY WithFixes; exactly1Important ProjectHTTPfile missingmanifest",
+    "fix_commit": "c67a0d3ce",
+    "final_result": "SPEC PASS; QUALITY PASS; ReadyYES;0openCritical/Important/Minor",
+    "fix": "Existingtests/test_web_api_task_project_summary.py appended once; noapp/gatemechanism/resourcepolicychange."
+  },
+  "rulings": [
+    "Ruling: Approved scope includes normal merge/push, one integrated standard deploy and postacceptance ownbackup/tempcleanup; no skip-quiet authorization thisround. Existing schema stays exact, so no schema migration/copy inverse is added — noDDL guarantee verified by fullcatalog/hash/FK; adding an unnecessary migration would increase risk and violate scope.",
+    "Ruling: For pure deadentry deletion/noobservable validStorebehavior change, preserve existing focused behavior baseline/green plus caller/static review, without adding source/hasattr-mirroring tests. Task3 changes observable JSON contract and must show meaningful RED/GREEN. This follows higher-priority test-scope instructions; if wrong the cost is missed regression, addressed by focused currentfact assertions and final standardgate."
+  ]
 }

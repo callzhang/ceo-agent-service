@@ -154,4 +154,4 @@ CASE WHEN record_type='project' THEN 'project' ELSE '' END
 
 ## 任务1–3本轮实现／审查
 
-5a2089750完成12个入口／DTO／helper退休及当前事实测试迁移；ae488a93b完成Email五组缺表及八处缺方法回退删除；91a5fcc7e与256f2a34b统一Project API／页面／decoder／当前dev mock职责读取。三项SPEC／QUALITY均通过；mock遗漏经实际middleware JSON RED／GREEN及限定复审关闭。当前完整声明463对象/hash与生产基线完全相同，没有DDL、版本、业务字段或anchor_type迁移。测试具体分组及首次失败／修正边界见[本轮验收记录](../../validation/2026-10-30-current-model-cleanup-release.json)。整分支审查、标准门禁／单次发布、生产读回与产物清理尚未完成；不把局部测试称为已上线。
+5a2089750完成12个入口／DTO／helper退休及当前事实测试迁移；ae488a93b完成Email五组缺表及八处缺方法回退删除；91a5fcc7e与256f2a34b统一Project API／页面／decoder／当前dev mock职责读取。三项SPEC／QUALITY均通过；mock遗漏经实际middleware JSON RED／GREEN及限定复审关闭。当前完整声明463对象/hash与生产基线完全相同，没有DDL、版本、业务字段或anchor_type迁移。测试具体分组及首次失败／修正边界见[本轮验收记录](../../validation/2026-10-30-current-model-cleanup-release.json)。整分支审查已通过：唯一门禁清单遗漏已由c67a0d3ce加入现成Project HTTP回归文件并经限定复审关闭。标准门禁／单次发布、生产读回与产物清理尚未完成；不把局部测试称为已上线。
