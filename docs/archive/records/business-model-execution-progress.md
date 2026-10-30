@@ -516,3 +516,7 @@ and exact current Store/Email release selection are covered by five focused
 in-memory tests. These results are local implementation evidence only: the
 current-data release was not executed; no production migration, push, deployment,
 or physical-size verification has occurred.
+
+### 2026-10-30 Attempt／Run 归属第二批收口
+
+Store29.2／Email54已随标准提交1e8d793ab上线并读回，当前事实owner、无Run独有事实及不同失败详情均保留。生产派生副本正逆迁移、真实旧代码冷启动读写、完整门禁8160PASS、历史指纹及回执读回完成；本轮备份和临时副本已清除。精确范围、首次失败与预算停止、浏览器设置关闭后的API验收边界见 [本轮验收](../../attempt-run-ownership-validation-20261029.md)。本记录不宣称全库最优、全仓零兼容或本轮真实模型业务验收。

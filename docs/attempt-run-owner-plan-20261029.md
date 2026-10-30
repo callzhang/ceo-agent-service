@@ -13,3 +13,7 @@ Rebuild actions with exact target declarations, preserving all stored columns/ty
 
 ## Task4: Validation and release
 RED/GREEN focused tests; latest production-derived copy forward; create new native tasks/runs/attempts and updates with substitute sends; inverse then real old-code cold start read/write, forward again; compare all required facts/types/references/sequences/FK. Standard fixed10min/2GB gate and coordinated deploy, read health/PID/queues/Attention/History/Attempt/session/results/receipts; validate then remove workflow backup and owned temporary artifacts, update docs/claim.
+
+## Completion
+
+All four tasks completed; standard release `1e8d793ab6ca7c1cd78147e648afa6f320de01b6`, natural quiet and Store29.2/Email54 production readback passed. Current-data inverse and real previous-code cold read/write passed on a production-derived copy. Workflow backup and task-owned temporary artifacts removed after verification. Exact evidence and test/release failures retained in [validation](attempt-run-ownership-validation-20261029.md). No full-library optimality claim or native-model/outbound acceptance claim.

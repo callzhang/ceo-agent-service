@@ -19,10 +19,18 @@ Email、定时及消息三类终结调用已切换到单一摘要与Run身份；
 - 正向后新增合成Task、Consumer／Audit Run、Attempt及替身Action／Receipt；逆迁后真正检出旧提交597da9f0e的独立进程冷启动，读出新Attempt和回执，新增无Run且原因／失败详情不同的Attempt，再正向读取一致。没有原生CLI或模型调用、worker或真实外发；这是存储／冷启动验收，不冒充真实模型业务链路。
 - 最后收紧规范类型去重资格后，副本中已规范引用的非规范Run数量为0，原副本验证集合不受影响；新增类型回归及4个正逆迁移单元另行通过。
 
-完整发布门禁第一次在09b27acde结束为8149通过、10失败、2跳过、1 deselected，用时402.76秒，未变更生产。5个History／副本页面失败共用SQL文本拆分根因：旧History构造器按`union all`拆字符串，误拆了新来源投影内部的标量复合查询；需改为显式顶层分支。另1个Signal冻结摘要仍绑定旧Actions声明，逐对象证实只有Actions变化后更新；4个邮件异常断言由独立修复负责人细分为missing子类与真实歧义，保留身份和不读取正文断言。合并后邮件两文件248项通过，Signal当前声明与owner文件9项通过。History改为显式来源分支后，owner／正逆迁移／History／Signal六文件25项通过（14.26秒）。
+完整发布门禁第一次在09b27acde结束为8149通过、10失败、2跳过、1 deselected，用时402.76秒，未变更生产。5个History／副本页面失败共用SQL文本拆分根因：旧History构造器按`union all`拆字符串，误拆了新来源投影内部的标量复合查询；已改为显式顶层分支。另1个Signal冻结摘要仍绑定旧Actions声明，逐对象证实只有Actions变化后更新；4个邮件异常断言由独立修复负责人细分为missing子类与真实歧义，保留身份和不读取正文断言。合并后邮件两文件248项通过，Signal当前声明与owner文件9项通过。History改为显式来源分支后，owner／正逆迁移／History／Signal六文件25项通过（14.26秒）。
 
 ## 发布与清理
 
-待标准完整门禁、发布及生产读回。仍需核对版本、PID、health、队列、Attention、History分页／筛选、关联与无Run的Attempt／session／结果／回执，并在验证备份后清理本轮产物。不得将当前本地通过称为已上线。
+2026-10-30 已标准部署 `1e8d793ab6ca7c1cd78147e648afa6f320de01b6`，实际监听PID34124，health200。第二次门禁在固定600秒停止（无已观察断言失败），未部署；定向28项性能检查未发现足以解释超时的History退化。第三次同一提交完整门禁416文件，8160通过、2跳过、1按既有live规则未运行，用时541.93秒，未提高预算、未减少检查。标准部署自然等到安静窗口完成，未skip、未人为中断或重派业务。
+
+生产Store29.2／Email54、463对象逐项精确匹配当前声明，schema SHA256为 `f691c5e632c662948c94b8cc6112632d34331e57bbb58956d0422ea156382d02`，FK异常为空。前端构建stamp与实际提交frontend tree相同。四类历史Attempt4385／4823／1／18的完整投影值及Python类型指纹与迁移前完全相同；唯一事实与不同失败详情保留。生产自然写入的新Attempt16416读取正常；历史Attempt16410的执行回执22354及provider回执可用。
+
+health、Attention、Workers、History第一页／第二页／failed筛选，以及上述历史详情API全部200。实际浏览器打开4385详情，能读摘要且原生过程缺失明确显示不可用；History加载后点击第二页显示21–40，再点击失败复选框，URL与记录发生相应变化。随后Local browser设置被关闭，因此无Run及其余详情使用只读API核验，不将未完成的额外浏览器访问标成通过。未创建生产测试任务、未触发真实发送。
+
+清理前对本次最新备份持目录锁重新验证integrity_check=ok、CEOB完成标记、当前schema、Store29.2／Email54、FK[]，连接已关闭且lsof无引用，再核对inode／mtime／size代次并删除。精确备份、旧代码临时worktree、本轮 `/private/tmp/ceo-attempt-run-owner.9bTFRE`（893412798字节）及本轮SDD临时目录（256470字节）均已不存在；生产库和原生trajectory保留。备份删除发生在读回后，不计为业务数据库模型容量收益。
+
+独立邮件修复仅合并负责人指定的来源读取及回归提交，未引入其另外四个旧本地提交。下一项Quality独立修复仍由负责人处理，不属于本轮模型归属范围。
 
 机器记录：[验收JSON](validation/2026-10-29-attempt-run-ownership.json)。

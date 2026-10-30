@@ -1,5 +1,5 @@
 {
-  "status": "copy_and_review_passed_release_pending",
+  "status": "deployed_readback_and_cleanup_complete",
   "baseline_commit": "597da9f0e702527fc18fe1365dc271d81ff26e08",
   "source_store": "2026-10-29.1",
   "target_store": "2026-10-29.2",
@@ -172,6 +172,15 @@
     "round3_history_owner_and_release": {
       "passed": 25,
       "seconds": 14.26
+    },
+    "bounded_history_profile": {
+      "passed": 28,
+      "seconds": 14.71,
+      "no_explanatory_regression_found": true
+    },
+    "email_exact_location": {
+      "passed": 6,
+      "seconds": 1.56
     }
   },
   "review": {
@@ -209,6 +218,197 @@
         "Signal full-catalog digest still bound to previous Actions declaration",
         "Email exact-source assertion did not distinguish missing from ambiguity"
       ]
+    },
+    {
+      "commit": "1e8d793ab6ca7c1cd78147e648afa6f320de01b6",
+      "gate": "fixed_600s_budget_stop",
+      "node": "tests/test_scheduled_agent_consumer.py::test_scheduled_audit_is_read_only_and_system_executor_owns_actions",
+      "production_changed": false
+    },
+    {
+      "commit": "1e8d793ab6ca7c1cd78147e648afa6f320de01b6",
+      "gate": {
+        "passed": 8160,
+        "skipped": 2,
+        "deselected": 1,
+        "seconds": 541.93,
+        "files": 416
+      },
+      "quiet": "natural_no_skip_no_interruption",
+      "deployed": true
     }
-  ]
+  ],
+  "production": {
+    "checked_at": 1793343525.68322,
+    "installed": "1e8d793ab6ca7c1cd78147e648afa6f320de01b6",
+    "frontend_tree": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "schema_count": 463,
+    "schema_matches_current": true,
+    "schema_sha256": "f691c5e632c662948c94b8cc6112632d34331e57bbb58956d0422ea156382d02",
+    "store": "2026-10-29.2",
+    "email": 54,
+    "fk": [],
+    "selected": {
+      "linked_equal": {
+        "attempt_id": 4385,
+        "typed_sha256": "ac121aa7957cdc11f738dfb019290b369c126b644aed6a9f13d7fe9053ecbc7d",
+        "matches_before": true
+      },
+      "linked_different": {
+        "attempt_id": 4823,
+        "typed_sha256": "3be0973e853024de91cfeda2486207528c708d254a578ae1dc094dcdfaee716c",
+        "matches_before": true
+      },
+      "no_run_unique": {
+        "attempt_id": 1,
+        "typed_sha256": "782f9a259ee63766d817fcb3d9b742828170381d4fd71a39484d6b06b36caa88",
+        "matches_before": true
+      },
+      "distinct_failure": {
+        "attempt_id": 18,
+        "typed_sha256": "fda58d13ff747093f163536b603c8e33940b553cebc510edce6081134b010fd3",
+        "matches_before": true
+      }
+    },
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.02
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.238
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.67
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.895,
+        "items": 5,
+        "ids": [
+          "127324",
+          "400749",
+          "16416",
+          "16408",
+          "127332"
+        ]
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.26,
+        "items": 5,
+        "ids": [
+          "127320",
+          "16415",
+          "127328",
+          "127326",
+          "127312"
+        ]
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&status=failed&include_chart=false",
+        "status": 200,
+        "seconds": 1.502,
+        "items": 5,
+        "ids": [
+          "400738",
+          "400725",
+          "16400",
+          "16262",
+          "16195"
+        ]
+      },
+      {
+        "path": "/api/console/history/4385",
+        "status": 200,
+        "seconds": 0.136
+      },
+      {
+        "path": "/api/console/history/4823",
+        "status": 200,
+        "seconds": 0.071
+      },
+      {
+        "path": "/api/console/history/1",
+        "status": 200,
+        "seconds": 0.374
+      },
+      {
+        "path": "/api/console/history/18",
+        "status": 200,
+        "seconds": 0.161
+      }
+    ],
+    "listener_pid": 34124
+  },
+  "extra_readback": {
+    "16410": {
+      "status": 200,
+      "delivery_receipt_id": 22354,
+      "provider_receipt_available": true
+    },
+    "16416": {
+      "status": 200,
+      "delivery_receipt_id": null,
+      "provider_receipt_available": null
+    },
+    "1": {
+      "status": 200,
+      "delivery_receipt_id": 2523,
+      "provider_receipt_available": false
+    },
+    "18": {
+      "status": 200,
+      "delivery_receipt_id": 2527,
+      "provider_receipt_available": false
+    }
+  },
+  "backup_verification": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+    "inode": 840355923,
+    "mtime_ns": 1793343642218376109,
+    "size": 514969600,
+    "integrity": "ok",
+    "complete": true,
+    "store": "2026-10-29.2",
+    "email": 54,
+    "fk": [],
+    "current_schema": true,
+    "source_schema": false
+  },
+  "ui": {
+    "attempt_4385": "rendered_summary_and_explicit_native_record_unavailable",
+    "history": "loaded",
+    "pagination": "clicked_page2_21_to40",
+    "failed_filter": "clicked_checked_failure_and_rows_changed",
+    "remaining_detail_browser": "local_browser_disabled_by_settings",
+    "remaining_detail_api": "all_selected_and_receipt_200"
+  },
+  "cleanup": {
+    "backup_deleted": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+    "verified_generation_deleted": true,
+    "old_code_worktree_removed": true,
+    "temporary_paths": [
+      {
+        "path": "/private/tmp/ceo-attempt-run-owner.9bTFRE",
+        "deleted": true,
+        "bytes": 893412798
+      },
+      {
+        "path": "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/.superpowers/sdd/attempt-run-owner-plan-20261029",
+        "deleted": true,
+        "bytes": 256470
+      }
+    ],
+    "production_database_preserved": true,
+    "native_trajectories_preserved": true
+  }
 }
