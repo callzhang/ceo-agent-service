@@ -19,15 +19,15 @@
 - Partial label/missing action list does not override applicable criteria.
 - Genuine missing material/policy and task authority still block unsupported approval.
 - Read-only/terminal source remains no_action; no fixed notification/comment invented.
-- Concurrent source/config changes cannot be silently overwritten during publication.
+- Observe current source/config immediately before save and preserve unrelated bytes in readback. Native Settings remains last-write-wins; do not claim CAS protection or add an unapproved concurrency mechanism.
 
 ### Task 1: Default rule and focused validation
 **Files:** app/defaults/audit_rules.md rule14; tests/test_audit_rules.py OA default test; tests/test_audit_rule14_settings.py if needed; scoped architecture/runtime docs.
 **Interfaces:** consumes approved exact replacement; produces reviewed default paragraph and focused tests.
-- [ ] Update the old default-OA composition test; run and observe the intended RED against old rule14.
-- [ ] Replace only numbered rule14 with approved text. Run focused rule/render/settings tests GREEN; preserve all other rule bytes.
-- [ ] Compare fixed anonymous Audit controls with identical facts/Consumer candidates/model/settings under old/new rule14. Inspect all outcomes; no raw real data sent to model.
-- [ ] Update current documentation and commit scoped changes.
+- [x] Update the old default-OA composition test; run and observe the intended RED against old rule14.
+- [x] Replace only numbered rule14 with approved text. Run focused rule/render/settings tests GREEN; preserve all other rule bytes.
+- [x] Compare fixed anonymous Audit controls with identical facts/Consumer candidates/model/settings under old/new rule14. Inspect all outcomes; no raw real data sent to model.
+- [x] Update current documentation and commit scoped changes.
 
 ### Task 2: Review, publish and read back
 **Interfaces:** consumes tested source/default paragraph; produces current live custom/default/rendered equality and lifecycle/provider receipts.
