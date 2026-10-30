@@ -88,6 +88,8 @@ pending -> processing -> done
 Attempt History 的“需要你处理/选择处理方式”只对应当前可操作的 `needs_human` 规则候选。
 当前 `failed` 即使重试耗尽，也继续显示为执行失败，提供重试或技术详情；不得把技术失败、
 候选绑定错误或外部执行错误伪装成业务规则决策，也不得提供“人工处理/暂不处理”作为替代决策。
+质量扫描只将关联当前 execution generation 且 Task 仍为 `needs_human` 的 Attempt 计入当前 Attention
+或质量违规。Task 已为 `done`、`skipped` 或 `failed` 时，旧 Attempt 留在 History，不再作为当前人工决策。
 
 如果 DingTalk trigger 引用了本服务通过 provider 回执确认已发送的 Agent 消息，Consumer context 会携带结构化来源标志；此类 Agent 发起的续接/恢复任务不得进入 `needs_human`。该标志以 conversation、quoted message ID 与成功发送状态回读匹配，不靠正文签名猜测；Consumer 生成校验与 Audit 独立复核都会拒绝该升级，要求 Agent 自主判断、补充有边界的 proposal 或向事实来源方 ask-back。
 

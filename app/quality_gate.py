@@ -576,8 +576,13 @@ def _check_structured_needs_human(
               and a.reviewed_at is null
               and trim(coalesce(a.resolved_at, ''))=''
               and exists (
-                  select 1 from ({REPLY_TASK_SQL}) current_task
-                  where current_task.channel=a.channel
+                  select 1
+                  from ({NATIVE_AGENT_RUN_SQL}) current_run
+                  join ({REPLY_TASK_SQL}) current_task
+                    on current_task.id=current_run.reply_task_id
+                   and current_task.execution_generation=current_run.execution_generation
+                  where current_run.id=a.agent_run_id
+                    and current_task.channel=a.channel
                     and current_task.conversation_id=a.conversation_id
                     and current_task.trigger_message_id=a.trigger_message_id
                     and lower(current_task.status)='needs_human'

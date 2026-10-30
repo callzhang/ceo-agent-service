@@ -930,7 +930,7 @@ def test_quality_gate_ignores_dry_run_when_done_task_has_no_unknown_effect(tmp_p
     assert not [item for item in report.violations if item.code == "recent_dry_run"]
 
 
-def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp_path):
+def test_quality_gate_ignores_unbound_needs_human_attempt_for_current_task(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
         _insert_canonical_reply_task(
@@ -953,7 +953,7 @@ def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp
     report = scan_hourly_quality(store.path, now=NOW)
 
     assert not any(item.code == "needs_human" for item in report.attention)
-    assert any(item.code == "invalid_needs_human_result" for item in report.violations)
+    assert not any(item.code == "invalid_needs_human_result" for item in report.violations)
 
 
 def test_quality_gate_excludes_reviewed_needs_human_attempt(tmp_path):

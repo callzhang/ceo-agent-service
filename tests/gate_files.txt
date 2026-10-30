@@ -415,3 +415,4 @@ tests/test_email_dws_recovery.py
 tests/test_email_history_subject.py
 tests/test_email_original_location.py
 tests/test_meeting_claim_sql_budget.py
+tests/test_quality_gate_current_task.py
