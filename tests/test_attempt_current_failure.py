@@ -111,8 +111,7 @@ def test_reconciled_execution_does_not_keep_showing_the_old_current_failure(tmp_
         run_id=audit.id, task_status="failed", task_error="external_action_uncertain", available_at="",
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
-        trigger_text=task.trigger_text, codex_reason="Previous verification pending", codex_session_id="",
-        codex_transcript_start_line=0, codex_transcript_end_line=0, audit_tool_events_json="[]",
+        trigger_text=task.trigger_text, audit_tool_events_json="[]",
         audit_summary="Previous verification pending", send_status="failed",
         send_error="external_action_uncertain", channel="dingtalk",
     )

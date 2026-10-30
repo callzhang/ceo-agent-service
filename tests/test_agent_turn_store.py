@@ -2265,36 +2265,3 @@ def test_audit_revision_does_not_resume_noncontinuable_prior_session(tmp_path):
     ).run
 
     assert audit_1.codex_session_id == ""
-
-
-def test_clear_agent_run_session_targets_one_turn(tmp_path):
-    store = AutoReplyStore(tmp_path / "turns.sqlite3")
-    task = _task(store)
-    consumer = _claim_consumer(store, task).run
-    consumer = store.set_agent_run_session(
-        consumer.id,
-        "consumer-session",
-        owner="consumer",
-    )
-    audit = store.claim_agent_run(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-        parent_agent_run_id=consumer.id,
-        operation_id="operation-0",
-        owner="audit",
-    ).run
-    store.set_agent_run_session(audit.id, "audit-session", owner="audit")
-
-    assert store.clear_agent_run_session(
-        task.id,
-        task.execution_generation,
-        role=AgentRole.AUDIT,
-        proposal_revision=0,
-        turn_attempt=0,
-    ) == 1
-
-    assert store.get_agent_run(consumer.id).codex_session_id == "consumer-session"
-    assert store.get_agent_run(audit.id).codex_session_id == ""

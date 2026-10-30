@@ -87,12 +87,12 @@ def prepare_database_schema_release(root: Path, path: Path, *, recovery_source_p
             email_version = (db.execute(
                 "select max(version) from main.email_schema_migrations"
             ).fetchone()[0] if "email_schema_migrations" in tables else None)
-        from app.email_field_retirement_release import (
-            SOURCE_STORE_VERSION as EMAIL_FIELD_SOURCE_STORE_VERSION,
-            prepare_email_field_retirement_release,
+        from app.attempt_run_ownership_release import (
+            SOURCE_STORE_VERSION as ATTEMPT_OWNER_SOURCE_STORE_VERSION,
+            prepare_attempt_run_ownership_release,
         )
-        if marker == (EMAIL_FIELD_SOURCE_STORE_VERSION,) and email_version == CURRENT_EMAIL_VERSION:
-            return prepare_email_field_retirement_release(path)
+        if marker == (ATTEMPT_OWNER_SOURCE_STORE_VERSION,) and email_version == CURRENT_EMAIL_VERSION:
+            return prepare_attempt_run_ownership_release(path)
         if not tables:
             require_current_pair(path)
             return None

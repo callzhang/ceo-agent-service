@@ -332,9 +332,6 @@ class ScheduledAgentConsumer:
             conversation_title=task.conversation_title,
             trigger_message_id=task.trigger_message_id,
             trigger_sender=task.trigger_sender, trigger_text=task.trigger_text,
-            codex_reason=result.summary, codex_session_id=final_run.codex_session_id,
-            codex_transcript_start_line=final_run.transcript_start_line,
-            codex_transcript_end_line=final_run.transcript_end_line,
             audit_tool_events_json=json.dumps(final_run.tool_events),
             audit_summary=result.summary,
             human_decision_options_json=json.dumps(

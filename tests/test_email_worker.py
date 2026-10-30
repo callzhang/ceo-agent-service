@@ -8991,6 +8991,8 @@ def test_deferred_orchestration_result_requeues_the_email_task():
 
 
 def test_bare_authorization_required_result_is_failed():
+    from unittest.mock import create_autospec
+    from app.store import AutoReplyStore
     module = _module()
     task = SimpleNamespace(
         id=7,
@@ -9020,8 +9022,6 @@ def test_bare_authorization_required_result_is_failed():
             assert run_id == 70
             return run
 
-        def finalize_orchestrated_reply_task(self, **kwargs):
-            captured.update(kwargs)
 
     result = SimpleNamespace(
         status="failed_terminal",
@@ -9030,7 +9030,12 @@ def test_bare_authorization_required_result_is_failed():
         error=SimpleNamespace(code="authorization_required", authorization_required=True),
     )
 
-    module._finalize_email_task(Store(), task, result)
+    store = Store()
+    store.finalize_orchestrated_reply_task = create_autospec(
+        AutoReplyStore.finalize_orchestrated_reply_task.__get__(store, AutoReplyStore),
+        side_effect=lambda **kwargs: captured.update(kwargs),
+    )
+    module._finalize_email_task(store, task, result)
 
     assert captured["task_status"] == "failed"
     assert captured["send_status"] == "failed"

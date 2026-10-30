@@ -33,8 +33,8 @@ def test_both_current_schema_roles_preserve_exact_catalogs():
     from app.current_schema_manifest import current_objects
 
     for email_ledger, count, digest in (
-        (False, 462, '2a30a7801c7148b290e917a7c3df8a45a155068710f130b4a61f7d20ff548c96'),
-        (True, 463, '271003d51b40fa61a86fc2ff631df5138124c29b946787e8e875341aceef3758'),
+        (False, 462, 'e941d52e2e780563c1da67215b660884bb052c243bd605409a1d4d5fa1d77c2f'),
+        (True, 463, 'f691c5e632c662948c94b8cc6112632d34331e57bbb58956d0422ea156382d02'),
     ):
         objects = current_objects(email_ledger=email_ledger)
         assert len(objects) == count
@@ -104,11 +104,11 @@ hits = []
 original_read_bytes = Path.read_bytes
 original_read_text = Path.read_text
 def checked_read_bytes(path):
-    if path.name in {"store28_5_email54_catalog.json"}:
+    if path.name in {"store29_1_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_bytes(path)
 def checked_read_text(path, *args, **kwargs):
-    if path.name in {"store28_5_email54_catalog.json"}:
+    if path.name in {"store29_1_email54_catalog.json"}:
         raise AssertionError("historical source catalog loaded by current Store")
     return original_read_text(path, *args, **kwargs)
 Path.read_bytes = checked_read_bytes

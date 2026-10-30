@@ -1,0 +1,184 @@
+{
+  "status": "copy_and_review_passed_release_pending",
+  "baseline_commit": "597da9f0e702527fc18fe1365dc271d81ff26e08",
+  "source_store": "2026-10-29.1",
+  "target_store": "2026-10-29.2",
+  "email_version": 54,
+  "initial_historical_audit": {
+    "counts": {
+      "attempts": 15819,
+      "action:send_reply": 1912,
+      "no_run": 10091,
+      "no_run_reason_bytes": 1518875,
+      "no_run_audit_bytes": 1707283,
+      "no_run_summary_equal": 8328,
+      "action:no_reply": 1221,
+      "no_run_summary_different": 1763,
+      "no_run_summary_diff_audit_empty": 26,
+      "action:handoff_to_human": 193,
+      "action:stop_with_error": 176,
+      "no_run_summary_diff_both_nonempty": 1735,
+      "action:ask_clarifying_question": 144,
+      "action:oa_approval": 139,
+      "no_run_summary_diff_reason_empty": 2,
+      "action:okr_review": 24,
+      "action:skipped": 2,
+      "action:blocked": 18,
+      "action:memory_write": 122,
+      "action:dws_message_reaction": 65,
+      "action:send_reply_repair": 1,
+      "action:calendar_response": 4,
+      "action:agent_run": 6578,
+      "linked": 5728,
+      "provenance_equal": 3934,
+      "linked_reason_bytes": 969369,
+      "linked_audit_bytes": 1021062,
+      "linked_summary_equal": 4919,
+      "provenance_different": 1794,
+      "provenance_diff:session": 688,
+      "provenance_diff:start,end": 41,
+      "provenance_diff:end": 1038,
+      "linked_summary_different": 809,
+      "linked_summary_diff_both_nonempty": 809,
+      "provenance_diff:session,start,end": 2,
+      "provenance_diff:start": 1,
+      "provenance_diff:session,end": 23,
+      "provenance_diff:session,start": 1,
+      "action:runtime_failure": 40,
+      "action:calendar_reconciliation": 1,
+      "action:scheduled_command": 1,
+      "action:direct_unsubscribe": 5164,
+      "action:scheduled_preflight": 14
+    },
+    "difference_ids": {
+      "provenance_diff:session": [
+        4823,
+        4824,
+        4825,
+        4965,
+        4966,
+        4967,
+        4973,
+        4974
+      ],
+      "provenance_diff:start,end": [
+        4835,
+        4838,
+        4839,
+        4962,
+        5040,
+        5061,
+        5064,
+        5066
+      ],
+      "provenance_diff:end": [
+        4868,
+        4870,
+        4912,
+        4914,
+        4917,
+        4918,
+        4919,
+        4921
+      ],
+      "provenance_diff:session,start,end": [
+        5279,
+        5305
+      ],
+      "provenance_diff:start": [
+        5280
+      ],
+      "provenance_diff:session,end": [
+        5306,
+        6633,
+        6837,
+        7089,
+        7183,
+        7202,
+        7741,
+        7742
+      ],
+      "provenance_diff:session,start": [
+        5309
+      ]
+    }
+  },
+  "raw_eligibility": {
+    "reason_raw_same": 13247,
+    "provenance_raw_exact": 3920
+  },
+  "schema_delta": {
+    "changed_objects": [
+      [
+        "table",
+        "actions",
+        "actions"
+      ]
+    ],
+    "source_count": 463,
+    "target_count": 463
+  },
+  "copy": {
+    "forward_original_fingerprints_equal": true,
+    "inverse_original_fingerprints_equal": true,
+    "reforward_original_fingerprints_equal": true,
+    "allocation_watermarks_preserved": true,
+    "original_tables": 49,
+    "original_rows": 748166,
+    "foreign_key_findings": [],
+    "synthetic": {
+      "task_id": 417916,
+      "consumer_run_id": 400720,
+      "audit_run_id": 400721,
+      "attempt_id": 16408,
+      "action_id": 127295,
+      "receipt_id": 22338
+    },
+    "old_code": {
+      "cold_attempt_id": 16409,
+      "source_read_write_passed": true
+    },
+    "real_sends": 0,
+    "workers_started": false,
+    "native_cli_invoked": false
+  },
+  "tests": {
+    "core": {
+      "passed": 70,
+      "seconds": 30.32
+    },
+    "current_sqlite_behavior": {
+      "passed": 66,
+      "seconds": 11.44
+    },
+    "current_declarations": {
+      "passed": 7,
+      "seconds": 2.58
+    },
+    "review_round2_ownership": {
+      "passed": 6
+    },
+    "review_round2_release": {
+      "passed": 4
+    }
+  },
+  "review": {
+    "spec": "PASS",
+    "quality": "PASS",
+    "closed_findings": [
+      "actual Email/Cron finalizer signatures",
+      "public NULL vs internal reference representation",
+      "SQLite comparison affinity",
+      "noncanonical Run owner JSON encoding",
+      "frozen target catalog digests"
+    ],
+    "retired_dead_mutator": "clear_agent_run_session"
+  },
+  "validation_boundary": {
+    "real_native_cli": false,
+    "models": false,
+    "real_sends": 0,
+    "old_code_cold_process": true,
+    "copy_refinement": "Added canonical owner type restriction; verified 0 existing normalized references to noncanonical Run values, plus new BLOB/REAL/nonnumeric regression cases"
+  }
+}

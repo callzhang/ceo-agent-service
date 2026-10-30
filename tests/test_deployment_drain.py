@@ -473,12 +473,12 @@ def test_direct_email_reply_claim_is_paused_and_counted_before_runtime(
 def test_quiet_rejects_unsupported_store_marker_without_writes(tmp_path):
     import sqlite3
     import pytest
-    from tests.support.store28_5_source import create_store28_5_source
+    from tests.support.store29_1_source import create_store29_1_source
     from app.repository_updater import in_flight_work
 
     path = tmp_path / "unsupported.db"
     with sqlite3.connect(path) as db:
-        create_store28_5_source(db)
+        create_store29_1_source(db)
         db.execute("update state set payload_json=json_set(payload_json,'$.value','synthetic-unsupported') "
                    "where record_type='service_state' and legacy_key='1'")
     before = path.read_bytes()
@@ -555,17 +555,17 @@ def test_quiet_excludes_only_superseded_runtime_without_live_ownership(
     assert in_flight_work(store.path) == expected
 
 
-def test_quiet_reads_previous_store_285_source_and_counts_running_reply_run(tmp_path):
+def test_quiet_reads_previous_store_291_source_and_counts_running_reply_run(tmp_path):
     import sqlite3
 
     from app.repository_updater import in_flight_work
     from app.task_entity_storage import append_task_input, bind_current_input, create_task
     from app.run_entity_storage import create_run
-    from tests.support.store28_5_source import create_store28_5_source
+    from tests.support.store29_1_source import create_store29_1_source
 
-    path = tmp_path / "store-285.sqlite3"
+    path = tmp_path / "store-291.sqlite3"
     with sqlite3.connect(path) as source_db:
-        create_store28_5_source(source_db)
+        create_store29_1_source(source_db)
     assert in_flight_work(path) == 0
 
     with sqlite3.connect(path) as db:
@@ -599,18 +599,18 @@ def test_quiet_reads_previous_store_285_source_and_counts_running_reply_run(tmp_
 @pytest.mark.parametrize(
     "damage", ["schema_object", "email_version_53", "empty_email_ledger"]
 )
-def test_quiet_rejects_damaged_store_285_source_without_writes(tmp_path, damage):
+def test_quiet_rejects_damaged_store_291_source_without_writes(tmp_path, damage):
     import sqlite3
 
     from app.repository_updater import in_flight_work
-    from tests.support.store28_5_source import create_store28_5_source
+    from tests.support.store29_1_source import create_store29_1_source
 
-    path = tmp_path / "damaged-store-285.sqlite3"
+    path = tmp_path / "damaged-store-291.sqlite3"
     with sqlite3.connect(path) as source_db:
-        create_store28_5_source(source_db)
+        create_store29_1_source(source_db)
     with sqlite3.connect(path) as db:
         if damage == "schema_object":
-            from app.email_field_retirement_release import source_objects
+            from app.attempt_run_ownership_release import source_objects
 
             _kind, name, _owner, _sql = next(
                 obj for obj in source_objects() if obj[0] == "index"

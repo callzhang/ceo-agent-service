@@ -2129,3 +2129,35 @@ def test_report_seed_migrates_exact_default_prompt_and_copy_preserving_run(
         )
         == edited
     )
+
+
+def test_scheduled_terminal_run_uses_current_finalizer_signature(monkeypatch):
+    from types import SimpleNamespace
+    from unittest.mock import create_autospec
+    from app.agent_cron import consumer as module
+    import app.task_artifacts
+
+    task = SimpleNamespace(id=1, execution_generation='generation', channel='scheduled',
+        status='processing', trigger_message_json='{}', conversation_id='c',
+        conversation_title='title', trigger_message_id='m', trigger_sender='s', trigger_text='input')
+    run = SimpleNamespace(id=7, tool_events=[], codex_session_id='', transcript_start_line=0,
+                          transcript_end_line=0, snapshot=SimpleNamespace(notify_on_completion=False))
+    result = SimpleNamespace(status='no_action', error=SimpleNamespace(code=''), final_run_id=7,
+                             summary='done', consumer_result=None)
+    store = SimpleNamespace(get_reply_task=lambda _: task,
+        get_reply_task_for_execution=lambda *_: task,
+        get_scheduled_task_run_for_reply_execution=lambda _: SimpleNamespace(dispatch_status='dispatched', snapshot=run.snapshot),
+        get_agent_run=lambda _: run)
+    store.finalize_orchestrated_reply_task = create_autospec(
+        AutoReplyStore.finalize_orchestrated_reply_task.__get__(store, AutoReplyStore))
+    built = SimpleNamespace(context=object())
+    monkeypatch.setattr(module.ScheduledAgentContext, 'from_execution_json', lambda *args, **kwargs: built)
+    monkeypatch.setattr(module, 'validate_scheduled_execution_availability', lambda *_: None)
+    monkeypatch.setattr(app.task_artifacts, 'cleanup_terminal_task_artifacts', lambda *_: None)
+    guard = SimpleNamespace(assert_current=lambda _: None)
+    orchestrator = SimpleNamespace(process=lambda *args, **kwargs: result)
+    consumer = module.ScheduledAgentConsumer(store=store, option_service=None,
+        orchestrator_factory=lambda _: orchestrator, now=lambda: NOW)
+    consumer(SimpleNamespace(source_id='1'), guard)
+    assert store.finalize_orchestrated_reply_task.call_args.kwargs['audit_summary'] == 'done'
+    assert store.finalize_orchestrated_reply_task.call_args.kwargs['channel'] == 'scheduled'

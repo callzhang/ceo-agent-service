@@ -7,7 +7,7 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 
 ## 数据库结构与迁移合同
 
-当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-28.5／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
+当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-29.1／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
 
 ### 历史业务读取归一（2026-10-25）
 
@@ -16,6 +16,8 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 历史页面只读展示来源、事实、待办、更新、跟进结果和钉钉回执，标明历史状态；
 不按旧 active 状态创建任务、不重发待办、不按相同整数 ID 合并正式 Task。
 逐字段与退休清单见[历史读取归一](archive/records/business-model-history-read-unification.md)。
+
+Attempt 的最终业务摘要由现有 `audit_summary` 字段持有，它不是 Audit 结论的副本；真实审核仍由 Run 的采用结果／审核事实持有。与摘要完全相同的 `codex_reason` 只保存引用，不重复文本；不同原因（包括空字符串）、直接退订的失败详情继续独立保留。来源三元组与精确关联的已终结 Run 原始编码完全相同时，Attempt 只引用该 Run；无 Run、不同值或不同编码的来源仍由 Attempt 持有。现行存储以四个既有 JSONB 槽位的 NULL 表示上述精确引用，不新增业务字段，也不在运行期读取旧结构。公开写入仍拒绝这些逻辑字段的 NULL；局部更新先还原旧引用值再应用修改，保留未传入的原因／来源。仅被旧测试调用的 `clear_agent_run_session` 已删除，当前会话清理继续作用于会话 owner，不改写历史 Run。
 
 ## 当前任务运行机制
 

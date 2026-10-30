@@ -529,7 +529,7 @@ CANDIDATE_SELECTION_SQL = NATIVE_CANDIDATE_SELECTION_SQL
 CANDIDATE_EXECUTION_SQL = NATIVE_CANDIDATE_EXECUTION_SQL
 
 STORE_SCHEMA_VERSION_KEY = "store_schema_version"
-STORE_SCHEMA_VERSION = "2026-10-29.1"
+STORE_SCHEMA_VERSION = "2026-10-29.2"
 BUSINESS_ACTION_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind))
                        for kind in BUSINESS_ACTION_KINDS}
 BUSINESS_ACTION_ID_SQL = {kind: (signal_projection() if kind == "business_task_signals" else business_action_projection(kind, public_id_index=True))
@@ -15321,35 +15321,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
             return cursor.rowcount
 
-    def clear_agent_run_session(
-        self,
-        reply_task_id: int,
-        execution_generation: str,
-        *,
-        role: AgentRole,
-        proposal_revision: int,
-        turn_attempt: int,
-    ) -> int:
-        from app import run_entity_storage
-
-        role = AgentRole(role)
-        with self._immediate_write_transaction() as db:
-            rows = db.execute(
-                "select runs.id,runs.session_id from runs join tasks on tasks.id=runs.task_id "
-                "and tasks.kind='reply' where runs.task_id=? and runs.execution_generation=? "
-                "and runs.role=? and runs.proposal_revision=? and runs.turn_attempt=?",
-                (reply_task_id, execution_generation, role.value,
-                 proposal_revision, turn_attempt),
-            ).fetchall()
-            changed = 0
-            for row in rows:
-                if run_entity_storage.update_run_cas(
-                    db, run_id=int(row["id"]), expected={"session_id": row["session_id"]},
-                    changes={"session_id": ""},
-                ) is not None:
-                    changed += 1
-            return changed
-
     def list_codex_conversations(self) -> list[ConversationSessionRecord]:
         conversations = "(" + state_projection("conversations") + ")"
         sessions = "(" + state_projection("conversation_runtime_sessions") + ")"
@@ -19456,10 +19427,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         trigger_message_id: str,
         trigger_sender: str,
         trigger_text: str,
-        codex_reason: str,
-        codex_session_id: str,
-        codex_transcript_start_line: int,
-        codex_transcript_end_line: int,
         audit_tool_events_json: str,
         audit_summary: str,
         human_decision_options_json: str = "[]",
@@ -19488,7 +19455,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             from app import task_entity_storage
             task = self._native_current_reply_task(db, task_id)
             run = db.execute(
-                "select status, execution_generation from runs "
+                "select status, execution_generation, session_id, transcript_start, transcript_end from runs "
                 "where id=? and task_id=? and role in ('consumer','audit')",
                 (run_id, task_id),
             ).fetchone()
@@ -19565,10 +19532,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "trigger_sender": trigger_sender,
                 "trigger_text": trigger_text,
                 "action": "agent_run", "sensitivity_kind": "general",
-                "agent_run_id": run_id, "codex_reason": codex_reason,
-                "codex_session_id": codex_session_id,
-                "codex_transcript_start_line": codex_transcript_start_line,
-                "codex_transcript_end_line": codex_transcript_end_line,
+                "agent_run_id": run_id, "codex_reason": audit_summary,
+                "codex_session_id": run["session_id"],
+                "codex_transcript_start_line": run["transcript_start"],
+                "codex_transcript_end_line": run["transcript_end"],
                 "audit_tool_events_json": _audit_event_metadata_json(audit_tool_events_json),
                 "audit_summary": audit_summary,
                 "human_decision_options_json": human_decision_options_json,
