@@ -499,16 +499,27 @@ class DirectEmailUnsubscribeOperation:
             one_click_verified = bool(
                 authentication is not None and authentication.one_click_verified
             )
-            entries = browser_unsubscribe_entries(
-                tuple(
-                    _resolve_entries_with_authentication(
-                        self.resolve_entries,
-                        _locator_from_classification(classification, identity),
-                        entry_reference,
-                        authentication,
+            try:
+                entries = browser_unsubscribe_entries(
+                    tuple(
+                        _resolve_entries_with_authentication(
+                            self.resolve_entries,
+                            _locator_from_classification(classification, identity),
+                            entry_reference,
+                            authentication,
+                        )
                     )
                 )
-            )
+            except Exception as exc:  # noqa: BLE001 - preserve provider transport failures
+                from app.external_retry import is_transient_external_error
+
+                if not is_transient_external_error(exc):
+                    raise
+                return _failed_call(
+                    f"email_provider_transient:{type(exc).__name__}",
+                    detail=_rejection_detail(exc),
+                    retryable=True,
+                )
             entry = next(
                 (item for item in entries if item.reference == entry_reference),
                 None,

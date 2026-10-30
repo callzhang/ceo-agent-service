@@ -71,6 +71,7 @@ def is_external_task_error(error: str) -> bool:
 # needs a login. Only a person can log in again, and a rerun reads the same
 # expired session (Derek 2026-09-25).
 EXTERNAL_TASK_ERROR_PREFIXES = (
+    "email_provider_transient",
     "okr_headless_session_expired",
     "okr_authorization_required",
 )

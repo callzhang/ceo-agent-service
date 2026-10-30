@@ -7026,6 +7026,96 @@ def test_direct_unsubscribe_browser_timeout_stops_after_retry_limit():
     ]
 
 
+def test_direct_unsubscribe_provider_read_timeout_uses_bounded_backoff(monkeypatch):
+    module = _module()
+    task = SimpleNamespace(
+        id=101,
+        execution_generation="generation-101",
+        attempts=1,
+        error="",
+        conversation_id="email-thread:101",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:timeout-101",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    monkeypatch.setattr(
+        module,
+        "_email_task_retry_available_at",
+        lambda failures: f"backoff-{failures}",
+    )
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "error": {
+                "code": "email_provider_transient:TimeoutError",
+                "retryable": True,
+            },
+        },
+    )
+
+    assert calls[1][0] == "defer"
+    assert calls[1][1] == (
+        101,
+        "email_provider_transient:TimeoutError:1",
+    )
+    assert calls[1][2]["available_at"] == "backoff-1"
+
+
+def test_direct_unsubscribe_provider_read_timeout_stops_after_automatic_budget():
+    module = _module()
+    from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
+
+    code = "email_provider_transient:TimeoutError"
+    task = SimpleNamespace(
+        id=102,
+        execution_generation="generation-102",
+        attempts=1,
+        error=f"{code}:{MAX_AUTOMATIC_ATTEMPTS - 1}",
+        conversation_id="email-thread:102",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:timeout-102",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "error": {"code": code, "retryable": True},
+        },
+    )
+
+    assert calls == [("attempt", "failed"), ("fail", 102, code)]
+
+
 def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
     module = _module()
     task = SimpleNamespace(

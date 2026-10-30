@@ -3,6 +3,7 @@ import pytest
 from app.external_retry import (
     ExternalAttempt,
     ExternalDependencyError,
+    is_transient_external_error,
     retry_delay_seconds,
     run_external,
 )
@@ -104,3 +105,9 @@ def test_retry_delay_seconds_uses_exponential_backoff_with_ceiling():
     assert retry_delay_seconds(0.25, 1, max_delay_seconds=0.75) == 0.5
     assert retry_delay_seconds(0.25, 2, max_delay_seconds=0.75) == 0.75
     assert retry_delay_seconds(0.25, 3, max_delay_seconds=0.75) == 0.75
+
+
+def test_transient_external_error_recognizes_transport_faults_only():
+    assert is_transient_external_error(TimeoutError("provider timed out"))
+    assert is_transient_external_error(ConnectionResetError("connection reset"))
+    assert not is_transient_external_error(ValueError("invalid response"))
