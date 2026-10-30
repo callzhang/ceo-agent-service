@@ -81,6 +81,8 @@ from app.feedback_processing import (
     persisted_feedback_summary,
     project_feedback_status,
 )
+from app.dws_client import DwsError
+from app.meeting_alignment import queue_recent_meeting_alignment_replay
 
 
 def _validate_workbench_public_reference(value: str, *, field: str) -> str:
@@ -1201,14 +1203,42 @@ def register_console_routes(
                 "message": "Only a failed latest Meeting attempt can be rerun",
                 "details": {},
             }, status_code=409)
-        reopened = store.rerun_meeting_alignment_jobs([job.id])
-        if job.id not in reopened:
+        if dws_factory is None:
+            return JSONResponse({
+                "ok": False, "code": "meeting_source_unavailable",
+                "message": "Meeting source refresh is unavailable",
+                "details": {},
+            }, status_code=503)
+        try:
+            replay = queue_recent_meeting_alignment_replay(
+                store,
+                dws_factory(),
+                now=datetime.now().astimezone(),
+                limit=1,
+                meeting_id=job.meeting_id,
+                feature_registry=feature_registry_factory(),
+            )
+        except DwsError as exc:
+            return JSONResponse({
+                "ok": False, "code": "meeting_source_refresh_failed",
+                "message": "Meeting source could not be refreshed",
+                "details": {"technical": normalize_display_value(str(exc))},
+            }, status_code=502)
+        result = replay[0] if len(replay) == 1 else {}
+        if (
+            result.get("outcome") != "queued"
+            or result.get("meeting_id") != job.meeting_id
+            or result.get("job_id") != job.id
+        ):
             return JSONResponse({
                 "ok": False, "code": "meeting_not_rerunnable",
                 "message": "Meeting task is not eligible for a safe rerun",
-                "details": {},
+                "details": {
+                    "outcome": normalize_display_value(result.get("outcome")),
+                    "reason": normalize_display_value(result.get("error")),
+                },
             }, status_code=409)
-        return command_result(message="重跑已提交；原 Attempt 保留，后续仍经正常分析与独立 Audit")
+        return command_result(message="已刷新这场会议的来源并提交重跑；原 Attempt 保留，后续仍经正常分析与独立 Audit")
 
     @app.post("/api/console/meeting-attempts/{run_id}/audit-recovery")
     async def console_meeting_audit_recovery(run_id: int, request: Request):

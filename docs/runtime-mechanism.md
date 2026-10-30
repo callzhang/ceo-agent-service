@@ -1740,7 +1740,8 @@ Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失
 会议/运行时回合。已准备或已部分发送必须沿原回执恢复，不能清空重做候选。历史运行不改写。
 这些身份和归属检查不证明模型所写业务理由真实，也不代表会议已迁入通用 Consumer/Audit 引擎。
 Console 可从最新失败 Meeting Attempt 显式请求重跑；入口确认 Attempt 仍是该 Task 最新运行后，
-只调用同一受保护重放方法。后续重新进入普通 Meeting 分析和独立 Audit，不直接发送，也不跳过
+按精确 Minutes UUID 只读刷新该会议的来源与参会名单，再调用同一受保护重放方法。来源不可用或任务
+不再符合重放条件时保持原状态。后续重新进入普通 Meeting 分析和独立 Audit，不直接发送，也不跳过
 原有外发回执门禁。
 
 `import-meeting-asr-transcript --job-id ... --input-json ...` 先只读预览目标任务和 ASR 元数据；
