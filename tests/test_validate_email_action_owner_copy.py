@@ -77,4 +77,7 @@ def test_seeded_plan_allows_full_email_store_cold_validation(tmp_path):
     EmailStore(path)
     after = _identities(path)
     assert before['emails'] < after['emails']
+    assert created['email_id'] in after['emails'] - before['emails']
+    with sqlite3.connect(path) as db:
+        assert db.execute('select classification_id from emails where id=?', (created['email_id'],)).fetchone()[0] == created['classification_id']
     assert created['action_id'] in after['actions'] - before['actions']

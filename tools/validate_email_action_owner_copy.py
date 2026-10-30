@@ -123,7 +123,9 @@ def seed(path):
         receipt = append_action_receipt(db, action_id, values={'status': 'failed', 'error_text': 'synthetic failure'})
         db.commit()
         parameters = db.execute("select parameters_json from (" + DIRECT_EMAIL_ACTION_SQL + ") where action_id=?", (action_id,)).fetchone()[0]
-        return {'plan_id': plan.action_plan_id, 'action_id': action_id, 'receipt_id': receipt, 'parameters': parameters}
+        return {'email_id': email['id'], 'classification_id': email['classification_id'],
+                'plan_id': plan.action_plan_id, 'action_id': action_id,
+                'receipt_id': receipt, 'parameters': parameters}
 
 
 OLD_WRITE = r'''
