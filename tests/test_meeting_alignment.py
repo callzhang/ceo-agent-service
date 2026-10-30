@@ -1156,6 +1156,55 @@ def test_producer_queues_transcript_roster_for_multi_speaker_recording(
     ]
 
 
+def test_transcript_roster_includes_resolved_minutes_creator_even_when_not_speaking(
+    tmp_path, monkeypatch
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    minutes_item = {**ended_meeting(), "flashUserInfo": {"name": "胡明"}}
+
+    class CreatorRosterDws(FakeDws):
+        def get_all_minutes_transcription(self, meeting_id: str) -> dict:
+            assert meeting_id == "minutes-1"
+            return {
+                "paragraphs": [
+                    {"nickName": "Derek", "paragraph": "先确认范围。"},
+                    {"nickName": "Casey", "paragraph": "我补齐调研。"},
+                    {"nickName": "外部专家", "paragraph": "我补充案例。"},
+                ]
+            }
+
+        def search_user_profiles(self, query: str) -> list[DwsUserProfile]:
+            profiles = {
+                "Derek": DwsUserProfile(user_id="u-derek", name="Derek"),
+                "Casey": DwsUserProfile(user_id="u-claire", name="Casey"),
+                "胡明": DwsUserProfile(user_id="u-hu-ming", name="胡明"),
+            }
+            return [profiles[query]] if query in profiles else []
+
+    dws = CreatorRosterDws(
+        minutes_pages={
+            "": {"items": [minutes_item], "has_more": False, "next_token": ""}
+        },
+        calendar_pages={
+            "": {"events": [], "has_more": False, "next_cursor": ""}
+        },
+    )
+    monkeypatch.setattr(meeting_alignment, "principal_display_name", lambda: "Derek")
+
+    assert produce_meeting_alignment_jobs(store, dws, now=NOW) == 1
+
+    job = store.get_meeting_alignment_job_by_meeting_id("minutes-1")
+    assert job is not None
+    evidence = json.loads(job.source_json)["calendar_evidence"]
+    assert evidence["source"] == "transcript"
+    assert {participant["user_id"] for participant in evidence["participants"]} == {
+        "u-derek",
+        "u-claire",
+        "u-hu-ming",
+        "",
+    }
+
+
 def test_producer_skips_missing_self_attendee_without_creating_needs_human(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     event = matching_calendar_event()

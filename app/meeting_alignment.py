@@ -2395,6 +2395,11 @@ def _build_meeting_roster_evidence(
             transcription = dws.get_all_minutes_transcription(
                 minutes_meeting_id(info)
             )
+            resolved_creator = creator
+            if creator is not None and creator.name.strip() and not creator.user_id.strip():
+                resolved_creator = _resolve_transcript_speaker(
+                    dws, creator.name, current_user_id
+                )
             speaker_names = transcript_speaker_names(transcription)
             speakers = [
                 _resolve_transcript_speaker(dws, name, current_user_id)
@@ -2428,6 +2433,7 @@ def _build_meeting_roster_evidence(
                 transcription,
                 current_user=current_user,
                 speakers=speakers,
+                minutes_creator=resolved_creator,
             )
         except (DwsError, MeetingSourceIncomplete) as exc:
             raise MeetingSourceIncomplete(

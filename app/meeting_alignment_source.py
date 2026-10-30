@@ -509,6 +509,7 @@ def build_transcript_roster_evidence(
     *,
     current_user: MeetingParticipant,
     speakers: list[MeetingParticipant],
+    minutes_creator: MeetingParticipant | None = None,
 ) -> CalendarMeetingEvidence:
     """Build delivery evidence from the speaker roster of a Minutes record.
 
@@ -534,6 +535,17 @@ def build_transcript_roster_evidence(
     if not supplied or not supplied <= expected or len(omitted) > 1:
         raise MeetingSourceIncomplete("transcript speaker roster is incomplete")
     participants = [current_user, *speakers]
+    if (
+        minutes_creator is not None
+        and minutes_creator.name.strip()
+        and minutes_creator.user_id.strip()
+        and minutes_creator.user_id.strip() != current_user.user_id.strip()
+        and not any(
+            participant.user_id.strip() == minutes_creator.user_id.strip()
+            for participant in participants
+        )
+    ):
+        participants.append(minutes_creator)
     return CalendarMeetingEvidence(
         source="transcript",
         event_id=f"transcript:{metadata['meeting_id']}",
