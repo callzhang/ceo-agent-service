@@ -94,5 +94,20 @@
     "real_sends": 0,
     "lifespan_started": false,
     "meeting_run_id": 400681
+  },
+  "initial_gate": {
+    "commit": "e90567bd04401b8b12d5fb03aad094576c58d189",
+    "passed": 7989,
+    "failed": 1,
+    "skipped": 2,
+    "deselected": 1,
+    "seconds": 538.11,
+    "failure": "Historical Runs11 differential defaults crossed clock seconds; nothing deployed"
+  },
+  "clock_fix": {
+    "scope": "SQLite current_timestamp frozen only in test differential connections; complete value comparison unchanged",
+    "tests_passed": 99,
+    "seconds": 0.66,
+    "review": "SPEC/QUALITY passed"
   }
 }

@@ -277,6 +277,8 @@ def test_all_original_kinds_native_positive_insert(kind, values):
     results = []
     for candidate in (False, True):
         with closing(connection(candidate)) as db:
+            # Freeze defaults too: runtime attempts also initialize started_at/updated_at.
+            db.create_function('current_timestamp', 0, lambda: '2026-01-01 00:00:00')
             db.executemany('insert into tasks values (?,?)', (
                 (101, 'reply_tasks'), (102, 'meeting_alignment_jobs'), (103, 'workbench_turns')))
             # Fixed literal timestamp removes elapsed-clock noise only from this differential.

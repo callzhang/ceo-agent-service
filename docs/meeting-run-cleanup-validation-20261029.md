@@ -11,6 +11,10 @@
 - 当前生产派生副本514,969,600bytes，quick_check=ok。更新后的脚本读取13个API：History两页、Meeting筛选、Attention、队列、任务与待办、Task详情、Meeting Run400681、Attempt16397及Email预览／原文不可用。持久值逐表fingerprint前后一致；邮件来源为替身，未启动lifespan、worker或真实发送。
 - 发布前生产安装676770955；完整sqlite_schema清单464项（含SQLite内部声明），本文的固定排序／编码SHA256为9188be45ccf5967c560fef01b1e13462d30673d58c7884575dc31fd0835b1690，FK异常为空。发布后将使用同一算法逐项比较；不与此前采用其他筛选规则的463项摘要混用。
 
+## 首轮完整门禁与时间夹具修正
+
+精确提交e90567bd0首次完整门禁：7989通过、1失败、2跳过、1取消选择，538.11秒；生产未切换、未创建部署备份。唯一失败是历史Runs11声明对照测试：仅created_at显式固定，但RuntimeAttempt默认started_at/updated_at在两份顺序执行的库中跨秒。窄修仅固定两条测试连接的SQLite current_timestamp，保留原DDL及逐值／序列断言；整文件99项通过，独立SPEC／QUALITY通过。标准门禁须在新提交重新通过。
+
 ## 发布与清理
 
 待标准精确提交部署、生产读回及本轮产物清理；目前仅本地及副本验证通过，不表示已上线。机器可读记录见 [验收JSON](validation/2026-10-29-meeting-run-cleanup.json)。
