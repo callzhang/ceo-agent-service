@@ -12,7 +12,7 @@
       "source": "app/defaults/audit_rules.md",
       "target": "audit_rules",
       "old_sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237",
-      "new_sha256": "5dcfd33f48d23268296da5d89346eaf3a76ffec665e5d9a353c33654a5de8237"
+      "new_sha256": "b2bb6997952245daf210bc5e6acae845a3105c14c9b9463ae0e92b970a1023fc"
     },
     {
       "source": "ci/shared-skills/ceo-calendar-invite/SKILL.md",

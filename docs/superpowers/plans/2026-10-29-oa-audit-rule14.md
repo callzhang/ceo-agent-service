@@ -31,9 +31,11 @@
 
 ### Task 2: Review, publish and read back
 **Interfaces:** consumes tested source/default paragraph; produces current live custom/default/rendered equality and lifecycle/provider receipts.
-- [ ] One fresh whole-change reviewer; bounded regression fix pass only if needed.
+- [x] One fresh whole-change reviewer; bounded regression fix pass only if needed.
 - [ ] Normal PR/merge or authorized direct deterministic merge; final source tests and release gate, no bypass.
 - [ ] Snapshot current online rules, service/queues and nine provider identities/record hashes; verify no competing deploy/load concern.
 - [ ] Change only existing custom paragraph through Settings; use standard app.deploy (or restart if another deploy already installed exact source); no OA actions.
 - [ ] Verify default/custom paragraph, unchanged other custom text, rendered Audit, new PID, health/queues/Attention/History, and original nine OA operations unchanged.
 - [ ] Save concise anonymous/live evidence, release own claim, clean only owned scratch and managed worktree.
+
+Publication metadata verification: remote CI exposed an additional stale actual-runner phrase assertion and the existing default-rule source digest. The former is synchronized to the approved rule wording (119 Audit tests pass); only the latter manifest entry new_sha256 changes, retaining the old runtime precondition (18 publisher tests pass). No additional runtime behavior.
