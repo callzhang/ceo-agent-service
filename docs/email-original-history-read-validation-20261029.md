@@ -16,8 +16,18 @@ History 生产当前主题查询 `Quotation for On-Premise` 命中 44 条；加 
 - 修复代码经生产来源只读验证：法务 UID 60、稳定身份准确、完整正文 6417 UTF-8 bytes；摘要见 JSON。没有保存原文、修改邮箱或重放 JunHe 动作。
 - 发布前 Store / Email schema 共 463 项，SHA-256 `f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94`，FK 异常为空；已安装版本 `616e237ec28ad4a913ee09d2f5e3e3ef1193b727`。这是冻结时点的证据，不是滚动当前状态。
 
+## 发布阻塞的独立性能修复
+
+8f341ef85 的完整标准 gate 两次累计 600 秒被固定预算停止，未观察到断言失败；另一次随交互会话中断，未生成通过记录。生产均未切换。不提高预算、不减少测试或调整门禁政策。
+
+对两个耗时文件做只计时、不改语义的诊断：181 项全部通过，270.55 秒。其中 Meeting 测试累计约 219 秒。精确 SQL 记录定位到两个领取入口的无目标 `ON CONFLICT DO UPDATE`；冻结当前 schema 的合成 EXPLAIN 探针证明它生成 14,154,431 条指令，准备约 5.26 秒。限定到现有 public identity 唯一键和原 partial predicate 后为 422,230 条，准备约 0.19 秒。
+
+两个入口收敛到一个当前 claim 写入器，复用既有字段构造器和 `EMAIL_NUMERIC_SCOPE`；只更新原 job 的 token。没有新身份、DDL、兼容读取或回退；领取条件、事务、CAS、租约、token 生成、外部执行、Audit、授权和重试规则不变。独立审查穷举当前唯一索引，确认对有效 meeting claim 冲突语义相同。
+
+新增结构性 SQL 预算回归在旧代码上以 `14,154,431 < 1,000,000` 断言失败，修复后通过；流式读取 EXPLAIN，避免把完整字节码物化到内存。测试覆盖新 claim、两种领取入口、同一物理 owner 更新 token、其他 job 不变、schema 和 FK 不变。Meeting 全文件及新回归共 157 项通过，24.82 秒；SPEC / QUALITY 复核通过。
+
 ## 发布与收尾
 
-标准 gate、部署、安装后 API/UI 读回及本轮备份/临时文件清理仍待执行。负责人已确认本轮由本任务单独发布，不并行 deploy。
+性能修复后标准 gate、部署、安装后 API/UI 读回及本轮备份/临时文件清理仍待执行。负责人已确认本轮由本任务单独发布，不并行 deploy。
 
 机器可读记录：[验收 JSON](validation/2026-10-29-email-original-history-read.json)。不将本次读取修复描述为数据库容量缩减。

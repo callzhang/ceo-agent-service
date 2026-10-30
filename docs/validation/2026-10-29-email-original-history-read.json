@@ -51,7 +51,12 @@
     "failed_total": 0,
     "all_failed_total": 18,
     "root_cause": "No current failed item matches the subject; completed actions do not regain failed status from preserved failed attempt receipts.",
-    "sql_changed": false
+    "sql_changed": false,
+    "production_ui_before_deploy": {
+      "all_status_total": 44,
+      "failed_total": 0,
+      "verified": true
+    }
   },
   "validation": {
     "regression_red": {
@@ -72,10 +77,83 @@
       "spec": "pass",
       "quality": "pass",
       "limitation": "Relocation scans all Message-ID headers in batches of 50; large-folder latency not measured."
+    },
+    "performance_diagnostic": {
+      "files": [
+        "tests/test_email_action_reconcile.py",
+        "tests/test_meeting_alignment.py"
+      ],
+      "passed": 181,
+      "seconds": 270.55,
+      "provider": "substitutes",
+      "gate_policy_changed": false
+    },
+    "release_performance_fix": {
+      "scope": "only existing meeting claim public-identity UPSERT; no DDL, identity, claim, CAS, lease, Audit, authorization, retry, gate-policy change",
+      "root_cause": "Untargeted UPSERT compiles update branches for all unrelated Actions unique indexes.",
+      "frozen_schema_probe": [
+        {
+          "statement": "untargeted",
+          "prepare_seconds": 5.257401167007629,
+          "vm_instructions": 14154431
+        },
+        {
+          "statement": "plain_insert",
+          "prepare_seconds": 0.12761887500528246,
+          "vm_instructions": 141861
+        },
+        {
+          "statement": "primary_key",
+          "prepare_seconds": 0.21514874999411404,
+          "vm_instructions": 422237
+        },
+        {
+          "statement": "existing_public_identity",
+          "prepare_seconds": 0.18966770800761878,
+          "vm_instructions": 422230
+        }
+      ],
+      "red_regression": {
+        "node": "test_meeting_claim_sql_program_is_bounded",
+        "actual_vm_instructions": 14154431,
+        "bound": 1000000,
+        "failed_before_fix": true
+      },
+      "green": {
+        "passed": 157,
+        "seconds": 24.82,
+        "files": [
+          "tests/test_meeting_claim_sql_budget.py",
+          "tests/test_meeting_alignment.py"
+        ]
+      },
+      "independent_spec": "pass",
+      "independent_quality": "pass"
     }
   },
   "release": {
-    "status": "pending_standard_deploy"
+    "status": "pending_standard_gate_after_mechanical_sql_performance_fix",
+    "target_sha": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab",
+    "gate_attempts": [
+      {
+        "result": "cumulative_600_second_limit",
+        "observed_assertion_failures": 0,
+        "progress_percent": 95,
+        "last_node": "tests/test_scheduled_agent_consumer.py::test_execution_uses_persisted_preflight_context_after_current_options_change",
+        "isolated_node": "1 passed in 1.43s, call 0.89s"
+      },
+      {
+        "result": "interrupted_with_session",
+        "passed_record": false,
+        "progress_percent": 23
+      },
+      {
+        "result": "cumulative_600_second_limit",
+        "observed_assertion_failures": 0,
+        "last_node": "tests/test_email_action_reconcile.py::test_normalized_integer_action_id_can_be_recorded_after_readback"
+      }
+    ],
+    "installed_unchanged": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727"
   },
   "readback": {
     "status": "pending"

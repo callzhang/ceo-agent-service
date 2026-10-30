@@ -2215,6 +2215,11 @@ Consumer共用文档工具继续提交原始Markdown/JSONML工件；已执行写
 
 ### Current Meeting Run reference contract
 
+批量与单任务的会议投递领取共用当前 claim 写入器，按现有
+`idx_actions_public_id` 的完整身份和 partial predicate 更新 claim token。
+不使用无目标 UPSERT 为 Actions 中其他领域的唯一索引展开更新分支；领取条件、
+CAS、租约、token、任务引用及外部执行规则保持原样，不改变 schema。
+
 Historical Meeting Runs whose original Task is unavailable retain the source
 Job in `run_provenance.job_id` and use NULL for the optional native `runs.task_id`.
 They remain inspectable through the current schema and do not become executable

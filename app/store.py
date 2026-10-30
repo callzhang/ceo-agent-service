@@ -237,7 +237,7 @@ from app.action_storage import (
     task_delivery_projection,
     insert_task_delivery_action,
     task_delivery_set_parts,
-    task_delivery_insert_parts,
+    upsert_meeting_alignment_delivery_claim,
     insert_error_action,
     error_set_parts,
 )
@@ -13395,10 +13395,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     changes={"locked_at": stamp, "updated_at": stamp})
                 if changed is None:
                     continue
-                columns, args = task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
-                    {"job_id": task_id, "claim_token": token})
-                db.execute(f"insert into actions({','.join(columns)}) values(?,?,?,?) "
-                           "on conflict do update set payload_json=excluded.payload_json", args)
+                upsert_meeting_alignment_delivery_claim(
+                    db, job_id=task_id, claim_token=token,
+                )
                 job = self._native_meeting_alignment_job(db, task_id)
                 if job is not None:
                     jobs.append(job.model_copy(update={"delivery_claim_token": token}))
@@ -13424,10 +13423,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                                changes={"locked_at": stamp, "updated_at": stamp}) is None:
                 return None
             token = uuid4().hex
-            columns, args = task_delivery_insert_parts(db, "meeting_alignment_delivery_claims",
-                {"job_id": job_id, "claim_token": token})
-            db.execute(f"insert into actions({','.join(columns)}) values(?,?,?,?) "
-                       "on conflict do update set payload_json=excluded.payload_json", args)
+            upsert_meeting_alignment_delivery_claim(
+                db, job_id=job_id, claim_token=token,
+            )
             job = self._native_meeting_alignment_job(db, job_id)
             return None if job is None else job.model_copy(update={"delivery_claim_token": token})
 

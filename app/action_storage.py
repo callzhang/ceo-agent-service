@@ -1822,6 +1822,28 @@ def _task_delivery_payload(db, kind, values):
                             for field in fields})
 
 
+def upsert_meeting_alignment_delivery_claim(
+    db: sqlite3.Connection, *, job_id: int, claim_token: str,
+):
+    """Replace a claim token at its existing public job identity.
+
+    The caller owns the claim transaction. An untargeted UPSERT compiles an
+    UPDATE branch for every unrelated Actions unique index; this is the same
+    current public identity used by the meeting claim's schema constraint.
+    """
+    columns, args = task_delivery_insert_parts(
+        db, "meeting_alignment_delivery_claims",
+        {"job_id": job_id, "claim_token": claim_token},
+    )
+    return db.execute(
+        f"insert into actions({','.join(columns)}) values(?,?,?,?) "
+        "on conflict(record_type,cast(legacy_key as integer)) where "
+        + _EMAIL_NUMERIC_SCOPE
+        + " do update set payload_json=excluded.payload_json",
+        args,
+    )
+
+
 def task_delivery_insert_parts(db: sqlite3.Connection, kind: str, values: dict):
     """Build one Action insert; claim writes require an explicit task job ID."""
     _task_delivery_fields(kind, values)

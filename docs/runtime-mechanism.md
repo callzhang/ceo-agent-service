@@ -1985,6 +1985,11 @@ Consumer共用文档工具继续提交原始Markdown/JSONML工件；已执行写
 
 ### Current Meeting Run reference contract
 
+会议投递 claim 的两个领取入口使用同一当前写入器，UPSERT 显式限定到已声明的
+public identity 唯一索引及其完整 partial predicate，仅更新该 job 的 token。
+这样避免为不相关领域生成大量 SQLite 更新分支；原领取事务、CAS、锁、租约、
+唯一身份、Audit、授权和重试规则均不变。
+
 Historical Meeting Runs without a native Task keep their original source Job
 and Run/RuntimeAttempt/error history. NULL in the optional native Task reference
 means unavailable; it does not enqueue or retry the old Job. Non-NULL Task

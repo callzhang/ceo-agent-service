@@ -51,13 +51,13 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-email-original-history-read-20261029 | app/email_imap_readonly.py locate_message only; directly related readonly source tests; tests/gate_files.txt (two fast new regression files); History current-model search regression tests (no query change unless reproduced); directly related tests; current architecture/runtime paragraphs; scoped validation docs; this row | Derek authorized root-cause diagnosis and permanent repair of email_original_unavailable and History subject search; no legacy schema fallback, no provider writes/replay, no new audit/auth/retry policy. Coordinate serial standard deploy, production readonly readback, verified task-owned cleanup. | Active 2026-10-29; implementation scope frozen after source/SQL evidence. |
 
 
 
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-meeting-claim-sql-performance-20261029 | app/store.py two meeting delivery claim INSERTs/import only; app/action_storage.py current meeting claim writer helper; tests/test_meeting_claim_sql_budget.py; related gate line; scoped validation/current behavior docs | Remove untargeted UPSERT VM explosion using the already-declared public identity constraint; no DDL or claim/lease/identity/Audit/auth/retry policy changes. Necessary to complete fixed-budget release of authorized Email original read fix. | Active; production unchanged, root cause measured on synthetic current schema. |
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
