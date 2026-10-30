@@ -141,6 +141,4 @@ def _action_entity_objects():
 
 def current_reply_action_projection(kind: str):
     """Project all current public Attempt fields and Memory's parent ID."""
-    return actions.reply_action_projection(
-        kind, "fresh_memory_fk", canonical_attempt_fields=True,
-    )
+    return actions.current_reply_projection(kind)

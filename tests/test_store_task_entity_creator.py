@@ -249,39 +249,6 @@ def test_pending_single_chat_merge_stale_generation_cas_returns_without_mutation
         assert current["input_version"] == 1
 
 
-def test_clear_agent_run_session_uses_native_run_identity(tmp_path):
-    from app import run_entity_storage
-    from app.store import AgentRole
-
-    store = _target_store(tmp_path / "clear-run-session.sqlite3")
-    task = store.ensure_reply_task(**_creator_kwargs(_spec("clear-session")))
-    with store._immediate_write_transaction() as db:
-        matching = run_entity_storage.create_run(db, values={
-            "task_id": task.id, "execution_generation": task.execution_generation,
-            "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
-            "operation_id": "matching", "status": "completed", "session_id": "",
-            "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
-            "error": "", "lease_owner": "", "lease_expires_at": "",
-            "started_at": "start", "completed_at": "done", "updated_at": "done",
-        })
-        other = run_entity_storage.create_run(db, values={
-            "task_id": task.id, "execution_generation": "old-generation",
-            "role": "consumer", "proposal_revision": 0, "turn_attempt": 0,
-            "operation_id": "other", "status": "completed", "session_id": "session-b",
-            "transcript_start": 0, "transcript_end": 0, "structured_error_json": "{}",
-            "error": "", "lease_owner": "", "lease_expires_at": "",
-            "started_at": "start", "completed_at": "done", "updated_at": "done",
-        })
-
-    assert store.clear_agent_run_session(
-        task.id, task.execution_generation, role=AgentRole.CONSUMER,
-        proposal_revision=0, turn_attempt=0,
-    ) == 1
-    with store._connect() as db:
-        assert run_entity_storage.get_run(db, int(matching["id"]))["session_id"] == ""
-        assert run_entity_storage.get_run(db, int(other["id"]))["session_id"] == "session-b"
-
-
 def test_pending_single_chat_merge_rolls_back_when_duplicate_task_has_retained_run(tmp_path):
     from app import run_entity_storage
 

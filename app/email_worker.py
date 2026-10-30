@@ -3255,10 +3255,6 @@ def _finalize_email_task(store: object, task: object, result: object, *,
         trigger_message_id=task.trigger_message_id,
         trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text,
-        codex_reason=result.summary,
-        codex_session_id=run.codex_session_id,
-        codex_transcript_start_line=run.transcript_start_line,
-        codex_transcript_end_line=run.transcript_end_line,
         audit_tool_events_json=json.dumps(run.tool_events, ensure_ascii=False),
         audit_summary=result.summary,
         human_decision_options_json=human_decision_options_json,
@@ -4315,8 +4311,9 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
             raise ValueError("email unsubscribe account is unavailable")
         source = source_factory(account)
         try:
+            current_locator = source.locate_message_across_folders(locator)
             message = source.fetch_message(
-                locator,
+                current_locator,
                 stable_message_identity=locator.stable_message_identity,
             )
             entries = extract_unsubscribe_entries(

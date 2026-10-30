@@ -2228,10 +2228,6 @@ class DingTalkAutoReplyWorker:
                 trigger_message_id=task.trigger_message_id,
                 trigger_sender=task.trigger_sender,
                 trigger_text=task.trigger_text,
-                codex_reason=error,
-                codex_session_id=run.codex_session_id,
-                codex_transcript_start_line=run.transcript_start_line,
-                codex_transcript_end_line=run.transcript_end_line,
                 audit_tool_events_json=json.dumps(
                     run.tool_events,
                     ensure_ascii=False,
@@ -2701,10 +2697,6 @@ class DingTalkAutoReplyWorker:
             trigger_message_id=task.trigger_message_id,
             trigger_sender=task.trigger_sender,
             trigger_text=task.trigger_text,
-            codex_reason=result.summary,
-            codex_session_id=run.codex_session_id,
-            codex_transcript_start_line=run.transcript_start_line,
-            codex_transcript_end_line=run.transcript_end_line,
             audit_tool_events_json=json.dumps(
                 run.tool_events,
                 ensure_ascii=False,

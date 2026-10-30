@@ -2,7 +2,12 @@
 import pytest
 
 from app.email_classifier_contracts import EmailProviderLocator
-from app.email_imap_readonly import ImapReadonlyAdapter, fallback_stable_message_identity
+from app.email_imap_readonly import (
+    EmailSourceMessageMissing,
+    ImapReadonlyAdapter,
+    fallback_stable_message_identity,
+)
+from app.email_provider_folders import FolderRole, ProviderFolder
 from tests.test_email_imap_readonly import FakeImapSession
 
 
@@ -170,3 +175,57 @@ def test_moved_message_without_rfc_message_id_is_not_guessed():
     with pytest.raises(LookupError):
         adapter.locate_message(LOCATOR.model_copy(update={'rfc_message_id':None}), folder='Archive')
     assert session.calls == []
+
+
+def test_cross_folder_locator_requires_one_exact_current_match():
+    archive = EmailProviderLocator(
+        account_id='a', folder='Archive', uidvalidity=91, uid=44,
+        rfc_message_id=LOCATOR.rfc_message_id,
+    )
+
+    class FolderSearch:
+        account_id = 'a'
+
+        def __init__(self, matches):
+            self.matches = matches
+            self.searched = []
+
+        def list_folders(self):
+            return (
+                ProviderFolder('inbox', 'INBOX', FolderRole.INBOX),
+                ProviderFolder('archive', 'Archive', FolderRole.UNBOUND),
+            )
+
+        def locate_message(self, locator, *, folder):
+            self.searched.append(folder)
+            match = self.matches.get(folder)
+            if match is None:
+                raise EmailSourceMessageMissing('email source Message-ID is missing')
+            return match
+
+    resolver = ImapReadonlyAdapter.locate_message_across_folders
+    unique = FolderSearch({'Archive': archive})
+    assert resolver(unique, LOCATOR) == archive
+    assert unique.searched == ['INBOX', 'Archive']
+
+    ambiguous = FolderSearch({'INBOX': LOCATOR, 'Archive': archive})
+    with pytest.raises(LookupError, match='ambiguous'):
+        resolver(ambiguous, LOCATOR)
+    assert ambiguous.searched == ['INBOX', 'Archive']
+
+    missing = FolderSearch({})
+    with pytest.raises(LookupError, match='missing or ambiguous'):
+        resolver(missing, LOCATOR)
+    assert missing.searched == ['INBOX', 'Archive']
+
+
+def test_cross_folder_locator_rejects_other_account_before_provider_io():
+    class FolderSearch:
+        account_id = 'a'
+
+        def list_folders(self):
+            raise AssertionError('account mismatch must be rejected first')
+
+    other_account = LOCATOR.model_copy(update={'account_id': 'other'})
+    with pytest.raises(ValueError, match='account'):
+        ImapReadonlyAdapter.locate_message_across_folders(FolderSearch(), other_account)

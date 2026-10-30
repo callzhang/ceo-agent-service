@@ -4,7 +4,7 @@
 
 ## 数据库结构与迁移合同
 
-Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、Store `2026-10-28.5`→`2026-10-29.1` 的邮件字段退休，以及仅 Email 变化的发布；其他版本一律以 `Store schema release needs a verified inverse for this transition` 或 `unsupported current Action source schema; explicit paired release required` 拒绝，较旧提交不再有自动逆迁。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。
+Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、Store `2026-10-29.1`→`2026-10-29.2` 的 Attempt 所有权迁移，以及仅 Email 变化的发布；其他版本一律以 `Store schema release needs a verified inverse for this transition` 或 `unsupported current Action source schema; explicit paired release required` 拒绝，较旧提交不再有自动逆迁。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。
 
 闸门进锁并按提交复用（Derek 2026-10-28）：闸门测试在仓库互斥锁（`GitRepository.mutex`，阻塞的 flock）里面跑，和安装同一把锁；拿到锁后先看生产是否已被别人推进（是则直接返回「another deploy got there first」，有发布请求的按 `_ProductionMoved` 重来），再跑测试。通过的结果记在服务数据库同目录 `deploy-gate-passed/<sha>.json`（提交、时间、文件数、摘要行），同一提交再部署或安装失败后重试不再跑；失败、超时、检出失败都不记。10-28 当天 Codex 和两个 Claude 会话同时部署，闸门并行，9 次只过 1 次，7 次超 10 分钟、2 次撞 2 GB，这就是起因。
 清单缺失或为空、运行超过 12 分钟（`TEST_GATE_TIMEOUT_SECONDS`；测试进程自身另有 10 分钟和 2 GB 上限）、或无法检出该提交，同样拒绝。失败时保留日志并在报错里给出路径。`--restart` 不运行新代码，不受此限。实现见 `app/deploy.py` 的 `require_green_suite`。
@@ -16,6 +16,10 @@ Action Entity Phase 1 已部署，当前生产即使用统一 Action owner：`ac
 字段映射见 `docs/action-entity-field-map.json`；`docs/action-entity-target.sql` 是初始字段合同夹具，当前完整 Store/Email 目标声明见 `docs/action-entity-current-target.sql`。
 
 Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一持有。局部结果更新使用一次明确指向该主键的 UPSERT：首次插入使用现有默认值，已有行只更新本次提供的结果字段，不覆盖其他已保存的消息、发送回执或日历结果。专业运行详情与副本验收通过原生 `runs.id` 和 `run_provenance` 读取，不再使用旧 Run 容器的 writer／projection。
+
+Reply Attempt 的摘要与独立原因使用当前同一 owner 编码；相同文本不重复保存，空字符串不同于缺省引用。完全一致的 session/start/end 三元组只引用精确的终态 Run，其他三元组保留在 Attempt。读取通过当前固定投影按类型解析引用，保留原 TEXT／INTEGER 比较亲和性与 BLOB／非数字值；没有按旧 schema、route 或历史类型回退。条件更新在原有事务／CAS 内还原旧事实后修改，再归一存储，仍只执行一次实际 Action 更新。Email、定时和消息三种编排终结调用都传一个最终摘要与 Run 身份；不重复传送 Run 的来源字段。
+
+显式发布只支持准确 Store29.1／Email54 源到 Store29.2／Email54；逆迁从当前引用 owner 还原字段，包含迁移后新增记录，并保留 opaque 其他 payload、身份、分配水位及原 FK 异常集合。旧28.5→29.1转换器及其专用夹具／工具已随发布窗口替换退休，运行时初始化只接受当前声明。
 
 当前 native `tasks` 表的 `kind` 合同包含九类：`reply`、`work_summary`、
 `meeting_alignment`、`okr_review`、`okr_analysis`、`workbench_turn`、
@@ -480,6 +484,8 @@ Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 executi
 
 Console Attention 同时投影当前队列故障和当前有效、已通过 Audit、尚未选择且仍未解决的 `needs_human` 决策。普通 `pending`、`processing` 或仅因状态为 `needs_human` 的记录不因此进入 Attention；人工决策行必须仍绑定当前 task/generation 与最新有效候选。Status 的 Attention 总数与 `/api/console/attention` 使用相同口径，避免把需要用户选择的已审核事项留在单独列表而漏出 Attention。
 
+质量门禁按同一当前 Reply Task 的生命周期检查 `needs_human` 投影：只有拥有该 attempt 的 Task 仍为 `needs_human` 时，结构化结果缺失或无效才构成当前健康违规。Task 已到终态时，该 attempt 只保留为历史记录，不继续触发 Attention 或健康降级；Task 仍待人工决定时，原有结构化结果校验不变。
+
 如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
 实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
 `skipped`，保存实时结果作为 resolution，并从当前 Attention 移除；原 Agent run 和决策
@@ -874,7 +880,7 @@ URL 查询参数。外部反馈页可以收集评分，但不能通过链接、�
 负责人 ID 或接受承诺的证明。
 
 邮件退订由独立系统服务执行，不进入 Consumer/Audit。其原有 ActionPlan、浏览器步骤、回执和退避保留，历史 Audit 退订 run 只作历史事实，不是新的执行路径。
-退订动作读取邮件来源时，使用任务持久化的精确 provider locator 并校验稳定身份；不通过相邻 UID 分页推断目标是否存在。此规则适用于所有邮箱账号和退订任务，不按发件人、域名或任务 ID 分支。
+退订动作读取邮件来源时，按精确 RFC Message-ID 在当前所有可选邮箱文件夹中只读定位；仅全邮箱唯一匹配时，才以返回的当前文件夹和 UID 读取邮件并校验稳定身份。缺失或重复匹配会停止，不用相邻 UID、主题或时间猜测。规则适用于所有邮箱账号和退订任务；读取来源不会触发退订，也不清理未知结果围栏。
 退订入口导航遇到 Playwright 超时或 Chromium `net::ERR_TIMED_OUT` 时，若同一次导航已离开空白页，执行器直接读取当前页面并检查真实页面回执，不再请求退订 URL；若仍停留在空白页，则记录为外部超时并沿用有界退避。其他未识别的导航错误继续失败，不获得重试资格。该读回只恢复已经到达的页面证据，不清除未知执行围栏，也不把页面未读成成功。
 退订浏览器仅把固定的内部失败类别投影到错误码；已识别的导航超时和页面状态缺失必须与兜底 `email_unsubscribe_browser_failed` 区分，错误码、步骤日志和页面原文里不得写入 URL 或凭证。结果的 `error_detail` 记下失败是什么：已识别的 `UnsubscribeBrowserError` 写固定枚举 `category=<名称>`（没有专属错误码的类别共用兜底码 `email_unsubscribe_browser_failed`，这里是唯一说明具体类别的地方）；未预期异常（兜底）会留下异常类名和截断到 240 字符的消息：URL、cookie/token/session 一类字段和 32 位以上的长串都先替换掉，再写入回执 evidence、这次尝试的 `audit_summary` 和任务的错误文本（`<码>: <类名: 消息>`，重试判断只看第一个冒号前的码）。所有结构化 `action_type=unsubscribe` 的失败都保持真实 `failed` 状态并留在 History，不进入管理者 Attention；Attempt 详情同样保留失败状态和原因，但不提供 Attention 处理动作。外部原因的失败（第三方页面拒绝表单或一键请求、页面操作失败或超时、导航目标无效、控件不可用，清单在 `app/external_failures.py`）继续按既有有界指数退避重试。Attention 分类通过任务错误中的固定 `category=` 校验分类，允许其后出现已脱敏 `detail` 和 `operation` 阶段后缀；浏览器/会话自身类别仍作为内部错误显示。兼容旧 Attempt 的 `failed_browser: category=<名称>` 格式。若已有执行标记不满足明确 retryable 状态及身份校验，或 retryable 次数已耗尽，服务以 `email_unsubscribe_outcome_unresolved` 记录未决结果；任务仍失败且不进入管理者 Attention，不把围栏误报为内部 `ValueError`，不自动重放，也不清除标记。只有终态 receipt 可收口该动作。
 旧失败任务的 effect-free 自动重入队要求没有 claim、receipt、effect、浏览器 step 或 Agent run。已有执行标记仍默认阻止重放；旧格式只有在标记绑定当前任务、稳定动作身份和完整输入摘要，Task 错误属于共享外部瞬时失败分类，且历史失败 Attempt 的操作阶段是当前支持的退订操作时，才升级为现有 `retryable` 状态。此规则适用于所有支持的入口来源和操作，不按站点、任务 ID、入口类型或某一个操作阶段区分，并继续使用同一重试预算。来源不支持、阶段不明、错误属于内部/未知类别、身份不匹配或预算耗尽时保留围栏。
@@ -1415,6 +1421,7 @@ the action plan and browser effect authorization remain unchanged.
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. No page-result cache or background page refresh
 can reuse another page size or hide a just-committed record.
+History builds source-keyed top-level SQL branches explicitly and joins only those branches; nested Attempt provenance queries are never split by SQL text or formatting. Key counts and full page hydration consume the same source projections.
 For failed Attempts, the History status projection also follows the owning
 AgentRun's stable reply-task ID when the OA scanner has changed the task's
 trigger key. Status filters and counts use that projected state; stored Attempt

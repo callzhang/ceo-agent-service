@@ -45,6 +45,10 @@ _MAX_TEXT_FETCH_BYTES = 64 * 1024
 IMAP_READ_TIMEOUT_SECONDS = 90.0
 
 
+class EmailSourceMessageMissing(LookupError):
+    """An exact RFC Message-ID is absent from one observed folder."""
+
+
 @dataclass(frozen=True)
 class ImapUidBatch:
     """One readonly folder observation and the UID generation it belongs to."""
@@ -555,6 +559,28 @@ class ImapReadonlyAdapter:
         _require_ok(status, "IMAP readonly select failed")
         if _uidvalidity(self.session.response("UIDVALIDITY")) != generation:
             raise LookupError("email source generation changed")
+        if not matches:
+            raise EmailSourceMessageMissing("email source Message-ID is missing")
+        if len(matches) > 1:
+            raise LookupError("email source Message-ID is ambiguous")
+        return matches[0]
+
+    def locate_message_across_folders(
+        self, locator: EmailProviderLocator,
+    ) -> EmailProviderLocator:
+        """Resolve one exact RFC Message-ID in the current selectable folders."""
+        if locator.account_id != self.account_id:
+            raise ValueError("email source account mismatch")
+        if locator.rfc_message_id is None:
+            raise LookupError("email source has no Message-ID for moved lookup")
+        matches = []
+        for folder in self.list_folders():
+            try:
+                matches.append(
+                    self.locate_message(locator, folder=folder.display_name)
+                )
+            except EmailSourceMessageMissing:
+                continue
         if len(matches) != 1:
             raise LookupError("email source Message-ID is missing or ambiguous")
         return matches[0]

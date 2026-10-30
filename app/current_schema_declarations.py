@@ -65,11 +65,11 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             "'blob' then unhex(json_extract(payload_json,'$[6].v')) when 'real' then "
             "json_extract(payload_json,'$[6].m') * pow(2.0,json_extract(payload_json,'$[6].e')) when 'inf' "
             "then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[6]') end end) "
-            'virtual,attempt_codex_reason text generated always as (case when _kind=15 then case when '
+            'virtual,attempt_codex_reason text generated always as (coalesce(case when _kind=15 then case when '
             "json_type(payload_json,'$[7]')='object' then case json_extract(payload_json,'$[7].t') when "
             "'blob' then unhex(json_extract(payload_json,'$[7].v')) when 'real' then "
             "json_extract(payload_json,'$[7].m') * pow(2.0,json_extract(payload_json,'$[7].e')) when 'inf' "
-            "then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[7]') end end) "
+            "then 9e999 when '-inf' then -9e999 end else json_extract(payload_json,'$[7]') end end,case when _kind=15 then attempt_audit_summary end)) "
             'virtual,attempt_draft_reply_text text generated always as (case when _kind=15 then case when '
             "json_type(payload_json,'$[8]')='object' then case json_extract(payload_json,'$[8].t') when "
             "'blob' then unhex(json_extract(payload_json,'$[8].v')) when 'real' then "
@@ -3968,7 +3968,7 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             'attempt_reviewer_feedback is not null and attempt_corrected_reply_text is not null and '
             'attempt_created_at is not null and attempt_updated_at is not null and '
             'attempt_audit_documents_json is not null and attempt_audit_tool_events_json is not null and '
-            'attempt_audit_summary is not null and attempt_codex_session_id is not null and '
+            'attempt_audit_summary is not null and '
             'attempt_direct_user_id is not null and attempt_direct_open_dingtalk_id is not null and '
             'attempt_oa_process_instance_id is not null and attempt_oa_task_id is not null and '
             'attempt_oa_url is not null and attempt_oa_action is not null and attempt_oa_remark is not null '
@@ -3983,8 +3983,8 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             'attempt_human_decision_options_json is not null and attempt_feedback_scope is not null and '
             'attempt_skill_update_receipts_json is not null and attempt_resolved_at is not null and '
             'attempt_resolution is not null and attempt_trigger_text_provenance_json is not null and '
-            'attempt_retry_count is not null and attempt_codex_transcript_start_line is not null and '
-            'attempt_codex_transcript_end_line is not null and attempt_skill_update_requested is not '
+            'attempt_retry_count is not null and '
+            'attempt_skill_update_requested is not '
             "null)),check(record_type<>'memory_write_events' or (case when typeof(payload_json)='blob' and "
             "json_valid(payload_json,8) then coalesce((json_type(payload_json)='array' and "
             "json_array_length(payload_json)=7),0) else 0 end and case when json_type(payload_json,'$[0]') "
@@ -10464,7 +10464,7 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             "typeof(action_data)='blob' and json_valid(action_data,8) and "
             "json_type(action_data)='object')),check(record_type='action' or action_data is "
             "null),check(record_type<>'action' or action_status is null or action_status in "
-            "('pending','processing','done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')))",
+            "('pending','processing','done','skipped','failed','dispatched','verified','confirmed_no_effect','uncertain')),check(_kind<>15 or ((attempt_codex_session_id is null and attempt_codex_transcript_start_line is null and attempt_codex_transcript_end_line is null and attempt_agent_run_id is not null) or (attempt_codex_session_id is not null and attempt_codex_transcript_start_line is not null and attempt_codex_transcript_end_line is not null))))",
  'idx_actions_public_id': 'create unique index idx_actions_public_id on actions(record_type,cast(legacy_key '
                           "as integer)) where record_type<>'action' and "
                           "record_type<>'external_action_results' and record_type not in "

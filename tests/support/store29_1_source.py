@@ -1,10 +1,10 @@
-"""Exact published Store28.5 source construction for explicit release tests."""
+"""Exact published Store29.1 source construction for explicit release tests."""
 
-from app.email_field_retirement_release import source_objects, SOURCE_STORE_VERSION
+from app.attempt_run_ownership_release import source_objects, SOURCE_STORE_VERSION
 from app.task8_storage import register_task8_functions
 
 
-def create_store28_5_source(db):
+def create_store29_1_source(db):
     register_task8_functions(db)
     objects = source_objects()
     for kind, _, _, sql in objects:

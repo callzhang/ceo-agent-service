@@ -7,7 +7,7 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 
 ## 数据库结构与迁移合同
 
-当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-28.5／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
+当前发布选择器只处理当前 Store／Email 声明、明确的单一上一版本（Store 2026-10-29.1／Email54）迁移和仅 Email 变化的迁移；不匹配的 schema 在任何写入前失败关闭。
 
 ### 历史业务读取归一（2026-10-25）
 
@@ -16,6 +16,8 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 历史页面只读展示来源、事实、待办、更新、跟进结果和钉钉回执，标明历史状态；
 不按旧 active 状态创建任务、不重发待办、不按相同整数 ID 合并正式 Task。
 逐字段与退休清单见[历史读取归一](archive/records/business-model-history-read-unification.md)。
+
+Attempt 的最终业务摘要由现有 `audit_summary` 字段持有，它不是 Audit 结论的副本；真实审核仍由 Run 的采用结果／审核事实持有。与摘要完全相同的 `codex_reason` 只保存引用，不重复文本；不同原因（包括空字符串）、直接退订的失败详情继续独立保留。来源三元组与精确关联的已终结 Run 原始编码完全相同时，Attempt 只引用该 Run；无 Run、不同值或不同编码的来源仍由 Attempt 持有。现行存储以四个既有 JSONB 槽位的 NULL 表示上述精确引用，不新增业务字段，也不在运行期读取旧结构。公开写入仍拒绝这些逻辑字段的 NULL；局部更新先还原旧引用值再应用修改，保留未传入的原因／来源。仅被旧测试调用的 `clear_agent_run_session` 已删除，当前会话清理继续作用于会话 owner，不改写历史 Run。
 
 ## 当前任务运行机制
 
@@ -807,7 +809,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
 - History 的逻辑来源是 `HISTORY_SOURCE_TABLES`：`reply_attempts` 投影、会议、Task 各来源，
   以及两类新来源。Audit web 启动不预热大范围 History 查询；打开尝试详情时批量读取该任务代次的
   Agent run 及工具事件，图表只投影所选时间范围内 attempt 的当前 History 状态。
-  页面缓存以来源表元组为键。
+  顶层查询按来源显式组织分支，计数键查询和页面明细使用同一来源投影；不按 SQL 文本拆分嵌套的 Attempt 来源查询，也不缓存页面结果。
   `errors` 不是 History 来源，其分支的 `service_error` 类型只出现在旧 `/logs` 页。
 - 定时命令（`scheduled_task_runs`）：失败的触发一律显示；同一定时任务之后有一次成功
   运行的，失败显示为 `recovered`（服务在那次成功时解决它的 Attention 条目），否则为
@@ -1784,7 +1786,9 @@ Attempt History 的外部效果摘要进一步区分本执行代首次产生的 
 
 失败 Reply task 的 Attention 诊断只读取本对象本 generation 的当前 run，显示原 source_code（无则 code）与明确标为“Agent 说明”的 reported_summary；缺少或坏 JSON 时保留 task error，不将 Agent 自述当作已证实的 provider 拒绝。Attention 按 Reply task 的当前状态计数，不为同一 WeChat task 的 failed delivery 再增加一条投递级记录；delivery 失败仍保留在 Workers 队列、History、Attempt 详情和 Reply attempts queue。History、Attempt 详情和 Reply attempts queue 对微信分别读取本对象当前 generation 最新 delivery：failed/send_unknown 不能被只表示候选完成的 task done 遮蔽。旧 generation 或其他对象的 delivery 不影响当前结果；这些展示不更新任务、投递或授权状态。
 
-独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执；所有结构化 `action_type=unsubscribe` 失败都保留真实 `failed` 状态和 History 记录，但不进入管理者 Attention；Attempt 详情同样保留失败状态和原因，但不提供 Attention 处理动作。已识别的可重试外部页面/网络失败按有界指数退避重试；共享上限是初次操作加 3 次重试，因此执行标记记录的 `retry_count=3` 仍允许第 4 次浏览器操作，之后的调用在浏览器运行前以未决结果拒绝。当前 `email_unsubscribe_browser_failed: category=<名称>` 和旧 `failed_browser: category=<名称>` 在附带脱敏 `detail`／`operation` 后缀时仍依据固定外部类别匹配，不会误归入内部错误。服务自身的执行围栏错误（如 `unsubscribe_operation_rejected:ValueError`）仍归类为内部技术错误，但结果不确定时只保留失败并等回读，不重放操作或清除标记；不确定性不改变 Attention 投影规则。效果零副作用的旧失败任务也只有在 ActionPlan 完整且没有执行中标记、claim、receipt、effect、浏览器 step 或 Agent run 时才会自动重新入队。退订动作读取邮件来源时，使用任务持久化的精确 provider locator 并校验稳定身份；不通过相邻 UID 分页推断目标是否存在。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。
+`needs_human` 的质量门禁只检查拥有该 attempt 的当前 Reply Task 仍处于 `needs_human` 时的投影。Task 到达终态后，旧 attempt 继续保留在 History，但不再作为当前 Attention 或健康违规计数。
+
+独立 Email 退订仍使用原有 direct executor、浏览器步骤和回执；所有结构化 `action_type=unsubscribe` 失败都保留真实 `failed` 状态和 History 记录，但不进入管理者 Attention；Attempt 详情同样保留失败状态和原因，但不提供 Attention 处理动作。已识别的可重试外部页面/网络失败按有界指数退避重试；共享上限是初次操作加 3 次重试，因此执行标记记录的 `retry_count=3` 仍允许第 4 次浏览器操作，之后的调用在浏览器运行前以未决结果拒绝。当前 `email_unsubscribe_browser_failed: category=<名称>` 和旧 `failed_browser: category=<名称>` 在附带脱敏 `detail`／`operation` 后缀时仍依据固定外部类别匹配，不会误归入内部错误。服务自身的执行围栏错误（如 `unsubscribe_operation_rejected:ValueError`）仍归类为内部技术错误，但结果不确定时只保留失败并等回读，不重放操作或清除标记；不确定性不改变 Attention 投影规则。效果零副作用的旧失败任务也只有在 ActionPlan 完整且没有执行中标记、claim、receipt、effect、浏览器 step 或 Agent run 时才会自动重新入队。退订动作读取邮件来源时，按精确 RFC Message-ID 在当前可选文件夹中只读定位；仅当全邮箱恰有一个匹配项时才读取邮件并校验稳定身份。缺失或重复匹配均停止，不用相邻 UID、主题或时间猜测，也不触发退订。默认 developer prompt 和 OA 规则种子统一为新角色合同；既有自定义规则、managed Skill 配置与 runtime-only Skill 必须在安静的正式发布窗口中逐项发布并记录版本，部署代码本身不会覆盖它们。
 
 退订入口导航遇到 Playwright 超时或 Chromium `net::ERR_TIMED_OUT` 时，若同一次导航已离开空白页，执行器直接读取当前页面并检查真实页面回执，不再请求退订 URL；若仍停留在空白页，则记录为外部超时并沿用有界退避。其他未识别的导航错误继续失败，不获得重试资格。该读回只恢复已经到达的页面证据，不清除未知执行围栏，也不把页面未读成成功。
 

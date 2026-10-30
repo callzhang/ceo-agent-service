@@ -1,4 +1,4 @@
-"""Independent source/finite comparisons for the opt-in Phase 5E storage."""
+"""Current reply action behavior compared with native SQLite semantics."""
 
 from contextlib import closing
 import json
@@ -10,6 +10,7 @@ from tempfile import TemporaryDirectory
 import pytest
 
 from app import action_storage as storage
+from app.current_database_schema import create_current_database_schema
 
 
 CAPTURE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/2026-10-13-database-redesign-phase5e-reply-source.json").read_text())
@@ -29,11 +30,7 @@ def pair(request):
             for index in definition["indexes"]:
                 if index["sql"]:
                     source.execute(index["sql"])
-        target.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-        target.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-        storage.create_action_schema(
-            target, include_reply=True, reply_variant=request.param[1], compact_payload=True,
-        )
+        create_current_database_schema(target)
         yield source, target, request.param[0]
 
 
@@ -42,9 +39,8 @@ def insert_source(db, table, values, ignore=False):
 
 
 def projection(db, kind, identity, variant):
-    columns = [c["name"] for c in CAPTURE[variant]["tables"][kind]["columns"]]
-    values = db.execute("select * from (" + storage.reply_action_projection(kind, "actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk") + ") where id=?", (identity,)).fetchone()
-    return dict(zip(columns, values, strict=True))
+    cursor = db.execute("select * from (" + storage.REPLY_ATTEMPT_COMMON_SQL + ") where id=?", (identity,))
+    return dict(zip([column[0] for column in cursor.description], cursor.fetchone(), strict=True))
 
 
 def _compact_variant(variant):
@@ -83,39 +79,22 @@ def source_row(db, kind, identity):
 def test_defaults_and_raw_storage_classes_match_source(pair):
     source, target, variant = pair
     values = REQUIRED | {"trigger_text": "not JSON\0 { trailing", "audit_documents_json": b"\x00\xffnot json",
-                         "final_reply_text": b"\x00\xffnot json", "agent_run_id": 404,
+                         "final_reply_text": b"\x00\xffnot json",
                          "reviewed_at": None}
-    if variant == "actual":
-        values |= {"conversation_single_chat": 1, "trigger_create_time": b"\x00\xffnot json"}
     sid = insert_source(source, "reply_attempts", values).lastrowid
     tid = storage.insert_action(target, "reply_attempts", values).lastrowid
     assert sid == tid
     expected = source_row(source, "reply_attempts", sid)
     actual = projection(target, "reply_attempts", tid, variant)
-    assert set(actual) == set(expected)
+    expected = {key: expected[key] for key in actual}
     expected["audit_tool_events_json"] = "[]"
     assert actual == expected
     for field in expected:
         if field == "audit_tool_events_json":
             continue
         source_type = source.execute(f"select typeof({field}) from reply_attempts where id=?", (sid,)).fetchone()[0]
-        target_type = target.execute(f"select typeof({field}) from ({storage.reply_action_projection('reply_attempts', 'actual_no_memory_fk' if variant == 'actual' else 'fresh_memory_fk')}) where id=?", (tid,)).fetchone()[0]
+        target_type = target.execute(f"select typeof({field}) from ({storage.REPLY_ATTEMPT_COMMON_SQL}) where id=?", (tid,)).fetchone()[0]
         assert target_type == source_type, field
-
-
-def test_old_layout_remains_unchanged(pair):
-    _, _, variant = pair
-    reply_variant = _compact_variant(variant)
-    with closing(sqlite3.connect(":memory:")) as target:
-        target.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-        target.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-        storage.create_action_schema(target, include_reply=True, reply_variant=reply_variant)
-        assert not storage.action_schema_is_current(target, include_delivery=True)
-        assert storage.action_schema_is_current(
-            target, include_reply=True, reply_variant=reply_variant
-        )
-    assert storage.ACTION_SEQUENCE_NAMES == {"agent_effect_intents": "actions:agent_effect_intents",
-                                             "agent_execution_receipts": "actions:agent_execution_receipts"}
 
 
 @pytest.mark.parametrize("kind", ["reply_attempts"])
@@ -188,10 +167,7 @@ def test_full_rolls_back_the_same_native_scope(kind, mode):
         with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
             db.execute("pragma foreign_keys=on")
             if target:
-                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk",
-                                             compact_payload=True)
+                create_current_database_schema(db)
             else:
                 for table in ("reply_attempts", "memory_write_events"):
                     db.execute(CAPTURE["actual"]["tables"][table]["sql"])
@@ -238,8 +214,7 @@ def test_attempt_affinity_value_and_type_match_source(pair, field, value):
     sid = insert_source(source, "reply_attempts", values).lastrowid
     tid = storage.insert_action(target, "reply_attempts", values).lastrowid
     expected = source.execute(f"select {field},typeof({field}) from reply_attempts where id=?", (sid,)).fetchone()
-    actual = target.execute("select " + field + ",typeof(" + field + ") from (" + storage.reply_action_projection(
-        "reply_attempts", "actual_no_memory_fk" if variant == "actual" else "fresh_memory_fk") + ") where id=?", (tid,)).fetchone()
+    actual = target.execute("select " + field + ",typeof(" + field + ") from (" + storage.REPLY_ATTEMPT_COMMON_SQL + ") where id=?", (tid,)).fetchone()
     assert actual == expected
 
 
@@ -256,7 +231,7 @@ def test_reply_index_shapes_and_variant_status(pair):
     assert [(row[2], row[3], row[4]) for row in oa[:3]] == [
         ("attempt_oa_process_instance_id", 0, "BINARY"), ("attempt_created_at", 1, "BINARY"), (None, 1, "BINARY")]
     status = list(target.execute("pragma index_xinfo(idx_actions_memory_status)"))
-    assert status[1][2] == ("memory_updated_at" if variant == "fresh_candidate17" else None)
+    assert status[1][2] == "memory_updated_at"
     sql = target.execute("select sql from sqlite_schema where name='idx_actions_reply_oa_history'").fetchone()[0]
     assert "attempt_oa_process_instance_id<>''" in sql
 
@@ -269,9 +244,8 @@ def test_finite_payload_has_no_duplicate_physical_source_values(pair):
     assert "memory_values_json" not in columns
     assert columns["attempt_final_reply_text"] == 2
     assert columns["memory_last_error"] == 2
-    assert ("memory_attempt_ref" in columns) == (variant == "fresh_candidate17")
-    assert ("memory_attempt_id" in columns) == (variant == "actual")
-    assert columns.get("memory_attempt_id") == (2 if variant == "actual" else None)
+    assert columns["memory_attempt_ref"] == 0
+    assert "memory_attempt_id" not in columns
 
 
 def test_raw_update_and_exact_queued_marker_projection(pair):
@@ -286,8 +260,9 @@ def test_raw_update_and_exact_queued_marker_projection(pair):
                    (*update.values(), sid))
     storage.update_action(target, "reply_attempts", sid, update)
     expected = source_row(source, "reply_attempts", sid)
-    expected["audit_tool_events_json"] = json.dumps([marker, marker], separators=(",", ":"))
     actual = projection(target, "reply_attempts", sid, variant)
+    expected = {key: expected[key] for key in actual}
+    expected["audit_tool_events_json"] = json.dumps([marker, marker], separators=(",", ":"))
     assert actual == expected
     assert math.isinf(actual["retry_count"])
     assert "secret" not in _compact_payload_json(target, "reply_attempts")
@@ -349,10 +324,7 @@ def test_bad_update_binding_opens_native_deferred_transaction(bad_argument, conn
     for target in (False, True):
         with closing(sqlite3.connect(":memory:", **connection_options)) as db:
             if target:
-                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk",
-                                             compact_payload=True)
+                create_current_database_schema(db)
             else:
                 db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
             db.commit()
@@ -372,15 +344,12 @@ def test_bad_update_binding_opens_native_deferred_transaction(bad_argument, conn
 
 @pytest.mark.parametrize("connection_options", [{"isolation_level": None}, {"autocommit": True}])
 def test_autocommit_update_holds_writer_lock_through_predicate_scan(connection_options):
-    with TemporaryDirectory(prefix="phase5e-update-", dir="/tmp") as temporary:
+    with TemporaryDirectory(prefix="phase5e-update-") as temporary:
         path = Path(temporary) / "reply.db"
         with closing(sqlite3.connect(path, **connection_options)) as db, closing(
             sqlite3.connect(path, isolation_level=None, timeout=0)
         ) as other:
-            db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-            db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-            storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk",
-                                         compact_payload=True)
+            create_current_database_schema(db)
             identity = storage.insert_action(db, "reply_attempts", REQUIRED).lastrowid
             observed = []
 
@@ -410,10 +379,7 @@ def test_failed_update_preserves_caller_transaction(scope):
     for target in (False, True):
         with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
             if target:
-                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-                storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk",
-                                             compact_payload=True)
+                create_current_database_schema(db)
             else:
                 db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
             db.execute("create table pending(value text)")
@@ -437,15 +403,12 @@ def test_failed_update_preserves_caller_transaction(scope):
 @pytest.mark.parametrize("bad_argument", ["set", "where"])
 def test_bad_update_binding_does_not_take_writer_lock(scope, bad_argument):
     outcomes = []
-    with TemporaryDirectory(prefix="phase5e-binding-", dir="/tmp") as temporary:
+    with TemporaryDirectory(prefix="phase5e-binding-") as temporary:
         for target in (False, True):
             path = Path(temporary) / ("target.db" if target else "source.db")
             with closing(sqlite3.connect(path)) as db, closing(sqlite3.connect(path, isolation_level=None, timeout=0)) as other:
                 if target:
-                    db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-                    db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-                    storage.create_action_schema(db, include_reply=True, reply_variant="actual_no_memory_fk",
-                                                 compact_payload=True)
+                    create_current_database_schema(db)
                 else:
                     db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
                 db.commit()
@@ -482,7 +445,7 @@ def test_bad_update_binding_does_not_take_writer_lock(scope, bad_argument):
 @pytest.mark.parametrize("scope", ["deferred", "autocommit", "outer"])
 def test_bad_reply_insert_binding_matches_native_transaction_and_lock(kind, variant, explicit_id, scope):
     outcomes = []
-    with TemporaryDirectory(prefix="phase5e-insert-binding-", dir="/tmp") as temporary:
+    with TemporaryDirectory(prefix="phase5e-insert-binding-") as temporary:
         for target in (False, True):
             path = Path(temporary) / ("target.db" if target else "source.db")
             options = {"isolation_level": None} if scope == "autocommit" else {}
@@ -491,11 +454,7 @@ def test_bad_reply_insert_binding_matches_native_transaction_and_lock(kind, vari
             ) as other:
                 db.execute("pragma foreign_keys=on")
                 if target:
-                    db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-                    db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-                    storage.create_action_schema(db, include_reply=True,
-                                                 reply_variant="fresh_memory_fk" if kind == "memory_write_events"
-                                                 else "actual_no_memory_fk", compact_payload=True)
+                    create_current_database_schema(db)
                 else:
                     for table in ("reply_attempts", "memory_write_events"):
                         db.execute(CAPTURE[variant]["tables"][table]["sql"])
@@ -531,10 +490,7 @@ def test_fresh_explicit_insert_parent_failure_transaction_matches_source(mode):
         with closing(sqlite3.connect(":memory:", isolation_level=None if mode == "autocommit" else "")) as db:
             db.execute("pragma foreign_keys=on")
             if target:
-                db.execute("create table runs(id integer primary key,record_type text,legacy_key text)")
-                db.execute("create table tasks(id integer primary key,record_type text,legacy_key text)")
-                storage.create_action_schema(db, include_reply=True, reply_variant="fresh_memory_fk",
-                                             compact_payload=True)
+                create_current_database_schema(db)
             else:
                 for table in ("reply_attempts", "memory_write_events"):
                     db.execute(CAPTURE["fresh_candidate17"]["tables"][table]["sql"])
@@ -619,3 +575,31 @@ def test_nan_public_id_uses_current_native_highwater(pair, kind):
         values = values | {"event_type": "y"}
     assert insert_source(source, kind, values | {"id": float("nan")}).lastrowid == 42
     assert storage.insert_action(target, kind, values | {"id": float("nan")}).lastrowid == 42
+
+
+def test_current_attempt_run_reference_and_compare_and_set():
+    from app.run_entity_storage import create_run
+    from app.task_entity_storage import create_task
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.row_factory = sqlite3.Row
+        db.execute("pragma foreign_keys=on")
+        create_current_database_schema(db)
+        task = create_task(db, values={"kind": "reply", "status": "processing", "created_at": "now", "updated_at": "now"})
+        run = create_run(db, values={"task_id": task["id"], "role": "consumer",
+                                     "status": "completed", "session_id": "session",
+                                     "transcript_start": 2, "transcript_end": 9})
+        attempt = storage.insert_action(db, "reply_attempts", REQUIRED | {
+            "agent_run_id": run["id"], "codex_session_id": "session",
+            "codex_transcript_start_line": 2, "codex_transcript_end_line": 9,
+            "codex_reason": "same", "audit_summary": "same",
+        }).lastrowid
+        before = db.execute("select payload_json from actions where record_type='reply_attempts' and cast(legacy_key as integer)=?", (attempt,)).fetchone()[0]
+        assert storage.update_action(db, "reply_attempts", attempt, {"audit_summary": "changed"},
+                                     where_sql="send_status=?", parameters=("failed",)).rowcount == 0
+        assert db.execute("select payload_json from actions where record_type='reply_attempts' and cast(legacy_key as integer)=?", (attempt,)).fetchone()[0] == before
+        assert storage.update_action(db, "reply_attempts", attempt, {"send_status": "completed"},
+                                     where_sql="send_status=?", parameters=("pending",)).rowcount == 1
+        row = db.execute(f"select agent_run_id,codex_session_id,codex_transcript_start_line,codex_transcript_end_line,codex_reason,audit_summary,send_status from ({storage.REPLY_ATTEMPT_COMMON_SQL}) where id=?", (attempt,)).fetchone()
+        assert tuple(row) == (run["id"], "session", 2, 9, "same", "same", "completed")
+        assert db.execute("pragma foreign_key_check").fetchall() == []

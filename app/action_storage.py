@@ -937,11 +937,40 @@ def reply_action_projection(kind, reply_variant, *, canonical_attempt_fields=Fal
     return f"select {','.join(fields)} from actions a {join} where a.record_type='{kind}' and a.record_type<>'external_action_results' and a.record_type not in ({_POSTFIX_TYPES_SQL}) and a.record_type<>'sent_reply_observers'"
 
 
+def current_reply_projection(kind, *, common=False):
+    """Project current Reply records and resolve the exact terminal Run owner."""
+    if kind not in REPLY_ACTION_TYPES:
+        raise ValueError("unsupported reply projection")
+    if kind == "reply_attempts":
+        order = _FRESH_ATTEMPT_ORDER if common else _ATTEMPT_ORDER
+        expressions = {
+            "id": "cast(a.legacy_key as integer)",
+            "codex_session_id": "(select a.attempt_codex_session_id where a.attempt_codex_session_id is not null union all select run.session_id where a.attempt_codex_session_id is null)",
+            "codex_transcript_start_line": "(select a.attempt_codex_transcript_start_line where a.attempt_codex_transcript_start_line is not null union all select run.transcript_start where a.attempt_codex_transcript_start_line is null)",
+            "codex_transcript_end_line": "(select a.attempt_codex_transcript_end_line where a.attempt_codex_transcript_end_line is not null union all select run.transcript_end where a.attempt_codex_transcript_end_line is null)",
+        }
+        if common:
+            expressions["oa_action_result_json"] = (
+                "coalesce((select receipt.provider_result_json from "
+                "reply_attempt_receipt_refs ref join action_receipts receipt "
+                "on receipt.id=ref.receipt_id where ref.attempt_id=a.id),"
+                "a.attempt_oa_action_result_json)"
+            )
+        fields = [expressions.get(field, "a.attempt_" + field) + " as " + field for field in order]
+        join = "left join runs run on run.id=a.attempt_agent_run_id and run.status in ('completed','failed')"
+    else:
+        expressions = {"id": "cast(a.legacy_key as integer)",
+                       "attempt_id": "cast(p.legacy_key as integer)", "payload_json": "'{}'"}
+        fields = [expressions.get(field, "a.memory_" + field) + " as " + field for field in _MEMORY_ORDER]
+        join = "left join actions p on p.id=a.memory_attempt_ref and p.record_type='reply_attempts'"
+    return (f"select {','.join(fields)} from actions a {join} where a.record_type='{kind}' "
+            f"and a.record_type<>'external_action_results' and a.record_type not in ({_POSTFIX_TYPES_SQL}) "
+            "and a.record_type<>'sent_reply_observers'")
+
+
 # Both canonical E declarations contain the 54 current Attempt fields. This
 # explicit projection omits only the four preserved actual-source history fields.
-REPLY_ATTEMPT_COMMON_SQL = reply_action_projection(
-    "reply_attempts", "fresh_memory_fk", receipt_references=True
-)
+REPLY_ATTEMPT_COMMON_SQL = current_reply_projection("reply_attempts", common=True)
 
 # Read candidate status from its existing index before resolving virtual
 # identity fields from the full Attempt payload.
@@ -1994,7 +2023,11 @@ def _insert_reply_action(db, kind, values, *, ignore=False):
         public_id = maximum + 1
     else:
         public_id = _native_integer_primary_key(values["id"])
-    if ignore and db.execute("select 1 from actions where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone():
+    invalid_owner_field = next((field for field in ("codex_reason", "codex_session_id",
+        "codex_transcript_start_line", "codex_transcript_end_line")
+        if kind == "reply_attempts" and field in values and _source_bound_null(values[field])), None)
+    duplicate = ignore and db.execute("select 1 from actions where record_type=? and cast(legacy_key as integer)=?", (kind, public_id)).fetchone()
+    if ignore and (duplicate or invalid_owner_field):
         # Source INSERT OR IGNORE resolves its public-key uniqueness before FK
         # evaluation, but still advances AUTOINCREMENT on an explicit ID.
         # A legal public-key UPDATE can put this ID above the saved sequence.
@@ -2002,6 +2035,11 @@ def _insert_reply_action(db, kind, values, *, ignore=False):
         db.execute("insert into main.sqlite_sequence(name,seq) select ?,0 where not exists(select 1 from main.sqlite_sequence where name=?)", (name, name))
         db.execute("update main.sqlite_sequence set seq=max(seq,?) where name=?", (public_id, name))
         return ActionWriteResult(None, 0)
+    if invalid_owner_field:
+        raise sqlite3.IntegrityError(f"NOT NULL constraint failed: reply_attempts.{invalid_owner_field}")
+    if kind == "reply_attempts":
+        from app.attempt_run_ownership import normalize_payload
+        payload_json = normalize_payload(db, payload_json)
     parent_ref = None
     if kind == "memory_write_events":
         required = (attempt_id, *(data.get(field) for field in ("event_type", "status", "attempts",
@@ -2040,7 +2078,15 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
     db.execute("update main.sqlite_sequence set seq=seq where 0" + " and ? is null" * len(bound), bound)
     if db.execute(f"select 1 from actions where {predicate} limit 1", identity_arguments).fetchone() is None:
         return db.execute("update main.sqlite_sequence set seq=seq where 0")
+    if kind == "reply_attempts":
+        for field in ("codex_reason", "codex_session_id", "codex_transcript_start_line", "codex_transcript_end_line"):
+            if field in values and _source_bound_null(values[field]):
+                raise sqlite3.IntegrityError(f"NOT NULL constraint failed: reply_attempts.{field}")
     assignments, arguments, paths = [], [], []
+    if kind == "reply_attempts":
+        from app.attempt_run_ownership import materialize_payload, normalize_payload
+        existing = db.execute(f"select payload_json from actions where {predicate} limit 1", identity_arguments).fetchone()[0]
+        payload = materialize_payload(db, existing)
     for field, value in values.items():
         if field == "id":
             column = "legacy_key"
@@ -2059,8 +2105,13 @@ def _update_reply_action(db, kind, public_id, values, *, where_sql="", parameter
         assignments.append(column + "=?")
         arguments.append(value)
     if paths:
-        assignments.append("payload_json=jsonb_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
-        arguments.extend(paths)
+        if kind == "reply_attempts":
+            payload = db.execute("select jsonb_set(?," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")", (payload, *paths)).fetchone()[0]
+            assignments.append("payload_json=?")
+            arguments.append(normalize_payload(db, payload))
+        else:
+            assignments.append("payload_json=jsonb_set(payload_json," + ",".join("?,json(?)" for _ in range(len(paths) // 2)) + ")")
+            arguments.extend(paths)
     if not assignments:
         raise ValueError("action update requires fields")
     arguments.extend(identity_arguments)
