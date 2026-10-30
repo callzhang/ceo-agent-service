@@ -24727,7 +24727,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 for source in dict.fromkeys(source_tables)
             ]
         else:
-            branches = self._operation_logs_base_query().split("union all")
+            branches = list(self._operation_logs_base_branches().values())
         compact = [
             "select source_table, source_id, occurred_at from ("
             + branch + ") as source " + where_sql
@@ -24932,11 +24932,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             return current_email_actions_available(db)
 
-    def _operation_logs_base_query(
-        self,
-        source_tables: tuple[str, ...] | None = None,
+    def _operation_logs_base_branches(
+        self, source_tables: tuple[str, ...] | None = None,
         reply_attempt_ids: list[int] | tuple[int, ...] | None = None,
-    ) -> str:
+    ) -> dict[str, str]:
         oa_status_projection = """(
             (reply_attempts.action='oa_approval'
              or coalesce(reply_attempts.oa_process_instance_id, '')<>'')
@@ -24945,7 +24944,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 'recovered', 'skipped'
             )
         )"""
-        query = f"""
+        branches = {"errors": f"""
             select
                     'error:' || id as id,
                     'errors' as source_table,
@@ -24970,7 +24969,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from ({ERROR_SQL})
-                union all
+            """, "reply_tasks": f"""
                 select
                     'reply-task:' || id as id,
                     'reply_tasks' as source_table,
@@ -24990,7 +24989,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as todo_id,
                     0 as follow_up_id
                 from ({NATIVE_REPLY_TASK_CURRENT_SQL})
-                union all
+            """, "reply_attempts": f"""
                 select
                     'reply:' || id as id,
                     'reply_attempts' as source_table,
@@ -25399,7 +25398,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     where historical_run.id = reply_attempts.agent_run_id
                       and latest.attempt_id > reply_attempts.id
                 )
-                union all
+            """, "meeting_alignment_runs": f"""
                 select
                     'meeting:' || runs.id as id,
                     'meeting_alignment_runs' as source_table,
@@ -25434,7 +25433,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as follow_up_id
                 from ({NATIVE_MEETING_RUN_SQL}) as runs
                 join ({NATIVE_MEETING_TASK_SQL}) as jobs on jobs.id=runs.job_id
-                union all
+            """, "work_summary_inputs": f"""
                 select
                     'task-input:' || id as id,
                     'work_summary_inputs' as source_table,
@@ -25458,7 +25457,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from tasks as work_summary_tasks
                 join work_summary_inputs on work_summary_inputs.task_id=work_summary_tasks.id
                 where work_summary_tasks.kind='work_summary'
-                union all
+            """, "work_updates": f"""
                 select
                     'task-update:' || updates.id as id,
                     'work_updates' as source_table,
@@ -25479,7 +25478,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     0 as follow_up_id
                 from ({SYNC_ACTION_PROJECTIONS['work_updates']}) as updates
                 join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=updates.project_id
-                union all
+            """, "todo_evidence_candidates": f"""
                 select
                     'todo-evidence:' || candidates.id as id,
                     'todo_evidence_candidates' as source_table,
@@ -25501,7 +25500,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from ({BUSINESS_PROJECTIONS['todo_evidence_candidate']}) as candidates
                 join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=candidates.project_id
                 left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=candidates.todo_id
-                union all
+            """, "follow_up_drafts": f"""
                 select
                     'follow-up:' || drafts.id as id,
                     'follow_up_drafts' as source_table,
@@ -25523,7 +25522,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from ({SYNC_ACTION_PROJECTIONS['follow_up_drafts']}) as drafts
                 join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=drafts.project_id
                 left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=drafts.todo_id
-                union all
+            """, "work_todo_dingtalk_links": f"""
                 select
                     'dingtalk-todo:' || links.id as id,
                     'work_todo_dingtalk_links' as source_table,
@@ -25545,7 +25544,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from ({SYNC_ACTION_PROJECTIONS['work_todo_dingtalk_links']}) as links
                 left join ({BUSINESS_PROJECTIONS['work_todo']}) as todos on todos.id=links.work_todo_id
                 left join ({BUSINESS_PROJECTIONS['work_project']}) as projects on projects.id=todos.project_id
-                union all
+            """, "scheduled_task_runs": f"""
                 select
                     'scheduled-run:' || runs.id as id,
                     'scheduled_task_runs' as source_table,
@@ -25599,14 +25598,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 from schedule_occurrences as runs
                 join ({config_projection('scheduled_task_config_versions')}) as configs on configs.id=runs.snapshot_id
                 where {history_types.scheduled_run_filter_sql("runs")}
-        """
+        """}
         if (not source_tables or "actions" in source_tables) and self._email_actions_history_available():
             # The EmailStore projection gives the common Action id and its
             # current receipt facts; the domain source label remains stable.
             from app.email_store import DIRECT_ACTION_MAX_ATTEMPTS, DIRECT_EMAIL_ACTION_SQL
 
-            query += f"""
-                union all
+            branches["actions"] = f"""
                 select
                     'action:' || actions.action_id as id,
                     'actions' as source_table,
@@ -25659,15 +25657,20 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 join ({email_classification_projection()}) as messages
                   on messages.id=actions.classification_id
             """
+        return branches
+
+    def _operation_logs_base_query(
+        self,
+        source_tables: tuple[str, ...] | None = None,
+        reply_attempt_ids: list[int] | tuple[int, ...] | None = None,
+    ) -> str:
+        branches = self._operation_logs_base_branches(source_tables, reply_attempt_ids)
+        query = " union all ".join(branches.values())
         if not source_tables:
             return query
         requested = set(source_tables)
-        branches = []
-        for branch in query.split("union all"):
-            match = re.search(r"'([^']+)' as source_table", branch)
-            if match and match.group(1) in requested:
-                branches.append(branch)
-        return "union all".join(branches) if branches else f"select * from ({query}) where 0"
+        selected = [branch for source, branch in branches.items() if source in requested]
+        return " union all ".join(selected) if selected else f"select * from ({query}) where 0"
 
     def _operation_log_filters(
         self,

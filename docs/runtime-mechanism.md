@@ -1421,6 +1421,7 @@ the action plan and browser effect authorization remain unchanged.
 Audit web startup does not scan and cache History lists or charts. History
 pages are computed when requested. No page-result cache or background page refresh
 can reuse another page size or hide a just-committed record.
+History builds source-keyed top-level SQL branches explicitly and joins only those branches; nested Attempt provenance queries are never split by SQL text or formatting. Key counts and full page hydration consume the same source projections.
 For failed Attempts, the History status projection also follows the owning
 AgentRun's stable reply-task ID when the OA scanner has changed the task's
 trigger key. Status filters and counts use that projected state; stored Attempt

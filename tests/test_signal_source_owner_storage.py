@@ -191,8 +191,17 @@ def test_current_manifest_preserves_463_object_digest():
     objects = current_objects(email_ledger=True)
     encoded = json.dumps(objects, ensure_ascii=False, separators=(",", ":")).encode()
     assert len(objects) == 463
+    # This release changes only Attempt encoding in Actions, not Signal owners.
+    from app.attempt_run_ownership_release import source_objects
+
+    source = {(kind, name, owner): sql for kind, name, owner, sql in source_objects()}
+    target = {(kind, name, owner): sql for kind, name, owner, sql in objects}
+    assert source.keys() == target.keys()
+    assert [key for key in source if source[key] != target[key]] == [
+        ("table", "actions", "actions")
+    ]
     assert hashlib.sha256(encoded).hexdigest() == (
-        "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94"
+        "48eb4aee35f08e4d44a211eb3e87192a57072fe4544a1cd8bf33395f00516cc1"
     )
 
 

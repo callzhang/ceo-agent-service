@@ -160,6 +160,18 @@
     },
     "review_round2_release": {
       "passed": 4
+    },
+    "email_integrated": {
+      "passed": 248,
+      "seconds": 64.34
+    },
+    "signal_updated_digest": {
+      "passed": 9,
+      "seconds": 1.41
+    },
+    "round3_history_owner_and_release": {
+      "passed": 25,
+      "seconds": 14.26
     }
   },
   "review": {
@@ -180,5 +192,23 @@
     "real_sends": 0,
     "old_code_cold_process": true,
     "copy_refinement": "Added canonical owner type restriction; verified 0 existing normalized references to noncanonical Run values, plus new BLOB/REAL/nonnumeric regression cases"
-  }
+  },
+  "release_attempts": [
+    {
+      "commit": "09b27acdea86552e715eda50d8514427237f0c1e",
+      "gate": {
+        "failed": 10,
+        "passed": 8149,
+        "skipped": 2,
+        "deselected": 1,
+        "seconds": 402.76
+      },
+      "production_changed": false,
+      "findings": [
+        "History source builder split nested provenance scalar UNION",
+        "Signal full-catalog digest still bound to previous Actions declaration",
+        "Email exact-source assertion did not distinguish missing from ambiguity"
+      ]
+    }
+  ]
 }

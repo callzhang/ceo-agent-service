@@ -220,3 +220,17 @@ def test_noncanonical_run_values_leave_local_provenance_intact():
                 normalize_payload(db, invalid)
             with pytest.raises(ValueError, match='invalid Attempt Run owner'):
                 materialize_payload(db, invalid)
+
+
+def test_history_keeps_nested_owner_projection_with_source_filter_and_paging(tmp_path):
+    from app.store import AutoReplyStore
+    store = AutoReplyStore(tmp_path / 'history.sqlite3')
+    for number in range(2):
+        store.record_reply_attempt(conversation_id='history', conversation_title='History',
+            trigger_message_id=str(number), trigger_sender='sender', trigger_text=f'needle {number}',
+            action='chat_message', sensitivity_kind='general', send_status='sent')
+    for sources in (None, ('reply_attempts',)):
+        total, page = store.list_operation_logs_with_count(limit=1, query='needle', source_tables=sources)
+        assert total == 2 and len(page) == 1
+        assert page[0].source_table == 'reply_attempts'
+        assert store.count_operation_logs(query='absent', source_tables=sources) == 0

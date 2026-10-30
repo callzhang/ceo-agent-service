@@ -809,7 +809,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
 - History 的逻辑来源是 `HISTORY_SOURCE_TABLES`：`reply_attempts` 投影、会议、Task 各来源，
   以及两类新来源。Audit web 启动不预热大范围 History 查询；打开尝试详情时批量读取该任务代次的
   Agent run 及工具事件，图表只投影所选时间范围内 attempt 的当前 History 状态。
-  页面缓存以来源表元组为键。
+  顶层查询按来源显式组织分支，计数键查询和页面明细使用同一来源投影；不按 SQL 文本拆分嵌套的 Attempt 来源查询，也不缓存页面结果。
   `errors` 不是 History 来源，其分支的 `service_error` 类型只出现在旧 `/logs` 页。
 - 定时命令（`scheduled_task_runs`）：失败的触发一律显示；同一定时任务之后有一次成功
   运行的，失败显示为 `recovered`（服务在那次成功时解决它的 Attention 条目），否则为
