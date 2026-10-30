@@ -10606,20 +10606,28 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
         Older direct-unsubscribe failures can have no Agent run at all.  They
         are retryable only when the immutable action payload is intact and no
-        claim, receipt, effect, browser step, or execution-pending marker was
-        persisted.  This keeps the stable action identity as the idempotency
-        boundary while avoiding a blind status edit for arbitrary failed reply
-        tasks.
+        claim, receipt, effect, browser step, or Agent run was persisted. A
+        legacy execution marker is recoverable only when it binds to the same
+        task and input and an earlier failed Attempt contains typed transient
+        navigation evidence at the entry-opening stage. This upgrades the
+        marker to the existing bounded retry state; all other markers remain
+        reconciliation fences.
         """
         retryable_errors = (
             "email_unsubscribe_browser_failed:%",
             "email_unsubscribe_browser_timeout",
             "unsubscribe_operation_rejected:%",
         )
+        from app.email_unsubscribe import (
+            TRANSIENT_BROWSER_ERROR_CODES,
+            TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES,
+            UnsubscribeEntrySource,
+        )
         with self._immediate_write_transaction() as db:
             rows = db.execute(
                 f"""
-                select tasks.id, tasks.execution_generation
+                select tasks.id, tasks.execution_generation, tasks.trigger_message_id,
+                       tasks.trigger_message_json, tasks.input_version
                 from ({REPLY_TASK_CURRENT_SQL}) as tasks
                 where tasks.channel='email'
                   and tasks.status='failed'
@@ -10637,10 +10645,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_receipts')}) where action_identity=tasks.trigger_message_id)
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_effects')}) where action_identity=tasks.trigger_message_id)
                   and not exists (select 1 from ({email_action_projection('email_unsubscribe_steps')}) where action_identity=tasks.trigger_message_id)
-                  and not exists (
-                      select 1 from ({state_projection('service_state')})
-                      where key='email_unsubscribe_execution_pending:v1:' || tasks.trigger_message_id
-                  )
                 order by tasks.id
                 """,
                 (retryable_errors[0], retryable_errors[1], retryable_errors[2]),
@@ -10649,6 +10653,82 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             from app import task_entity_storage
             for row in rows:
                 task_id = int(row["id"])
+                action_identity = str(row["trigger_message_id"])
+                input_digest = hashlib.sha256(
+                    str(row["trigger_message_json"]).encode("utf-8")
+                ).hexdigest()
+                marker_key = f"email_unsubscribe_execution_pending:v1:{action_identity}"
+                marker_row = db.execute(
+                    f"select value from ({state_projection('service_state')}) where key=?",
+                    (marker_key,),
+                ).fetchone()
+                recovered_marker: dict[str, object] | None = None
+                if marker_row is not None:
+                    try:
+                        marker = json.loads(marker_row["value"])
+                    except (TypeError, json.JSONDecodeError):
+                        continue
+                    if not isinstance(marker, dict):
+                        continue
+                    if (
+                        marker.get("task_id") != task_id
+                        or marker.get("action_identity") != action_identity
+                        or marker.get("input_version") != int(row["input_version"])
+                        or marker.get("input_digest") != input_digest
+                    ):
+                        continue
+                    if marker.get("state") == "retryable":
+                        try:
+                            retry_count = int(marker.get("retry_count") or 0)
+                        except (TypeError, ValueError):
+                            continue
+                        if (
+                            marker.get("error_code") not in TRANSIENT_BROWSER_ERROR_CODES
+                            or retry_count < 0
+                            or retry_count > TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+                        ):
+                            continue
+                        recovered_marker = marker
+                    elif "state" not in marker:
+                        payload = json.loads(str(row["trigger_message_json"]))
+                        parameters = payload.get("action_parameters", {})
+                        entries = payload.get("unsubscribe_entries", [])
+                        candidate_reference = (
+                            parameters.get("candidate_reference")
+                            if isinstance(parameters, dict) else None
+                        )
+                        entry_sources = [
+                            entry.get("source") for entry in entries
+                            if isinstance(entry, dict)
+                            and entry.get("reference") == candidate_reference
+                        ] if isinstance(entries, list) else []
+                        if (
+                            not isinstance(parameters, dict)
+                            or parameters.get("candidate_source")
+                            != UnsubscribeEntrySource.BODY_HTML_HTTPS.value
+                            or len(entry_sources) != 1
+                            or entry_sources[0] != UnsubscribeEntrySource.BODY_HTML_HTTPS.value
+                        ):
+                            continue
+                        transient_attempt_count = (
+                            self._legacy_open_entry_timeout_attempt_count(
+                                db, action_identity
+                            )
+                        )
+                        if (
+                            transient_attempt_count == 0
+                            or transient_attempt_count > TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+                        ):
+                            continue
+                        marker.update(
+                            state="retryable",
+                            retry_count=transient_attempt_count,
+                            error_code="email_unsubscribe_browser_timeout",
+                            recovered_from_legacy_attempt=True,
+                        )
+                        recovered_marker = marker
+                    else:
+                        continue
                 native = task_entity_storage.get_task(db, task_id)
                 if native is None:
                     continue
@@ -10666,8 +10746,55 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     parameters=parameters,
                 )
                 if updated is not None:
+                    if recovered_marker is not None:
+                        update_state_rows(
+                            db, "service_state", {"value": json.dumps(recovered_marker, sort_keys=True)},
+                            where_sql="key=? and value=?",
+                            parameters=(marker_key, marker_row["value"]),
+                        )
                     recovered.append(task_id)
             return recovered
+
+    @staticmethod
+    def _legacy_open_entry_timeout_attempt_count(
+        db: sqlite3.Connection, action_identity: str,
+    ) -> int:
+        """Count historical failures with typed transient navigation evidence."""
+        from app.email_unsubscribe import (
+            CHROMIUM_NAVIGATION_TIMEOUT_MARKER,
+            UnsubscribeBrowserFailure,
+            UnsubscribeOperationKind,
+        )
+
+        attempts = db.execute(
+            f"""
+            select audit_summary from ({REPLY_ATTEMPT_COMMON_SQL})
+            where channel='email' and trigger_message_id=?
+              and action='direct_unsubscribe' and send_status='failed'
+            order by id desc
+            """,
+            (action_identity,),
+        ).fetchall()
+        count = 0
+        for attempt in attempts:
+            summary = str(attempt["audit_summary"] or "")
+            fields: dict[str, str] = {}
+            for part in summary.split(";"):
+                key, separator, value = part.partition("=")
+                if separator:
+                    fields[key.strip()] = value.strip()
+            category = summary.partition("category=")[2].partition(";")[0].strip()
+            detail = fields.get("detail", "")
+            if (
+                fields.get("operation") == UnsubscribeOperationKind.OPEN_ENTRY.value
+                and (
+                    category == UnsubscribeBrowserFailure.OPERATION_TIMEOUT.value
+                    or category == UnsubscribeBrowserFailure.OPERATION_FAILED.value
+                    and CHROMIUM_NAVIGATION_TIMEOUT_MARKER in detail
+                )
+            ):
+                count += 1
+        return count
 
     def terminalize_exhausted_pending_reply_tasks(
         self,

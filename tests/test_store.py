@@ -4805,6 +4805,127 @@ def test_retry_failed_effect_free_email_unsubscribe_tasks_requeues_only_safe_row
     assert task.error == "email_unsubscribe_browser_timeout"
 
 
+@pytest.mark.parametrize(
+    ("candidate_source", "audit_summary", "should_recover"),
+    [
+        (
+            "body_html_https",
+            "failed_browser: category=operation_failed;detail=Page.goto: net::ERR_TIMED_OUT at [url];operation=open_entry",
+            True,
+        ),
+        (
+            "header_https",
+            "failed_browser: category=operation_failed;detail=Page.goto: net::ERR_TIMED_OUT at [url];operation=open_entry",
+            False,
+        ),
+        (
+            "body_html_https",
+            "failed_browser: category=operation_timeout;detail=browser timed out;operation=read_page",
+            False,
+        ),
+        (
+            "body_html_https",
+            "failed_browser: category=operation_failed;detail=connection reset;operation=open_entry",
+            False,
+        ),
+    ],
+)
+def test_retry_failed_email_unsubscribe_recovers_legacy_fence_from_typed_attempt_evidence(
+    tmp_path: Path, candidate_source: str, audit_summary: str, should_recover: bool,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    action_identity = "email-action:legacy-timeout"
+    payload = {
+        "schema": "email_agent_action.v1",
+        "action_type": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_identity": action_identity,
+        "action_parameters": {
+            "candidate_reference": "unsubscribe-entry:stable-reference",
+            "candidate_source": candidate_source,
+        },
+        "unsubscribe_entries": [{
+            "reference": "unsubscribe-entry:stable-reference",
+            "source": candidate_source,
+        }],
+    }
+    trigger_message_json = json.dumps(payload, separators=(",", ":"))
+    store.enqueue_reply_task(
+        conversation_id="email-thread:legacy",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-10-15 20:43:35",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        trigger_message_json=trigger_message_json,
+        channel="email",
+    )
+    task = store.list_reply_tasks(limit=1)[0]
+    with store._connect() as db:
+        _update_current_task8(
+            db,
+            "reply_tasks",
+            {"status": "failed", "error": "unsubscribe_operation_rejected:ValueError"},
+            where_sql="and id=?",
+            parameters=(task.id,),
+        )
+        _update_current_task8(
+            db,
+            "reply_task_inputs",
+            {"trigger_message_json": trigger_message_json},
+            where_sql="and trigger_message_id=?",
+            parameters=(action_identity,),
+        )
+
+    store.record_reply_attempt(
+        conversation_id="email-thread:legacy",
+        conversation_title="Email unsubscribe",
+        trigger_message_id=action_identity,
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+        action="direct_unsubscribe",
+        sensitivity_kind="none",
+        audit_summary=audit_summary,
+        send_status="failed",
+        channel="email",
+    )
+
+    input_digest = hashlib.sha256(trigger_message_json.encode()).hexdigest()
+    with store._immediate_write_transaction() as db:
+        insert_state(
+            db,
+            "service_state",
+            {
+                "key": f"email_unsubscribe_execution_pending:v1:{action_identity}",
+                "value": json.dumps({
+                    "task_id": task.id,
+                    "action_identity": action_identity,
+                    "execution_generation": "initial",
+                    "input_version": 1,
+                    "input_digest": input_digest,
+                    "started_at": "2026-10-15T20:43:35+00:00",
+                }),
+            },
+        )
+
+    recovered_ids = store.retry_failed_effect_free_email_unsubscribe_tasks()
+    assert recovered_ids == ([task.id] if should_recover else [])
+    recovered = store.list_reply_tasks(limit=1)[0]
+    assert recovered.status == ("pending" if should_recover else "failed")
+    with store._connect() as db:
+        marker = json.loads(db.execute(
+            f"select value from ({state_projection('service_state')}) where key=?",
+            (f"email_unsubscribe_execution_pending:v1:{action_identity}",),
+        ).fetchone()[0])
+    if should_recover:
+        assert marker["state"] == "retryable"
+        assert marker["error_code"] == "email_unsubscribe_browser_timeout"
+        assert marker["retry_count"] == 1
+    else:
+        assert "state" not in marker
+
+
 def test_reply_task_execution_generation_defaults_and_survives_requeue(
     tmp_path: Path,
 ):

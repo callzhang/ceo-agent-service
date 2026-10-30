@@ -417,6 +417,9 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
         "email_unsubscribe_browser_failed",
     }
 )
+# Chromium navigation timeout evidence shared by live classification and
+# recovery of historical Attempt details.
+CHROMIUM_NAVIGATION_TIMEOUT_MARKER = "net::ERR_TIMED_OUT"
 # A transient browser failure receives this many exact-action retries; the
 # worker applies its existing exponential backoff between attempts.
 TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = MAX_AUTOMATIC_RETRIES
@@ -3462,7 +3465,7 @@ class PlaywrightUnsubscribeBrowser:
                     retryable_navigation_stop = (
                         "timeout" in type(exc).__name__.casefold()
                         or "ERR_ABORTED" in str(exc)
-                        or "net::ERR_TIMED_OUT" in str(exc)
+                        or CHROMIUM_NAVIGATION_TIMEOUT_MARKER in str(exc)
                     )
                     current_url = str(getattr(self.page, "url", ""))
                     if (
@@ -3616,7 +3619,7 @@ class PlaywrightUnsubscribeBrowser:
                 "timeout" in type(exc).__name__.casefold()
                 or (
                     operation.kind is UnsubscribeOperationKind.OPEN_ENTRY
-                    and "net::ERR_TIMED_OUT" in str(exc)
+                    and CHROMIUM_NAVIGATION_TIMEOUT_MARKER in str(exc)
                 )
             ):
                 raise UnsubscribeBrowserError(
