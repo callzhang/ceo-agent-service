@@ -1076,6 +1076,8 @@ History 的回复类记录以 task 为核心：列表行带 `task_id` 与 `run_c
 `/history/tasks/<task_id>`；该页只读取 `tasks`、`runs` 和 Attempt 投影，列出 task 的全部 run
 （含历史执行代）与 Attempt，Attempt 详情页保持原样（规则见 `docs/architecture.md` 的「History 语义」）。
 
+`POST /api/console/history/tasks/{task_id}/retry` 对 Reply Task 校验当前执行代最新 Consumer/Audit run 的可重试证据。对直接 Email 退订 Task，只有当前不可变输入精确绑定退订 action identity，且没有任何 AgentRun、退订执行标记、claim、receipt、effect 或 browser step 时，才在新 generation 排队。任一执行标记都保持不动并要求 reconciliation；不可变失败 Attempt 保留在 History。每个 action identity 最多 3 次显式重试，预算存于 service state，不随 generation 轮换重置。API 不执行 provider 操作、不写成功状态，worker 仍使用原 ActionPlan 和现有执行围栏。
+
 微信 History 的任务完成与消息投递分别投影：同一任务、会话和当前执行代的最新投递为
 `failed` 或 `send_unknown` 时，失败 Attempt 继续在列表筛选、详情、状态计数和图表中显示
 `failed`，不能被候选任务的 `done` 掩盖。旧代、其他会话和已有后续成功投递的失败不覆盖

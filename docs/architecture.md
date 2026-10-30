@@ -849,6 +849,7 @@ History 是任务和执行记录的单一展示入口。同一个任务不得被
   展示 task 的当前状态，并列出它的全部 Attempt（各自链到 `/attempts/<id>`）和全部 Agent run
   （按执行代标明「当前代」或「历史代」）。Attempt 详情页不变；这是对已存行的只读投影，不改状态、
   不改任务生命周期。队列行、会议、定时和邮件动作行没有 task 页，仍按各自规则链接。
+- `POST /api/console/history/tasks/{task_id}/retry` 是 Task 级技术恢复入口。Reply Task 沿用当前代最新 Consumer/Audit run 的可重试错误校验。直接 Email 退订 Task 仅在当前输入精确绑定退订身份，且不存在 AgentRun、执行标记、认领、回执、效果或浏览器步骤时才可入队；未知或待核对标记原样保留并拒绝重试。显式重试按稳定 action identity 最多 3 次，代次轮换不会清零预算。两种路径都保留原 Attempt/History，只创建新执行代并排队，由原 worker 和现有外部动作门禁处理，不写成功终态。
 - History 在页面可见时每十秒读取当前快照；已经进入终态的队列任务不得因页面保持打开而继续
   显示为 `processing`。
 - 微信候选任务的 `done` 不证明消息已投递。同一任务、会话和当前执行代的最新投递为

@@ -135,3 +135,104 @@ def test_task_retry_api_rejects_provider_risk_rejection(tmp_path: Path):
     assert current.status == "failed"
     assert current.execution_generation == task.execution_generation
 
+
+def _failed_effect_free_email_unsubscribe(store: AutoReplyStore):
+    import json
+
+    action_identity = "email-action:retry-api-unsubscribe"
+    payload = {
+        "schema": "email_agent_action.v1",
+        "action_type": "unsubscribe",
+        "lifecycle_version": "email_unsubscribe_audited_v2",
+        "action_identity": action_identity,
+        "action_parameters": {"candidate_reference": "entry-1", "candidate_source": "body_html_https"},
+        "unsubscribe_entries": [{"reference": "entry-1", "source": "body_html_https"}],
+    }
+    assert store.enqueue_reply_task(
+        conversation_id="email-thread:retry-api",
+        conversation_title="Email unsubscribe",
+        single_chat=False,
+        trigger_message_id=action_identity,
+        trigger_create_time="2026-10-30T10:00:00Z",
+        trigger_sender="sender@example.com",
+        trigger_text="Authorized unsubscribe action.",
+        trigger_message_json=json.dumps(payload),
+        channel="email",
+    )
+    task = store.list_reply_tasks(limit=1)[0]
+    task = store.claim_reply_task(task.id)
+    assert task is not None
+    store.fail_reply_task(
+        task.id, "provider source temporarily unavailable",
+        expected_execution_generation=task.execution_generation,
+    )
+    return task
+
+
+def test_task_retry_api_requeues_failed_effect_free_email_unsubscribe(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _failed_effect_free_email_unsubscribe(store)
+
+    response = _client(store).post(f"/api/console/history/tasks/{task.id}/retry")
+
+    assert response.status_code == 200, response.text
+    item = response.json()["item"]
+    assert item["task_id"] == task.id
+    assert item["status"] == "pending"
+    assert item["retried_generation"] == task.execution_generation
+    retried = store.get_reply_task(task.id)
+    assert retried is not None
+    assert retried.status == "pending"
+    assert retried.execution_generation != task.execution_generation
+    assert retried.current_input_id == task.current_input_id
+    assert retried.error == "task_retry:effect_free_email_unsubscribe"
+    retry_state = store.get_service_state(
+        f"email_unsubscribe_manual_retry:v1:{task.trigger_message_id}"
+    )
+    assert retry_state == '{"retry_count": 1}'
+
+
+def test_task_retry_api_bounds_effect_free_email_unsubscribe_retries(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _failed_effect_free_email_unsubscribe(store)
+    store.set_service_state(
+        f"email_unsubscribe_manual_retry:v1:{task.trigger_message_id}",
+        '{"retry_count":3}',
+    )
+
+    response = _client(store).post(f"/api/console/history/tasks/{task.id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_unsubscribe_retry_not_allowed"
+    current = store.get_reply_task(task.id)
+    assert current is not None
+    assert current.status == "failed"
+    assert current.execution_generation == task.execution_generation
+
+
+def test_task_retry_api_preserves_unresolved_email_unsubscribe_marker(tmp_path: Path):
+    import json
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _failed_effect_free_email_unsubscribe(store)
+    marker_key = f"email_unsubscribe_execution_pending:v1:{task.trigger_message_id}"
+    marker = json.dumps({
+        "task_id": task.id,
+        "action_identity": task.trigger_message_id,
+        "execution_generation": task.execution_generation,
+        "input_version": task.input_version,
+        "input_digest": "unknown",
+        "started_at": "2026-10-30T10:00:00Z",
+    })
+    store.set_service_state(marker_key, marker)
+
+    response = _client(store).post(f"/api/console/history/tasks/{task.id}/retry")
+
+    assert response.status_code == 409
+    assert response.json()["code"] == "email_unsubscribe_retry_not_allowed"
+    current = store.get_reply_task(task.id)
+    assert current is not None
+    assert current.status == "failed"
+    assert current.execution_generation == task.execution_generation
+    assert store.get_service_state(marker_key) == marker
+

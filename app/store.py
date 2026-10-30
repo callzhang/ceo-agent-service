@@ -10738,6 +10738,131 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     recovered.append(task_id)
             return recovered
 
+    def retry_failed_effect_free_email_unsubscribe_task(
+        self, task_id: int, *, expected_execution_generation: str,
+    ) -> ReplyTask:
+        """Retry one failed direct-unsubscribe Task when no execution began.
+
+        This is the explicit, task-scoped History API path. It requires the
+        immutable current input to identify the direct unsubscribe, and rejects
+        any persisted run, execution marker, claim, receipt, effect, or browser
+        step. The retry budget is keyed by stable action identity so generation
+        rotation cannot reset it. The original failed Attempt remains History.
+        """
+        from app.email_unsubscribe import TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
+
+        if not expected_execution_generation.strip():
+            raise ValueError("expected execution generation is required")
+        with self._immediate_write_transaction() as db:
+            task = task_entity_storage.get_task_with_inputs(db, task_id)
+            if (
+                task is None
+                or task["kind"] != "reply"
+                or task["status"] != "failed"
+                or task["execution_generation"] != expected_execution_generation
+            ):
+                raise ValueError("failed email unsubscribe task is no longer current")
+            current_input = task.get("current_input")
+            if not isinstance(current_input, dict) or current_input.get("channel") != "email":
+                raise ValueError("task is not a direct Email task")
+            action_identity = str(current_input.get("trigger_message_id") or "").strip()
+            raw_payload = current_input.get("trigger_message_json")
+            try:
+                payload = json.loads(raw_payload) if isinstance(raw_payload, str) else None
+            except (TypeError, json.JSONDecodeError):
+                payload = None
+            if (
+                not action_identity
+                or not isinstance(payload, dict)
+                or payload.get("schema") != "email_agent_action.v1"
+                or payload.get("action_type") != "unsubscribe"
+                or payload.get("lifecycle_version") not in {
+                    "email_unsubscribe_consumer_direct_v1",
+                    "email_unsubscribe_audited_v2",
+                }
+                or payload.get("action_identity") != action_identity
+            ):
+                raise ValueError("current input is not an identity-bound unsubscribe action")
+            if db.execute("select 1 from runs where task_id=? limit 1", (task_id,)).fetchone():
+                raise ValueError("task has AgentRun history and is not effect-free")
+            marker_key = f"email_unsubscribe_execution_pending:v1:{action_identity}"
+            if db.execute(
+                f"select 1 from ({state_projection('service_state')}) where key=?",
+                (marker_key,),
+            ).fetchone():
+                raise ValueError("unsubscribe execution marker requires reconciliation")
+            for record_type in (
+                "email_unsubscribe_claims", "email_unsubscribe_receipts",
+                "email_unsubscribe_effects", "email_unsubscribe_steps",
+            ):
+                if db.execute(
+                    f"select 1 from ({email_action_projection(record_type)}) "
+                    "where action_identity=? limit 1",
+                    (action_identity,),
+                ).fetchone():
+                    raise ValueError("unsubscribe has persisted execution evidence")
+
+            retry_key = f"email_unsubscribe_manual_retry:v1:{action_identity}"
+            retry_row = db.execute(
+                f"select value from ({state_projection('service_state')}) where key=?",
+                (retry_key,),
+            ).fetchone()
+            if retry_row is None:
+                retry_count = 0
+            else:
+                try:
+                    retry_state = json.loads(str(retry_row["value"]))
+                    retry_count_value = retry_state["retry_count"]
+                except (TypeError, ValueError, KeyError, json.JSONDecodeError):
+                    raise ValueError("unsubscribe retry counter is invalid") from None
+                if (
+                    not isinstance(retry_state, dict)
+                    or not isinstance(retry_count_value, int)
+                    or isinstance(retry_count_value, bool)
+                    or retry_count_value < 0
+                ):
+                    raise ValueError("unsubscribe retry counter is invalid")
+                retry_count = retry_count_value
+            if retry_count >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+                raise ValueError("email unsubscribe retry budget exhausted")
+
+            parameters = dict(task["parameters"])
+            parameters.update(
+                force_new_decision=1,
+                recovery_code="effect_free_unsubscribe_retry",
+            )
+            next_generation = uuid4().hex
+            updated = task_entity_storage.update_task_cas(
+                db,
+                task_id=task_id,
+                expected={
+                    "kind": "reply",
+                    "status": "failed",
+                    "execution_generation": expected_execution_generation,
+                    "current_input_id": task["current_input_id"],
+                    "input_version": task["input_version"],
+                },
+                changes={
+                    "status": "pending", "attempts": 0, "locked_at": None,
+                    "available_at": "", "error": "task_retry:effect_free_email_unsubscribe",
+                    "execution_generation": next_generation,
+                    "updated_at": db.execute("select current_timestamp").fetchone()[0],
+                },
+                parameters=parameters,
+            )
+            if updated is None:
+                raise ValueError("failed email unsubscribe task is no longer current")
+            upsert_state(
+                db,
+                "service_state",
+                {"key": retry_key, "value": json.dumps({"retry_count": retry_count + 1})},
+                {"value": state_json_field("value"), "updated_at": "json_quote(current_timestamp)"},
+            )
+            refreshed = task_entity_storage.get_task_with_inputs(db, task_id)
+            if refreshed is None:
+                raise RuntimeError("retried Email task was not persisted")
+            return self._reply_task_from_native(refreshed)
+
     @staticmethod
     def _legacy_transient_browser_failure_attempt_count(
         db: sqlite3.Connection, action_identity: str,

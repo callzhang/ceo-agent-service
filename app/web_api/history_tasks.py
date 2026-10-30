@@ -193,6 +193,32 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
                 },
                 status_code=409,
             )
+        if task.channel == "email":
+            try:
+                retried = store.retry_failed_effect_free_email_unsubscribe_task(
+                    task.id,
+                    expected_execution_generation=task.execution_generation,
+                )
+            except ValueError as exc:
+                return JSONResponse(
+                    {
+                        "ok": False,
+                        "code": "email_unsubscribe_retry_not_allowed",
+                        "message": str(exc),
+                        "details": {},
+                    },
+                    status_code=409,
+                )
+            return {
+                "item": {
+                    "task_id": retried.id,
+                    "status": retried.status,
+                    "execution_generation": retried.execution_generation,
+                    "retried_generation": task.execution_generation,
+                    "failure_code": "effect_free_email_unsubscribe",
+                },
+                "meta": {"snapshot_at": snapshot_at()},
+            }
         runs = store.list_agent_runs_for_task_generation(
             task.id, task.execution_generation, load_events=False
         )
