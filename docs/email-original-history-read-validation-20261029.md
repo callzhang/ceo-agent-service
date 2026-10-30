@@ -2,11 +2,11 @@
 
 ## 已证实根因与当前实现
 
-生产原文详情 `/api/console/email/classifications/949082524487675729` 返回 502 / `email_original_unavailable`。异常在 `locate_message`，尚未读取正文。当前来源指向法务；原始邮件确实位于 UID 60。现有 Message-ID 合同规范化域名为小写，但该服务器的 HEADER Message-ID 检索只在原始大小写的完整值下命中，规范值、本地部分及子串检索均为零。只读获取原始头信息确认是同一完整身份，不是邮件被删除。
+修复前，生产原文详情 `/api/console/email/classifications/949082524487675729` 返回 502 / `email_original_unavailable`。异常在 `locate_message`，尚未读取正文。当前来源指向法务；原始邮件确实位于 UID 60。现有 Message-ID 合同规范化域名为小写，但该服务器的 HEADER Message-ID 检索只在原始大小写的完整值下命中，规范值、本地部分及子串检索均为零。只读获取原始头信息确认是同一完整身份，不是邮件被删除。
 
 修复替换现行原文重新定位算法：UID SEARCH ALL，按最多 50 UID 一批只读 FETCH Message-ID 头字段；复用既有规范身份全等、严格 UID literal 解析、唯一性和 UIDVALIDITY 合同后读取正文。没有 DWS/旧结构回退、标题猜测、正文缓存、读取自修补或 DDL。正常已知 UID 的直接读取不变。代价是重新定位需要遍历目标文件夹的头信息，大文件夹耗时尚未实测。
 
-History 生产当前主题查询 `Quotation for On-Premise` 命中 44 条；加 failed 为零，当前全部 18 条失败也没有该主题。JunHe MOVE 111699、FLAG 127062、READ 127063 都已 done；保留的失败尝试不重新决定 Action 当前状态。本轮未证实当前搜索缺陷，不修改搜索 SQL。新增当前模型 API 回归覆盖主题大小写、failed/全状态、无命中、计数和翻页。
+本轮诊断时，History 生产主题查询 `Quotation for On-Premise` 命中 44 条；加 failed 为零，当前全部 18 条失败也没有该主题。JunHe MOVE 111699、FLAG 127062、READ 127063 都已 done；保留的失败尝试不重新决定 Action 当前状态。本轮未证实当前搜索缺陷，不修改搜索 SQL。新增当前模型 API 回归覆盖主题大小写、failed/全状态、无命中、计数和翻页。
 
 ## 验证
 
