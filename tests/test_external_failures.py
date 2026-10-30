@@ -45,3 +45,16 @@ def test_detailed_internal_unsubscribe_failure_stays_in_internal_attention():
     assert not db.execute(
         f"select {external_task_error_sql()} from reply_tasks"
     ).fetchone()[0]
+
+
+def test_terminal_provider_transport_failure_is_classified_as_external():
+    error = "email_provider_transient:TimeoutError:4"
+
+    assert is_external_task_error(error)
+
+    db = sqlite3.connect(":memory:")
+    db.execute("create table reply_tasks (error text)")
+    db.execute("insert into reply_tasks values (?)", (error,))
+    assert db.execute(
+        f"select {external_task_error_sql()} from reply_tasks"
+    ).fetchone()[0]

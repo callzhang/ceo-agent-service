@@ -39,6 +39,18 @@ def is_external_dependency_error(exc: BaseException) -> bool:
     return False
 
 
+def is_transient_external_error(exc: BaseException) -> bool:
+    """Whether a failure is a transport fault that may recover on retry."""
+    if is_external_dependency_error(exc):
+        return True
+    if isinstance(exc, (OSError, ConnectionError)):
+        return True
+    return type(exc).__module__.startswith("imaplib") or type(exc).__name__ in {
+        "IMAP4Error",
+        "IMAPClientError",
+    }
+
+
 @dataclass(frozen=True)
 class ExternalAttempt:
     operation: str

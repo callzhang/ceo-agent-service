@@ -24,7 +24,7 @@ from uuid import uuid4
 from app.email_category_config import VerifiedEmailFolderBinding
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_unsubscribe import TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES
-from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
+from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, is_transient_external_error
 
 
 SCAN_INTERVAL_SECONDS = 60
@@ -1610,12 +1610,7 @@ def run_email_provider_action_delivery_loop(
 
 def _is_transient_email_provider_error(exc: BaseException) -> bool:
     """Socket, TLS and IMAP transport failures are retried; logic errors are not."""
-    if isinstance(exc, (OSError, ConnectionError)):
-        return True
-    return type(exc).__module__.startswith("imaplib") or type(exc).__name__ in {
-        "IMAP4Error",
-        "IMAPClientError",
-    }
+    return is_transient_external_error(exc)
 
 
 def _unresolved_selection_rechecks(task_error: str) -> int:
@@ -1643,6 +1638,18 @@ def _transient_browser_retry_count(task_error: str, code: str) -> int:
     itself out and can bound nothing.
     """
 
+    prefix = f"{code}:"
+    if not task_error.startswith(prefix):
+        return 0
+    count, _, _ = task_error[len(prefix) :].partition(":")
+    try:
+        return max(int(count), 0)
+    except ValueError:
+        return 0
+
+
+def _transient_external_retry_count(task_error: str, code: str) -> int:
+    """Count bounded provider-read retries persisted in the task error."""
     prefix = f"{code}:"
     if not task_error.startswith(prefix):
         return 0
@@ -2006,6 +2013,20 @@ def _finalize_direct_email_unsubscribe_task(
                 store.fail_reply_task(
                     task.id,
                     terminal_error,
+                    expected_execution_generation=task.execution_generation,
+                )
+                return
+            task_error = f"{error_code}:{spent}"
+        else:
+            from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
+
+            spent = _transient_external_retry_count(
+                str(getattr(task, "error", "") or ""), error_code
+            ) + 1
+            if spent >= MAX_AUTOMATIC_ATTEMPTS:
+                store.fail_reply_task(
+                    task.id,
+                    error_code,
                     expected_execution_generation=task.execution_generation,
                 )
                 return
