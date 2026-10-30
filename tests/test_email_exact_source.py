@@ -214,7 +214,7 @@ def test_cross_folder_locator_requires_one_exact_current_match():
     assert ambiguous.searched == ['INBOX', 'Archive']
 
     missing = FolderSearch({})
-    with pytest.raises(LookupError, match='missing or ambiguous'):
+    with pytest.raises(EmailSourceMessageMissing, match='Message-ID is missing'):
         resolver(missing, LOCATOR)
     assert missing.searched == ['INBOX', 'Archive']
 
