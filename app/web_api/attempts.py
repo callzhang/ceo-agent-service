@@ -31,17 +31,6 @@ def _permission_display(attempt: Any) -> str:
     return action or reason
 
 
-def resolve_attempt_detail_reference(store: Any, requested_id: int) -> int | None:
-    """Resolve a public Attempt ID or a historical Actions physical-ID URL."""
-    if store.get_reply_attempt(requested_id) is not None:
-        return requested_id
-    with store._connect() as db:
-        row = db.execute(
-            "select cast(legacy_key as integer) as public_id from actions "
-            "where record_type='reply_attempts' and id=?",
-            (requested_id,),
-        ).fetchone()
-    return int(row["public_id"]) if row is not None else None
 
 
 def _status_message(
@@ -908,8 +897,7 @@ def build_attempt_detail(
     store: Any, attempt_id: int, *, email_store_factory: Callable[[], Any] | None = None
 ) -> tuple[int, dict[str, Any] | None]:
     """Build a rich, JSON-safe Attempt DTO without rendering HTML."""
-    canonical_id = resolve_attempt_detail_reference(store, attempt_id)
-    attempt = store.get_reply_attempt(canonical_id) if canonical_id is not None else None
+    attempt = store.get_reply_attempt(attempt_id)
     historical_attempt = attempt
     if attempt is None:
         return 404, None

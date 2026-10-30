@@ -1,3 +1,4 @@
+from tests.support.sync_action_readers import todo_sync_outbox
 import json
 import sqlite3
 from pathlib import Path
@@ -670,7 +671,7 @@ def test_independent_project_suggests_from_historical_role_then_human_promotes_s
         ),
     )
     assert repeated.task_ids == (task_id,)
-    assert store.list_business_task_todo_sync_outbox() == []
+    assert todo_sync_outbox(store) == []
     assert store.list_business_task_follow_ups() == []
 
     assigned_item = item.model_copy(
@@ -865,7 +866,7 @@ def test_independent_project_link_preserves_all_original_proofs(
     details = [event for event in events if event.event_type.value == "details_changed"]
     assert len(details) == int(change_description)
     assert store.list_business_task_follow_ups() == []
-    assert store.list_business_task_todo_sync_outbox() == []
+    assert todo_sync_outbox(store) == []
 
 
 def test_independent_project_suggestion_reason_update_preserves_omitted_description(
@@ -7225,7 +7226,7 @@ def test_exact_owner_reply_accepts_only_cited_assignment_and_records_committed_d
         "alex-id",
         "Alex",
     )
-    [mirror_intent] = store.list_business_task_todo_sync_outbox()
+    [mirror_intent] = todo_sync_outbox(store)
     assert mirror_intent["business_task_id"] == assigned.task_id
     assert mirror_intent["operation"] == "create"
 
@@ -7271,7 +7272,7 @@ def test_source_grounded_completion_updates_task_status_without_todo_write(tmp_p
         assert db.execute(
             "select count(*) from business where record_type='work_todo'"
         ).fetchone()[0] == 0
-    [intent] = store.list_business_task_todo_sync_outbox()
+    [intent] = todo_sync_outbox(store)
     assert intent["business_task_id"] == assigned.task_id
     assert intent["operation"] == "complete"
 

@@ -1379,18 +1379,16 @@ def _projection_receipt_json():
 
 
 def test_task_agent_projection_receipt_preserves_terminal_run(tmp_path: Path):
-    from app.task_models import TaskAgentRun
-
     store = AutoReplyStore(tmp_path / "projection-receipt.sqlite3")
     _, run_id = _completed_projection_run(store)
     with store._connect() as db:
         before = dict(db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone())
-    assert TaskAgentRun.model_validate(before).projection_json == "{}"
+    assert before["projection_json"] == "{}"
     receipt = _projection_receipt_json()
     store.record_task_agent_projection(run_id, receipt)
     with store._connect() as db:
         after = dict(db.execute(f"select * from ({TASK_LOGICAL_RUN_SQL}) where id=?", (run_id,)).fetchone())
-    assert TaskAgentRun.model_validate(after).projection_json == receipt
+    assert after["projection_json"] == receipt
     assert after.pop("projection_json") == receipt
     assert before.pop("projection_json") == "{}"
     assert after == before

@@ -865,19 +865,6 @@ class UserFeedbackItem(BaseModel):
     updated_at: str = ""
 
 
-class ServiceBugfixCandidate(BaseModel):
-    id: int
-    feedback_event_key: str
-    feedback_token: str = ""
-    attempt_id: int = 0
-    status: str = "pending"
-    title: str
-    reason: str
-    feedback_comment: str
-    conversation_title: str = ""
-    trigger_text: str = ""
-    created_at: str
-    updated_at: str
 
 
 class ConversationRecord(BaseModel):
@@ -7509,9 +7496,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             return row is not None
 
-    def foreign_key_violations(self) -> list[tuple[object, ...]]:
-        with self._connect() as db:
-            return [tuple(row) for row in db.execute("pragma foreign_key_check")]
 
     @contextmanager
     def _agent_run_write_transaction(
@@ -15422,51 +15406,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 single_chat=bool(row["single_chat"]),
             )
 
-    def find_single_chat_conversation_by_title(
-        self, title: str
-    ) -> ConversationRecord | None:
-        projection = "(" + state_projection("conversations") + ")"
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select conversation_id, title, single_chat
-                from {projection}
-                where title=? and single_chat=1
-                order by conversation_id
-                limit 2
-                """,
-                (title,),
-            ).fetchall()
-            if len(rows) != 1:
-                return None
-            row = rows[0]
-            return ConversationRecord(
-                conversation_id=row["conversation_id"],
-                title=row["title"],
-                single_chat=bool(row["single_chat"]),
-            )
 
-    def find_conversation_by_title(self, title: str) -> ConversationRecord | None:
-        projection = "(" + state_projection("conversations") + ")"
-        with self._connect() as db:
-            rows = db.execute(
-                f"""
-                select conversation_id, title, single_chat
-                from {projection}
-                where title=?
-                order by single_chat, conversation_id
-                limit 2
-                """,
-                (title,),
-            ).fetchall()
-            if len(rows) != 1:
-                return None
-            row = rows[0]
-            return ConversationRecord(
-                conversation_id=row["conversation_id"],
-                title=row["title"],
-                single_chat=bool(row["single_chat"]),
-            )
 
     def has_seen(self, message_id: str) -> bool:
         projection = "(" + state_projection("seen_messages") + ")"
@@ -18909,113 +18849,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 result.setdefault(event.feedback_token, []).append(event)
             return result
 
-    def create_service_bugfix_candidate(
-        self,
-        *,
-        feedback_event_key: str,
-        feedback_token: str = "",
-        attempt_id: int = 0,
-        title: str,
-        reason: str,
-        feedback_comment: str,
-        conversation_title: str = "",
-        trigger_text: str = "",
-    ) -> ServiceBugfixCandidate | None:
-        cleaned_key = feedback_event_key.strip()
-        if not cleaned_key:
-            return None
-        with self._immediate_write_transaction() as db:
-            result = insert_business(db, "service_bugfix_candidate", {
-                "feedback_event_key": cleaned_key,
-                "feedback_token": feedback_token,
-                "attempt_id": max(0, int(attempt_id)),
-                "title": title,
-                "reason": reason,
-                "feedback_comment": feedback_comment,
-                "conversation_title": conversation_title,
-                "trigger_text": trigger_text,
-            }, ignore=True)
-            if result.rowcount != 1 or result.lastrowid is None:
-                return None
-            row = db.execute(
-                f"select * from ({BUSINESS_PROJECTIONS['service_bugfix_candidate']}) "
-                "where id=?",
-                (result.lastrowid,),
-            ).fetchone()
-            return ServiceBugfixCandidate.model_validate(dict(row)) if row else None
 
-    def create_service_bugfix_candidate_for_feedback_event(
-        self,
-        event: FeedbackEvent,
-        *,
-        title: str,
-        reason: str,
-    ) -> ServiceBugfixCandidate | None:
-        with self._connect() as db:
-            row = db.execute(
-                f"""
-                select
-                    coalesce(ra.id, 0) as attempt_id,
-                    coalesce(ra.conversation_title, '') as conversation_title,
-                    coalesce(ra.trigger_text, '') as trigger_text
-                from ({FEEDBACK_EVENT_SQL}) fe
-                left join ({SENT_REPLY_SQL}) sr
-                    on sr.feedback_token = fe.feedback_token
-                left join ({REPLY_ATTEMPT_COMMON_SQL}) as ra
-                    on ra.conversation_id = sr.conversation_id
-                   and ra.trigger_message_id = sr.trigger_message_id
-                where fe.key=?
-                order by ra.id desc
-                limit 1
-                """,
-                (event.key,),
-            ).fetchone()
-        return self.create_service_bugfix_candidate(
-            feedback_event_key=event.key,
-            feedback_token=event.feedback_token,
-            attempt_id=int(row["attempt_id"] or 0) if row else 0,
-            title=title,
-            reason=reason,
-            feedback_comment=event.comment,
-            conversation_title=str(row["conversation_title"] or "") if row else "",
-            trigger_text=str(row["trigger_text"] or "") if row else "",
-        )
 
-    def list_service_bugfix_candidates(
-        self,
-        *,
-        status: str | None = None,
-        limit: int = 50,
-    ) -> list[ServiceBugfixCandidate]:
-        filters: list[str] = []
-        args: list[object] = []
-        if status is not None:
-            filters.append("status=?")
-            args.append(status)
-        query = f"select * from ({BUSINESS_PROJECTIONS['service_bugfix_candidate']})"
-        if filters:
-            query = f"{query} where {' and '.join(filters)}"
-        query = f"{query} order by created_at desc, id desc limit ?"
-        args.append(max(1, limit))
-        with self._connect() as db:
-            rows = db.execute(query, args).fetchall()
-            return [ServiceBugfixCandidate.model_validate(dict(row)) for row in rows]
 
-    def count_service_bugfix_candidates(self, *, status: str | None = None) -> int:
-        filters: list[str] = []
-        args: list[object] = []
-        if status is not None:
-            filters.append("status=?")
-            args.append(status)
-        query = (
-            "select count(*) as count from business "
-            "where record_type='service_bugfix_candidate'"
-        )
-        if filters:
-            query = f"{query} and {' and '.join(filters)}"
-        with self._connect() as db:
-            row = db.execute(query, args).fetchone()
-            return int(row["count"] if row else 0)
 
     def list_user_feedback_items(
         self, limit: int = 200, offset: int = 0
@@ -22977,14 +22813,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         with self._connect() as db:
             return list(db.execute(query, args))
 
-    def list_business_task_follow_up_send_attempts(
-        self, *, draft_id: int,
-    ) -> list[sqlite3.Row]:
-        with self._connect() as db:
-            return list(db.execute(
-                f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_follow_up_send_attempts']}) "
-                "where draft_id=? order by id", (draft_id,)
-            ))
 
     def recover_expired_business_task_follow_up_sends(
         self, *, now: str,
@@ -23349,16 +23177,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where_sql="status='unknown'",
             ).rowcount == 1
 
-    def list_business_task_todo_sync_outbox(
-        self, *, statuses: tuple[str, ...] | None = None
-    ) -> list[sqlite3.Row]:
-        query = f"select * from ({SYNC_ACTION_PROJECTIONS['business_task_todo_sync_outbox']})"
-        args: list[str] = []
-        if statuses:
-            query += f" where status in ({','.join('?' for _ in statuses)})"
-            args.extend(statuses)
-        with self._connect() as db:
-            return list(db.execute(f"{query} order by id", args).fetchall())
 
     def get_business_task_todo_sync_outbox(self, outbox_id: int) -> sqlite3.Row | None:
         with self._connect() as db:

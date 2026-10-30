@@ -1,3 +1,4 @@
+from tests.support.sync_action_readers import todo_sync_outbox
 import inspect
 import json
 
@@ -73,7 +74,7 @@ def test_recorded_active_legacy_todo_collision_stays_readable_and_cannot_dispatc
     assert todo_sync.reconcile_unknown_business_task_todo_creates(store, NoProviderCalls()) == 0
     assert store.get_business_task(current_id).status.value == "open"
     assert store.list_business_task_dingtalk_links() == []
-    assert store.list_business_task_todo_sync_outbox() == []
+    assert todo_sync_outbox(store) == []
 
     recorded = next((link for link in store.list_work_todo_dingtalk_links_for_todos([legacy_id]).get(legacy_id, []) if link.id == link_id), None)
     assert recorded.work_todo_id == legacy_id

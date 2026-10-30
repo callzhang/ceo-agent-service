@@ -1,5 +1,7 @@
 """Contract fixtures shared by the staged multisource attention implementation."""
 
+from tests.support.sync_action_readers import todo_sync_outbox
+
 import json
 import importlib.util
 from pathlib import Path
@@ -3566,7 +3568,7 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
         ]
         todo_before = [
             dict(row)
-            for row in store.list_business_task_todo_sync_outbox()
+            for row in todo_sync_outbox(store)
         ]
     events_before = store.list_business_task_events(seed.task_id)
     signals_before = signal_snapshot(store)
@@ -3622,7 +3624,7 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
         ] == followups_before
         assert [
             dict(row)
-            for row in store.list_business_task_todo_sync_outbox()
+            for row in todo_sync_outbox(store)
         ] == todo_before
     assert store.get_business_attention_item(card_id).title == "验收取消与付款风险"
     assert store.list_business_attention_tasks(card_id)[0].task_id == seed.task_id
@@ -3685,7 +3687,7 @@ def test_new_evidence_updates_existing_project_attention_without_task_field_chan
         ] == followups_before
         assert [
             dict(row)
-            for row in store.list_business_task_todo_sync_outbox()
+            for row in todo_sync_outbox(store)
         ] == todo_before
 
 
@@ -4097,7 +4099,7 @@ def test_reconfirmed_relevance_with_attention_keeps_task_and_follow_up_unchanged
     ]
     todo_before = [
         dict(row)
-        for row in store.list_business_task_todo_sync_outbox()
+        for row in todo_sync_outbox(store)
     ]
     payload = {
         **new_task,
@@ -4134,7 +4136,7 @@ def test_reconfirmed_relevance_with_attention_keeps_task_and_follow_up_unchanged
     ] == followups_before
     assert [
         dict(row)
-        for row in store.list_business_task_todo_sync_outbox()
+        for row in todo_sync_outbox(store)
     ] == todo_before
 
 

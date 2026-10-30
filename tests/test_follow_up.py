@@ -1,3 +1,4 @@
+from tests.support.sync_action_readers import follow_up_send_attempts
 import json
 
 import pytest
@@ -89,7 +90,7 @@ def test_business_task_follow_up_sends_to_exact_source_conversation_with_receipt
     [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
     assert draft["id"] == draft_id and draft["status"] == "sent"
     assert json.loads(draft["send_result_json"])["send_result"] == {"ok": True}
-    assert store.list_business_task_follow_up_send_attempts(draft_id=draft_id)[0]["state"] == "sent"
+    assert follow_up_send_attempts(store, draft_id=draft_id)[0]["state"] == "sent"
 
 
 def test_clicked_business_task_follow_up_sends_outside_working_hours(tmp_path):
@@ -146,7 +147,7 @@ def test_clicked_follow_up_failure_stays_failed_and_resends_as_new_revision(tmp_
     assert status == "sent"
     [draft] = store.list_business_task_follow_ups(business_task_id=task_id)
     assert draft["status"] == "sent" and draft["revision"] == 2
-    attempts = store.list_business_task_follow_up_send_attempts(draft_id=draft_id)
+    attempts = follow_up_send_attempts(store, draft_id=draft_id)
     assert [(a["draft_revision"], a["state"]) for a in attempts] == [(1, "failed"), (2, "sent")]
 
 
@@ -234,7 +235,7 @@ def test_business_task_follow_up_uncertain_send_does_not_replay(tmp_path):
 
     assert status == "unknown"
     assert len(dws.sent) == 1
-    assert store.list_business_task_follow_up_send_attempts(draft_id=draft_id)[0]["state"] == "unknown"
+    assert follow_up_send_attempts(store, draft_id=draft_id)[0]["state"] == "unknown"
     assert store.list_business_task_follow_ups(business_task_id=task_id)[0]["status"] == "failed"
     with store._connect() as db:
         assert db.execute(
@@ -279,7 +280,7 @@ def test_expired_sending_follow_up_is_unknown_and_a_new_click_sends_a_new_revisi
 
     store.recover_expired_business_task_follow_up_sends(now="2026-06-29 01:02:00")
 
-    [attempt] = store.list_business_task_follow_up_send_attempts(draft_id=draft_id)
+    [attempt] = follow_up_send_attempts(store, draft_id=draft_id)
     assert attempt["state"] == "unknown"
     assert store.list_business_task_follow_ups(business_task_id=task_id)[0]["status"] == "failed"
     with store._connect() as db:
@@ -295,5 +296,5 @@ def test_expired_sending_follow_up_is_unknown_and_a_new_click_sends_a_new_revisi
 
     assert status == "sent"
     assert len(dws.sent) == 1
-    attempts = store.list_business_task_follow_up_send_attempts(draft_id=draft_id)
+    attempts = follow_up_send_attempts(store, draft_id=draft_id)
     assert [(a["draft_revision"], a["state"]) for a in attempts] == [(1, "unknown"), (2, "sent")]

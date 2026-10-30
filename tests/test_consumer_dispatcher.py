@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.sync_action_readers import todo_sync_outbox
 from tests.support.native_task_fields import set_native_task_fields
 from app.store import REPLY_TASK_SQL
 
@@ -236,7 +237,7 @@ def _business_task_todo_outbox(store: AutoReplyStore, *, index: int = 1) -> int:
         operation_key=f"task-agent:{index}:business-task:{task_id}:create",
         business_task_id=task_id, operation="create",
     )
-    return int(store.list_business_task_todo_sync_outbox()[-1]["id"])
+    return int(todo_sync_outbox(store)[-1]["id"])
 
 
 def test_business_task_todo_outbox_adapter_claims_and_finishes_receipted_work(

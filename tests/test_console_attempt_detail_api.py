@@ -17,43 +17,38 @@ from app.web_api.attempts import (
     _oa_permission_wait_projection,
     _runtime_payload,
     build_attempt_detail,
-    resolve_attempt_detail_reference,
 )
 
 from app.store import NATIVE_CANDIDATE_EXECUTION_SQL
 
 
-def test_attempt_detail_reference_resolves_legacy_physical_id_only_when_public_id_missing(
-    tmp_path: Path,
-):
+def test_attempt_detail_uses_only_public_ids(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "attempt-reference.db")
     with store._connect() as db:
-        insert_action(db, "reply_attempts", {
-            "id": 9800,
-            "conversation_id": "legacy-id",
-            "conversation_title": "Legacy ID",
-            "trigger_message_id": "message",
-            "trigger_sender": "sender",
-            "trigger_text": "request",
-            "action": "reply",
-            "sensitivity_kind": "normal",
-            "send_status": "skipped",
-        })
+        def insert(public_id, title):
+            insert_action(db, "reply_attempts", {
+                "id": public_id, "conversation_id": title,
+                "conversation_title": title, "trigger_message_id": "message",
+                "trigger_sender": "sender", "trigger_text": "request",
+                "action": "reply", "sensitivity_kind": "normal", "send_status": "skipped",
+            })
+        insert(9800, "first")
         physical_id = db.execute(
-            "select id from actions where record_type='reply_attempts' "
-            "and cast(legacy_key as integer)=9800"
+            "select id from actions where record_type='reply_attempts' and legacy_key='9800'"
         ).fetchone()[0]
-
     assert physical_id != 9800
-    assert resolve_attempt_detail_reference(store, 9800) == 9800
-    assert resolve_attempt_detail_reference(store, physical_id) == 9800
-    assert resolve_attempt_detail_reference(store, 999999) is None
     client = TestClient(create_audit_app(store.path), follow_redirects=False)
+    assert build_attempt_detail(store, 9800)[0] == 200
+    assert client.get("/attempts/9800").status_code == 200
+    assert build_attempt_detail(store, physical_id)[0] == 404
+    assert client.get(f"/attempts/{physical_id}").status_code == 404
+    with store._connect() as db:
+        insert(physical_id, "collision")
+    assert store.get_reply_attempt(physical_id).conversation_title == "collision"
+    assert build_attempt_detail(store, physical_id)[0] == 200
     response = client.get(f"/attempts/{physical_id}")
-    assert response.status_code == 307
-    assert response.headers["location"] == "/attempts/9800"
-    public_response = client.get("/attempts/9800")
-    assert public_response.status_code == 200
+    assert response.status_code == 200
+    assert "collision" in response.text
 
 
 CONVERSATION = "email-thread:thread-digest"

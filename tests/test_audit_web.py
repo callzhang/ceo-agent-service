@@ -1818,37 +1818,6 @@ def test_oa_approval_detail_route_shows_summary_and_history(tmp_path: Path):
 
 def test_service_bugfix_candidates_page_is_removed(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
-    store.create_service_bugfix_candidate(
-        feedback_event_key="event-1",
-        feedback_token="token-1",
-        attempt_id=42,
-        title="自动回复服务报错",
-        reason="用户反馈明确指向 CEO 服务自身的 bug、失败或回归。",
-        feedback_comment="分身自动回复服务报错，需要修复。",
-        conversation_title="技术部",
-        trigger_text="上一条回复失败了",
-    )
-    candidate = store.list_service_bugfix_candidates(status="pending")
-    assert len(candidate) == 1
-    assert candidate[0].feedback_event_key == "event-1"
-    assert candidate[0].attempt_id == 42
-    assert store.count_service_bugfix_candidates() == 1
-    assert store.count_service_bugfix_candidates(status="pending") == 1
-    assert store.create_service_bugfix_candidate(
-        feedback_event_key="event-1",
-        title="duplicate",
-        reason="duplicate",
-        feedback_comment="duplicate",
-    ) is None
-    with store._connect() as db:
-        assert db.execute(
-            "select count(*) from business where record_type='service_bugfix_candidate'"
-        ).fetchone()[0] == 1
-        assert db.execute(
-            "select 1 from sqlite_schema where type='table' "
-            "and name='service_bugfix_candidates'"
-        ).fetchone() is None
-
     history_html = render_attempt_list(store)
     assert "待处理服务修复" not in history_html
     assert "/service-bugfix-candidates" not in history_html

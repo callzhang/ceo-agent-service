@@ -131,17 +131,6 @@ def owner_identity_evidence_records(
     return records
 
 
-def owner_identity_is_supported(
-    assigned: Mapping[str, object],
-    evidence: object,
-) -> bool:
-    assigned_record = owner_identity_record(assigned)
-    if not assigned_record:
-        return True
-    return any(
-        assigned_record <= evidence_record
-        for evidence_record in owner_identity_evidence_records(evidence)
-    )
 
 
 class WorkItemSourceType(StrEnum):
@@ -202,10 +191,6 @@ class RiskLevel(StrEnum):
     HIGH = "high"
 
 
-class FollowUpMode(StrEnum):
-    AUTO = "auto"
-    DRAFT = "draft"
-    NONE = "none"
 
 
 class TodoStatus(StrEnum):
@@ -1337,19 +1322,6 @@ class TaskAttentionProjectionReceipt(BaseModel):
     recompute_error: str = ""
 
 
-class TaskAgentRun(BaseModel):
-    id: int
-    summary_input_id: int
-    codex_session_id: str = ""
-    decision_json: str = "{}"
-    projection_json: str = "{}"
-    audit_summary: str = ""
-    memory_recall_used: bool = False
-    status: str = "completed"
-    error: str = ""
-    created_at: str
-    finished_at: str = ""
-    updated_at: str = ""
 
 
 class FollowUpDraft(BaseModel):

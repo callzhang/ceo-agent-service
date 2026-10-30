@@ -1,3 +1,4 @@
+from tests.support.sync_action_readers import todo_sync_outbox
 import json
 from pathlib import Path
 
@@ -268,7 +269,7 @@ def test_unknown_business_task_create_without_receipt_blocks_new_create_operatio
         business_task_id=task_id, operation="create",
     )
 
-    rows = store.list_business_task_todo_sync_outbox()
+    rows = todo_sync_outbox(store)
     assert len(rows) == 1
     assert rows[0]["status"] == "unknown"
     assert len(dws.created) == 1
@@ -314,7 +315,7 @@ def test_business_task_outbox_expired_claim_becomes_unknown_without_replay(tmp_p
     assert store.claim_business_task_todo_sync_outbox(
         owner="worker-b", now="2026-06-27 10:01:00"
     ) is None
-    [unknown] = store.list_business_task_todo_sync_outbox(statuses=("unknown",))
+    [unknown] = todo_sync_outbox(store, statuses=("unknown",))
     assert unknown["error"] == "receipt_reconciliation_required"
 
 

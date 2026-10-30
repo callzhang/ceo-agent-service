@@ -9,7 +9,6 @@ from app.task_agent import build_task_agent_prompt
 from app.task_models import (
     TaskAgentDecision,
     TaskDecision,
-    owner_identity_is_supported,
     task_agent_output_schema,
 )
 
@@ -136,25 +135,3 @@ def test_formal_task_cannot_be_created_without_source_binding():
 def test_formal_owner_identity_requires_source_evidence():
     with pytest.raises(ValidationError, match="owner_evidence"):
         TaskDecision.model_validate(_formal_task(owner_evidence={}))
-
-
-def test_owner_id_and_name_must_be_supported_by_same_evidence_record():
-    assigned = {"owner_user_id": "uid-1", "owner_name": "Display One"}
-
-    assert not owner_identity_is_supported(
-        assigned,
-        [
-            {"user_id": "uid-1", "name": "Display Two"},
-            {"user_id": "uid-2", "name": "Display One"},
-        ],
-    )
-    assert owner_identity_is_supported(
-        assigned,
-        [
-            {
-                "user_id": "uid-1",
-                "display_name": "Display One",
-                "source": "verified source identity",
-            }
-        ],
-    )

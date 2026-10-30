@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.sync_action_readers import todo_sync_outbox
 
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
@@ -198,25 +199,24 @@ def test_todo_outbox_finish_verifies_terminal_action_status(
 
 
 @pytest.mark.parametrize(
-    ("kind", "enqueue", "list_rows", "get_row", "arguments"),
+    ("kind", "enqueue", "get_row", "arguments"),
     (
         (
             "business_task_todo_sync_outbox",
             "enqueue_business_task_todo_sync_outbox",
-            "list_business_task_todo_sync_outbox",
             "get_business_task_todo_sync_outbox",
             {"operation_key": "business:store:create", "business_task_id": 1, "operation": "create"},
         ),
     ),
 )
 def test_store_outbox_enqueue_list_get_uses_typed_actions(
-    tmp_path: Path, kind: str, enqueue: str, list_rows: str, get_row: str, arguments: dict,
+    tmp_path: Path, kind: str, enqueue: str, get_row: str, arguments: dict,
 ) -> None:
     store = _target_store(tmp_path)
 
     getattr(store, enqueue)(**arguments)
 
-    rows = getattr(store, list_rows)()
+    rows = todo_sync_outbox(store)
     assert len(rows) == 1
     assert rows[0]["operation_key"] == arguments["operation_key"]
     assert rows[0]["status"] == "queued"
