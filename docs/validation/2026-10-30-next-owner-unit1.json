@@ -104,7 +104,7 @@
   },
   "production_listener_pid": 98934,
   "html_contract": "SPA HTML shell returns200; public data API resolves only publicIDs, physical-only ID404; no conversion or redirect",
-  "scope": "Unit1 noDDL, no productiontesttasks or outboundreplay; Unit2 migration pending",
+  "scope": "Unit1 noDDL, no production test tasks or outbound replay; Unit2 separately completed in2026-10-30-next-owner-unit2.json.",
   "backup_cleanup": {
     "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3",
     "inode": 840718752,
@@ -116,5 +116,11 @@
     "fk": [],
     "deleted": true,
     "predeployment_backup": "already_retired_by_verified_daily_backup_workflow"
+  },
+  "temporary_cleanup": {
+    "status": "deleted_verified_absent",
+    "shared_task_root": "/private/tmp/ceo-next-owner-impl.Qp5fbt",
+    "sdd_workspace": ".superpowers/sdd/2026-10-30-next-owner-cleanup",
+    "production_database_preserved": true
   }
 }

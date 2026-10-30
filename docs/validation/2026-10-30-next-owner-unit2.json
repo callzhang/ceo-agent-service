@@ -1,5 +1,5 @@
 {
-  "status": "final_review_and_copy_passed_standard_release_pending",
+  "status": "completed_deployed_readback_and_task_owned_cleanup_passed",
   "checked_at": "2026-10-30T10:26:43.335101+00:00",
   "implementation_head": "563a40633",
   "source": {
@@ -245,9 +245,172 @@
     "workers_started": false,
     "native_cli_invoked": false,
     "unit1": "Independently deployed and read back; see2026-10-30-next-owner-unit1.json.",
-    "ui_browser": "Previously disabled by Work settings; API readback required after release; no browser acceptance claimed."
+    "ui_browser": "Previously disabled by Work settings; API readback required after release; no browser acceptance claimed.",
+    "live_version_boundary": "Production evidence is this workflow readback at8fe08f935/PID83800; peer may deploy newer approved fixes afterward. No current-live-version assertion after handoff."
   },
-  "production": null,
-  "backup_cleanup": null,
-  "temporary_cleanup": null
+  "production": {
+    "checked_at": 1793356637.457911,
+    "installed": "8fe08f9357e876490c0b8e6f9761f02a9a829755",
+    "frontend_tree": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "schema_current": true,
+    "schema_count": 463,
+    "schema_sha256": "6e3244bb571073026a3256b7cfbac6cd547477331e2d4f0fc37d37273275951e",
+    "fk": [],
+    "store_version": "2026-10-30.1",
+    "email_version": 54,
+    "retired_columns_absent": true,
+    "retired_json_key_rows": 0,
+    "common_actions": 17820,
+    "direct_email_actions_with_exact_plan": 13102,
+    "detail_classification_id": 6323083051829431886,
+    "bugfix_rows": 3,
+    "bugfix_fact_sha256": "074fad361db23b4f066e3e623df24aee4d688fe48e6b4b5768249086d2f5179c",
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.013
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.205
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.559
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.729,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.264,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&status=failed&include_chart=false",
+        "status": 200,
+        "seconds": 0.87,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.218,
+        "receipt_id": 22414,
+        "provider_available": true
+      },
+      {
+        "path": "/api/console/history/127430",
+        "status": 404,
+        "seconds": 0.001
+      },
+      {
+        "path": "/api/console/history/16410",
+        "status": 200,
+        "seconds": 0.232,
+        "receipt_id": 22354,
+        "provider_available": true
+      },
+      {
+        "path": "/api/console/email/processing-progress",
+        "status": 200,
+        "seconds": 0.443
+      },
+      {
+        "path": "/api/console/email/classifications?limit=5",
+        "status": 200,
+        "seconds": 0.205,
+        "items": 20
+      },
+      {
+        "path": "/api/console/email/classifications/6323083051829431886",
+        "status": 200,
+        "seconds": 5.365
+      }
+    ],
+    "listener_pid": 83800,
+    "email_data_contract_readback": [
+      {
+        "path": "/api/console/email/classifications?page=1&page_size=5",
+        "items": 5,
+        "page_size": 5
+      },
+      {
+        "path": "/api/console/email/classifications/6323083051829431886",
+        "ok": true,
+        "classification_identity_matches": true,
+        "mailbox_action_count": 1,
+        "mailbox_action_types_and_statuses": [
+          {
+            "type": "move",
+            "status": "pending"
+          }
+        ]
+      }
+    ],
+    "deployment_ledger": {
+      "operation_id": "deploy-2c2404d6-fedb-47e5-b16d-4080e81410b1",
+      "status": "succeeded",
+      "original_commit": "57c75b0c05b12153027fbd1ef9d384cec5385ed1",
+      "target_commit": "8fe08f9357e876490c0b8e6f9761f02a9a829755",
+      "installed_commit": "8fe08f9357e876490c0b8e6f9761f02a9a829755",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-2c2404d6-fedb-47e5-b16d-4080e81410b1.sqlite3",
+      "error": "",
+      "updated_at": "2026-10-30T10:37:00.629462+00:00"
+    },
+    "quiet_wait": "Standard natural quiet; no skip/interruption requested or used."
+  },
+  "backup_cleanup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3",
+    "device": 16777231,
+    "inode": 840964188,
+    "mtime_ns": 1793356665837825920,
+    "size": 514969600,
+    "integrity": "ok",
+    "complete": true,
+    "schema": "Store30.1Email54",
+    "fk": [],
+    "no_open_references": true,
+    "deleted": true,
+    "removed_paths": [
+      "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3"
+    ],
+    "predeployment_backup": "auto-reply-before-upgrade-deploy-2c2404d6-fedb-47e5-b16d-4080e81410b1.sqlite3 already retired by verified daily workflow; original ledger identity retained above.",
+    "other_workflows_preserved": [
+      "oa-project-value-20261030",
+      "oa-material-dimensions-20261030"
+    ]
+  },
+  "temporary_cleanup": {
+    "status": "deleted_verified_absent",
+    "root": "/private/tmp/ceo-next-owner-impl.Qp5fbt",
+    "sdd_workspace": ".superpowers/sdd/2026-10-30-next-owner-cleanup",
+    "no_open_files_before_cleanup": true,
+    "old_code_worktree_clean": true,
+    "root_exists": false,
+    "sdd_workspace_exists": false,
+    "old_code_worktree_registered": false,
+    "size_before_cleanup": "666MiB temporary root plus10MiB SDD workspace (before old-code worktree removal)"
+  },
+  "gate": {
+    "commit": "8fe08f9357e876490c0b8e6f9761f02a9a829755",
+    "passed_at": "2026-10-30T10:36:13+00:00",
+    "files": 418,
+    "summary": "8177 passed, 2 skipped, 1 deselected in 370.98s (0:06:10)"
+  },
+  "rulings": [
+    {
+      "decision": "Approved scope includes implementation, normal push/standard deploy and postacceptance task-owned cleanup; no skip-quiet authorization this round. Preserve three unique historical bugfix records and other workers' claims. No new fields or compatibility JSON.",
+      "cost_if_wrong": "Would exceed release/cleanup scope or interfere with another workflow; mitigated by standard quiet, explicit ownership, exact generation locks and preserved historical fingerprints."
+    }
+  ],
+  "closed_at": "2026-10-30T10:42:34.707444+00:00"
 }

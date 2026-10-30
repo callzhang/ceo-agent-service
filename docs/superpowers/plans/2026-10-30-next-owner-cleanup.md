@@ -41,13 +41,13 @@
 
 Modify: app/task_models.py、app/store.py、app/web_api/attempts.py、app/audit_web.py；实际受影响tests/test_store.py、test_work_tracking_skill.py、test_follow_up.py、test_todo_sync.py、test_task_agent.py、test_task_attention_multisource.py、test_consumer_dispatcher.py、test_sync_outbox_dispatcher_actions.py、test_legacy_todo_retirement.py、test_audit_web.py、test_console_attempt_detail_api.py；新建测试窄查询夹具放tests/support，不能移回应用通用DAO。更新architecture/runtime相关当前入口段落。
 
-- [ ] 刷新main／生产与claims，确认14项没有新增真实调用；一个实施者认领store.py各子范围，其他任务的发布和Quality文件不碰。
+- [x] 刷新main／生产与claims，确认14项没有新增真实调用；一个实施者认领store.py各子范围，其他任务的发布和Quality文件不碰。
 - [x] 保存相关节点基线。新增当前ID回归：公开ID成功；只存在物理ID而无公开ID的请求返回404、不重定向；数值碰撞时只按公开ID读取。保留当前History/Task链接正确的测试。
 - [x] 删除只服务退休功能的专用测试；现行回执、outbox、Run projection的测试切换到当前owner，不能删断言或添加应用别名。
 - [x] 退休service-bugfix页面的404回归继续保留；不再为一个已退休页面测试旧writer的CRUD。若需历史造数，由测试夹具直接写当前物理结构。
 - [x] 执行精确符号搜索，确认没有剩余导入、getattr注册、脚本字符串、专用当前文档声明；删独占导入，不连带删除仍有用途的身份helper。
-- [ ] 每个测试进程2GB／10分钟；先跑单文件／节点。对大型test_store、test_audit_web、test_task_agent只选实际相关节点；不在生产运行全套。
-- [ ] 比较前后schema清单／hash与FK集合完全不变；SPEC／QUALITY通过后，行为文档与代码同一提交，单独标准部署并只读验收。
+- [x] 每个测试进程2GB／10分钟；先跑单文件／节点。对大型test_store、test_audit_web、test_task_agent只选实际相关节点；不在生产运行全套。
+- [x] 比较前后schema清单／hash与FK集合完全不变；SPEC／QUALITY通过后，行为文档与代码同一提交，单独标准部署并只读验收。
 
 验收：当前公开ID详情、History链接和回执正常；旧物理ID适配不存在；所有原有效果断言继续保留；历史3条bugfix记录不变。本单元没有数据库文件缩小承诺。
 
@@ -83,16 +83,16 @@ Modify: app/task_models.py、app/store.py、app/web_api/attempts.py、app/audit_
 
 Files: app/action_entity_definitions.py、app/action_entity_storage.py、app/shared_action_lifecycle.py、app/email_store.py、app/email_canonical_definitions.py、app/configs_definitions.py、app/action_entity_transfer.py、app/action_storage.py涉及ACTION_FIELDS的当前投影；app/current_schema_declarations.py、current_schema_manifest.py、store_schema_release.py、current_publication_sources.py及对应显式迁移模块／冻结上一版本catalog；更新当前SQL／字段映射文档。认领后单独协调发布文件，不能与其他schema任务并行编辑。
 
-- [ ] 先冻结字段owner、所有读写方、3个generated列及触发器引用、现有索引和完整目标SQL；任何未映射字段报错。
-- [ ] 加回归证明当前Action JSON确有3份重复键；之后改为断言键不存在，generic API拒绝旧字段。Email投影仍返回相同参数值、账号与classification；非Email Action及回执不变。
-- [ ] 覆盖多Action Plan、空参数、依赖参数、旧Plan版本、agent／unsubscribe非direct项；Plan不存在、参数／身份不一致的源在修改前拒绝。
-- [ ] 保留并复验claim／retry／CAS、processing期间plan-switch及账号update/delete阻挡；没有processing时原操作仍可进行。不会删除阻挡触发器来绕过依赖。
-- [ ] 当前数据副本正向迁移，写入新Plan／Action／替身回执，再逆迁；真实旧代码冷启动读写，最后再次正向。逐值／类型比较事实、全部身份、引用、序列、其他payload及FK异常集合。
-- [ ] 逆迁重建3字段只基于不可变Plan精确事实；含差异历史库不准通过猜测补齐。原始不存在键与NULL等非业务差异若影响源合同，也须明确冻结并验证，不能悄悄宣称逐字无损。
-- [ ] 对既有claim、账号保护和completed查询比较EXPLAIN QUERY PLAN及有界同数据计时；必要索引按真实查询决定，不先删除索引凑空间。
-- [ ] 定向跑tests/test_email_action_writes.py、test_email_action_plan_boundary.py、test_email_action_status_identity.py、test_action_storage.py、test_action_entity_schema_release.py及新当前逆迁测试，使用实际仓内文件名；全部模型/provider用替身。
-- [ ] SPEC／QUALITY通过后标准完整gate、自然quiet、已验证备份、精确提交发布。读回Email队列／History／Action详情／receipt、Store/Email版本、schema/FK，生产仅只读。
-- [ ] 读回后重新验证备份精确代次并清除本workflow备份和临时文件；不删他人新生成的文件，不为纯文档再部署。
+- [x] 先冻结字段owner、所有读写方、3个generated列及触发器引用、现有索引和完整目标SQL；任何未映射字段报错。
+- [x] 加回归证明当前Action JSON确有3份重复键；之后改为断言键不存在，generic API拒绝旧字段。Email投影仍返回相同参数值、账号与classification；非Email Action及回执不变。
+- [x] 覆盖多Action Plan、空参数、依赖参数、旧Plan版本、agent／unsubscribe非direct项；Plan不存在、参数／身份不一致的源在修改前拒绝。
+- [x] 保留并复验claim／retry／CAS、processing期间plan-switch及账号update/delete阻挡；没有processing时原操作仍可进行。不会删除阻挡触发器来绕过依赖。
+- [x] 当前数据副本正向迁移，写入新Plan／Action／替身回执，再逆迁；真实旧代码冷启动读写，最后再次正向。逐值／类型比较事实、全部身份、引用、序列、其他payload及FK异常集合。
+- [x] 逆迁重建3字段只基于不可变Plan精确事实；含差异历史库不准通过猜测补齐。原始不存在键与NULL等非业务差异若影响源合同，也须明确冻结并验证，不能悄悄宣称逐字无损。
+- [x] 对既有claim、账号保护和completed查询比较EXPLAIN QUERY PLAN及有界同数据计时；必要索引按真实查询决定，不先删除索引凑空间。
+- [x] 定向跑tests/test_email_action_writes.py、test_email_action_plan_boundary.py、test_email_action_status_identity.py、test_action_storage.py、test_action_entity_schema_release.py及新当前逆迁测试，使用实际仓内文件名；全部模型/provider用替身。
+- [x] SPEC／QUALITY通过后标准完整gate、自然quiet、已验证备份、精确提交发布。读回Email队列／History／Action详情／receipt、Store/Email版本、schema/FK，生产仅只读。
+- [x] 读回后重新验证备份精确代次并清除本workflow备份和临时文件；不删他人新生成的文件，不为纯文档再部署。
 
 ## 本次不列为直接删除的项
 
@@ -110,8 +110,18 @@ Files: app/action_entity_definitions.py、app/action_entity_storage.py、app/sha
 
 2026-10-30标准部署57c75b0c0，门禁8164PASS／2skip／1按规则未运行，486.24秒；自然quiet，无中断。schema463对象/hash和FK[]不变，3条历史bugfix事实指纹不变。公开Attempt16429数据API200、旧物理127430数据API404；SPA页面壳HTML200不等于详情存在，未做旧ID转换。History分页/筛选及回执22354读回通过；临时测试产物在全计划结束统一清理。准确备份代次清理见[Unit1验收JSON](../../validation/2026-10-30-next-owner-unit1.json)。
 
-## 单元2副本验收通过，待发布
+## 单元2副本验收（发布前记录）
 
 实现563a40633已通过独立SPEC／QUALITY；当前生产派生副本48张表、749748条原记录完成正向→新合成邮件／分类及原生Plan/Action／失败回执→逆迁→固定旧代码57c75b0c0完整Store和EmailStore冷启动读写→再次正向。原始和全部新增cohort的事实、类型、身份、序列和FK[]通过；精确目标463对象、仅Actions三generated列及原有三阻挡触发器变化，无索引增删。第一次副本试跑曾因合成Plan身份无效失败，已保留失败记录；修正后使用全新副本完整通过，未取消校验。源参数TEXT精确比较，只有外层Action JSON键顺序不作为事实。
 
-同原始群体claim/completed/account保护查询都有索引路径；计时仅诊断样本，不作为吞吐承诺。测试不启动worker、不调用模型或真实发送。完整机器证据见[Unit2验收JSON](../../validation/2026-10-30-next-owner-unit2.json)。整分支审查SPEC／QUALITY均PASS，无未关闭Important；标准gate／自然quiet部署、生产只读验收和本轮产物清理仍待完成。
+同原始群体claim/completed/account保护查询都有索引路径；计时仅诊断样本，不作为吞吐承诺。测试不启动worker、不调用模型或真实发送。完整机器证据见[Unit2验收JSON](../../validation/2026-10-30-next-owner-unit2.json)。整分支审查SPEC／QUALITY均PASS，无未关闭Important；已完成标准gate／自然quiet部署与生产只读验收，本轮临时产物已清理并验证路径不存在。
+
+## 单元2已上线并读回
+
+标准精确发布8fe08f935：门禁8177PASS／2skip／1deselected，370.98秒；自然quiet，无中断／跳过。生产PID83800、health200、前端tree/stamp一致，Store30.1／Email54，463对象精确目标hash，FK[]。17820共同Action无三重复JSON键及generated列，13102直接邮件Action均关联准确Plan。History页1／2、failed筛选、公开Attempt16429、回执22414／22354（provider available）、旧物理127430数据API404；邮件列表分页和分类6323083051829431886身份／move状态读回通过。3条历史bugfix事实hash不变。浏览器受Work设置限制，本轮不声称逐项点击验收，读回证据为实际生产API和SQLite。
+
+本轮daily备份inode840964188精确代次已在目录锁下重新验证integrity／CEOB／当前schema／FK／无打开引用后删除；部署UUID备份已由同workflow自动退休，其他OA工作流目录保留。临时产物清理状态及最终结案以Unit2 JSON为准。本轮去除约0.74MiB逻辑重复值，不宣称SQLite文件按该量缩小，也不宣称全库最优或全仓零兼容。
+
+## 本计划收口
+
+两个单元均已实施、审查、独立标准发布并完成生产只读验收。本轮约666MiB临时根目录（含测试数据库、代码及日志）和10MiB SDD工作目录已清除，旧代码测试worktree已注销，路径不存在；无新建长期测试备份。生产库、原生trajectory及其他工作流目录保留。发布窗口已交还退订修复负责人；其后续提交和新备份属于独立工作，不重复部署或清理。本次验收的实际安装时点为8fe08f935，不把该SHA/PID写成永久实时状态。纯文档结案无需再次部署。
