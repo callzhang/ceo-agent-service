@@ -5181,23 +5181,26 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
 
     class Source:
         def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
+            raise AssertionError("known UID must use exact source read")
+
+        def fetch_message(self, locator, *, stable_message_identity):
             source_events.append(
-                ("fetch", folder, cursor_uidvalidity, last_seen_uid, limit)
+                (
+                    "fetch_exact",
+                    locator.folder,
+                    locator.uidvalidity,
+                    locator.uid,
+                    locator.rfc_message_id,
+                    stable_message_identity,
+                )
             )
-            return SimpleNamespace(
-                uidvalidity=42,
-                messages=(
-                    {
-                        "uid": 7,
-                        "stableMessageIdentity": (
-                            "account-1:message-id:<mail-7@example.com>"
-                        ),
-                        "listUnsubscribe": f"<{private_url}>",
-                        "listUnsubscribePost": "",
-                        "textBody": "metadata-only test body",
-                    },
-                ),
-            )
+            return {
+                "uid": locator.uid,
+                "stableMessageIdentity": stable_message_identity,
+                "listUnsubscribe": f"<{private_url}>",
+                "listUnsubscribePost": "",
+                "textBody": "metadata-only test body",
+            }
 
         def logout(self):
             source_events.append("logout")
@@ -5273,7 +5276,16 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     ) == (entry,)
     # The connector-backed source checks its connection back in (discarded)
     # rather than really logging out -- see _ConnectorBackedSource.
-    assert source_events == [("fetch", "INBOX", 42, 6, 2)]
+    assert source_events == [
+        (
+            "fetch_exact",
+            "INBOX",
+            42,
+            7,
+            "<mail-7@example.com>",
+            "account-1:message-id:<mail-7@example.com>",
+        )
+    ]
     assert checkin_calls == [False]
     assert execution_calls == []
 
@@ -5368,8 +5380,10 @@ def test_execution_resolves_selected_candidate_before_executing(
     )
 
     class Source:
-        def fetch_uid_batch(self, *_args, **_kwargs):
-            return SimpleNamespace(uidvalidity=42, messages=(provider_message,))
+        def fetch_message(self, locator, *, stable_message_identity):
+            assert locator.uid == 8
+            assert stable_message_identity == locator.stable_message_identity
+            return provider_message
 
         def logout(self):
             return None
@@ -5463,8 +5477,10 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
     )[0]
 
     class Source:
-        def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
-            return SimpleNamespace(uidvalidity=42, messages=(provider_message,))
+        def fetch_message(self, locator, *, stable_message_identity):
+            assert locator.uid == 7
+            assert stable_message_identity == locator.stable_message_identity
+            return provider_message
 
         def logout(self):
             return None

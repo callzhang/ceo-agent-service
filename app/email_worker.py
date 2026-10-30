@@ -4315,25 +4315,10 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
             raise ValueError("email unsubscribe account is unavailable")
         source = source_factory(account)
         try:
-            batch = source.fetch_uid_batch(
-                locator.folder,
-                cursor_uidvalidity=locator.uidvalidity,
-                last_seen_uid=max(0, locator.uid - 1),
-                limit=2,
+            message = source.fetch_message(
+                locator,
+                stable_message_identity=locator.stable_message_identity,
             )
-            if batch.uidvalidity != locator.uidvalidity:
-                raise ValueError("email unsubscribe provider generation changed")
-            message = next(
-                (
-                    item
-                    for item in batch.messages
-                    if _message_identity(item) == locator.stable_message_identity
-                    and int(item.get("uid") or 0) == locator.uid
-                ),
-                None,
-            )
-            if not isinstance(message, Mapping):
-                raise ValueError("email unsubscribe source message is unavailable")
             entries = extract_unsubscribe_entries(
                 list_unsubscribe=str(message.get("listUnsubscribe") or ""),
                 list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
