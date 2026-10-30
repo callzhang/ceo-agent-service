@@ -69,6 +69,7 @@ tests/test_followup_sync_source.py
 tests/test_friday_runtime_adapter.py
 tests/test_fxiaoke_customer_lookup.py
 tests/test_gate_manifest.py
+tests/test_quality_gate.py
 tests/test_group_discovery.py
 tests/test_hourly_dry_run_launchd.py
 tests/test_leak_check.py
