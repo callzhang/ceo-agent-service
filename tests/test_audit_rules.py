@@ -100,20 +100,51 @@ def test_audit_does_not_require_approval_for_configured_ai_service_processing(tm
     assert "review the exact recipient or target, content, evidence, and task scope" in audit
 
 
-def test_default_oa_rules_keep_material_and_policy_gaps_separate():
-    rules = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_default_oa_rule14_uses_skill_criteria_without_legacy_card_action_veto(tmp_path, role):
+    # A partial card label must not replace the task's actual Skill/decision table.
+    path = tmp_path / "new-install.md"
+    rendered = render_audit_rules(role, path)
 
-    assert "actual applicant is authoritative" in rules
-    assert "cannot create, replace, or close a rule" in rules
-    assert "stardust-oa-finance-review" in rules
-    assert "live `processCode`" in rules
-    assert "sole authority for the template action" in rules
-    assert "cannot be reported as 100%" in rules
-    assert "cannot close the reusable policy gap" in rules
-    assert "Do not introduce a new factual requirement" in rules
-    assert "reusable rule should govern this task class" in rules
-    assert "do not ask {{principal}} to choose the outcome or action for this individual OA" in rules
-    assert "current-instance `needs_human` question" not in rules
+    assert "business Skill for criteria" in rendered
+    assert "common OA Skill for evidence handling, scoring, staged outcomes and actions" in rendered
+    assert "partial label or absence of a separate action list" in rendered
+    assert "Preserve real material, policy and authorization gaps" in rendered
+    assert "Respect read-only scope and current/terminal task ownership" in rendered
+    assert "unless the task and applicable Skill require it" in rendered
+    assert "sole authority for the template action" not in rendered
+    assert "No complete applicable card" not in rendered
+    assert "first-stage complete proposal for the exact OA material comment" not in rendered
+    assert "Do not introduce a new factual requirement unless" not in rendered
+    if role is AgentRole.CONSUMER:
+        assert "do not execute" in rendered
+    else:
+        assert "Audit must never send" in rendered
+
+
+@pytest.mark.parametrize("role", [AgentRole.CONSUMER, AgentRole.AUDIT])
+def test_saved_rule14_roundtrip_preserves_other_custom_rules_and_role_contracts(tmp_path, role):
+    source = SEED_AUDIT_RULES_TEMPLATE.read_text(encoding="utf-8")
+    paragraph = next(line for line in source.splitlines() if line.startswith("14. "))
+    prefix = "1. Preserve this custom audience rule.\n2. Keep {{principal}}'s evidence requirement.\n"
+    suffix = "\n15. Preserve this following custom restriction.\n"
+    template = prefix + paragraph + suffix
+    path = tmp_path / "custom.md"
+    write_audit_rules_template(template, path)
+    rendered = render_audit_rules(role, path)
+
+    assert path.read_text(encoding="utf-8") == template
+    assert "Preserve this custom audience rule." in rendered
+    assert "Preserve this following custom restriction." in rendered
+    assert "business Skill for criteria" in rendered
+    assert "Preserve real material, policy and authorization gaps" in rendered
+    assert "Respect read-only scope and current/terminal task ownership" in rendered
+    assert "sole authority for the template action" not in rendered
+    if role is AgentRole.AUDIT:
+        assert "only the System Executor executes the exact persisted approved plan" in rendered
+        assert "configured AI Services tool" in rendered
+    else:
+        assert "do not execute its proposed business actions" in rendered
 
 
 def test_default_rules_do_not_treat_consumer_audit_clock_progress_as_conflict():
