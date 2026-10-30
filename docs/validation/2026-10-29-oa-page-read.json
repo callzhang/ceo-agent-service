@@ -1,0 +1,34 @@
+{
+  "source_commit": "7ef834a83",
+  "baseline": "edc494ace30b2588b4a16863f0d50fc1a55c6bab",
+  "scope": "OA process/comment cold page acquisition through unchanged exact source downloaders",
+  "regressions": {
+    "before": "16 failed",
+    "after": "16 passed"
+  },
+  "focused_suite": {
+    "passed": 67,
+    "seconds": 3.81,
+    "files": [
+      "tests/test_oa_process_attachment_reader.py",
+      "tests/test_oa_comment_attachment_reader.py",
+      "tests/test_agent_role_tool_boundary.py"
+    ]
+  },
+  "ruff": "passed",
+  "diff_check": "passed",
+  "fresh_review": "no Critical or Important findings",
+  "deferred_minor": "Server-recreation PDF variant also changes display filename. Separate same-filename server recreation is not isolated; central cold-cache behavior is covered by no-prior-read cases.",
+  "preserved": [
+    "source identifiers",
+    "role read-only registration",
+    "existing download endpoints",
+    "byte/expanded/package limits",
+    "type/page/hash rendering checks",
+    "provider errors",
+    "Audit and execution policy",
+    "retry budgets"
+  ],
+  "live": "pending standard deployment and provider readback",
+  "private_originals_committed": false
+}
