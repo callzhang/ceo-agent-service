@@ -1711,7 +1711,7 @@ Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meetin
 
 独立 Meeting Audit 的结果（`MeetingAlignmentAuditResult`）不含 digest：模型只返回 outcome、summary、feedback，Audit 提示词里也不放 digest，没有让模型抄写的字段。Audit 与候选的绑定由服务计算：`persist_audited_meeting_decision` 用被审核候选的 SHA-256 写入 `_service_audit.candidate_sha256`，读取时（`meeting_decision_audit_is_approved`、audit-only 恢复）重新计算并要求相等且结果为 `approve`；候选被改动则绑定失效。绑定保证不变，只是不再依赖模型转录。解析器对结构错误抛 `RoutedResultValidationError`，路由器对同一 Audit 会话执行唯一一次修正轮（`attempt_purpose=result_validation_correction`）；仍错则该次尝试终止为 `runtime_result_validation_failed`，Meeting Task 失败。已存储的旧 Audit 结果若仍带模型抄写的 `candidate_sha256`，读取时必须等于候选 digest，否则按未批准处理。
 
-Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `needs_human`（`meeting_audit_unapproved`，未发送任何消息）。History 对它与 `failed`/`quarantined` 一样给出 `needs_manager` 注意项（人工处理、技术详情），不再显示为没有待办。`needs_human` 的 Meeting 属于 `rerun_meeting_alignment_jobs` 的可重跑状态（与 `failed`/`no_action` 同一入口，Derek 2026-10-27 批准）：只有控制台“重跑”按钮会调用，原 Run 全部保留，重跑从 `retry` 重新经 Consumer→独立 Audit，所有未发送/无外发/无占用的前置检查不变。
+Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `needs_human`（`meeting_audit_unapproved`，未发送任何消息）。History 对它与 `failed`/`quarantined` 一样给出 `needs_manager` 注意项（人工处理、技术详情），不再显示为没有待办。`needs_human` 的 Meeting 属于 `rerun_meeting_alignment_jobs` 的可重跑状态（与 `failed`/`no_action` 同一入口，Derek 2026-10-27 批准）：只有控制台“重跑”按钮会调用，原 Run 全部保留，重跑从 `retry` 重新经 Consumer→独立 Audit，所有未发送/无外发/无占用的前置检查不变。转录参会名单验证将稳定身份已核实的 Minutes 创建者作为参会人单独保留；仅逐字稿实际列出的其余发言人参与逐字稿名单匹配，避免把未发言的创建者误判为缺失发言人。
 
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。检查使用 Phase 2 TaskBusinessKey 中保存的原生公开投递键，并同时检查主键、`:sensitive` 键和 `:target:` 派生键；准备好的 Action 即使没有 provider 回执也阻止重放。不得从 native Task ID 重建 source key。prepared outbound 仍由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 

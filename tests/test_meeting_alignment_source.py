@@ -496,6 +496,45 @@ def test_read_meeting_source_marks_transcript_roster_incomplete():
     assert source.attendee_roster_complete is False
 
 
+def test_read_meeting_source_validates_minutes_creator_as_attendee_not_speaker():
+    dws = FakeDws()
+    resolved_creator = meeting_alignment_source.MeetingParticipant(
+        name="胡明", user_id="u-hu", open_dingtalk_id="open-hu"
+    )
+    creator = meeting_alignment_source.MeetingParticipant(name="胡明", user_id="")
+    evidence = build_transcript_roster_evidence(
+        live_minutes_info(),
+        dws.get_all_minutes_transcription("minutes-1"),
+        current_user=meeting_alignment_source.MeetingParticipant(
+            name="Derek", user_id="u-derek", open_dingtalk_id="open-derek"
+        ),
+        speakers=[
+            meeting_alignment_source.MeetingParticipant(
+                name="A", user_id="union-a"
+            ),
+            meeting_alignment_source.MeetingParticipant(
+                name="B", user_id="u-b"
+            ),
+        ],
+        minutes_creator=resolved_creator,
+    )
+
+    source = read_meeting_source(
+        dws,
+        "minutes-1",
+        calendar_evidence=evidence,
+        creator=creator,
+    )
+
+    assert source.attendee_evidence == "transcript"
+    assert [participant.name for participant in source.participants] == [
+        "Derek",
+        "A",
+        "B",
+        "胡明",
+    ]
+
+
 def test_read_meeting_source_merges_producer_discovery_metadata():
     dws = FakeDws()
 

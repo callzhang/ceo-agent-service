@@ -626,11 +626,48 @@ def _verify_calendar_evidence(
             raise MeetingSourceIncomplete(
                 "transcript evidence lacks a stable participant roster"
             )
+        transcript_names = {
+            _normalized_title(name) for name in transcript_speaker_names(transcription)
+        }
+        minutes_creator = None
+        speakers = counterparts
+        if (
+            creator is not None
+            and creator.name.strip()
+            and creator.user_id.strip() != current_user_id.strip()
+        ):
+            creator_matches = [
+                participant
+                for participant in counterparts
+                if (
+                    participant.user_id.strip() == creator.user_id.strip()
+                    if creator.user_id.strip()
+                    else _normalized_title(participant.name)
+                    == _normalized_title(creator.name)
+                )
+            ]
+            if (
+                len(creator_matches) != 1
+                or not creator_matches[0].user_id.strip()
+                or _normalized_title(creator_matches[0].name)
+                != _normalized_title(creator.name)
+            ):
+                raise MeetingSourceIncomplete(
+                    "transcript evidence does not match the stable Minutes creator"
+                )
+            minutes_creator = creator_matches[0]
+            if _normalized_title(minutes_creator.name) not in transcript_names:
+                speakers = [
+                    participant
+                    for participant in counterparts
+                    if participant.user_id.strip() != minutes_creator.user_id.strip()
+                ]
         rebuilt = build_transcript_roster_evidence(
             data,
             transcription,
             current_user=current[0],
-            speakers=counterparts,
+            speakers=speakers,
+            minutes_creator=minutes_creator,
         )
         if rebuilt != evidence:
             raise MeetingSourceIncomplete("transcript evidence is stale or mismatched")
