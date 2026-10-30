@@ -250,7 +250,6 @@ export interface BusinessProjectDetail {
   anchor?: Record<string, unknown> | null;
   confirmed_tasks: BusinessTaskSummary[];
   context: ProjectContext | null;
-  responsibilities: ProjectResponsibility[];
   suggestions: BusinessTaskSummary[];
   evidence_signals: BusinessTaskSignal[];
   context_revisions: ProjectContextRevision[];
@@ -899,7 +898,6 @@ export function confirmBusinessProjectCandidate(candidateId: string, projectId?:
 export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessProjectDetail>> {
   return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary)
     && (item.context === null || isProjectContext(item.context))
-    && Array.isArray(item.responsibilities) && item.responsibilities.every(isResponsibility)
     && [item.confirmed_tasks, item.suggestions].every((rows) => Array.isArray(rows) && rows.every((row) => isRecord(row) && isTaskSummary(row)))
     && Array.isArray(item.evidence_signals) && item.evidence_signals.every(isBusinessTaskSignal)
     && Array.isArray(item.context_revisions) && item.context_revisions.every((row) => isRecord(row) && typeof row.id === "number" && typeof row.project_id === "number" && isProjectContext(row.context) && Array.isArray(row.evidence_signal_ids) && row.evidence_signal_ids.every((id) => typeof id === "number") && isString(row.created_at))

@@ -26,7 +26,7 @@ const pageMeta = { page: 1, page_size: 20, total: 4, next_cursor: "", has_more: 
 function projectDetail(): BusinessProjectDetail {
   return {
     summary: { id: "2", title: "客户交付项目", registry_source: "经营会确认", canonical_anchor_id: 3, confirmed_task_count: 1, detail_url: "/tasks/project/2", overall_owner: "张三", overall_responsibility: "交付与验收", attention_reason: "回款风险仍需观察，材料完成不代表风险已解除。", responsible_content: "交付与验收", goal: context.goal, deadline: "", current_status: context.facts.map((fact) => fact.text).join("\n"), source_title: "", reporting_period: "", source_url: "", open_task_count: 0, done_task_count: 1, updated_at: "2026-10-04T08:00:00Z" },
-    anchor: { id: 3, title: "客户项目" }, context, responsibilities: [role], confirmed_tasks: [sourceTask], suggestions: [suggestion],
+    anchor: { id: 3, title: "客户项目" }, context, confirmed_tasks: [sourceTask], suggestions: [suggestion],
     evidence_signals: [owner.evidence[0], role.evidence[0], paymentCitation, materialsCitation].map((source) => ({ id: source.signal_id, source_type: source.signal_id === 33 ? "dingtalk" : "meeting", source_ref: source.source_ref, source_time: "2026-10-03T09:00:00Z", evidence_text: `保存的完整原文 ${source.signal_id}\n${source.source_excerpt}`, source_available: true, source_unavailable_reason: null, context_json: JSON.stringify({ source_link: `https://example.com/source/${source.signal_id}` }) })),
     context_revisions: [{ id: 9, project_id: 2, context, evidence_signal_ids: [31, 32, 33, 34], created_at: "2026-10-04T08:00:00Z" }],
     evidence_meta: pageMeta, context_revision_meta: { ...pageMeta, total: 1 },
@@ -59,6 +59,19 @@ describe("TaskProjectDetailPage", () => {
     expect(screen.getByRole("link", { name: "来源：meeting-31" })).toHaveAttribute("href", "https://example.com/source/31");
   });
 
+  it("renders historical responsibilities from their own revision", async () => {
+    const item = projectDetail();
+    const historicRole = { ...role, person_name: "赵六", responsibility: "历史交付", evidence: [citation(35, "meeting-35", "赵六负责历史交付。") ] };
+    item.context_revisions[0] = { ...item.context_revisions[0], context: { ...context, responsibilities: [historicRole] } };
+    crmApi.get.mockResolvedValue({ item, meta: { snapshot_at: "2026-10-04" } });
+    render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
+    await screen.findByRole("heading", { name: "客户交付项目" });
+    expect(screen.getByText("王五")).toBeInTheDocument();
+    expect(screen.getByText("赵六")).toBeInTheDocument();
+    expect(screen.getByText("历史交付")).toBeInTheDocument();
+    expect(screen.getByText("赵六负责历史交付。")).toBeInTheDocument();
+  });
+
   it("searches CRM read-only and requires an explicit click to confirm a returned customer", async () => {
     const user = userEvent.setup();
     const item = projectDetail();
@@ -80,10 +93,11 @@ describe("TaskProjectDetailPage", () => {
 
   it("keeps a zero-Task project readable without inferring missing context", async () => {
     const item = projectDetail();
-    crmApi.get.mockResolvedValue({ item: { ...item, summary: { ...item.summary, overall_owner: "", overall_responsibility: "", confirmed_task_count: 0, open_task_count: 0, done_task_count: 0 }, context: null, responsibilities: [], confirmed_tasks: [], suggestions: [], context_revisions: [], context_revision_meta: { ...pageMeta, total: 0 } }, meta: { snapshot_at: "2026-10-04" } });
+    crmApi.get.mockResolvedValue({ item: { ...item, summary: { ...item.summary, overall_owner: "", overall_responsibility: "", confirmed_task_count: 0, open_task_count: 0, done_task_count: 0 }, context: null, confirmed_tasks: [], suggestions: [], context_revisions: [], context_revision_meta: { ...pageMeta, total: 0 } }, meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     await screen.findByRole("heading", { name: "客户交付项目" });
     expect(screen.getByText("总负责人").nextElementSibling).toHaveTextContent("待明确");
+    expect(screen.getByText("人员分工待明确。")).toBeInTheDocument();
     expect(screen.getByText("暂无关联任务。")).toBeInTheDocument();
     expect(screen.getByText("暂无 Agent 建议。")).toBeInTheDocument();
     expect(screen.getByText(/^保存的完整原文 31/)).toBeInTheDocument();

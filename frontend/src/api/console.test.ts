@@ -51,12 +51,12 @@ describe("console API helpers", () => {
   it("requires the explicit nullable project context, suggestions and bounded evidence/history", async () => {
     const summary = { id: "2", title: "客户项目", registry_source: "经营会", canonical_anchor_id: 3, confirmed_task_count: 0, detail_url: "/tasks/project/2", overall_owner: "", overall_responsibility: "", attention_reason: "", updated_at: "now" };
     const pageMeta = { page: 1, page_size: 20, total: 0, next_cursor: "", has_more: false, snapshot_at: "now" };
-    const item: Record<string, unknown> = { summary, confirmed_tasks: [], context: null, responsibilities: [], suggestions: [], evidence_signals: [], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
+    const item: Record<string, unknown> = { summary, confirmed_tasks: [], context: null, suggestions: [], evidence_signals: [], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ item, meta: { snapshot_at: "now" } }), { status: 200 });
     try {
       expect((await getBusinessProjectDetail("2")).item.context).toBeNull();
-      for (const field of ["context", "responsibilities", "suggestions", "evidence_signals", "context_revisions", "evidence_meta", "context_revision_meta"]) {
+      for (const field of ["context", "suggestions", "evidence_signals", "context_revisions", "evidence_meta", "context_revision_meta"]) {
         const saved = item[field];
         delete item[field];
         await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
@@ -68,7 +68,7 @@ describe("console API helpers", () => {
     const summary = { id: "2", title: "客户项目", registry_source: "经营会", canonical_anchor_id: 3, confirmed_task_count: 0, detail_url: "/tasks/project/2", overall_owner: "", overall_responsibility: "", attention_reason: "", updated_at: "now" };
     const pageMeta = { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "now" };
     const signal: Record<string, unknown> = { id: 7, source_type: "ai_minutes", source_ref: "meeting-7", source_time: "now", conversation_id: "", conversation_title: "", author_user_id: "", author_name: "", author_kind: "unknown", context_json: "{}", dedupe_key: "signal-7", created_at: "now", evidence_text: null, source_available: false, source_unavailable_reason: "source_missing" };
-    const item = { summary, confirmed_tasks: [], context: null, responsibilities: [], suggestions: [], evidence_signals: [signal], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
+    const item = { summary, confirmed_tasks: [], context: null, suggestions: [], evidence_signals: [signal], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ item, meta: { snapshot_at: "now" } }), { status: 200 });
     try {

@@ -98,7 +98,7 @@ export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
         <div><dt>总负责人</dt><dd>{owner?.person_name || "待明确"}</dd></div>
         <div><dt>整体负责事项</dt><dd>{owner?.responsibility || "待明确"}{owner && <CitationList citations={owner.evidence} signals={detail.evidence_signals} />}</dd></div>
       </dl>
-      <h3>人员分工</h3><Responsibilities people={detail.responsibilities} signals={detail.evidence_signals} />
+      <h3>人员分工</h3><Responsibilities people={detail.context?.responsibilities ?? []} signals={detail.evidence_signals} />
     </section>
     <section className="console-card business-detail-section"><h2>为什么关注</h2><p className="business-project-attention">{project.attention_reason || "待明确"}</p></section>
     <DetailSection title="来源任务" count={tasks.length}>

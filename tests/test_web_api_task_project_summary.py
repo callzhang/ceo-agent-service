@@ -1,3 +1,5 @@
+import json
+
 from app.business_source_reader import PreparedSources
 from app.project_context_service import ProjectContextService
 from app.store import AutoReplyStore
@@ -9,6 +11,7 @@ from app.web_api.tasks import business_project_detail, business_project_list_res
 from app.action_followup_sync_definitions import sync_action_projection
 import pytest
 from tests.support.business_task_seed import seed_task, seed_task_signal
+from tests.test_console_web_api import _client
 
 
 def _prepared(store, citation):
@@ -53,13 +56,26 @@ def test_zero_task_project_api_reads_saved_accountability_and_facts(tmp_path):
     assert summary.attention_reason == ""
     assert summary.confirmed_task_count == summary.open_task_count == summary.done_task_count == 0
     assert detail.context == context
-    assert detail.responsibilities == context.responsibilities
+    payload = json.loads(detail.model_dump_json())
+    assert "responsibilities" not in payload
+    assert payload["context"]["responsibilities"] == [role.model_dump(mode="json") for role in context.responsibilities]
     assert detail.confirmed_tasks == detail.suggestions == []
     assert [signal.id for signal in detail.evidence_signals] == [citation.signal_id]
     assert detail.context_revisions == list(before)
     assert store.list_business_project_context_revisions(project_id) == before
     result = business_project_list_response(store, page=1, page_size=20)
     assert result.items[0].overall_owner == "张三"
+
+
+def test_project_detail_http_json_has_context_responsibilities_only(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id, _, _, context = _project(store)
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/console/tasks/projects/{project_id}")
+    assert response.status_code == 200
+    payload = response.json()["item"]
+    assert "responsibilities" not in payload
+    assert payload["context"]["responsibilities"] == [role.model_dump(mode="json") for role in context.responsibilities]
 
 
 def test_unknown_project_context_does_not_borrow_task_owner(tmp_path):
@@ -108,7 +124,11 @@ def test_two_projects_api_never_mix_accountability(tmp_path):
     second, _, _, _ = _project(store, title="二期", name="李四")
     assert business_project_detail(store, first).summary.overall_owner == "张三"
     assert business_project_detail(store, second).summary.overall_owner == "李四"
-    assert business_project_detail(store, second).evidence_signals[0].source_ref == "meeting:二期"
+    first_detail = business_project_detail(store, first)
+    second_detail = business_project_detail(store, second)
+    assert first_detail.context.responsibilities[0].evidence[0].source_ref == "meeting:一期"
+    assert second_detail.context.responsibilities[0].evidence[0].source_ref == "meeting:二期"
+    assert second_detail.evidence_signals[0].source_ref == "meeting:二期"
 
 
 def test_project_summaries_batch_task_project_membership_queries(tmp_path, monkeypatch):

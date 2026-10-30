@@ -24,7 +24,6 @@ from app.task_semantic_models import (
     Nonblank,
     ProjectContext,
     ProjectCrmCustomerCandidate,
-    ProjectResponsibility,
     TaskSuggestion,
 )
 from app.business_source_reader import (
@@ -539,7 +538,6 @@ class ConsoleBusinessProjectDetail(BaseModel):
     anchor: dict[str, Any]
     confirmed_tasks: list[ConsoleBusinessTaskSummary]
     context: ProjectContext | None
-    responsibilities: list[ProjectResponsibility]
     suggestions: list[ConsoleBusinessTaskSummary]
     evidence_signals: list[ConsoleBusinessTaskSignalView]
     context_revisions: list[BusinessProjectContextRevision]
@@ -1002,7 +1000,6 @@ def business_project_detail(store: Any, project_id: int, *,
         anchor=json_safe(anchors[project.canonical_anchor_id]) if project.canonical_anchor_id in anchors else {},
         confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")],
         context=context,
-        responsibilities=list(context.responsibilities) if context else [],
         suggestions=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if task.origin == "agent_suggestion" and task.stage.value == "candidate"],
         evidence_signals=business_signal_views(store, facts, source_reader=source_reader),
         context_revisions=list(revisions), evidence_meta=metadata(evidence_count, len(evidence)), context_revision_meta=metadata(revision_count, len(revisions)),

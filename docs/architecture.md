@@ -1051,6 +1051,7 @@ Project 可选关联 Fxiaoke CRM 客户；CRM 身份单独保存为稳定 Accoun
 连续逐字引文；总负责与负责结果不能从 Task owner 猜出。未改变的职责沿用历史原文证据。
 context=null 只补 Project↔Signal 关系；明确提供空分工快照才清空当前分工，旧版本仍可读。
 当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
+Project 详情 API 的当前分工只在 `context.responsibilities` 中返回；历史分工从各个 `context_revisions[].context.responsibilities` 读取，context 为 null 时页面显示待明确。
 Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
 不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
 仅描述“某人负责某业务领域”的职责陈述只进入 ProjectContext，不单独生成 Task/candidate；
