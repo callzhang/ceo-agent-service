@@ -1,3 +1,4 @@
+from tests.support.native_run_rows import find_run_for_turn
 from tests.support.reply_action_snapshot import reply_action_snapshot
 import json
 import shlex
@@ -275,7 +276,7 @@ class PoisonedSessionFailureOrchestrator:
 
 
 def _get_audit_run(store, task_id: int, execution_generation: str):
-    audit = store.get_agent_run_for_turn(
+    audit = find_run_for_turn(store,
         task_id,
         execution_generation,
         role=AgentRole.AUDIT,
@@ -284,7 +285,7 @@ def _get_audit_run(store, task_id: int, execution_generation: str):
     )
     if audit is not None:
         return audit
-    return store.get_agent_run_for_turn(
+    return find_run_for_turn(store,
         task_id,
         execution_generation,
         role=AgentRole.CONSUMER,
@@ -3687,14 +3688,14 @@ def test_retryable_failure_reuses_generation_and_session_with_new_turn_then_succ
         "g1",
     ]
     assert runner.resume_session_ids == ["session-retry"]
-    failed_run = worker.store.get_agent_run_for_turn(
+    failed_run = find_run_for_turn(worker.store,
         task_id,
         "g1",
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
     )
-    completed_run = worker.store.get_agent_run_for_turn(
+    completed_run = find_run_for_turn(worker.store,
         task_id,
         "g1",
         role=AgentRole.CONSUMER,
@@ -4225,14 +4226,14 @@ def test_stale_retryable_failed_run_resumes_same_generation_and_session(
 
     assert runner.resume_session_ids == ["session-retry-after-restart"]
     assert [generation for _task, generation, _context in runner.calls] == ["g1"]
-    failed_run = worker.store.get_agent_run_for_turn(
+    failed_run = find_run_for_turn(worker.store,
         task_id,
         "g1",
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
     )
-    completed_run = worker.store.get_agent_run_for_turn(
+    completed_run = find_run_for_turn(worker.store,
         task_id,
         "g1",
         role=AgentRole.CONSUMER,

@@ -1,4 +1,5 @@
 """Native source versus disabled nine-family action mutations."""
+from tests.support.action_fixtures import delete_sync_fixture
 
 from contextlib import closing
 from datetime import datetime
@@ -11,7 +12,7 @@ import pytest
 
 from app.action_followup_sync_definitions import SYNC_FIELDS, sync_action_projection
 from app.action_storage import (
-    create_action_schema, delete_sync_action, insert_sync_action, update_sync_action,
+    create_action_schema, insert_sync_action, update_sync_action,
 )
 from test_followup_sync_source import NAMES, snapshot, values
 
@@ -72,7 +73,7 @@ def test_task_events_insert_update_delete_and_source_constraints(variant):
             _insert_source(source, "business_task_events", row | {"before_json": "[]"})
         with pytest.raises(sqlite3.IntegrityError):
             insert_sync_action(target, "business_task_events", row | {"before_json": "[]"})
-        assert delete_sync_action(target, "business_task_events", actual.lastrowid).rowcount == \
+        assert delete_sync_fixture(target, "business_task_events", actual.lastrowid).rowcount == \
             source.execute("delete from business_task_events where id=?", (expected.lastrowid,)).rowcount == 1
 
 

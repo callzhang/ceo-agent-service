@@ -1,4 +1,6 @@
 """The four disabled task-delivery Action kinds preserve source contracts."""
+from tests.support.action_fixtures import delete_delivery_fixture
+from tests.support.action_fixtures import update_delivery_fixture
 
 import sqlite3
 from contextlib import closing
@@ -130,7 +132,7 @@ def _update_task_delivery_text(db, kind, public_id, values, *, where_sql="", par
 def _frozen_task_delivery_text_writer(monkeypatch):
     monkeypatch.setattr(action_storage, "insert_task_delivery_action", _insert_task_delivery_text)
     monkeypatch.setattr(action_storage, "task_delivery_set_parts", _task_delivery_set_parts_text)
-    monkeypatch.setattr(action_storage, "update_task_delivery_action", _update_task_delivery_text)
+    monkeypatch.setattr("test_action_task_delivery_storage.update_delivery_fixture", _update_task_delivery_text)
 
 
 def test_fresh_final_schema_failure_does_not_publish_current(tmp_path, monkeypatch):
@@ -271,7 +273,7 @@ def test_wechat_allocator_uses_main_sequence_with_unrelated_temp_autoincrement(v
             db, "wechat_deliveries", {"id": 80, **values}, ignore=True,
         )
         assert ignored.rowcount == 0
-        assert action_storage.delete_task_delivery_action(
+        assert delete_delivery_fixture(
             db, "wechat_deliveries", 80,
         ).rowcount == 1
         assert db.execute("select seq from main.sqlite_sequence where name='actions:wechat_deliveries'").fetchone() == (80,)
@@ -305,7 +307,7 @@ def test_unmatched_wechat_update_does_not_evaluate_invalid_primary_key(variant):
             include_followup_sync=True, include_business_sync=True,
             include_task_delivery=True,
         )
-        result = action_storage.update_task_delivery_action(
+        result = update_delivery_fixture(
             db, "wechat_deliveries", 999, {"id": None},
         )
         assert result.rowcount == 0
@@ -406,7 +408,7 @@ def test_auto_id_full_preserves_source_and_target_caller_transaction(
         )
         source.execute(f"delete from {kind} where id=?", (maximum,))
         action_storage.insert_task_delivery_action(target, kind, {"id": maximum, **values})
-        action_storage.delete_task_delivery_action(target, kind, maximum)
+        delete_delivery_fixture(target, kind, maximum)
         for db in (source, target):
             db.commit()
             if explicit_transaction:
@@ -469,7 +471,7 @@ def test_wrong_parent_kind_precedes_full_auto_id_as_in_source(
         )
         source.execute(f"delete from {kind} where id=?", (maximum,))
         action_storage.insert_task_delivery_action(target, kind, {"id": maximum, **values})
-        action_storage.delete_task_delivery_action(target, kind, maximum)
+        delete_delivery_fixture(target, kind, maximum)
         wrong = {**values, parent: 2 if parent == "meeting_job_id" else 1}
         if temp_shadow:
             expected = "meeting_alignment_jobs" if parent == "meeting_job_id" else "reply_tasks"
@@ -564,7 +566,7 @@ def test_task_delivery_parent_kind_and_claim_cascade():
             db, "meeting_alignment_delivery_claims", {"job_id": 44, "claim_token": "token"},
         ).lastrowid == 44
         structural_id = db.execute("select id from actions where record_type='meeting_alignment_delivery_claims'").fetchone()[0]
-        assert action_storage.update_task_delivery_action(
+        assert update_delivery_fixture(
             db, "meeting_alignment_delivery_claims", 44, {"job_id": 66},
         ).rowcount == 1
         assert db.execute("select id,legacy_key,td_claim_job_id,td_claim_token from actions "
@@ -651,7 +653,7 @@ def test_four_families_round_trip_current_facts_and_allocator(variant, monkeypat
              "target_id": "t", "reply_text": "second", "execution_generation": "two"},
         )
         assert inserted.lastrowid == 32
-        assert action_storage.update_task_delivery_action(
+        assert update_delivery_fixture(
             db, "wechat_deliveries", 32, {"status": "unrecognized-later"},
             where_sql="status='ready_to_send'",
         ).rowcount == 1
@@ -665,7 +667,7 @@ def test_four_families_round_trip_current_facts_and_allocator(variant, monkeypat
                     db, "wechat_deliveries", duplicate_generation)
         else:
             action_storage.insert_task_delivery_action(db, "wechat_deliveries", duplicate_generation)
-            assert action_storage.delete_task_delivery_action(
+            assert delete_delivery_fixture(
                 db, "wechat_deliveries", 33).rowcount == 1
         db.execute("update actions set payload_json=json_set(payload_json,'$.status','sent') "
                    "where record_type='wechat_deliveries' and legacy_key='7'")

@@ -249,23 +249,7 @@ ROWS = {
             "created_at": STAMP,
         },
     ),
-    "business_legacy_links": (
-        "BusinessLegacyLink",
-        {
-            "id": 1,
-            "signal_id": 1,
-            "task_id": None,
-            "cluster_id": None,
-            "anchor_id": None,
-            "project_id": None,
-            "project_candidate_id": None,
-            "attention_item_id": None,
-            "work_project_id": 1,
-            "work_todo_id": None,
-            "work_update_id": None,
-            "created_at": STAMP,
-        },
-    ),
+
 }
 
 # Python's str.strip whitespace includes C0 separators as well as Unicode
@@ -976,10 +960,6 @@ INVALID_ROWS = [
     ("business_attention_events", {"event_type": "read"}),
     ("business_attention_events", {"signal_id": None}),
     ("business_attention_events", {"after_json": "not json"}),
-    ("business_legacy_links", {"signal_id": None}),
-    ("business_legacy_links", {"task_id": 1}),
-    ("business_legacy_links", {"work_project_id": None}),
-    ("business_legacy_links", {"work_todo_id": 1}),
 ]
 
 

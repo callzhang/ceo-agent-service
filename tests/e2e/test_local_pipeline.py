@@ -1,3 +1,4 @@
+from tests.support.native_run_rows import find_run_for_turn
 from datetime import datetime
 
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
@@ -18,7 +19,7 @@ from app.worker import DingTalkAutoReplyWorker
 
 
 def _get_audit_run(store, task_id: int, execution_generation: str):
-    return store.get_agent_run_for_turn(
+    return find_run_for_turn(store,
         task_id,
         execution_generation,
         role=AgentRole.AUDIT,
@@ -465,7 +466,7 @@ def test_audit_local_pipeline_handoff_uses_codex_session_audit(
     assert worker.consume_once(max_tasks=1) == 1
 
     task = store.get_reply_task_for_message("cid-1", "msg-1")
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         "g1",
         role=AgentRole.CONSUMER,

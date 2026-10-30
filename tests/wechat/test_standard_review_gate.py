@@ -84,9 +84,9 @@ def approved(tmp_path):
 
 
 def _set(store, delivery_id, **values):
-    from app.action_storage import update_task_delivery_action
+    from tests.support.action_fixtures import update_delivery_fixture
     with store._connect() as db:
-        update_task_delivery_action(db, "wechat_deliveries", delivery_id, values)
+        update_delivery_fixture(db, "wechat_deliveries", delivery_id, values)
 
 
 def test_standard_review_approves_exactly_the_reviewed_target_and_text(approved):

@@ -10,11 +10,12 @@ completed Audit run and the recorded review, and the delivery's ``standard_*`` e
 """
 
 from __future__ import annotations
+from tests.support.action_fixtures import update_delivery_fixture
 
 import json
 
 from app.action_storage import (
-    insert_task_delivery_action, task_delivery_set_parts, update_task_delivery_action,
+    insert_task_delivery_action, task_delivery_set_parts,
 )
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.reviewed_candidates import candidate_digest
@@ -151,7 +152,7 @@ def approve_delivery(store, delivery_id: int) -> None:
         "standard_action_identity": IDENTITY,
     })
     with store._connect() as db:
-        update_task_delivery_action(
+        update_delivery_fixture(
             db, "wechat_deliveries", delivery_id,
             {"evidence_json": json.dumps(evidence, ensure_ascii=False)},
         )

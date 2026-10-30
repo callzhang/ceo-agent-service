@@ -484,36 +484,3 @@ class BusinessAttentionEvent(_FrozenBusinessModel):
     after_json: JsonObject
     reason: Nonblank
     created_at: str
-
-
-class BusinessLegacyLink(_FrozenBusinessModel):
-    id: int
-    signal_id: ReferenceId | None = None
-    task_id: ReferenceId | None = None
-    cluster_id: ReferenceId | None = None
-    anchor_id: ReferenceId | None = None
-    project_id: ReferenceId | None = None
-    project_candidate_id: ReferenceId | None = None
-    attention_item_id: ReferenceId | None = None
-    work_project_id: ReferenceId | None = None
-    work_todo_id: ReferenceId | None = None
-    work_update_id: ReferenceId | None = None
-    created_at: str
-
-    @model_validator(mode="after")
-    def validate_endpoints(self) -> BusinessLegacyLink:
-        semantic_ids = (
-            self.signal_id,
-            self.task_id,
-            self.cluster_id,
-            self.anchor_id,
-            self.project_id,
-            self.project_candidate_id,
-            self.attention_item_id,
-        )
-        legacy_ids = (self.work_project_id, self.work_todo_id, self.work_update_id)
-        if sum(value is not None for value in semantic_ids) != 1:
-            raise ValueError("legacy link requires exactly one semantic object")
-        if sum(value is not None for value in legacy_ids) != 1:
-            raise ValueError("legacy link requires exactly one legacy row")
-        return self

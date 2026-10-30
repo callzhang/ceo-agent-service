@@ -45,3 +45,24 @@ def insert_scheduled_occurrence(db, values):
         "execution_kind": "", "execution_id": "",
     }
     return insert_occurrence(db, {**defaults, **values})
+
+
+def find_run_for_turn(store, task_id, execution_generation, *, role, proposal_revision, turn_attempt):
+    with store._connect() as db:
+        row = db.execute(
+            "select id from runs where task_id=? and execution_generation=? and role=? "
+            "and proposal_revision=? and turn_attempt=?",
+            (task_id, execution_generation, role.value, proposal_revision, turn_attempt),
+        ).fetchone()
+    return store.get_agent_run(int(row[0])) if row else None
+
+
+def memory_events_for_attempt(store, attempt_id):
+    from app.current_action_schema import current_reply_action_projection
+    from app.store import MemoryWriteEvent
+
+    with store._connect() as db:
+        projection = current_reply_action_projection("memory_write_events")
+        rows = db.execute(f"select * from ({projection}) where attempt_id=? order by id",
+                          (attempt_id,)).fetchall()
+    return [MemoryWriteEvent.model_validate(dict(row)) for row in rows]

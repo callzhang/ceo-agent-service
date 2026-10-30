@@ -10176,24 +10176,6 @@ class EmailStore:
                 ],
             )
 
-    @staticmethod
-    def _training_snapshot_from_dict(value: Mapping[str, object]):
-        from app.email_training_snapshot import FolderTrainingSnapshot, TrainingSnapshotObservation
-
-        return FolderTrainingSnapshot(
-            snapshot_id=value["snapshot_id"],
-            snapshot_version=value["snapshot_version"],
-            description_version=value["description_version"],
-            input_schema_version=value["input_schema_version"],
-            seed=value["seed"],
-            observed_at=value["observed_at"],
-            observations=tuple(
-                TrainingSnapshotObservation(**row) for row in value["observations"]
-            ),
-            snapshot_digest=value["snapshot_digest"],
-            _manifest_json=json.dumps(value["manifest"], ensure_ascii=False, sort_keys=True, separators=(",", ":")),
-        )
-
     def _get_training_snapshot(
         self, db: sqlite3.Connection, snapshot_id: str
     ) -> dict[str, object] | None:

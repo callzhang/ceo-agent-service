@@ -32,7 +32,7 @@ from app.business_legacy_fields import CURRENT_SYNC_PROJECTIONS, CURRENT_SYNC_FI
 from app.action_task_delivery_definitions import (
     TASK_DELIVERY_FIELDS, TASK_DELIVERY_KINDS, TASK_DELIVERY_AUTOINCREMENT,
     TASK_DELIVERY_PARENTS, TASK_DELIVERY_DEFAULTS,
-    task_delivery_projection, task_delivery_schema_parts,
+    task_delivery_projection, task_delivery_schema_parts,  # noqa: F401 -- public projection used by callers
 )
 from app.action_error_definitions import ERROR_PAYLOAD_FIELDS, error_schema_parts
 from app.action_feedback_definitions import FEEDBACK_KINDS, feedback_schema_parts
@@ -1000,37 +1000,7 @@ REPLY_ATTEMPT_PROBLEM_TRIGGER_KEYS_SQL = """
 """
 
 
-def validated_reply_variant(db: sqlite3.Connection, *, allow_missing_objects=False,
-                            include_email=False, include_followup_sync=False,
-                            include_business_sync=False,
-                            include_skill_config_receipts=False,
-                            include_task_delivery=False, include_errors=False, include_feedback=False) -> str:
-    """Select one complete canonical E declaration, including its FK and indexes."""
-    matches = [
-        variant for variant in REPLY_VARIANTS
-        if action_schema_is_current(
-            db, allow_missing_objects=allow_missing_objects,
-            include_reply=True, reply_variant=variant, include_email=include_email,
-                include_followup_sync=include_followup_sync,
-                include_business_sync=include_business_sync,
-            include_skill_config_receipts=include_skill_config_receipts,
-            include_task_delivery=include_task_delivery,
-            include_errors=include_errors,
-                include_feedback=include_feedback,
-        )
-    ]
-    if len(matches) != 1:
-        raise sqlite3.IntegrityError("unsupported or mixed Attempt/Memory action schema")
-    return matches[0]
 
-
-def reply_schema_is_current(db: sqlite3.Connection, *, include_email=False,
-                            include_skill_config_receipts=False) -> bool:
-    """Recognize the selected complete reply declaration without altering the DB."""
-    return any(action_schema_is_current(db, include_reply=True, reply_variant=variant,
-                                        include_email=include_email,
-                                        include_skill_config_receipts=include_skill_config_receipts)
-               for variant in REPLY_VARIANTS)
 REVIEW_CANDIDATE_SQL = ACTION_PROJECTIONS["review_candidates"]
 CANDIDATE_REVIEW_SQL = ACTION_PROJECTIONS["candidate_reviews"]
 CANDIDATE_SELECTION_SQL = _projection("candidate_selections", selection_references=True)
@@ -1193,20 +1163,6 @@ def _current_objects(include_receipts=False, include_postfix=False, include_deli
         _create_action_objects(db, include_receipts, include_postfix, include_delivery, include_reply, reply_variant, include_email, include_followup_sync, include_skill_config_receipts, include_business_sync, include_task_delivery, include_errors, include_feedback, include_business_actions, include_email_history, inline_legacy_owner, physical_provenance, compact_payload, canonical_email, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
         return _objects(db, "actions")
 
-
-def email_action_auxiliary_objects_are_current(db: sqlite3.Connection, *, reply_variant: str, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False) -> bool:
-    """Email-only metadata is required, outside the Store's auxiliary repairs."""
-    old_names = {
-        sqlite_schema_name(obj["name"])
-        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
-    }
-    expected = {
-        sqlite_schema_name(obj["name"]): obj
-        for obj in _current_objects(include_reply=True, reply_variant=reply_variant, include_email=True, physical_provenance=physical_provenance, compact_payload=compact_payload, selection_references=selection_references, result_references=result_references, execution_owner=execution_owner, sent_result_references=sent_result_references, shared_lifecycle=shared_lifecycle, specialized_claims=specialized_claims, postfix_owner=postfix_owner, logical_owner=logical_owner)
-        if sqlite_schema_name(obj["name"]) not in old_names
-    }
-    actual = {sqlite_schema_name(obj["name"]): obj for obj in _objects(db, "actions")}
-    return all(actual.get(name) == obj for name, obj in expected.items())
 
 
 def action_schema_is_current(db: sqlite3.Connection, *, allow_missing_objects=False, include_receipts=False, include_postfix=False, include_delivery=False, include_reply=False, reply_variant=None, include_email=False, include_followup_sync=False, include_skill_config_receipts=False, include_business_sync=False, include_task_delivery=False, include_errors=False, include_feedback=False, include_business_actions=False, include_email_history=False, canonical_email=False, inline_legacy_owner=False, physical_provenance=False, compact_payload=False, selection_references=False, result_references=False, execution_owner=False, sent_result_references=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, logical_owner=False, expected_objects=None) -> bool:
@@ -1836,16 +1792,6 @@ def update_sync_action(db: sqlite3.Connection, kind: str, public_id, values: dic
     return _email_unit(db, "action_sync_update", operation)
 
 
-def delete_sync_action(db: sqlite3.Connection, kind: str, public_id) -> sqlite3.Cursor:
-    _sync_fields(kind, {})
-
-    def operation():
-        _email_lock(db, (public_id,))
-        return db.execute("delete from actions where record_type=? and " + _EMAIL_NUMERIC_SCOPE +
-                          " and cast(legacy_key as integer)=?", (kind, public_id))
-
-    return _email_unit(db, "action_sync_delete", operation)
-
 
 def _task_delivery_fields(kind, values):
     if kind not in TASK_DELIVERY_KINDS:
@@ -1981,42 +1927,7 @@ def task_delivery_set_parts(kind: str, values: dict, *, update_sql=None,
     return ",".join(assignments), tuple(arguments)
 
 
-def update_task_delivery_action(db: sqlite3.Connection, kind: str, public_id, values: dict, *,
-                                where_sql="", parameters=()) -> sqlite3.Cursor:
-    _task_delivery_fields(kind, values)
 
-    def operation():
-        _email_lock(db, (*values.values(), public_id, *parameters))
-        predicate = "record_type=? and " + _EMAIL_NUMERIC_SCOPE + " and cast(legacy_key as integer)=?"
-        identity_args = [kind, public_id]
-        if where_sql:
-            projection = task_delivery_projection(kind)
-            predicate += (" and cast(legacy_key as integer) in "
-                          f"(select {('job_id' if kind == 'meeting_alignment_delivery_claims' else 'id')} "
-                          f"from ({projection}) where {('job_id' if kind == 'meeting_alignment_delivery_claims' else 'id')}=? "
-                          f"and ({where_sql}))")
-            identity_args.extend((public_id, *parameters))
-        identity = "job_id" if kind == "meeting_alignment_delivery_claims" else "id"
-        if identity in values and db.execute(
-            "select 1 from actions where " + predicate + " limit 1", identity_args,
-        ).fetchone() is None:
-            return db.execute("update main.sqlite_sequence set seq=seq where 0")
-        assignment, arguments = task_delivery_set_parts(kind, values)
-        return db.execute("update actions set " + assignment + " where " + predicate,
-                          (*arguments, *identity_args))
-
-    return _email_unit(db, "action_task_delivery_update", operation)
-
-
-def delete_task_delivery_action(db: sqlite3.Connection, kind: str, public_id) -> sqlite3.Cursor:
-    _task_delivery_fields(kind, {})
-
-    def operation():
-        _email_lock(db, (public_id,))
-        return db.execute("delete from actions where record_type=? and " + _EMAIL_NUMERIC_SCOPE +
-                          " and cast(legacy_key as integer)=?", (kind, public_id))
-
-    return _email_unit(db, "action_task_delivery_delete", operation)
 
 
 def _insert_reply_action(db, kind, values, *, ignore=False):

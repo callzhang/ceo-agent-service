@@ -1,3 +1,4 @@
+from tests.support.native_run_rows import find_run_for_turn
 from tests.support.reply_action_snapshot import reply_action_snapshot
 from tests.support.native_task_fields import set_native_task_fields
 import errno
@@ -167,7 +168,7 @@ class ScriptResult(BaseModel):
 
 
 def _get_audit_run(store, task_id: int, execution_generation: str):
-    return store.get_agent_run_for_turn(
+    return find_run_for_turn(store,
         task_id,
         execution_generation,
         role=AgentRole.AUDIT,

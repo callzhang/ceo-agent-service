@@ -7306,36 +7306,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ),
         })
 
-    def get_agent_run_for_turn(
-        self,
-        reply_task_id: int,
-        execution_generation: str,
-        *,
-        role: AgentRole,
-        proposal_revision: int,
-        turn_attempt: int,
-    ) -> AgentRun | None:
-        role = AgentRole(role)
-        with self._connect() as db:
-            row = db.execute(
-                """select runs.*,
-                       case runs.role when 'consumer' then candidate.candidate_json
-                         when 'audit' then review.result_json end as adopted_result_json
-                from runs left join run_adopted_results candidate on candidate.consumer_run_id=runs.id
-                left join run_adopted_reviews review on review.audit_run_id=runs.id
-                where runs.task_id=? and runs.execution_generation=? and runs.role=?
-                  and runs.proposal_revision=? and runs.turn_attempt=?""",
-                (
-                    reply_task_id,
-                    execution_generation,
-                    role.value,
-                    proposal_revision,
-                    turn_attempt,
-                ),
-            ).fetchone()
-            run_id = int(row["id"]) if row is not None else None
-        return self.get_agent_run(run_id) if run_id is not None else None
-
     def next_agent_run_turn_attempt(
         self,
         reply_task_id: int,
@@ -20327,23 +20297,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
         return bool(row and row["status"] == "done")
 
-    def list_memory_write_events_for_attempt(
-        self,
-        attempt_id: int,
-    ) -> list[MemoryWriteEvent]:
-        with self._connect() as db:
-            memory_sql = current_reply_action_projection("memory_write_events")
-            rows = db.execute(
-                f"""
-                select *
-                from ({memory_sql}) as memory_write_events
-                where attempt_id=?
-                order by id
-                """,
-                (attempt_id,),
-            ).fetchall()
-        return [MemoryWriteEvent.model_validate(dict(row)) for row in rows]
-
     @staticmethod
     def _record_memory_write_events_in_connection(
         db: sqlite3.Connection,
@@ -20566,22 +20519,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "corrected_reply_text": corrected_reply_text,
                 "reviewed_at": now, "updated_at": now,
             })
-            return cursor.rowcount == 1
-
-    def resolve_needs_human_attempt(
-        self,
-        attempt_id: int,
-        *,
-        reviewer_feedback: str,
-    ) -> bool:
-        with self._connect() as db:
-            db.execute("update sqlite_sequence set seq=seq where 0")
-            now = db.execute("select current_timestamp").fetchone()[0]
-            cursor = update_action(db, "reply_attempts", attempt_id, {
-                "send_status": "decision_selected", "send_error": "",
-                "reviewer_feedback": reviewer_feedback,
-                "reviewed_at": now, "updated_at": now,
-            }, where_sql="send_status='needs_human'")
             return cursor.rowcount == 1
 
     def close_needs_human_task_with_decision(

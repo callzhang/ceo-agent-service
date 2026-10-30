@@ -1,4 +1,5 @@
 """Current-fact inverse checks for the disabled nine-family migration."""
+from tests.support.action_fixtures import delete_sync_fixture
 
 from contextlib import closing
 from copy import deepcopy
@@ -10,7 +11,7 @@ from app.action_followup_sync_definitions import sync_action_projection
 from app.action_followup_sync_storage import (
     capture_followup_sync_source, migrate_followup_sync_schema, restore_followup_sync_schema,
 )
-from app.action_storage import insert_sync_action, update_sync_action, delete_sync_action
+from app.action_storage import insert_sync_action, update_sync_action
 from test_email_action_migration import historical_text_action_writers as historical_text_action_writers
 from test_followup_sync_action_migration import source as _source_fixture
 from test_followup_sync_source import NAMES, values
@@ -97,7 +98,7 @@ def test_inverse_refuses_orphaned_business_attempt_without_losing_receipt(
         historical_text_action_writers.insert_sync_action,
     )
     monkeypatch.setattr(
-        "test_followup_sync_action_inverse.delete_sync_action",
+        "test_followup_sync_action_inverse.delete_sync_fixture",
         historical_text_action_writers.delete_sync_action,
     )
     path, _ = migration_source
@@ -115,7 +116,7 @@ def test_inverse_refuses_orphaned_business_attempt_without_losing_receipt(
                                                                      "result_json": receipt}
         insert_sync_action(db, "business_task_follow_up_send_attempts", child)
         insert_sync_action(db, "business_task_todo_sync_outbox", values("business_task_todo_sync_outbox"))
-        assert delete_sync_action(db, "business_task_follow_ups", parent.lastrowid).rowcount == 1
+        assert delete_sync_fixture(db, "business_task_follow_ups", parent.lastrowid).rowcount == 1
         if parent_state == "wrong_kind":
             db.execute("insert into main.actions(id,record_type,legacy_key,payload_json) "
                        "select ?,record_type,'2',payload_json from main.actions "
@@ -184,7 +185,7 @@ def test_current_facts_all_families_and_legacy_link_survive_inverse_and_reforwar
         historical_text_action_writers.update_sync_action,
     )
     monkeypatch.setattr(
-        "test_followup_sync_action_inverse.delete_sync_action",
+        "test_followup_sync_action_inverse.delete_sync_fixture",
         historical_text_action_writers.delete_sync_action,
     )
     path, variant = migration_source
@@ -205,7 +206,7 @@ def test_current_facts_all_families_and_legacy_link_survive_inverse_and_reforwar
         state = migrate_followup_sync_schema(db, capture_followup_sync_source(db))
         if initial:
             for kind in reversed(NAMES):
-                assert delete_sync_action(db, kind, 1).rowcount == 1
+                assert delete_sync_fixture(db, kind, 1).rowcount == 1
             db.execute("delete from main.business_legacy_links")
         for kind in NAMES:
             row = values(kind, "replacement")
@@ -239,7 +240,7 @@ def test_current_facts_all_families_and_legacy_link_survive_inverse_and_reforwar
                 high["business_task_id"] = 700
             assert insert_sync_action(db, kind, high).rowcount == 1
         for kind in reversed(NAMES):
-            assert delete_sync_action(db, kind, 700).rowcount == 1
+            assert delete_sync_fixture(db, kind, 700).rowcount == 1
         public_update = 2 if initial else 1
         physical = db.execute("select id from main.actions where record_type='work_updates' "
                               "and legacy_key=?", (str(public_update),)).fetchone()[0]

@@ -3,6 +3,7 @@
 The former Audit-executes tests were removed with that obsolete responsibility;
 system execution and receipts are covered by test_system_executor.py.
 """
+from tests.support.native_run_rows import find_run_for_turn
 
 import json
 from dataclasses import replace
@@ -437,7 +438,7 @@ def test_candidate_digest_is_checked_before_claim(setup):
     changed = replace(context, candidate_digest="0" * 64)
     with pytest.raises(ValueError, match="digest mismatch"):
         _runner(setup, CapturingExecutor("")).run(task, changed, turn_attempt=0, parent_agent_run_id=parent.id)
-    assert store.get_agent_run_for_turn(task.id, task.execution_generation, role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0) is None
+    assert find_run_for_turn(store, task.id, task.execution_generation, role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0) is None
 
 
 def test_audit_wire_binding_is_service_owned_and_unexpected_echo_is_rejected(setup):
@@ -499,7 +500,7 @@ def test_false_field_feedback_corrects_audit_without_revising_or_approving_candi
     with pytest.raises(ResultParseError, match="Audit candidate field assertion"):
         _runner(setup, CapturingExecutor("\n".join(lines))).run(
             task, context, turn_attempt=0, parent_agent_run_id=parent.id)
-    failed = store.get_agent_run_for_turn(task.id, task.execution_generation,
+    failed = find_run_for_turn(store, task.id, task.execution_generation,
         role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
     assert failed.status == "failed"
     assert json.loads(failed.structured_error_json)["code"] == "codex_result_invalid"
@@ -531,7 +532,7 @@ def test_missing_candidate_field_path_error_names_path_and_parent_fields(setup):
         _runner(setup, CapturingExecutor("\n".join(lines))).run(
             task, context, turn_attempt=0, parent_agent_run_id=parent.id)
 
-    failed = store.get_agent_run_for_turn(task.id, task.execution_generation,
+    failed = find_run_for_turn(store, task.id, task.execution_generation,
         role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
     detail = json.loads(failed.structured_error_json)["detail"]
     assert '["proposal", "summary"]' in detail
@@ -561,7 +562,7 @@ def test_sensitive_audit_output_is_a_result_failure_not_a_process_outage(setup):
             task, context, turn_attempt=0, parent_agent_run_id=parent.id,
         )
 
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0,
     )
@@ -616,7 +617,7 @@ def test_sensitive_recovered_audit_result_is_a_result_failure_not_a_process_outa
             task, context, turn_attempt=0, parent_agent_run_id=parent.id,
         )
 
-    failed = store.get_agent_run_for_turn(
+    failed = find_run_for_turn(store,
         task.id, task.execution_generation, role=AgentRole.AUDIT,
         proposal_revision=0, turn_attempt=0,
     )
@@ -900,7 +901,7 @@ def test_completed_api_native_audit_recovers_without_running_executor(setup, mon
     monkeypatch.setattr(store, "complete_agent_run", interrupt)
     with pytest.raises(InterruptedAfterCompletedAttempt):
         runner.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
-    run = store.get_agent_run_for_turn(task.id, task.execution_generation,
+    run = find_run_for_turn(store, task.id, task.execution_generation,
         role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0)
     attempts = store.list_agent_runtime_attempts(run.id)
     assert len(attempts) == 1 and attempts[0].status == "completed"
@@ -947,7 +948,7 @@ def test_non_oauth_audit_continues_native_attempt_without_consumer_session(setup
     if phase == "retry":
         with pytest.raises(ResultParseError):
             first.run(task, context, turn_attempt=0, parent_agent_run_id=parent.id)
-        prior = store.get_agent_run_for_turn(
+        prior = find_run_for_turn(store,
             task.id, task.execution_generation, role=AgentRole.AUDIT,
             proposal_revision=0, turn_attempt=0,
         )

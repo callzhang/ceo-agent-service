@@ -153,9 +153,9 @@ def test_a_superseded_delivery_is_reported_not_sent(tmp_path):
     store.create_standard_wechat_delivery(
         candidate_id=row["candidate_id"], review_id=row["review_id"], action_identity=IDENTITY)
     delivery = store.get_wechat_delivery_for_task(task.id)
-    from app.action_storage import update_task_delivery_action
+    from tests.support.action_fixtures import update_delivery_fixture
     with store._connect() as db:
-        update_task_delivery_action(db, "wechat_deliveries", delivery.id,
+        update_delivery_fixture(db, "wechat_deliveries", delivery.id,
                                     {"status": "superseded", "error": "superseded_by_newer_wechat_trigger:9"})
     outcome = handler.dispatch(action, action_key="k", candidate=row)
     assert outcome.status == "business_state_changed" and runner.calls == []

@@ -1,3 +1,4 @@
+from tests.support.native_run_rows import find_run_for_turn, memory_events_for_attempt
 from tests.runtime_attempt_fixtures import seed_effect_started
 from app.run_entity_storage import get_run
 from tests.support.reply_action_snapshot import reply_action_snapshot
@@ -428,7 +429,7 @@ def _get_audit_run(
     reply_task_id: int,
     execution_generation: str,
 ):
-    return store.get_agent_run_for_turn(
+    return find_run_for_turn(store,
         reply_task_id,
         execution_generation,
         role=AgentRole.AUDIT,
@@ -7790,7 +7791,7 @@ def test_reopening_current_core_keeps_native_events_in_ram_only(tmp_path: Path):
 
 
 
-def test_get_agent_run_for_turn_returns_exact_row(tmp_path: Path):
+def test_native_run_identity_returns_exact_row(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task_id = _enqueue_universal_reply_task(store)
     claimed = _claim_audit_run(store, task_id, "initial", owner="worker-1")
@@ -8782,7 +8783,7 @@ def test_record_reply_attempt_extracts_memory_write_events(tmp_path: Path):
         ),
     )
 
-    events = store.list_memory_write_events_for_attempt(attempt_id)
+    events = memory_events_for_attempt(store, attempt_id)
 
     assert len(events) == 1
     assert events[0].status == "written"
@@ -8830,7 +8831,7 @@ def test_record_reply_attempt_extracts_memory_write_output_from_tool_output(
         ),
     )
 
-    events = store.list_memory_write_events_for_attempt(attempt_id)
+    events = memory_events_for_attempt(store, attempt_id)
 
     assert len(events) == 1
     assert events[0].status == "written"
@@ -8862,7 +8863,7 @@ def test_record_reply_attempt_ignores_tool_search_memory_write_mentions(
         ),
     )
 
-    assert store.list_memory_write_events_for_attempt(attempt_id) == []
+    assert memory_events_for_attempt(store, attempt_id) == []
 
 
 
@@ -10727,7 +10728,7 @@ def test_stale_processing_task_ignores_future_lease_without_recent_heartbeat(
     )
 
     assert store.get_reply_task(task.id).status == "pending"
-    assert store.get_agent_run_for_turn(
+    assert find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.AUDIT,

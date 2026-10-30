@@ -1,10 +1,10 @@
+from tests.support.action_fixtures import update_delivery_fixture
 from tests.support.legacy_todo_facts import seed_legacy_work_project, seed_legacy_work_todo, seed_legacy_work_update
 from app.action_storage import (
     insert_action,
     error_set_parts,
     update_action,
     update_sync_action,
-    update_task_delivery_action,
 )
 import sqlite3
 import json
@@ -211,7 +211,7 @@ def test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery(
         sensitivity_kind="normal", send_status="pending", channel="wechat",
     )
     with store._connect() as db:
-        update_task_delivery_action(db, "wechat_deliveries", delivery_id, {
+        update_delivery_fixture(db, "wechat_deliveries", delivery_id, {
             "status": "failed", "error": "wechat_ui_not_ready",
             "pre_action_failure": 1, "action_started_at": "2026-09-08 19:00:00",
         })
@@ -3501,7 +3501,7 @@ def test_current_wechat_delivery_failure_remains_in_history_after_candidate_done
     )
     with store._connect() as db:
         set_native_task_fields(db, "reply_tasks", task.id, {"status": "done"})
-        update_task_delivery_action(
+        update_delivery_fixture(
             db,
             "wechat_deliveries",
             delivery_id,
@@ -3583,7 +3583,7 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
     )
     with store._connect() as db:
         set_native_task_fields(db, "reply_tasks", 1, {"execution_generation": generation, "status": "pending"})
-        update_task_delivery_action(db, "wechat_deliveries", delivery_id, {"conversation_id": conversation})
+        update_delivery_fixture(db, "wechat_deliveries", delivery_id, {"conversation_id": conversation})
     before = _wechat_delivery_and_attempt_state(store, delivery_id)
     with _client(tmp_path) as client:
         item = client.get(f"/api/console/history/{attempt_id}").json()["item"]

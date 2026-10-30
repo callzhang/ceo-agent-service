@@ -1,3 +1,4 @@
+from tests.support.native_run_rows import find_run_for_turn
 from app.action_storage import (
     NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
     NATIVE_EXTERNAL_ACTION_RESULT_SQL,
@@ -919,7 +920,7 @@ def test_consumer_codex_turn_uses_matching_native_schema_and_parser(
         "action": "no_action", "reason": "Already handled", "target": {},
         "payload": {}, "evidence_refs": [], "summary": "Already handled",
         "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
-        "information_completeness": 1.0, 
+        "information_completeness": 1.0,
     }).model_dump(mode="json")
     stream = "\n".join((
         json.dumps({"type": "thread.started", "thread_id": f"native-{purpose}"}),
@@ -1945,7 +1946,7 @@ def test_consumer_retries_recoverable_invalid_result_in_same_session(
         codex_session_wire_schema=lambda _: schema_identity,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    retry = store.get_agent_run_for_turn(
+    retry = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2318,7 +2319,7 @@ def test_consumer_rotates_damaged_session_after_missing_final_result(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == "session-a"
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2372,7 +2373,7 @@ def test_consumer_rotates_session_when_codex_exits_without_a_final_result(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
     assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == "session-a"
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2405,7 +2406,7 @@ def test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wai
             workspace=Path("/workspace"),
             executor=FailingExecutor(stdout),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2456,14 +2457,14 @@ def test_retryable_consumer_turn_uses_the_current_conversation_session(
     assert executor.commands[0][3:5] == ["exec", "resume"]
     assert executor.commands[0][-2:] == ["session-new", "-"]
     assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == "session-new"
-    failed = store.get_agent_run_for_turn(
+    failed = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
     )
-    recovered = store.get_agent_run_for_turn(
+    recovered = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2511,14 +2512,14 @@ def test_retry_turn_parse_failure_preserves_original_run_session_lineage(
 
     assert executor.commands[0][-2:] == ["session-new", "-"]
     assert store.get_conversation_runtime_session(task.conversation_id, "codex_oauth") == "session-new"
-    failed = store.get_agent_run_for_turn(
+    failed = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
         proposal_revision=0,
         turn_attempt=0,
     )
-    retry = store.get_agent_run_for_turn(
+    retry = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2548,7 +2549,7 @@ def test_retry_after_missing_result_creates_new_run_in_same_session(store, task,
         codex_session_exists=lambda _: True,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    failed = store.get_agent_run_for_turn(
+    failed = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2634,7 +2635,7 @@ def test_consumer_preserves_codex_cli_authentication_failure(store, task, contex
             executor=FailingExecutor(stdout),
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -2718,7 +2719,7 @@ def test_consumer_does_not_load_audit_rules_before_claiming_run(
         executor=CapturingExecutor(_result_jsonl()),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    assert store.get_agent_run_for_turn(
+    assert find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -3617,7 +3618,7 @@ def test_consumer_preserves_direct_native_write_in_runtime_trace(store, task, co
         executor=executor,
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,
@@ -3704,7 +3705,7 @@ def test_api_only_ineligible_route_is_typed_and_starts_no_process(
             codex_adapter=adapter,
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
-    run = store.get_agent_run_for_turn(
+    run = find_run_for_turn(store,
         task.id,
         task.execution_generation,
         role=AgentRole.CONSUMER,

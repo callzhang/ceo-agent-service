@@ -1,4 +1,5 @@
 from __future__ import annotations
+from tests.support.native_run_rows import memory_events_for_attempt
 
 import sqlite3
 import json
@@ -9,8 +10,8 @@ import pytest
 
 from app.action_storage import (
     create_action_schema,
+    action_schema_is_current,
     insert_action,
-    validated_reply_variant,
 )
 from app.store import AutoReplyStore
 from app import store as store_module
@@ -47,7 +48,7 @@ def _target_store(tmp_path: Path, variant: str) -> tuple[_Store, int]:
         db.execute("create table tasks(id integer primary key,record_type text not null)")
         db.execute("create table runs(id integer primary key,record_type text not null)")
         create_action_schema(db, include_reply=True, reply_variant=variant)
-        assert validated_reply_variant(db) == variant
+        assert action_schema_is_current(db, include_reply=True, reply_variant=variant)
         attempt_id = insert_action(db, "reply_attempts", {
             "conversation_id": "conversation", "conversation_title": "Title",
             "trigger_message_id": "message", "trigger_sender": "sender",
@@ -79,19 +80,19 @@ def test_store_extracts_paired_repeated_memory_calls_and_rebuilds_selected_attem
         trigger_sender="sender", trigger_text="text", action="send_reply",
         sensitivity_kind="general", audit_tool_events_json=json.dumps(events[:2]),
     )
-    prior = store.list_memory_write_events_for_attempt(attempt_id)
+    prior = memory_events_for_attempt(store, attempt_id)
     assert [(e.event_type, e.status, e.memory_episode_id, e.payload_json) for e in prior] == [
         ("memory_write", "written", "episode-pair", "{}"),
         ("memory_write_2", "pending", "", "{}"),
     ]
-    other_event_id = store.list_memory_write_events_for_attempt(other_id)[0].id
+    other_event_id = memory_events_for_attempt(store, other_id)[0].id
     with store._connect() as db:
         store._record_memory_write_events_in_connection(db, attempt_id, "[]")
-    assert store.list_memory_write_events_for_attempt(attempt_id) == []
-    assert store.list_memory_write_events_for_attempt(other_id)[0].id == other_event_id
+    assert memory_events_for_attempt(store, attempt_id) == []
+    assert memory_events_for_attempt(store, other_id)[0].id == other_event_id
     with store._connect() as db:
         store._record_memory_write_events_in_connection(db, attempt_id, json.dumps(events[:2]))
-    rebuilt = store.list_memory_write_events_for_attempt(attempt_id)
+    rebuilt = memory_events_for_attempt(store, attempt_id)
     assert len(rebuilt) == 1 and rebuilt[0].id > prior[-1].id
 
 
@@ -106,10 +107,10 @@ def test_store_memory_rebuild_deletes_previous_rows_for_empty_or_malformed_input
         sensitivity_kind="general",
         audit_tool_events_json='[{"tool":"memory_write","call_id":"one"}]',
     )
-    assert len(store.list_memory_write_events_for_attempt(attempt_id)) == 1
+    assert len(memory_events_for_attempt(store, attempt_id)) == 1
     with store._connect() as db:
         store._record_memory_write_events_in_connection(db, attempt_id, raw)
-    assert store.list_memory_write_events_for_attempt(attempt_id) == []
+    assert memory_events_for_attempt(store, attempt_id) == []
 
 
 _SOURCE = json.loads((Path(__file__).parents[1] / "docs/superpowers/specs/"

@@ -88,11 +88,6 @@ def _physical_id(db, preferred):
     return (maximum or 0) + 1
 
 
-def _insert_raw(db, values):
-    columns = tuple(values)
-    db.execute("insert into emails(" + ",".join(map(_quote, columns)) + ") values("
-               + ",".join("?" for _ in columns) + ")", tuple(values.values()))
-
 
 def _native_class_next(db):
     maximum = db.execute("select max(classification_id) from emails").fetchone()[0]
