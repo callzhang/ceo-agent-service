@@ -1,5 +1,5 @@
 {
-  "status": "final_review_passed_standard_release_pending",
+  "status": "tasks1_3_released_and_closed_with_recorded_followup",
   "approved_tasks": [
     1,
     2,
@@ -40,7 +40,60 @@
     "task3_red": "DTO serialized JSON included retired topfield; frontend payloadwithouttopfield failed decoder/render. HTTP JSON green coverage added, not claimed as prechange HTTP red.",
     "limits": "Fixed2GiB/10min; no localfullsuite; fakeproviders/models.",
     "task3_frontend_final": 54,
-    "task3_mock_red_green": "Real middleware JSON retained retired topfield before fix:1 failed; after1 passed.54frontend cases/build passed."
+    "task3_mock_red_green": "Real middleware JSON retained retired topfield before fix:1 failed; after1 passed.54frontend cases/build passed.",
+    "task1_affected_nodes": [
+      "tests/test_store.py::test_native_run_identity_returns_exact_row",
+      "tests/test_store.py::test_record_reply_attempt_extracts_memory_write_events",
+      "tests/test_store.py::test_record_reply_attempt_extracts_memory_write_output_from_tool_output",
+      "tests/test_store.py::test_record_reply_attempt_ignores_tool_search_memory_write_mentions",
+      "tests/test_store.py::test_stale_processing_task_ignores_future_lease_without_recent_heartbeat",
+      "tests/test_worker.py::test_consume_once_records_stale_processing_tasks_before_requeue",
+      "tests/test_worker.py::test_consume_once_external_dependency_honors_attempt_limit",
+      "tests/test_worker.py::test_codex_invalid_refresh_token_retries_without_duplicate_notification",
+      "tests/test_worker.py::test_recoverable_agent_runtime_failure_continues_stuck_conversation_session",
+      "tests/test_worker.py::test_stale_codex_resume_clears_session_and_retries_with_new_user_message",
+      "tests/test_worker.py::test_sent_reply_records_recall_key_from_send_result",
+      "tests/test_worker.py::test_force_new_rerun_starts_fresh_codex_session",
+      "tests/test_agent_runtime_worker.py::test_retryable_failure_reuses_generation_and_session_with_new_turn_then_succeeds",
+      "tests/test_agent_runtime_worker.py::test_retryable_failure_is_requeued_without_custom_receipt_logic",
+      "tests/test_agent_runtime_worker.py::test_no_action_result_does_not_consult_custom_receipts",
+      "tests/test_agent_runtime_worker.py::test_failed_result_is_a_regular_failure_without_unknown_effect_state",
+      "tests/test_agent_runtime_worker.py::test_manual_rerun_rotates_generation_and_allows_changed_work",
+      "tests/test_agent_runtime_worker.py::test_completed_generation_is_not_executed_again",
+      "tests/test_agent_runtime_worker.py::test_stale_retryable_failed_run_resumes_same_generation_and_session",
+      "tests/test_agent_runtime_worker.py::test_oa_runtime_agent_reads_live_tasks_and_reviews_selected_identity",
+      "tests/test_agent_runtime_worker.py::test_service_waits_when_agent_cannot_form_requested_execution_proposal",
+      "tests/test_agent_runtime_worker.py::test_nonzero_native_write_uses_failed_retry_path_in_real_runner_protocol",
+      "tests/test_consumer_agent.py::test_consumer_retries_recoverable_invalid_result_in_same_session",
+      "tests/test_consumer_agent.py::test_consumer_rotates_damaged_session_after_missing_final_result",
+      "tests/test_consumer_agent.py::test_consumer_rotates_session_when_codex_exits_without_a_final_result",
+      "tests/test_consumer_agent.py::test_consumer_classifies_codex_capacity_exhaustion_as_retryable_provider_wait",
+      "tests/test_consumer_agent.py::test_retryable_consumer_turn_uses_the_current_conversation_session",
+      "tests/test_consumer_agent.py::test_retry_turn_parse_failure_preserves_original_run_session_lineage",
+      "tests/test_consumer_agent.py::test_retry_after_missing_result_creates_new_run_in_same_session",
+      "tests/test_consumer_agent.py::test_consumer_preserves_codex_cli_authentication_failure",
+      "tests/test_consumer_agent.py::test_consumer_does_not_load_audit_rules_before_claiming_run",
+      "tests/test_consumer_agent.py::test_consumer_preserves_direct_native_write_in_runtime_trace",
+      "tests/test_consumer_agent.py::test_api_only_ineligible_route_is_typed_and_starts_no_process",
+      "tests/test_audit_agent.py::test_candidate_digest_is_checked_before_claim",
+      "tests/test_audit_agent.py::test_false_field_feedback_corrects_audit_without_revising_or_approving_candidate",
+      "tests/test_audit_agent.py::test_missing_candidate_field_path_error_names_path_and_parent_fields",
+      "tests/test_audit_agent.py::test_sensitive_audit_output_is_a_result_failure_not_a_process_outage",
+      "tests/test_audit_agent.py::test_sensitive_recovered_audit_result_is_a_result_failure_not_a_process_outage",
+      "tests/test_audit_agent.py::test_completed_api_native_audit_recovers_without_running_executor",
+      "tests/test_audit_agent.py::test_non_oauth_audit_continues_native_attempt_without_consumer_session",
+      "tests/test_console_web_api.py::test_console_attempt_detail_exposes_retry_for_expired_wechat_delivery",
+      "tests/test_console_web_api.py::test_current_wechat_delivery_failure_remains_in_history_after_candidate_done",
+      "tests/test_console_web_api.py::test_old_principal_supersession_does_not_describe_current_pending_task",
+      "tests/e2e/test_local_pipeline.py::test_audit_local_pipeline_send_uses_codex_session_audit",
+      "tests/e2e/test_local_pipeline.py::test_audit_local_pipeline_handoff_uses_codex_session_audit",
+      "tests/wechat/test_send_message_handler.py::test_a_superseded_delivery_is_reported_not_sent",
+      "tests/wechat/test_standard_review_gate.py::test_a_delivery_that_differs_from_the_reviewed_action_is_not_approved",
+      "tests/wechat/test_standard_review_gate.py::test_evidence_that_does_not_point_at_the_review_is_not_approved",
+      "tests/wechat/test_standard_review_gate.py::test_a_review_of_another_task_does_not_release_this_delivery"
+    ],
+    "task2_related_command": "python -m pytest -q tests/test_email_web_api.py tests/test_email_console_training_api.py tests/test_email_model_progress.py tests/test_email_canonical_current12.py",
+    "task3_frontend_command": "npm test -- --run --maxWorkers=1 dev-mock/tasksMock.test.ts src/pages/TaskProjectDetailPage.test.tsx src/api/console.test.ts"
   },
   "schema": {
     "objects": 463,
@@ -62,14 +115,165 @@
     }
   },
   "retired_symbol_application_scan_matches": 0,
-  "pending": [
-    "standardgate/deploy",
-    "productionreadback",
-    "verifiedbackup/tasktempcleanup"
-  ],
-  "production": null,
-  "backup_cleanup": null,
-  "temporary_cleanup": null,
+  "pending": [],
+  "production": {
+    "checked_at": 1793400301.256916,
+    "installed": "d6ee155fc39988b5c32c323ce9c7ff3506af2595",
+    "frontend_tree": "6df291586d5751c664ef4249862abd06f1ae8cd4",
+    "frontend_stamp": "6df291586d5751c664ef4249862abd06f1ae8cd4",
+    "listener_pids": [
+      "30633"
+    ],
+    "schema_exact_before_and_current": true,
+    "schema_count": 463,
+    "schema_sha256": "6e3244bb571073026a3256b7cfbac6cd547477331e2d4f0fc37d37273275951e",
+    "fk": [],
+    "store_version": "2026-10-30.1",
+    "email_version": 54,
+    "project_original_revision_unchanged": true,
+    "detail_classification_id": 3598087198477196371,
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.024
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.214
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.551
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.49,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.615,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&status=failed&include_chart=false",
+        "status": 200,
+        "seconds": 0.241,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.148,
+        "receipt_id": 22414,
+        "provider_receipt_available": true
+      },
+      {
+        "path": "/api/console/history/127430",
+        "status": 404,
+        "seconds": 0.001
+      },
+      {
+        "path": "/api/console/history/16410",
+        "status": 200,
+        "seconds": 0.124,
+        "receipt_id": 22354,
+        "provider_receipt_available": true
+      },
+      {
+        "path": "/api/console/email/processing-progress",
+        "status": 200,
+        "seconds": 0.211
+      },
+      {
+        "path": "/api/console/email/learning",
+        "status": 200,
+        "seconds": 0.527,
+        "current_learning_fields_present": true
+      },
+      {
+        "path": "/api/console/email/classifications?page=1&page_size=5",
+        "status": 200,
+        "seconds": 0.094,
+        "items": 5
+      },
+      {
+        "path": "/api/console/email/classifications/3598087198477196371",
+        "status": 200,
+        "seconds": 3.97
+      },
+      {
+        "path": "/api/console/tasks/projects/49",
+        "status": 200,
+        "seconds": 11.813,
+        "top_level_responsibilities_absent": true,
+        "responsibility_count": 4,
+        "context_responsibilities_sha256": "f309e9a0fb61dd016a7167ff0062275512dc068568b50de31a6553d8a9d20457",
+        "context_responsibilities_unchanged": true,
+        "original_revision_available": true
+      }
+    ],
+    "empty_context_control": {
+      "selection": "existing Project withoutcontextrevision andwithoutevidence; differentfromtimedoutProject1",
+      "available": true,
+      "project_id": 20,
+      "result": "PASS",
+      "http_status": 200,
+      "seconds": 0.161,
+      "context_is_null": true,
+      "top_level_responsibilities_absent": true
+    },
+    "readback_boundary": "Required scopedcontracts verified on Project49 positivecontext andProject20 nullcontext; Project1 supplemental slow-data readback separatelyopen. Manualbrowserblocked, notclaimed."
+  },
+  "backup_cleanup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3",
+    "device": 16777231,
+    "inode": 842458493,
+    "mtime_ns": 1793400646383151902,
+    "size": 514969600,
+    "integrity": "ok",
+    "complete": true,
+    "schema_current": true,
+    "fk": [],
+    "no_open_references": true,
+    "generation_guarded": true,
+    "deleted": true,
+    "removed_paths": [
+      "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3"
+    ],
+    "predeployment_uuid": "auto-reply-before-upgrade-deploy-6ec19e9e-e084-4e4e-8d7b-9156b333931f.sqlite3 automatically retired by native verified daily workflow before attemptedmanualcleanup; originalattempt exited missingfile and deletednothing.",
+    "initial_other_generation": "Initialdailyinode842169404 was retired by existing standardbackup retention after newbackup verified, not manuallydeleted byroot.",
+    "preserved_other_workflow_dirs": [
+      "oa-project-value-20261030",
+      "oa-material-dimensions-20261030"
+    ]
+  },
+  "temporary_cleanup": {
+    "root": "/private/tmp/ceo-current-model-cleanup.cjKfGA",
+    "sdd_workspace": ".superpowers/sdd/2026-10-30-current-model-next-cleanup",
+    "development_build": "app/static/workbench",
+    "status": "deleted_verified_absent",
+    "production_bundle_must_be_preserved": true,
+    "registered_test_worktrees": [],
+    "size_before_cleanup": {
+      "root": "71MiB",
+      "sdd": "500KiB",
+      "development_build": "1.6MiB"
+    },
+    "removed_paths": [
+      "/private/tmp/ceo-current-model-cleanup.cjKfGA",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/.superpowers/sdd/2026-10-30-current-model-next-cleanup",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench"
+    ],
+    "no_open_references_before_deletion": true,
+    "production_database_preserved": true,
+    "production_bundle_preserved": true
+  },
   "task3_integration_gap": {
     "finding": "Currentdevmock still emitted topfield despite initialscopedreviewpass",
     "fix_commit": "256f2a34b",
@@ -86,6 +290,63 @@
   },
   "rulings": [
     "Ruling: Approved scope includes normal merge/push, one integrated standard deploy and postacceptance ownbackup/tempcleanup; no skip-quiet authorization thisround. Existing schema stays exact, so no schema migration/copy inverse is added — noDDL guarantee verified by fullcatalog/hash/FK; adding an unnecessary migration would increase risk and violate scope.",
-    "Ruling: For pure deadentry deletion/noobservable validStorebehavior change, preserve existing focused behavior baseline/green plus caller/static review, without adding source/hasattr-mirroring tests. Task3 changes observable JSON contract and must show meaningful RED/GREEN. This follows higher-priority test-scope instructions; if wrong the cost is missed regression, addressed by focused currentfact assertions and final standardgate."
-  ]
+    "Ruling: For pure deadentry deletion/noobservable validStorebehavior change, preserve existing focused behavior baseline/green plus caller/static review, without adding source/hasattr-mirroring tests. Task3 changes observable JSON contract and must show meaningful RED/GREEN. This follows higher-priority test-scope instructions; if wrong the cost is missed regression, addressed by focused currentfact assertions and final standardgate.",
+    "Ruling: Keep supplementalProject1latency explicitlyopen asaseparatefollowup, without expanding Tasks1–3 into query/SourceReader/policyfixes or claiming it resolved. Scopedcontract verified on Project49/context4 andProject20/null, handlerdiffonlyresponsefieldremoval andno prechangeProject1latencybaseline; ifwrong, riskanunfixedrecord-specificregression, so attributionremainsunverifiedandobservationisretainedfornextinvestigation."
+  ],
+  "ui_validation": {
+    "browser": "blocked",
+    "reason": "Local browser use is disabled in Work settings",
+    "attempted_url": "http://127.0.0.1:8765/tasks/projects/49",
+    "new_tab_created": false,
+    "manual_ui_actions_run": false,
+    "alternative": "Actual postrelease API payload checks plus focused frontend tests and successful production build; no manualclick claim."
+  },
+  "deployment_ledger": {
+    "operation_id": "deploy-6ec19e9e-e084-4e4e-8d7b-9156b333931f",
+    "status": "succeeded",
+    "target_commit": "d6ee155fc39988b5c32c323ce9c7ff3506af2595",
+    "installed_commit": "d6ee155fc39988b5c32c323ce9c7ff3506af2595",
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-6ec19e9e-e084-4e4e-8d7b-9156b333931f.sqlite3",
+    "updated_at": "2026-10-30T22:44:50.080965+00:00",
+    "error": ""
+  },
+  "gate": {
+    "commit": "d6ee155fc39988b5c32c323ce9c7ff3506af2595",
+    "passed_at": "2026-10-30T22:44:28+00:00",
+    "files": 420,
+    "summary": "8420 passed, 2 skipped, 1 deselected in 453.18s (0:07:33)"
+  },
+  "standard_publications_completed": 1,
+  "quiet_wait": "Natural standardquiet, no skip/interruption.",
+  "additional_observations": {
+    "project1_empty_context_readback": {
+      "project_id": 1,
+      "first_attempt": {
+        "result": "TimeoutError",
+        "timeout_seconds": 60,
+        "response_shape_unverified": true
+      },
+      "retry": {
+        "result": "TimeoutError",
+        "timeout_seconds": 20,
+        "seconds": 20.002
+      },
+      "health_status": 200
+    },
+    "status": "Project1 latency remainsopen; different Project20 realemptycontext control PASS0.161s proves currentnullcontract works, but does not resolve/erase twoProject1timeouts.",
+    "evidence_boundary": "Health200 and Project49fullcontractpassed. Parent inspected handler diff: only retiredtype/responsefield removal; no query/source-read logic changed. No prechange Project1 latency measurement, so cause and regression attribution unverified. No unrelated query/SourceReader/policyfix added.",
+    "next_evidence": "Trace exact Project1 source/DB waits and compare same-input precedingcode before proposing a separatefix."
+  },
+  "open_followups": [
+    {
+      "issue": "Project1 detail read latency",
+      "observed": "60s and20s timeouts; health200",
+      "attribution": "unverified; no prechangeProject1timing",
+      "scope": "Separate investigation; notsilentlyfixed or markedpass."
+    }
+  ],
+  "retired_symbol_count": 12,
+  "email_schema_fallback_groups_removed": 5,
+  "email_method_fallback_sites_removed": 8,
+  "closed_at": "2026-10-30T22:59:04.836452+00:00"
 }
