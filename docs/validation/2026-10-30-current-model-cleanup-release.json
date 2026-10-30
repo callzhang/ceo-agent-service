@@ -1,0 +1,79 @@
+{
+  "status": "tasks1_3_review_passed_final_review_pending",
+  "approved_tasks": [
+    1,
+    2,
+    3
+  ],
+  "excluded_task": "Task4 anchor_type and everyDDL/migration",
+  "implementation_commits": [
+    "5a2089750",
+    "ae488a93b",
+    "91a5fcc7e",
+    "256f2a34b"
+  ],
+  "per_task_review": {
+    "task1": "SPEC PASS; QUALITY PASS",
+    "task2": "SPEC PASS; QUALITY PASS",
+    "task3": "SPEC PASS; QUALITY PASS including scoped dev-mock fix round1."
+  },
+  "tests": {
+    "task1_pass_runs": [
+      574,
+      17,
+      72,
+      14,
+      171
+    ],
+    "task1_boundary": "Overlapping runs; declaration fixture staleindex initially2failed then corrected/17passed. Frozen historical inverse writer references retained, no current application alias.",
+    "task2_baseline": 78,
+    "task2_related_run": {
+      "passed": 246,
+      "failed": 1
+    },
+    "task2_corrected_focused": 13,
+    "task2_boundary": "Only wrong new unavailable-state assertion changed, no runtimecode changed to pass. No clean four-file rerun claimed; integrated standardgate remainsrequired.",
+    "task3_backend": 12,
+    "task3_frontend": 53,
+    "task3_build": "PASS",
+    "task3_red": "DTO serialized JSON included retired topfield; frontend payloadwithouttopfield failed decoder/render. HTTP JSON green coverage added, not claimed as prechange HTTP red.",
+    "limits": "Fixed2GiB/10min; no localfullsuite; fakeproviders/models.",
+    "task3_frontend_final": 54,
+    "task3_mock_red_green": "Real middleware JSON retained retired topfield before fix:1 failed; after1 passed.54frontend cases/build passed."
+  },
+  "schema": {
+    "objects": 463,
+    "sha256": "6e3244bb571073026a3256b7cfbac6cd547477331e2d4f0fc37d37273275951e",
+    "equals_initial_production": true,
+    "ddl_changes": false,
+    "store_version": "2026-10-30.1",
+    "email_version": 54,
+    "production_before_fk": []
+  },
+  "production_before": {
+    "installed": "42300c317f89528a2b7b7fc337da30c311815f9c",
+    "chosen_project": {
+      "revision_id": 7,
+      "project_id": 49,
+      "context_json_sha256": "c1e5fd99749edc117e57c4b916a8e69adbcfd4fd411b2036f3d6ceac3f943e00",
+      "responsibility_count": 4,
+      "responsibilities_sha256": "f309e9a0fb61dd016a7167ff0062275512dc068568b50de31a6553d8a9d20457"
+    }
+  },
+  "retired_symbol_application_scan_matches": 0,
+  "pending": [
+    "finalwholebranchreview",
+    "standardgate/deploy",
+    "productionreadback",
+    "verifiedbackup/tasktempcleanup"
+  ],
+  "production": null,
+  "backup_cleanup": null,
+  "temporary_cleanup": null,
+  "task3_integration_gap": {
+    "finding": "Currentdevmock still emitted topfield despite initialscopedreviewpass",
+    "fix_commit": "256f2a34b",
+    "status": "closed_by_scopedreview"
+  },
+  "lint_all_changed_python": "PASS"
+}

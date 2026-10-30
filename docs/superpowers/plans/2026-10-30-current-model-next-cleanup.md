@@ -1,6 +1,6 @@
 # 下一批当前模型清理实施建议
 
-> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans after Derek approves this proposal. Steps use checkbox syntax. 本文件是审计与计划，尚未实施。
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development or superpowers:executing-plans after Derek approves this proposal. Steps use checkbox syntax. Derek已批准本轮执行任务1–3；Task4 anchor_type迁移明确不做。
 
 **Goal:** 删除没有当前调用方的应用入口和已经不可能成立的旧结构分支，让 Project 职责只通过当前 context 读取。
 
@@ -65,11 +65,11 @@
 
 **Interfaces:** 生产Run继续get_agent_run／claim_agent_run；当前同步和delivery生产writer／parts不变；memory事件保留原writer；历史→正式任务映射继续business_legacy_owner_storage。
 
-- [ ] 冻结上述符号的应用、tests、tools、scripts、ci及前端精确名称调用；若主线新增真调用，切到已有当前入口后再删。
-- [ ] 将仍覆盖当前事实的测试移到当前模型：保留Run身份／顺序／状态、memory事件成对提取／重建、原生类型、FK、CAS与allocator断言。纯旧变体专用测试删除。
-- [ ] 删除12项及确无其他调用的独占导入；不删除仍使用的parts helper、事件存储和显式迁移／逆迁工具。
-- [ ] 分组执行实际调整的窄节点，例如`python -m pytest -q tests/test_reply_attempt_action_store.py tests/test_business_legacy_field_retirement.py tests/test_action_task_delivery_storage.py`；大型Agent／Store文件只选受影响节点。
-- [ ] 对删除符号重新检索，确认无调用、导入、字符串登记或兼容别名；更新architecture/runtime相应当前描述，独立提交。
+- [x] 冻结上述符号的应用、tests、tools、scripts、ci及前端精确名称调用；若主线新增真调用，切到已有当前入口后再删。
+- [x] 将仍覆盖当前事实的测试移到当前模型：保留Run身份／顺序／状态、memory事件成对提取／重建、原生类型、FK、CAS与allocator断言。纯旧变体专用测试删除。
+- [x] 删除12项及确无其他调用的独占导入；不删除仍使用的parts helper、事件存储和显式迁移／逆迁工具。
+- [x] 分组执行实际调整的窄节点，例如`python -m pytest -q tests/test_reply_attempt_action_store.py tests/test_business_legacy_field_retirement.py tests/test_action_task_delivery_storage.py`；大型Agent／Store文件只选受影响节点。
+- [x] 对删除符号重新检索，确认无调用、导入、字符串登记或兼容别名；更新architecture/runtime相应当前描述，独立提交。
 
 ## Task 2：删除Email运行时旧结构分支
 
@@ -89,12 +89,12 @@
 
 删除Email API的8处缺方法回退：list_mailbox_action_states两处（1502、1554），get_provider_classification_state（1537），list_selected_training_labels（2089），classifier_runtime_observability（2454），latest_training_snapshot_state（2483），classifier_runtime_rate（2503），model_scan_progress（2508）。直接调用同名当前方法，不新增协议、能力标志或第二实现。
 
-- [ ] 保存现行返回合同及正常／无Run／无当前模型样例；把缺方法的LearningStore等测试替身补成当前合同，或改用真实当前Store。
-- [ ] 删除仅为缺表／缺方法存在的分支，保留方法实际返回None、初始化失败、无模型、receipt内容和lineage绑定校验。
-- [ ] 验证`test_email_unsubscribe_filter_returns_dedicated_task_rows`、`test_processing_progress_reports_exact_queue_counts_and_scan_cursors`、`test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address`及两项audited lineage／conflict测试。
-- [ ] 验证邮箱动作状态、observability、learning／training snapshot和model progress读取；缺表／混合schema仍在初始化处拒绝，不新增读时修补。
-- [ ] 复验`test_email_learning_and_model_version_expose_safe_modern_evidence`；为无激活模型和model_scan_progress／latest_training_snapshot_state真实返回None的当前状态保留断言，不通过缺方法替身制造这种状态。
-- [ ] 更新行为文档，检查无DDL差异，独立提交。
+- [x] 保存现行返回合同及正常／无Run／无当前模型样例；把缺方法的LearningStore等测试替身补成当前合同，或改用真实当前Store。
+- [x] 删除仅为缺表／缺方法存在的分支，保留方法实际返回None、初始化失败、无模型、receipt内容和lineage绑定校验。
+- [x] 验证`test_email_unsubscribe_filter_returns_dedicated_task_rows`、`test_processing_progress_reports_exact_queue_counts_and_scan_cursors`、`test_a_direct_receipt_without_agent_runs_still_shows_its_unsubscribe_address`及两项audited lineage／conflict测试。
+- [x] 验证邮箱动作状态、observability、learning／training snapshot和model progress读取；缺表／混合schema仍在初始化处拒绝，不新增读时修补。
+- [x] 复验`test_email_learning_and_model_version_expose_safe_modern_evidence`；为无激活模型和model_scan_progress／latest_training_snapshot_state真实返回None的当前状态保留断言，不通过缺方法替身制造这种状态。
+- [x] 更新行为文档，检查无DDL差异，独立提交。
 
 ## Task 3：Project职责只通过context返回与读取
 
@@ -102,14 +102,14 @@
 
 **Interfaces:** 唯一事实owner仍为现有project_context_revision中的ProjectContext；当前详情使用context，历史详情使用revision.context。删除顶层responsibilities，不增加别名或双读。
 
-- [ ] 加断言：JSON详情不再有顶层responsibilities；context.responsibilities仍保留完整人员、职责和原引文。context为null时显示空态；两个Project不得混用职责。
-- [ ] 同一提交移除后端字段／赋值、前端类型／校验／夹具，并让页面直接从已存在context取职责；保持历史revision职责显示。
-- [ ] 执行`python -m pytest -q tests/test_web_api_task_project_summary.py`，以及frontend下`npm test -- --run src/pages/TaskProjectDetailPage.test.tsx src/api/console.test.ts`和`npm run build`。
-- [ ] 更新当前接口说明，独立提交；不动DB、provenance、context修订或证据页。
+- [x] 加断言：JSON详情不再有顶层responsibilities；context.responsibilities仍保留完整人员、职责和原引文。context为null时显示空态；两个Project不得混用职责。
+- [x] 同一提交移除后端字段／赋值、前端类型／校验／夹具，并让页面直接从已存在context取职责；保持历史revision职责显示。
+- [x] 执行`python -m pytest -q tests/test_web_api_task_project_summary.py`，以及frontend下`npm test -- --run src/pages/TaskProjectDetailPage.test.tsx src/api/console.test.ts`和`npm run build`。
+- [x] 更新当前接口说明，独立提交；不动DB、provenance、context修订或证据页。
 
-## 可选Task 4：Project anchor_type退出payload／DTO，不删除类型约束
+## Task 4：Project anchor_type退出payload／DTO，不删除类型约束
 
-此项属于独立低优先级迁移，建议任务1–3验收后再决定。33个常量不是值得立即承担迁移维护成本的磁盘目标；若继续做，价值是取消一个可写的冗余常量合同。
+**本轮不执行。**此项属于独立低优先级迁移，后续须另行确认。33个常量不是值得立即承担迁移维护成本的磁盘目标；若继续做，价值是取消一个可写的冗余常量合同。
 
 **现有约束必须保留：** Project四元FK的最后一列是project_anchor_type→anchor_anchor_type，且idx_business_typed_anchor是父键。直接删列／索引会削弱“Project只能引用project Anchor”和“被引用Anchor不能改类型”的现有合同。
 
@@ -148,6 +148,10 @@ CASE WHEN record_type='project' THEN 'project' ELSE '' END
 
 本轮没有发现可直接列入DROP清单的索引，也没有证明一批新的大体积正文重复。以上是经核对的下一批建议，不是全仓零兼容或全库最优证明。
 
-## 审计交付状态
+## 前次审计与本轮执行范围
 
-本轮仅完成审计和拟实施计划，未修改应用、DDL或业务数据，未运行测试、模型、provider或部署。只读统计及确切符号列表见[审计JSON](../../validation/2026-10-30-current-model-next-audit.json)。本轮AST临时代码和元数据目录已清除，未创建数据库副本或备份。实施范围须由Derek确认，以上checkbox保持未执行。
+提交d2ffd0a49仅完成审计和计划；其只读统计及确切符号列表见[审计JSON](../../validation/2026-10-30-current-model-next-audit.json)。审计AST临时目录已清除，未创建数据库副本或备份。此后Derek明确批准本轮实施任务1–3、集成发布一次、生产读回和本轮产物清理；Task4 anchor_type迁移明确不执行。实施／审查／发布结果由本轮验收记录单独报告，不能把前次审计当作已实现证据。
+
+## 任务1–3本轮实现／审查
+
+5a2089750完成12个入口／DTO／helper退休及当前事实测试迁移；ae488a93b完成Email五组缺表及八处缺方法回退删除；91a5fcc7e与256f2a34b统一Project API／页面／decoder／当前dev mock职责读取。三项SPEC／QUALITY均通过；mock遗漏经实际middleware JSON RED／GREEN及限定复审关闭。当前完整声明463对象/hash与生产基线完全相同，没有DDL、版本、业务字段或anchor_type迁移。测试具体分组及首次失败／修正边界见[本轮验收记录](../../validation/2026-10-30-current-model-cleanup-release.json)。整分支审查、标准门禁／单次发布、生产读回与产物清理尚未完成；不把局部测试称为已上线。
