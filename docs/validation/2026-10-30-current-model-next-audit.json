@@ -1,0 +1,211 @@
+{
+  "installed": "42300c317f89528a2b7b7fc337da30c311815f9c",
+  "code_head": "60adfec675f3c0037ac390e14e6e5320d3e81104",
+  "schema_exact_current": true,
+  "schema_hash": "6e3244bb571073026a3256b7cfbac6cd547477331e2d4f0fc37d37273275951e",
+  "objects": {
+    "index": 239,
+    "table": 48,
+    "trigger": 176
+  },
+  "fk": [],
+  "store_version": "2026-10-30.1",
+  "email_version": 54,
+  "exact_duplicate_explicit_index_groups": [],
+  "project_anchor_type_values": [
+    [
+      "text",
+      "project",
+      33
+    ]
+  ],
+  "project_anchor_json_types": [
+    [
+      "text",
+      33
+    ]
+  ],
+  "historical_bugfix_count": 3,
+  "status": "proposal_only_not_implemented",
+  "checked_at": "2026-10-30T21:01:58.545120+00:00",
+  "additional_stats": {
+    "same_exact_index_body_groups": [],
+    "project_constant_value_bytes": 231,
+    "foreign_key_project_type_components": [
+      [
+        7,
+        3,
+        "business",
+        "project_anchor_type",
+        "anchor_anchor_type",
+        "NO ACTION",
+        "NO ACTION",
+        "NONE"
+      ]
+    ],
+    "legacy_links_table_exists": 0,
+    "retired_action_columns": []
+  },
+  "code_changes": false,
+  "database_writes": false,
+  "test_runs": 0,
+  "model_or_provider_calls": 0,
+  "database_copy_created": false,
+  "graphify": {
+    "scope_files": 8,
+    "nodes": 51,
+    "extracted_edges": 74,
+    "structural_input_tokens": 0,
+    "structural_output_tokens": 0,
+    "semantic_extraction": false,
+    "boundary": "AST navigation only; conclusions verified against source."
+  },
+  "retire_symbols": [
+    {
+      "symbol": "AutoReplyStore.resolve_needs_human_attempt",
+      "file": "app/store.py",
+      "line": 20571
+    },
+    {
+      "symbol": "AutoReplyStore.get_agent_run_for_turn",
+      "file": "app/store.py",
+      "line": 7309
+    },
+    {
+      "symbol": "AutoReplyStore.list_memory_write_events_for_attempt",
+      "file": "app/store.py",
+      "line": 20330
+    },
+    {
+      "symbol": "delete_sync_action",
+      "file": "app/action_storage.py",
+      "line": 1839
+    },
+    {
+      "symbol": "update_task_delivery_action",
+      "file": "app/action_storage.py",
+      "line": 1984
+    },
+    {
+      "symbol": "delete_task_delivery_action",
+      "file": "app/action_storage.py",
+      "line": 2011
+    },
+    {
+      "symbol": "validated_reply_variant",
+      "file": "app/action_storage.py",
+      "line": 1003
+    },
+    {
+      "symbol": "reply_schema_is_current",
+      "file": "app/action_storage.py",
+      "line": 1027
+    },
+    {
+      "symbol": "email_action_auxiliary_objects_are_current",
+      "file": "app/action_storage.py",
+      "line": 1197
+    },
+    {
+      "symbol": "EmailStore._training_snapshot_from_dict",
+      "file": "app/email_store.py",
+      "line": 10180
+    },
+    {
+      "symbol": "_insert_raw",
+      "file": "app/email_canonical_storage.py",
+      "line": 91
+    },
+    {
+      "symbol": "BusinessLegacyLink",
+      "file": "app/task_semantic_models.py",
+      "line": 489
+    }
+  ],
+  "email_schema_fallback_groups": [
+    {
+      "function": "_email_unsubscribe_attempt_ids",
+      "line": 1230
+    },
+    {
+      "function": "_unsubscribe_classification_membership",
+      "line": 7947
+    },
+    {
+      "function": "get_email_unsubscribe_entry_url",
+      "line": 8368
+    },
+    {
+      "function": "list_email_classification_observability",
+      "line": 8630
+    },
+    {
+      "function": "email_processing_progress",
+      "line": 9613
+    }
+  ],
+  "email_method_fallbacks": [
+    {
+      "method": "list_mailbox_action_states",
+      "line": 1502
+    },
+    {
+      "method": "list_mailbox_action_states",
+      "line": 1554
+    },
+    {
+      "method": "get_provider_classification_state",
+      "line": 1537
+    },
+    {
+      "method": "list_selected_training_labels",
+      "line": 2089
+    },
+    {
+      "method": "classifier_runtime_observability",
+      "line": 2454
+    },
+    {
+      "method": "latest_training_snapshot_state",
+      "line": 2483
+    },
+    {
+      "method": "classifier_runtime_rate",
+      "line": 2503
+    },
+    {
+      "method": "model_scan_progress",
+      "line": 2508
+    }
+  ],
+  "wire_retirement": {
+    "field": "ConsoleBusinessProjectDetail.responsibilities",
+    "owner": "context.responsibilities from existing ProjectContext revision",
+    "database_migration": false,
+    "client_and_server_same_change": true
+  },
+  "optional_migration": {
+    "field": "BusinessProject.anchor_type and project payload anchor_type",
+    "retained_constraint_column": "project_anchor_type",
+    "target_expression": "CASE WHEN record_type='project' THEN 'project' ELSE '' END",
+    "foreign_key_and_parent_unique_index_retained": true,
+    "priority": "low; separate approval and full current-data inverse validation before implementation",
+    "benefit_boundary": "33 constant values;231 raw UTF-8 value bytes, not database file savings."
+  },
+  "drop_index_list": [],
+  "retain": [
+    "Current WorkTodo.import_task_id owner and importer",
+    "Legacy Project/Todo/Update/evidence history readers and unique facts",
+    "Logical Run vs RuntimeAttempt distinct status/session/transcript facts",
+    "run_provenance source_type/job_id relationship facts",
+    "Current email_reply/email_unsubscribe transition flow",
+    "Provider receipts, distinct failures and exact predecessor migration/inverse tools"
+  ],
+  "temporary_cleanup": {
+    "path": "/private/tmp/ceo-next-audit.LNVSv7",
+    "status": "deleted_verified_absent",
+    "no_open_files_before_cleanup": true,
+    "database_copies_created": 0,
+    "backups_created": 0
+  }
+}
