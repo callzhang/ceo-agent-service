@@ -29,6 +29,20 @@
     "Audit and execution policy",
     "retry budgets"
   ],
-  "live": "pending standard deployment and provider readback",
-  "private_originals_committed": false
+  "live": {
+    "deployed_commit": "597da9f0e702527fc18fe1365dc271d81ff26e08",
+    "current_production_contains_fix": true,
+    "health": "ok",
+    "actual_native_reader_observation": "Recovered live Consumer successfully read previously cold renewal page2 and original page6; the exact runtime window contains no prior page_source_unavailable error. Complete seven-page original material was separately read through the existing Drive reader.",
+    "provider_readback": "The new current principal node was later approved once after a separately published private evidence-rule correction; reader success alone did not establish decision quality.",
+    "additional_testing": "Stopped at user request; no new test or simulated approval was run during closeout."
+  },
+  "private_originals_committed": false,
+  "standard_deploy_gate": {
+    "passed": 8017,
+    "skipped": 2,
+    "deselected": 1,
+    "seconds": 467.9
+  },
+  "closeout": "metadata only; no company policy, original approval content or personal data committed"
 }
