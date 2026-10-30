@@ -920,7 +920,7 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 ### Schema 初始化竞争
 
-`AutoReplyStore` 和 `EmailStore` 在构造器缓存或 journal 修改前只读核对准确当前声明。真正空库在共享路径文件锁内直接建立当前结构；准确当前库冷启动不执行 DDL。旧版本及缺失／损坏对象必须由显式发布工具处理，运行时不迁移、修补或回填。短暂 `locked`／`busy` 仍沿用有限等待复查，不把锁错误当成结构缺失。Email 完整持久行校验在释放 schema 锁后执行。
+`AutoReplyStore` 和 `EmailStore` 在构造器缓存或 journal 修改前只读核对准确当前声明。真正空库在共享路径文件锁内直接建立当前结构；准确当前库冷启动不执行 DDL。旧版本及缺失／损坏对象必须由显式发布工具处理，运行时不迁移、修补或回填。短暂 `locked`／`busy` 仍沿用有限等待复查，不把锁错误当成结构缺失。Email 完整持久行校验在释放 schema 锁后执行。 Email 读取使用这个已验证的当前 Store 合同，直接查询 Task、Run 和 Action，并调用当前 EmailStore 方法；真实缺失的模型、快照或扫描进度仍按其返回值展示。
 
 ### Workbench Turn native execution ownership
 

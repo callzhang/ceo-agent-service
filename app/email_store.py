@@ -1234,10 +1234,6 @@ def _email_unsubscribe_attempt_ids(
     action_identity: str,
 ) -> list[int]:
     from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
-    if db.execute(
-        "select 1 from sqlite_master where type='table' and name='actions'"
-    ).fetchone() is None:
-        return []
     return [
         int(row["id"])
         for row in db.execute(
@@ -7945,16 +7941,7 @@ class EmailStore:
 
     @staticmethod
     def _unsubscribe_classification_membership(db: sqlite3.Connection) -> str:
-        task_tables = {
-            str(row["name"])
-            for row in db.execute(
-                "select name from sqlite_master where type='table' "
-                "and name in ('tasks', 'runs')"
-            ).fetchall()
-        }
-        task_clause = ""
-        if task_tables == {"tasks", "runs"}:
-            task_clause = f"""
+        task_clause = f"""
                 or classifications.id in (
                     select json_extract(
                                tasks.trigger_message_json,
@@ -8370,17 +8357,6 @@ class EmailStore:
 
         _require_positive_int(classification_id, field="classification_id")
         with self._connect() as db:
-            generic_tables = {
-                str(row["name"])
-                for row in db.execute(
-                    """
-                    select name from sqlite_master
-                    where type='table' and name in ('tasks', 'runs')
-                    """
-                ).fetchall()
-            }
-            if generic_tables != {"tasks", "runs"}:
-                return None
             classification = db.execute(
                 f"""
                 select classifications.id, classifications.account_id,
@@ -8623,62 +8599,42 @@ class EmailStore:
                 """,
                 (classification_id,),
             ).fetchall()
-            generic_tables = {
-                str(row["name"])
-                for row in db.execute(
-                    """
-                    select name from sqlite_master
-                    where type='table' and name in ('tasks', 'runs')
-                    """
-                ).fetchall()
-            }
-            task_rows: Sequence[sqlite3.Row] = ()
-            if generic_tables == {"tasks", "runs"}:
-                task_rows = db.execute(
-                    f"""
-                    select id, conversation_id, trigger_message_id,
-                           trigger_message_json, input_compacted, input_provenance_json,
-                           execution_generation, status, error, created_at
-                    from (
-                        select reply_tasks.*,
-                               case when input_compacted=1 then
-                                   case when json_valid(input_provenance_json) then
-                                       json_extract(input_provenance_json, '$.source') end
-                                   else trigger_message_json end as lineage_source_json
-                        from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
-                        where channel='email'
-                    )
-                    where json_valid(lineage_source_json)
-                      and json_extract(lineage_source_json, '$.classification_id')=?
-                      and json_extract(lineage_source_json, '$.action_type')='unsubscribe'
-                    order by created_at, id
-                    """,
-                    (classification_id,),
-                ).fetchall()
+            task_rows = db.execute(
+                f"""
+                select id, conversation_id, trigger_message_id,
+                       trigger_message_json, input_compacted, input_provenance_json,
+                       execution_generation, status, error, created_at
+                from (
+                    select reply_tasks.*,
+                           case when input_compacted=1 then
+                               case when json_valid(input_provenance_json) then
+                                   json_extract(input_provenance_json, '$.source') end
+                               else trigger_message_json end as lineage_source_json
+                    from ({REPLY_TASK_CURRENT_SQL}) as reply_tasks
+                    where channel='email'
+                )
+                where json_valid(lineage_source_json)
+                  and json_extract(lineage_source_json, '$.classification_id')=?
+                  and json_extract(lineage_source_json, '$.action_type')='unsubscribe'
+                order by created_at, id
+                """,
+                (classification_id,),
+            ).fetchall()
             lineage_by_action: dict[str, dict[str, object]] = {}
-            if unsubscribe_rows and generic_tables == {"tasks", "runs"}:
-                for row in unsubscribe_rows:
-                    _validate_durable_unsubscribe_result_text(
-                        row["result_text"],
-                        row["observation_digest"],
-                        row["result_text_truncated"],
-                        row["result_text_digest"],
-                    )
-                    lineage = _audited_unsubscribe_lineage(
-                        db,
-                        receipt=row,
-                        classification=classification,
-                    )
-                    if lineage is not None:
-                        lineage_by_action[str(row["action_identity"])] = lineage
-            else:
-                for row in unsubscribe_rows:
-                    _validate_durable_unsubscribe_result_text(
-                        row["result_text"],
-                        row["observation_digest"],
-                        row["result_text_truncated"],
-                        row["result_text_digest"],
-                    )
+            for row in unsubscribe_rows:
+                _validate_durable_unsubscribe_result_text(
+                    row["result_text"],
+                    row["observation_digest"],
+                    row["result_text_truncated"],
+                    row["result_text_digest"],
+                )
+                lineage = _audited_unsubscribe_lineage(
+                    db,
+                    receipt=row,
+                    classification=classification,
+                )
+                if lineage is not None:
+                    lineage_by_action[str(row["action_identity"])] = lineage
             unsubscribe_steps = db.execute(
                 f"""
                 select steps.action_identity, steps.sequence, steps.operation,
@@ -9610,21 +9566,14 @@ class EmailStore:
                     "where status in ('pending','processing') group by status"
                 )
             }
-            has_tasks = db.execute(
-                "select count(*) from sqlite_master where type='table' and name='tasks'"
-            ).fetchone()[0]
-            unsubscribe_queue = (
-                {
-                    str(row["status"]): int(row["n"])
-                    for row in db.execute(
-                        f"select status, count(*) as n from ({REPLY_TASK_SQL}) "
-                        "where channel='email' and status in ('pending','processing') "
-                        "group by status"
-                    )
-                }
-                if has_tasks
-                else {}
-            )
+            unsubscribe_queue = {
+                str(row["status"]): int(row["n"])
+                for row in db.execute(
+                    f"select status, count(*) as n from ({REPLY_TASK_SQL}) "
+                    "where channel='email' and status in ('pending','processing') "
+                    "group by status"
+                )
+            }
             waiting = int(
                 db.execute(
                     f"select count(*) from ({EMAIL_CLASSIFICATION_SQL}) "

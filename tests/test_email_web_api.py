@@ -560,6 +560,9 @@ def test_email_learning_endpoint_exposes_current_state_without_private_paths(
     payload = response.json()
     assert payload["ok"] is True
     assert payload["learning"]["active_model_id"] is None
+    assert payload["learning"]["training_snapshot"] is None
+    assert payload["learning"]["model_scan_progress"] is None
+    assert payload["learning"]["runtime_timing"] == {"state": "unavailable"}
     assert payload["learning"]["pending_examples"] == 0
     assert payload["learning"]["models"] == []
 
@@ -961,7 +964,10 @@ def test_email_learning_registry_issues_never_echo_corrupt_model_id(
         def list_staged_evidence_inventory(self):
             return []
 
-    class LearningStore:
+    class LearningStore(EmailStore):
+        def __init__(self):
+            super().__init__(tmp_path / "learning-store.sqlite3")
+
         def current_model_promotion_config(self):
             return EmailStore(tmp_path / "controls.sqlite3").current_model_promotion_config()
 
@@ -1475,6 +1481,10 @@ def test_email_classification_detail_projects_observability(tmp_path: Path) -> N
                 }
             ]
 
+        def list_mailbox_action_states(self, classification_ids):
+            assert classification_ids == [41]
+            return {}
+
         def get_provider_classification_state(self, classification_id: int):
             assert classification_id == 41
             return {
@@ -1743,7 +1753,10 @@ def test_email_learning_and_model_version_expose_safe_modern_evidence(tmp_path) 
             return [{"model_id": row["model_id"], "evidence": row, "integrity_status": "readable"}
                     for row in self.list_staged_evidence()]
 
-    class LearningStore:
+    class LearningStore(EmailStore):
+        def __init__(self):
+            super().__init__(tmp_path / "learning-store.sqlite3")
+
         def current_model_promotion_config(self):
             return EmailStore(tmp_path / "controls.sqlite3").current_model_promotion_config()
 

@@ -1497,11 +1497,7 @@ def register_email_routes(
             )
         row_ids = [int(row["id"]) for row in rows]
         provider_states = email_store.get_provider_classification_states(row_ids)
-        mailbox_actions = (
-            email_store.list_mailbox_action_states(row_ids)
-            if hasattr(email_store, "list_mailbox_action_states")
-            else {}
-        )
+        mailbox_actions = email_store.list_mailbox_action_states(row_ids)
         unsubscribe_states = (
             email_store.list_unsubscribe_states(row_ids)
             if status == "unsubscribe"
@@ -1534,14 +1530,7 @@ def register_email_routes(
         unsubscribe_entry_available = (
             email_store.get_email_unsubscribe_entry_url(classification_id) is not None
         )
-        provider_state_reader = getattr(
-            email_store, "get_provider_classification_state", None
-        )
-        provider_state = (
-            provider_state_reader(classification_id)
-            if callable(provider_state_reader)
-            else {"state": "unavailable", "reason": "provider_truth_not_supported"}
-        )
+        provider_state = email_store.get_provider_classification_state(classification_id)
         return {
             "ok": True,
             "item": {
@@ -1551,8 +1540,6 @@ def register_email_routes(
                     email_store.list_mailbox_action_states([classification_id]).get(
                         classification_id, []
                     )
-                    if hasattr(email_store, "list_mailbox_action_states")
-                    else []
                 ),
             },
             "observability": email_store.list_email_classification_observability(
@@ -2086,8 +2073,7 @@ def register_email_routes(
     def training_source_catalog(email_store: EmailStore) -> list[dict[str, object]]:
         rows: dict[tuple[str, str], dict[str, object]] = {}
         snapshot = email_store.latest_training_snapshot_state()
-        list_records = getattr(email_store, "list_selected_training_labels", None)
-        records = list_records() if callable(list_records) else []
+        records = email_store.list_selected_training_labels()
         for sample in records:
             source = str(sample.get("source") or "")
             identity = str(sample.get("stable_message_identity") or "")
@@ -2451,7 +2437,6 @@ def register_email_routes(
                 model_id=modern_active_model_id
             )
             if modern_active_model_id is not None
-            and hasattr(email_store, "classifier_runtime_observability")
             else None
         )
         runtime_timing, fallback_counts = _project_runtime_observability(
@@ -2478,11 +2463,7 @@ def register_email_routes(
                 "staged_models": [
                     _project_staged_model_evidence(row) for row in staged_evidence
                 ],
-                "training_snapshot": (
-                    email_store.latest_training_snapshot_state()
-                    if hasattr(email_store, "latest_training_snapshot_state")
-                    else None
-                ),
+                "training_snapshot": email_store.latest_training_snapshot_state(),
                 "historical_eligibility": (
                     latest_projection.get("historical_eligibility")
                     if latest_projection is not None
@@ -2498,16 +2479,8 @@ def register_email_routes(
                     }
                 ),
                 "runtime_timing": runtime_timing,
-                "runtime_rate": (
-                    email_store.classifier_runtime_rate()
-                    if hasattr(email_store, "classifier_runtime_rate")
-                    else None
-                ),
-                "model_scan_progress": (
-                    email_store.model_scan_progress()
-                    if hasattr(email_store, "model_scan_progress")
-                    else None
-                ),
+                "runtime_rate": email_store.classifier_runtime_rate(),
+                "model_scan_progress": email_store.model_scan_progress(),
                 "fallback_counts": fallback_counts,
                 "registry_issues": registry_issues,
                 "category_thresholds": {
