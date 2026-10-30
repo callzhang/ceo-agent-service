@@ -79,6 +79,13 @@ def water(path):
         return list(db.execute('select rowid,name,seq from sqlite_sequence order by rowid'))
 
 
+def require_cohort(path, identities, facts, *, exact_identities):
+    if exact_identities and _identities(path) != identities:
+        raise ValueError('validation cohort identities changed')
+    if fingerprint(path, identities) != facts:
+        raise ValueError('validation cohort typed facts changed')
+
+
 def seed(path):
     from app.action_entity_storage import append_action_receipt
     from app.shared_action_lifecycle import create_direct_email_action, persist_email_plan
@@ -137,9 +144,12 @@ def validate(path, old_code):
     release.verify_loaded()
     assert fingerprint(path, identities) == before and water(path) == initial_water
     synthetic = seed(path)
+    seeded_ids = _identities(path)
+    seeded_facts = fingerprint(path, seeded_ids)
     target_water = water(path)
     release.rollback()
     assert fingerprint(path, identities) == before and water(path) == target_water
+    require_cohort(path, seeded_ids, seeded_facts, exact_identities=True)
     with closing(sqlite3.connect(path)) as db:
         assert schema_objects(db) == source_objects()
         assert list(db.execute('pragma foreign_key_check')) == initial_fk
@@ -155,11 +165,14 @@ def validate(path, old_code):
         expected = {cold['action_id']} if table == 'actions' else {cold['receipt_id']} if table == 'action_receipts' else set()
         if added != expected or before_cold[table] - after_cold[table]:
             raise ValueError('predecessor constructor or cold write changed unexpected row identities in ' + table)
+    require_cohort(path, seeded_ids, seeded_facts, exact_identities=False)
+    cold_facts = fingerprint(path, after_cold)
     cold_water = water(path)
     again = prepare_email_action_owner_release(path)
     again.publish()
     again.finalize()
     assert fingerprint(path, identities) == before and water(path) == cold_water
+    require_cohort(path, after_cold, cold_facts, exact_identities=True)
     with closing(sqlite3.connect(path)) as db:
         assert list(db.execute('pragma foreign_key_check')) == initial_fk
         assert db.execute('select error_text from action_receipts where id=?', (cold['receipt_id'],)).fetchone()[0] == 'cold failure'

@@ -3350,7 +3350,7 @@
       }
     ],
     "current_release_ddl": "docs/action-entity-current-target.sql",
-    "current_release_ddl_scope": "Exact 463-object Store29.2/Email54 target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture rendered from the explicit Store25.2 Action declaration, not a runtime schema.",
+    "current_release_ddl_scope": "Exact 463-object Store30.1/Email54 target manifest; generated directly from current_objects(email_ledger=True). Compared with Store29.2, three Action generated columns are removed and the existing Email plan-switch and two account blockers now join the immutable Plan; no indexes change. The original action-entity-target.sql remains the initial field-contract fixture rendered from the explicit Store25.2 Action declaration, not a runtime schema.",
     "current_release_ddl_sha256": "59a6cf83196193c147c232d99cc7ceff568fbe49164e8f56c2e20635be4af8ec"
   },
   "indexes": [
