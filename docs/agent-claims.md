@@ -57,7 +57,6 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-meeting-claim-sql-performance-20261029 | app/store.py two meeting delivery claim INSERTs/import only; app/action_storage.py current meeting claim writer helper; tests/test_meeting_claim_sql_budget.py; related gate line; scoped validation/current behavior docs | Remove untargeted UPSERT VM explosion using the already-declared public identity constraint; no DDL or claim/lease/identity/Audit/auth/retry policy changes. Necessary to complete fixed-budget release of authorized Email original read fix. | Active; production unchanged, root cause measured on synthetic current schema. |
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |

@@ -26,8 +26,15 @@ History 生产当前主题查询 `Quotation for On-Premise` 命中 44 条；加 
 
 新增结构性 SQL 预算回归在旧代码上以 `14,154,431 < 1,000,000` 断言失败，修复后通过；流式读取 EXPLAIN，避免把完整字节码物化到内存。测试覆盖新 claim、两种领取入口、同一物理 owner 更新 token、其他 job 不变、schema 和 FK 不变。Meeting 全文件及新回归共 157 项通过，24.82 秒；SPEC / QUALITY 复核通过。
 
-## 发布与收尾
+## 发布与收尾（已完成）
 
-性能修复后标准 gate、部署、安装后 API/UI 读回及本轮备份/临时文件清理仍待执行。负责人已确认本轮由本任务单独发布，不并行 deploy。
+- 已安装精确提交 `1ccf8fe8b391b97c3dac0df2b769aa56d910671d`，包含原文修复 `8f341ef85` 和独立 SQL 性能修复。完整固定门禁 406 个文件：**7817 passed、2 skipped、1 deselected，345.91 秒**；10 分钟 / 2 GB、全部测试、标准安静窗口、备份和失败回滚均保留。
+- 正式部署账本 `deploy-ad9b43ec-0cff-4c5e-8301-d55e6e02fa01` 为 succeeded；2026-10-29 17:27 PDT 完成安装。新 PID 2981、health 200；前端 stamp `395fce9b6e3ddd924881471c36fbb654ac6ef7dd` 与安装提交的 frontend tree 一致。
+- 原文详情 API 200，6331 字符 / 6417 UTF-8 bytes，SHA-256 与部署前直接只读原文的摘要一致；生产页面详情区域已渲染，不再显示来源不可用。UI 自动 mark-read 在本轮独立标签中阻断；没有触发真实发送、补发或生产测试任务，标签已关闭。
+- History API 主题查询总数 44，两个 10 条分页身份无重复；页面实际翻到 21–40 / 44。failed 交集为零，与三个已完成动作及保留的失败历史含义一致。
+- schema 精确清单仍为 463 项，SHA-256 `f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94`，FK 异常集合仍为空，没有 DDL 或迁移。JunHe MOVE 111699、FLAG 127062、READ 127063 仍 done，尝试次数仍 3 / 2 / 1，没有重放。
+- 读回时 pending 3、processing 0、failed 26、Attention 2，与本轮发布前观测一致；这些计数是该时点的快照，不表示全库历史失败归零。
+- 部署的 pre-upgrade 备份已由启动后的已验证日备份替换。最后一代日备份已在目录锁下核对 CEOB、integrity=ok、schema/FK、SHA、inode/mtime/size 和无打开引用后删除。3 个失败/中断门禁副本、4 个本轮空模板及本轮测试根目录共 8 个目录均已删除；成功门禁目录由标准流程自动删除。每个路径都已复查不存在，备份目录为空。
+- 删除文件的逻辑大小合计约 971,400,052 bytes，不作为实际磁盘回收量；保留生产数据库、原生 trajectory 和提交的简洁验收证据。未触碰更早且不属于本轮的框架模板。此项是测试产物清理，不是数据库业务容量缩减。
 
-机器可读记录：[验收 JSON](validation/2026-10-29-email-original-history-read.json)。不将本次读取修复描述为数据库容量缩减。
+机器可读记录：[验收 JSON](validation/2026-10-29-email-original-history-read.json)。本轮读取缺陷和必要发布性能问题均已收口；不宣称全库模型或所有查询性能已最优。

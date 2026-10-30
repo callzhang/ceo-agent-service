@@ -132,34 +132,409 @@
     }
   },
   "release": {
-    "status": "pending_standard_gate_after_mechanical_sql_performance_fix",
-    "target_sha": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab",
+    "status": "succeeded",
+    "target_sha": "1ccf8fe8b391b97c3dac0df2b769aa56d910671d",
     "gate_attempts": [
       {
         "result": "cumulative_600_second_limit",
         "observed_assertion_failures": 0,
         "progress_percent": 95,
         "last_node": "tests/test_scheduled_agent_consumer.py::test_execution_uses_persisted_preflight_context_after_current_options_change",
-        "isolated_node": "1 passed in 1.43s, call 0.89s"
+        "isolated_node": "1 passed in 1.43s, call 0.89s",
+        "commit": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab"
       },
       {
         "result": "interrupted_with_session",
         "passed_record": false,
-        "progress_percent": 23
+        "progress_percent": 23,
+        "commit": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab"
       },
       {
         "result": "cumulative_600_second_limit",
         "observed_assertion_failures": 0,
-        "last_node": "tests/test_email_action_reconcile.py::test_normalized_integer_action_id_can_be_recorded_after_readback"
+        "last_node": "tests/test_email_action_reconcile.py::test_normalized_integer_action_id_can_be_recorded_after_readback",
+        "commit": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab"
       }
     ],
-    "installed_unchanged": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727"
+    "gate": {
+      "commit": "1ccf8fe8b391b97c3dac0df2b769aa56d910671d",
+      "passed_at": "2026-10-30T00:27:28+00:00",
+      "files": 406,
+      "summary": "7817 passed, 2 skipped, 1 deselected in 345.91s (0:05:45)"
+    },
+    "operation": {
+      "operation_id": "deploy-ad9b43ec-0cff-4c5e-8301-d55e6e02fa01",
+      "status": "succeeded",
+      "original_commit": "616e237ec28ad4a913ee09d2f5e3e3ef1193b727",
+      "target_commit": "1ccf8fe8b391b97c3dac0df2b769aa56d910671d",
+      "installed_commit": "1ccf8fe8b391b97c3dac0df2b769aa56d910671d",
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-ad9b43ec-0cff-4c5e-8301-d55e6e02fa01.sqlite3",
+      "updated_at": "2026-10-30T00:27:47.399175+00:00",
+      "error": ""
+    }
   },
   "readback": {
-    "status": "pending"
+    "at": "2026-10-30T00:28:42.265615+00:00",
+    "installed_sha": "1ccf8fe8b391b97c3dac0df2b769aa56d910671d",
+    "service": {
+      "label": "com.ceo-agent-service.main",
+      "target": "gui/501/com.ceo-agent-service.main",
+      "ok": true,
+      "state": "running",
+      "detail": "running",
+      "pid": "2981",
+      "runs": "1",
+      "initialized": "1",
+      "last_terminating_signal": "",
+      "returncode": 0
+    },
+    "queue_summary": {
+      "queue_count": 11,
+      "pending": 3,
+      "processing": 0,
+      "failed": 26,
+      "retryable": 0,
+      "attention": 2
+    },
+    "health_http": 200,
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "attention_meta": {
+      "snapshot_at": "2026-10-30T00:28:09.757683Z",
+      "page": null,
+      "page_size": null,
+      "total": 2,
+      "next_cursor": "",
+      "has_more": false
+    },
+    "frontend_stamp": "395fce9b6e3ddd924881471c36fbb654ac6ef7dd",
+    "frontend_needs_build": false,
+    "schema": {
+      "objects": 463,
+      "sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+      "fk": []
+    },
+    "email_detail": {
+      "http": 200,
+      "id": "949082524487675729",
+      "subject": "回复: Quotation for On-Premise Labeling Platform with Customer Cloud_225.pdf",
+      "visible_body_characters": 6331,
+      "visible_body_utf8_bytes": 6417,
+      "visible_body_sha256": "433b59b10bdf2d3ca9557761e86845e514e7f5f5fd663bafba2124c3bfae5d66"
+    },
+    "history": [
+      {
+        "params": {
+          "q": "Quotation for On-Premise",
+          "page": 1,
+          "page_size": 10
+        },
+        "meta": {
+          "snapshot_at": "2026-10-30T00:28:26.685777Z",
+          "page": 1,
+          "page_size": 10,
+          "total": 44,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "ids": [
+          "127063",
+          "127062",
+          "127037",
+          "127038",
+          "127002",
+          "127003",
+          "126999",
+          "127000",
+          "126988",
+          "126989"
+        ]
+      },
+      {
+        "params": {
+          "q": "Quotation for On-Premise",
+          "page": 2,
+          "page_size": 10
+        },
+        "meta": {
+          "snapshot_at": "2026-10-30T00:28:39.020712Z",
+          "page": 2,
+          "page_size": 10,
+          "total": 44,
+          "next_cursor": "3",
+          "has_more": true
+        },
+        "ids": [
+          "126983",
+          "126984",
+          "126972",
+          "126973",
+          "126955",
+          "126956",
+          "111700",
+          "111699",
+          "112003",
+          "111734"
+        ]
+      },
+      {
+        "params": {
+          "q": "Quotation for On-Premise",
+          "status": "failed",
+          "page_size": 10
+        },
+        "meta": {
+          "snapshot_at": "2026-10-30T00:28:41.276183Z",
+          "page": 1,
+          "page_size": 10,
+          "total": 0,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "ids": []
+      }
+    ],
+    "completed_actions": [
+      {
+        "action_id": 111699,
+        "status": "done",
+        "attempt_count": 3
+      },
+      {
+        "action_id": 127062,
+        "status": "done",
+        "attempt_count": 2
+      },
+      {
+        "action_id": 127063,
+        "status": "done",
+        "attempt_count": 1
+      }
+    ],
+    "ui": {
+      "history_subject_total": 44,
+      "second_page": "21-40 / 44",
+      "email_detail_characters": 8815,
+      "expected_subject": true,
+      "original_unavailable": false,
+      "automatic_mark_read_blocked_in_ephemeral_tab": true,
+      "tab_closed": true
+    }
   },
   "cleanup": {
-    "status": "pending",
-    "task_temp_root": "/private/tmp/ceo-email-original-history.yeKpso"
+    "status": "completed",
+    "backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-29.sqlite3",
+      "inode": 838841947,
+      "mtime_ns": 1793320127946972412,
+      "bytes": 514969600,
+      "sha256": "bf6234f279ead85604ded67917f1ddb80830f1239052f093b71046013881fe33",
+      "integrity": "ok",
+      "complete_marker": "CEOB",
+      "schema_objects": 463,
+      "schema_sha256": "f5cd6496df716bf9a997c57403310c98ab393500b2de75dc48b8fe9ba10c6a94",
+      "fk": [],
+      "open_references": false,
+      "owner": "current deployment/startup daily backup workflow; deploy pre-upgrade snapshot already retired by verified daily replacement",
+      "deleted": true
+    },
+    "framework_templates": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.pizzguye",
+        "inode": 838580276,
+        "birthtime": 1793316665.6154497,
+        "empty_current_templates": {
+          "store.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          },
+          "email.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          }
+        },
+        "bytes": 5787648
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.eza42hic",
+        "inode": 838656696,
+        "birthtime": 1793317347.9143806,
+        "empty_current_templates": {
+          "store.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          },
+          "email.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          }
+        },
+        "bytes": 5787648
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.g3y39qab",
+        "inode": 838695236,
+        "birthtime": 1793317912.9612355,
+        "empty_current_templates": {
+          "store.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          },
+          "email.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          }
+        },
+        "bytes": 5787648
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.xdeiykau",
+        "inode": 838772358,
+        "birthtime": 1793319739.059349,
+        "empty_current_templates": {
+          "store.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          },
+          "email.sqlite3": {
+            "tasks": 0,
+            "runs": 0,
+            "actions": 0,
+            "emails": 0
+          }
+        },
+        "bytes": 5787648
+      }
+    ],
+    "task_temp_root": "/private/tmp/ceo-email-original-history.yeKpso",
+    "failed_gate_roots": [
+      "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.8_6vpodz",
+      "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate._p5ojwt9",
+      "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.19qpc7mq"
+    ],
+    "successful_gate_root": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate._703dzg7",
+    "successful_gate_root_absent": true,
+    "unrelated_older_templates": "not touched",
+    "verified_temp_roots": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.8_6vpodz",
+        "inode": 838569482,
+        "mtime_ns": 1793316618310797367,
+        "owner_uid": 501,
+        "git_sha": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab",
+        "bytes": 123157290,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate._p5ojwt9",
+        "inode": 838645877,
+        "mtime_ns": 1793317284394359199,
+        "owner_uid": 501,
+        "git_sha": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab",
+        "bytes": 122327908,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.19qpc7mq",
+        "inode": 838684628,
+        "mtime_ns": 1793317871236434363,
+        "owner_uid": 501,
+        "git_sha": "8f341ef8541c110c03c8d9df58da5f2dc86b1eab",
+        "bytes": 122980094,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.pizzguye",
+        "inode": 838580276,
+        "mtime_ns": 1793320391950237344,
+        "owner_uid": 501,
+        "git_sha": null,
+        "bytes": 5787648,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.eza42hic",
+        "inode": 838656696,
+        "mtime_ns": 1793320392027241115,
+        "owner_uid": 501,
+        "git_sha": null,
+        "bytes": 5787648,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.g3y39qab",
+        "inode": 838695236,
+        "mtime_ns": 1793320392095411802,
+        "owner_uid": 501,
+        "git_sha": null,
+        "bytes": 5787648,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/store-template.xdeiykau",
+        "inode": 838772358,
+        "mtime_ns": 1793320392172939037,
+        "owner_uid": 501,
+        "git_sha": null,
+        "bytes": 5787648,
+        "open_references": false,
+        "deleted": true
+      },
+      {
+        "path": "/private/tmp/ceo-email-original-history.yeKpso",
+        "inode": 838555320,
+        "mtime_ns": 1793320392206482521,
+        "owner_uid": 501,
+        "git_sha": null,
+        "bytes": 64814568,
+        "open_references": false,
+        "deleted": true
+      }
+    ],
+    "completed_at": "2026-10-30T00:35:26.101258+00:00",
+    "deleted_bytes": 971400052,
+    "backup_directory_empty": true,
+    "bytes_semantics": "Sum of logical file sizes; not measured physical disk recovery or production database shrinkage."
+  },
+  "post_cleanup_readback": {
+    "at": "2026-10-30T00:36:46.602991+00:00",
+    "health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "service_pid": "2981",
+    "queue_summary": {
+      "queue_count": 11,
+      "pending": 3,
+      "processing": 0,
+      "failed": 26,
+      "retryable": 0,
+      "attention": 2
+    },
+    "temp_roots_absent": true,
+    "verified_backup_absent": true,
+    "backup_directory_empty": true
   }
 }
