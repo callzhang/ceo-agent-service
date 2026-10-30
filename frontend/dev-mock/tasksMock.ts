@@ -166,7 +166,7 @@ const projectDetail = (id: string): BusinessProjectDetail | null => {
   ] : id === "2" ? [{ ...signal(504, "meeting", "评审还没有形成结论。"), source_ref: "review-504" }] : id === "4" ? [{ ...signal(502, "dingtalk", payment.source_excerpt), source_ref: payment.source_ref }] : [];
   const revisions = context ? [{ id: Number(id) * 10, project_id: Number(id), context, evidence_signal_ids: evidence.map((source) => source.id), created_at: summary.updated_at }] : [];
   const meta = (total: number): ConsoleListMeta => ({ page: 1, page_size: 20, total, next_cursor: "", has_more: false, snapshot_at: snapshot() });
-  return { summary, anchor: { id: Number(id), title: summary.title }, context, responsibilities: context?.responsibilities || [], confirmed_tasks: formal.filter((task) => projectTaskIds[id].includes(Number(task.id))), suggestions: suggestions.filter((task) => task.id === (id === "1" ? "300" : id === "2" ? "301" : "")), evidence_signals: evidence, context_revisions: revisions, evidence_meta: meta(evidence.length), context_revision_meta: meta(revisions.length) };
+  return { summary, anchor: { id: Number(id), title: summary.title }, context, confirmed_tasks: formal.filter((task) => projectTaskIds[id].includes(Number(task.id))), suggestions: suggestions.filter((task) => task.id === (id === "1" ? "300" : id === "2" ? "301" : "")), evidence_signals: evidence, context_revisions: revisions, evidence_meta: meta(evidence.length), context_revision_meta: meta(revisions.length) };
 };
 
 function page<T>(rows: T[], url: URL, extra: Row = {}) {
