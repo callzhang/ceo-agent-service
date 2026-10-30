@@ -32,10 +32,14 @@
 ### Task 2: Review, publish and read back
 **Interfaces:** consumes tested source/default paragraph; produces current live custom/default/rendered equality and lifecycle/provider receipts.
 - [x] One fresh whole-change reviewer; bounded regression fix pass only if needed.
-- [ ] Normal PR/merge or authorized direct deterministic merge; final source tests and release gate, no bypass.
-- [ ] Snapshot current online rules, service/queues and nine provider identities/record hashes; verify no competing deploy/load concern.
-- [ ] Change only existing custom paragraph through Settings; use standard app.deploy (or restart if another deploy already installed exact source); no OA actions.
-- [ ] Verify default/custom paragraph, unchanged other custom text, rendered Audit, new PID, health/queues/Attention/History, and original nine OA operations unchanged.
-- [ ] Save concise anonymous/live evidence, release own claim, clean only owned scratch and managed worktree.
+- [x] Normal PR/merge or authorized direct deterministic merge; final source tests and release gate, no bypass.
+- [x] Snapshot current online rules, service/queues and nine provider identities/record hashes; verify no competing deploy/load concern.
+- [x] Change only existing custom paragraph through Settings; use standard app.deploy (or restart if another deploy already installed exact source); no OA actions.
+- [x] Verify default/custom paragraph, unchanged other custom text, rendered Audit, new PID, health/queues/Attention/History, and original nine OA operations unchanged.
+- [x] Save concise anonymous/live evidence, release own claim, clean only owned scratch and managed worktree.
 
 Publication metadata verification: remote CI exposed an additional stale actual-runner phrase assertion and the existing default-rule source digest. The former is synchronized to the approved rule wording (119 Audit tests pass); only the latter manifest entry new_sha256 changes, retaining the old runtime precondition (18 publisher tests pass). No additional runtime behavior.
+
+Release readback (2026-10-29): source fix5fe9a2f57 is included byte-for-byte in standard-deployed676770955. First gate timed out at600s without installation; the queued successor passed its409-file gate (7980passed,2skipped,1deselected,533.60s), then drained work, backed up and restarted successfully. Native Settings save/readback changed only rule14; default/custom full digestb2bb69979522, other template bytes unchanged. PID99009→70930, health ok, Attention2→2, no new failed History IDs. Nine source OA states, operation counts and digests unchanged; no approval replay or action. Native task-done live verifier passed. Owned failed-gate clone, scratch and this plan's ignored SDD workspace removed after preserving minimal local acceptance evidence; managed worktree handed to native archive. Existing native backup and unrelated work preserved.
+
+Evidence bounds: anonymous fixed controls are scoped non-regression (old6/6,new6/6), with4 reused V1 pairs and2 corrected V2 pairs; not all-route or production replay. Native Settings remains last-write-wins. Existing private finance Skill scope wording and unrelated remote CI meeting FakeStore fixture failure are outside this minimal change; focused119 Audit tests,18 publisher tests and final deployed-target gate pass. Detailed development rulings and live receipts are in the local acceptance artifact, not company source-material fixtures in the public repository.
