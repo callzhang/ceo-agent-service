@@ -2,7 +2,7 @@
 
 import pytest
 
-from app.email_imap_readonly import ImapReadonlyAdapter
+from app.email_imap_readonly import EmailSourceMessageMissing, ImapReadonlyAdapter
 from tests.test_email_exact_source import HEADERS, LOCATOR, STRUCTURE, read
 from tests.test_email_imap_readonly import FakeImapSession
 
@@ -46,13 +46,22 @@ def test_original_location_uses_canonical_id_not_provider_header_index():
     assert all(call[1] in {'SEARCH', 'FETCH'} for call in session.calls if call[0] == 'uid')
 
 
-@pytest.mark.parametrize('ids', [{}, {7: '<other@example.test>'},
-    {7: '<source@EXAMPLE.TEST>', 8: '<source@example.test>'},
-    {7: '<Source@example.test>'}])
-def test_original_location_requires_one_exact_canonical_identity(ids):
+@pytest.mark.parametrize(('ids', 'ambiguous'), [
+    ({}, False),
+    ({7: '<other@example.test>'}, False),
+    ({7: '<source@EXAMPLE.TEST>', 8: '<source@example.test>'}, True),
+    ({7: '<Source@example.test>'}, False),
+])
+def test_original_location_requires_one_exact_canonical_identity(ids, ambiguous):
     session = HeaderSession(ids)
-    with pytest.raises(LookupError, match='missing or ambiguous'):
+    with pytest.raises(LookupError) as caught:
         ImapReadonlyAdapter(session, account_id='a').locate_message(LOCATOR, folder='Archive')
+    if ambiguous:
+        assert type(caught.value) is LookupError
+        assert 'ambiguous' in str(caught.value)
+    else:
+        assert isinstance(caught.value, EmailSourceMessageMissing)
+        assert 'missing' in str(caught.value)
     assert not any('BODY.PEEK[1]' in str(call) for call in session.calls)
 
 
