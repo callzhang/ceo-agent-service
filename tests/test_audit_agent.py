@@ -672,10 +672,10 @@ def test_actual_audit_runner_uses_production_review_instructions(setup, monkeypa
     assert (actual + executor.prompts[0]).count(_AUDIT_AGENT_RULES) == 1
     assert f"## Audit Rules\n{rendered_rules}" in actual
     assert "For every proposed message, email, or other externally visible action" in actual
-    assert "reusable rule should govern this task class" in rendered_rules
-    assert "not ask " in rendered_rules
-    assert "to choose the outcome or action for this individual OA" in rendered_rules
-    assert "current-instance `needs_human` question" not in rendered_rules
+    assert "applicable task-bound business Skill for criteria" in rendered_rules
+    assert "common OA Skill for evidence handling, scoring, staged outcomes and actions" in rendered_rules
+    assert "Preserve real material, policy and authorization gaps" in rendered_rules
+    assert "Respect read-only scope and current/terminal task ownership" in rendered_rules
     task_rules = executor.prompts[0].partition("## Audit Rules\n")[2].partition(
         "\n\n## Context Facts"
     )[0]

@@ -61,6 +61,8 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 
 Consumer 负责业务准备和完整候选，Audit 只读审核整份候选，系统执行已持久化且审核通过的完整结构化动作。所有 Consumer 入口共用同一条行为指令：不直接向外发送消息或邮件，也不直接执行审批；返回结构化决定或候选，由服务处理外部效果。Audit 的角色规则逐项核对外发候选的收件人/目标、内容、证据和任务范围；候选文本不作实际执行或送达证明，Audit 不发送或执行任何动作。若来源或任务明确要求只要草稿或由用户发送，Audit 退回或拒绝拟发送消息、邮件的候选；其他有效结构化外发提案也只能由 System Executor 在 Audit 批准后执行，只有服务回执证明外部效果。Consumer 保留报告、文档准备能力，不自行执行提交审核的受控动作；没有新增 update_daily_report 动作。Email 退订保持独立的系统直接流程。该指令不构成工具或凭据的强制权限隔离。
 
+OA 的可配置 Audit 第14条只引用当前任务绑定的业务 Skill 与通用 OA Skill：业务 Skill 提供判断条件，通用 Skill 提供证据、评分、阶段和动作映射。卡片的 partial 标记或缺少单独动作列表本身不构成本单规则缺口；真实材料、制度和授权缺口仍按适用 Skill 处理。已解决的问题不因旧规则重新打开；只读及终态任务不得由该条额外产生评论、通知或审批动作。默认种子更新不覆盖已有自定义文件；本次已获明确授权的线上第14条通过现有 Audit Rules 设置保存，其余自定义条款保留。
+
 Consumer 的普通工具工作不因写入而自动进入系统动作审核。任务绑定的本地文件由
 `consumer_artifact_write` 写入 `/tmp/ceo-agent-service-task-artifacts/<task_id>/<execution_generation>`，
 Consumer 与 Audit 可用 `read_task_artifact`、`list_task_artifacts` 读取当前代材料；Audit 没有写工具。
