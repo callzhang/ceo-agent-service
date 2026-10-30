@@ -1136,7 +1136,7 @@ def _resolve_service_runtime_skills(
     )
 
 
-def _record_successful_cron_tick(store, component: str, tick_at: datetime) -> None:
+def _record_successful_component_tick(store, component: str, tick_at: datetime) -> None:
     store.set_service_health_component(
         component,
         state="healthy",
@@ -1185,7 +1185,7 @@ def run_agent_cron_scheduler_loop(
             SERVICE_COMMAND_EXECUTION_KIND: lambda _execution_id: True,
         }),
         dispatcher_wake=(dispatcher_wake_event or wake_event).set,
-        tick_observer=lambda tick_at: _record_successful_cron_tick(
+        tick_observer=lambda tick_at: _record_successful_component_tick(
             store, "agent-cron-scheduler", tick_at,
         ),
     )
@@ -1403,7 +1403,7 @@ def run_agent_cron_dispatcher_loop(
             shared_max_in_flight=agent_capacity,
             owner=f"scheduled-dispatcher:{os.getpid()}", lease=timedelta(minutes=5),
             wake_event=wake_event,
-            tick_observer=lambda tick_at: _record_successful_cron_tick(
+            tick_observer=lambda tick_at: _record_successful_component_tick(
                 store, "agent-cron-dispatcher", tick_at,
             ),
         )
@@ -3396,6 +3396,12 @@ def run_database_backup_loop(
 ) -> None:
     while True:
         backup_database_if_due(db_path)
+        if os.environ.get("CEO_DATABASE_BACKUP_PAUSED", "0") != "1":
+            _record_successful_component_tick(
+                AutoReplyStore(db_path),
+                "database-backup",
+                datetime.now(timezone.utc),
+            )
         sleep(BACKUP_CHECK_INTERVAL_SECONDS)
 
 
