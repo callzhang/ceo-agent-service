@@ -166,7 +166,10 @@ def _structured_needs_human_result(
     }
 
 
-def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_human", native_available=True):
+def _insert_needs_human_projection(
+    store, *, monkeypatch, result, status="needs_human", task_status="needs_human",
+    native_available=True,
+):
     store.enqueue_reply_task(
         conversation_id="conversation", conversation_title="group", single_chat=False,
         trigger_message_id="message", trigger_create_time="2026-08-07 00:00:00",
@@ -183,7 +186,7 @@ def _insert_needs_human_projection(store, *, monkeypatch, result, status="needs_
         ).fetchone()[0]
         task_row = db.execute('select status from tasks where id=?', (task_id,)).fetchone()
         assert update_task_cas(db, task_id=task_id, expected={'status': task_row[0]},
-                               changes={'status': 'done'}) is not None
+                               changes={'status': task_status}) is not None
         # Preserve each authored result as a native assistant final, without
         # adopting it as an approved candidate. Pretty JSON is a native format.
         native = store.path.with_suffix('.native.jsonl')
@@ -930,6 +933,9 @@ def test_quality_gate_ignores_dry_run_when_done_task_has_no_unknown_effect(tmp_p
 def test_quality_gate_reports_only_current_needs_human_attempts_as_attention(tmp_path):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     with store._connect() as db:
+        _insert_canonical_reply_task(
+            db, status="needs_human", trigger_message_id="current",
+        )
         for status, message, updated_at in (
             ("needs_human", "current", "2026-08-07 00:30:00"),
             ("needs_human", "recovered", "2026-08-07 00:00:00"),
@@ -995,18 +1001,21 @@ def test_quality_gate_excludes_resolved_needs_human_attempt(tmp_path, monkeypatc
 
 def test_quality_gate_rejects_unreviewed_legacy_human_projection_when_queue_task_is_done(tmp_path, monkeypatch):
     store = AutoReplyStore(tmp_path / "state.sqlite3")
-    _insert_needs_human_projection(store, monkeypatch=monkeypatch, result=_structured_needs_human_result())
+    _insert_needs_human_projection(
+        store, monkeypatch=monkeypatch, result=_structured_needs_human_result(),
+        task_status="done",
+    )
 
     report = scan_hourly_quality(store.path, now=NOW)
 
     assert ("reply_attempts", "needs_human", 1) not in {
         (item.source, item.code, item.count) for item in report.attention
     }
-    assert ("reply_attempts", "invalid_needs_human_result", 1) in {
+    assert ("reply_attempts", "invalid_needs_human_result", 1) not in {
         (item.source, item.code, item.count) for item in report.violations
     }
-    # A raw legacy result remains in History but is not a current approved
-    # candidate, and the done current business object is not unresolved work.
+    # A terminal task keeps its raw legacy result in History but does not
+    # project it as current quality-gate work.
     assert store.count_current_unresolved_problem_attempts() == 0
 
 

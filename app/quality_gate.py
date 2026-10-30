@@ -575,6 +575,13 @@ def _check_structured_needs_human(
             where a.ordinal=1 and lower(a.send_status)='needs_human'
               and a.reviewed_at is null
               and trim(coalesce(a.resolved_at, ''))=''
+              and exists (
+                  select 1 from ({REPLY_TASK_SQL}) current_task
+                  where current_task.channel=a.channel
+                    and current_task.conversation_id=a.conversation_id
+                    and current_task.trigger_message_id=a.trigger_message_id
+                    and lower(current_task.status)='needs_human'
+              )
               and not exists (
                   select 1
                   from ({REPLY_TASK_SQL}) as historical_task

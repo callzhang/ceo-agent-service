@@ -484,6 +484,8 @@ Workers 的当前 attempt 队列统计会排除 `agent_run_id` 指向旧 executi
 
 Console Attention 同时投影当前队列故障和当前有效、已通过 Audit、尚未选择且仍未解决的 `needs_human` 决策。普通 `pending`、`processing` 或仅因状态为 `needs_human` 的记录不因此进入 Attention；人工决策行必须仍绑定当前 task/generation 与最新有效候选。Status 的 Attention 总数与 `/api/console/attention` 使用相同口径，避免把需要用户选择的已审核事项留在单独列表而漏出 Attention。
 
+质量门禁按同一当前 Reply Task 的生命周期检查 `needs_human` 投影：只有拥有该 attempt 的 Task 仍为 `needs_human` 时，结构化结果缺失或无效才构成当前健康违规。Task 已到终态时，该 attempt 只保留为历史记录，不继续触发 Attention 或健康降级；Task 仍待人工决定时，原有结构化结果校验不变。
+
 如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
 实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
 `skipped`，保存实时结果作为 resolution，并从当前 Attention 移除；原 Agent run 和决策
