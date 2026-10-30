@@ -2208,18 +2208,29 @@ def build_role_server(
         Use the process instance and file ID from read_dingtalk_oa, even when
         generic Drive access is denied. Scanned PDFs and image-bearing PPTX
         files return one-based ocr_page_numbers; pass a listed page_number for
-        bounded OCR input. PPTX page numbers follow embedded-image reading order.
+        bounded OCR input. A page can be requested directly without a prior
+        metadata call in this MCP process. PPTX pages follow embedded-image order.
         """
         nonlocal drive_material_directory
         if not process_instance_id.strip() or not file_id.strip():
             raise AgentReadOnlyViolationError("oa_process_attachment_identity_required")
         if not _task_file_component(file_name) or len(file_name) > 255:
             raise AgentReadOnlyViolationError("oa_process_attachment_file_name_invalid")
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        from app.dws_client import DwsClient
         key = (process_instance_id, file_id, file_name)
         if page_number is not None:
             material_path = oa_process_material_paths.get(key)
             if material_path is None or not material_path.is_file():
-                raise AgentReadOnlyViolationError("oa_process_attachment_page_source_unavailable")
+                result = _download_dingtalk_oa_process_attachment(
+                    dws=DwsClient(), process_instance_id=process_instance_id,
+                    file_id=file_id, file_name=file_name,
+                    material_root=Path(drive_material_directory.name),
+                )
+                material_path = Path(str(result["path"]))
+                oa_process_material_paths[key] = material_path
             with material_path.open("rb") as source:
                 source_sha256 = hashlib.file_digest(source, "sha256").hexdigest()
             if material_path.suffix.casefold() == ".pdf":
@@ -2233,10 +2244,6 @@ def build_role_server(
                     source_sha256=source_sha256,
                 )
             raise AgentReadOnlyViolationError("oa_process_attachment_page_requires_pdf_or_pptx")
-        if drive_material_directory is None:
-            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
-            atexit.register(drive_material_directory.cleanup)
-        from app.dws_client import DwsClient
         result = _download_dingtalk_oa_process_attachment(
             dws=DwsClient(), process_instance_id=process_instance_id,
             file_id=file_id, file_name=file_name,
@@ -2302,22 +2309,31 @@ def build_role_server(
 
         Use the file_id and file_name from read_dingtalk_oa_records. Scanned PDFs
         return one-based ocr_page_numbers; pass a listed page_number to receive
-        a bounded JPEG for ai_services.ocr_document. The exact file remains only
-        for this MCP process lifetime. An unavailable premium download is a
-        technical read failure, never evidence that the applicant omitted it.
+        a bounded JPEG for ai_services.ocr_document. A page can be requested
+        directly; a missing local copy uses the same exact source downloader.
+        The exact file remains only for this MCP process lifetime. An unavailable
+        premium download is a technical failure, not evidence of missing material.
         """
         nonlocal drive_material_directory
         if not process_instance_id.strip() or not file_id.strip():
             raise AgentReadOnlyViolationError("oa_comment_attachment_identity_required")
         if not _task_file_component(file_name) or len(file_name) > 255:
             raise AgentReadOnlyViolationError("oa_comment_attachment_file_name_invalid")
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        from app.dws_client import DwsClient
         key = (process_instance_id, file_id, file_name)
         if page_number is not None:
             material_path = oa_comment_material_paths.get(key)
             if material_path is None or not material_path.is_file():
-                raise AgentReadOnlyViolationError(
-                    "oa_comment_attachment_page_source_unavailable"
+                result = _download_dingtalk_oa_comment_attachment(
+                    dws=DwsClient(), process_instance_id=process_instance_id,
+                    file_id=file_id, file_name=file_name,
+                    material_root=Path(drive_material_directory.name),
                 )
+                material_path = Path(str(result["path"]))
+                oa_comment_material_paths[key] = material_path
             if material_path.suffix.casefold() != ".pdf":
                 raise AgentReadOnlyViolationError(
                     "oa_comment_attachment_page_requires_pdf"
@@ -2329,12 +2345,6 @@ def build_role_server(
                 source_sha256=source_sha256,
             )
 
-        if drive_material_directory is None:
-            drive_material_directory = tempfile.TemporaryDirectory(
-                prefix="oa-review-"
-            )
-            atexit.register(drive_material_directory.cleanup)
-        from app.dws_client import DwsClient
         result = _download_dingtalk_oa_comment_attachment(
             dws=DwsClient(),
             process_instance_id=process_instance_id,

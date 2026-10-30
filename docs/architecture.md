@@ -1406,6 +1406,8 @@ Message Triage 的 Audit 按触发消息判断 Derek 角色是否有待办。对
 
 ### MCP 服务器可见范围
 
+OA 表单／评论附件分页读取在本地原件未缓存时，使用原有精确流程与文件 ID 的下载路径取得原件，随后执行同一分页渲染和来源摘要检查；不依赖该 MCP 进程事先读取过元数据。文件仍只保存在本进程临时目录，实际下载失败按技术错误返回。
+
 OA Consumer/Audit 收到扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里传递读取工具返回的字节、MIME、页码和摘要给 `ai_services.ocr_document`，仅展示 OCR 文本与来源信息；非 OA Audit 和其他角色保持原直接工具路径。嵌套目录、shell 清单或其他 Agent 的工具列表都不能单独证明本轮 OCR 可用；以本轮实际调用结果判断依赖故障。
 
 Codex 会把 `$CODEX_HOME/config.toml` 中的全部 MCP 服务器合并进每次运行，后台 Agent turn 因此

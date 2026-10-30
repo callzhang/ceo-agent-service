@@ -368,3 +368,97 @@ def test_process_attachment_reader_is_registered_once(caplog):
         "Tool already exists: read_dingtalk_oa_process_attachment" in record.message
         for record in caplog.records
     )
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+@pytest.mark.parametrize("kind", ["process", "comment"])
+@pytest.mark.parametrize("prior", ["none", "another_server", "another_display_name"])
+def test_oa_pdf_page_read_does_not_require_process_local_warmup(
+    role, kind, prior, tmp_path, monkeypatch,
+):
+    from pypdf import PdfWriter
+
+    writer = PdfWriter()
+    writer.add_blank_page(width=200, height=200)
+    encoded = BytesIO()
+    writer.write(encoded)
+    body = encoded.getvalue()
+    calls = []
+
+    class FakeDws:
+        def download_oa_process_attachment_via_cli(self, process, file, *, max_bytes):
+            calls.append((process, file))
+            return body
+
+        def download_oa_process_comment_attachment(self, process, file):
+            calls.append((process, file))
+            return body
+
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    monkeypatch.setattr(agent_cli.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+    tool_name = f"read_dingtalk_oa_{kind}_attachment"
+    tool = agent_cli.build_role_server(role)._tool_manager.get_tool(tool_name)
+    identity = {"process_instance_id": "process-page", "file_id": "file-page"}
+    if prior != "none":
+        asyncio.run(tool.run({**identity, "file_name": "initial-display.pdf"}, convert_result=True))
+        if prior == "another_server":
+            tool = agent_cli.build_role_server(role)._tool_manager.get_tool(tool_name)
+    response = asyncio.run(tool.run({
+        **identity, "file_name": "current-display.pdf", "page_number": 1,
+    }, convert_result=True))
+    page = json.loads(response[0][0].text)
+    assert page["ocr_source_sha256"] == hashlib.sha256(body).hexdigest()
+    assert page["ocr_original_page_number"] == 1
+    assert page["ocr_mime_type"] == "image/jpeg"
+    assert len(base64.b64decode(page["ocr_input_base64"])) <= agent_cli.MAX_OCR_AGENT_INPUT_BYTES
+    assert calls == [("process-page", "file-page")] * (1 if prior == "none" else 2)
+    asyncio.run(tool.run({
+        **identity, "file_name": "current-display.pdf", "page_number": 1,
+    }, convert_result=True))
+    assert len(calls) == (1 if prior == "none" else 2)
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_oa_pptx_first_call_can_read_a_bounded_page(role, tmp_path, monkeypatch):
+    body = _image_only_pptx()
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    monkeypatch.setattr(agent_cli.tempfile, "tempdir", str(tmp_path))
+
+    class FakeDws:
+        def download_oa_process_attachment_via_cli(self, *_args, **_kwargs):
+            return body
+
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+    tool = agent_cli.build_role_server(role)._tool_manager.get_tool(
+        "read_dingtalk_oa_process_attachment"
+    )
+    response = asyncio.run(tool.run({
+        "process_instance_id": "process-slide", "file_id": "file-slide",
+        "file_name": "receipts.pptx", "page_number": 1,
+    }, convert_result=True))
+    page = json.loads(response[0][0].text)
+    assert page["ocr_source_sha256"] == hashlib.sha256(body).hexdigest()
+    assert page["ocr_original_page_number"] == 1
+    assert page["ocr_mime_type"] == "image/jpeg"
+    assert len(base64.b64decode(page["ocr_input_base64"])) <= agent_cli.MAX_OCR_AGENT_INPUT_BYTES
+
+
+@pytest.mark.parametrize("kind", ["process", "comment"])
+def test_oa_first_page_preserves_real_download_error(kind, monkeypatch):
+    class FakeDws:
+        def download_oa_process_attachment_via_cli(self, *_args, **_kwargs):
+            raise RuntimeError("fixture-provider-denied")
+
+        def download_oa_process_comment_attachment(self, *_args, **_kwargs):
+            raise RuntimeError("fixture-provider-denied")
+
+    monkeypatch.setattr("app.dws_client.DwsClient", FakeDws)
+    tool = agent_cli.build_role_server("audit")._tool_manager.get_tool(
+        f"read_dingtalk_oa_{kind}_attachment"
+    )
+    with pytest.raises(ToolError, match="fixture-provider-denied"):
+        asyncio.run(tool.run({
+            "process_instance_id": "process-denied", "file_id": "file-denied",
+            "file_name": "receipts.pdf", "page_number": 1,
+        }, convert_result=True))
