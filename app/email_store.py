@@ -154,9 +154,9 @@ EMAIL_UNSUBSCRIBE_CANCELLATION_SQL = EMAIL_ACTION_PROJECTIONS[
 DIRECT_EMAIL_ACTION_SQL = """
 select a.id as owner_id, a.id as action_id,
        a.action_action_plan_id as action_plan_id,
-       a.action_classification_id as classification_id,
-       a.action_account_id as account_id, a.action_operation as action_type,
-       a.action_parameters_json as parameters_json, a.action_status as status,
+       p.classification_id as classification_id,
+       p.account_id as account_id, a.action_operation as action_type,
+       coalesce(json_extract(p.action_parameters_json,'$.'||a.action_operation),'{}') as parameters_json, a.action_status as status,
        p.config_version,
        coalesce((select max(r.attempt_number) from action_receipts r
                  where r.action_id=a.id and r.attempt_number is not null),0) as attempt_count,
@@ -2953,26 +2953,17 @@ class EmailStore:
                 raise EmailPersistenceCorruption(
                     f"invalid current action status for {row['action_id']}"
                 )
-            parameters = _json_load(
+            _json_load(
                 row["parameters_json"],
                 field="parameters_json",
                 expected_type=dict,
             )
             plan = plans.get(row["action_plan_id"])
             action = EmailAction(row["action_type"])
-            expected_parameters = (
-                dict(plan.action_parameters.get(action, {}))
-                if plan is not None
-                else None
-            )
             immutable_fields_match = plan is not None and (
                 action in plan.direct_actions
                 and row["action_plan_id"] == plan.action_plan_id
                 and row["action_type"] == action.value
-                and row["classification_id"] == plan.classification_id
-                and row["account_id"] == plan.account_id
-                and row["config_version"] == plan.config_version
-                and _json_dump(parameters) == _json_dump(expected_parameters)
             )
             if not immutable_fields_match:
                 raise EmailPersistenceCorruption(
@@ -3378,15 +3369,11 @@ class EmailStore:
         now: str,
     ) -> None:
         for action in plan.direct_actions:
-            parameters = dict(plan.action_parameters.get(action, {}))
             shared_action_lifecycle.create_direct_email_action(
                 db,
                 {
                     "action_plan_id": plan.action_plan_id,
-                    "classification_id": plan.classification_id,
-                    "account_id": plan.account_id,
                     "action_type": action.value,
-                    "parameters_json": _json_dump(parameters),
                     "status": "pending",
                     "created_at": now,
                     "updated_at": now,
@@ -9723,7 +9710,8 @@ class EmailStore:
                 and json_extract(t.trigger_message_json,'$.classification_id')=emails.classification_id
                 and t.status not in ('done','skipped'))
             and not exists(select 1 from actions a where
-                (a.record_type='action' and a.action_classification_id=emails.classification_id
+                (a.record_type='action' and exists(select 1 from ({EMAIL_PLAN_SQL}) p
+                  where p.action_plan_id=a.action_action_plan_id and p.classification_id=emails.classification_id)
                   and a.action_operation in ('archive','flag_important','mark_read','move','trash','label')
                   and a.action_status not in ('done','skipped'))
                 or (a.record_type in ('email_reply_dispatch_claims','email_unsubscribe_claims')

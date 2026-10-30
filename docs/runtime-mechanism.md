@@ -6,7 +6,7 @@
 
 Attempt HTML／JSON详情只接受当前公开Attempt ID；不再把Actions物理ID转换成公开ID或重定向。History链接沿用公开身份。旧service-bugfix候选的生产／查询入口及DTO已退休，其唯一历史记录保留在原存储中，不形成当前待执行任务。同步outbox与跟进回执的应用读取只保留真实运行调用；单元测试使用测试目录内的当前投影窄查询，不在应用中保留测试专用DAO。
 
-Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、Store `2026-10-29.1`→`2026-10-29.2` 的 Attempt 所有权迁移，以及仅 Email 变化的发布；其他版本一律以 `Store schema release needs a verified inverse for this transition` 或 `unsupported current Action source schema; explicit paired release required` 拒绝，较旧提交不再有自动逆迁。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。
+Derek于2026-10-24批准分阶段退役历史迁移链：部署路径 `prepare_database_schema_release` 只处理当前 Store／Email 版本、Store `2026-10-29.2`→`2026-10-30.1` 的 Email Action 所有权迁移，以及仅 Email 变化的发布；其他版本一律以 `Store schema release needs a verified inverse for this transition` 或 `unsupported current Action source schema; explicit paired release required` 拒绝，较旧提交不再有自动逆迁。部署进度 DAO（`ExistingSchemaUpgradeStateStore`）只接受 Email 账本版本 52／53／54，Email 51 及更早的账本报 `unsupported committed Email schema role`。
 
 闸门进锁并按提交复用（Derek 2026-10-28）：闸门测试在仓库互斥锁（`GitRepository.mutex`，阻塞的 flock）里面跑，和安装同一把锁；拿到锁后先看生产是否已被别人推进（是则直接返回「another deploy got there first」，有发布请求的按 `_ProductionMoved` 重来），再跑测试。通过的结果记在服务数据库同目录 `deploy-gate-passed/<sha>.json`（提交、时间、文件数、摘要行），同一提交再部署或安装失败后重试不再跑；失败、超时、检出失败都不记。10-28 当天 Codex 和两个 Claude 会话同时部署，闸门并行，9 次只过 1 次，7 次超 10 分钟、2 次撞 2 GB，这就是起因。
 清单缺失或为空、运行超过 12 分钟（`TEST_GATE_TIMEOUT_SECONDS`；测试进程自身另有 10 分钟和 2 GB 上限）、或无法检出该提交，同样拒绝。失败时保留日志并在报错里给出路径。`--restart` 不运行新代码，不受此限。实现见 `app/deploy.py` 的 `require_green_suite`。
@@ -21,7 +21,7 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 
 Reply Attempt 的摘要与独立原因使用当前同一 owner 编码；相同文本不重复保存，空字符串不同于缺省引用。完全一致的 session/start/end 三元组只引用精确的终态 Run，其他三元组保留在 Attempt。读取通过当前固定投影按类型解析引用，保留原 TEXT／INTEGER 比较亲和性与 BLOB／非数字值；没有按旧 schema、route 或历史类型回退。条件更新在原有事务／CAS 内还原旧事实后修改，再归一存储，仍只执行一次实际 Action 更新。Email、定时和消息三种编排终结调用都传一个最终摘要与 Run 身份；不重复传送 Run 的来源字段。
 
-显式发布只支持准确 Store29.1／Email54 源到 Store29.2／Email54；逆迁从当前引用 owner 还原字段，包含迁移后新增记录，并保留 opaque 其他 payload、身份、分配水位及原 FK 异常集合。旧28.5→29.1转换器及其专用夹具／工具已随发布窗口替换退休，运行时初始化只接受当前声明。
+显式发布只支持准确 Store29.2／Email54 源到 Store30.1／Email54。直接 Email Action 的 classification、account 和当前 operation 参数由精确不可变 Plan 持有；共同 Action 不存这些重复字段。发布预检逐行比较源值及类型并拒绝不一致，逆迁从精确 Plan 还原这些字段，包括迁移后新增记录；其余 payload、身份、分配水位及 FK 异常集合保留。Action JSON 对象键顺序不是业务事实。旧29.1→29.2转换器及其专用夹具／工具随发布窗口退休，运行时初始化只接受当前声明。
 
 当前 native `tasks` 表的 `kind` 合同包含九类：`reply`、`work_summary`、
 `meeting_alignment`、`okr_review`、`okr_analysis`、`workbench_turn`、

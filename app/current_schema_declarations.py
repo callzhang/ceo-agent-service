@@ -3043,14 +3043,9 @@ ACTION_OBJECTS = {'actions': 'create table actions (id integer primary key, _kin
             "then 'effect_steps' when 69 then 'effect_steps' end) virtual,action_origin text generated "
             "always as (case _kind when 64 then 'email' when 68 then 'email_reply' when 69 then "
             "'email_unsubscribe' end) virtual,action_operation text generated always as (case when _kind=70 "
-            "then json_extract(action_data,'$.operation') end) virtual,action_parameters_json text generated "
-            "always as (case when _kind=70 then json_extract(action_data,'$.parameters_json') end) "
-            'virtual,action_status text generated always as (case when _kind=70 then '
+            "then json_extract(action_data,'$.operation') end) virtual,action_status text generated always as (case when _kind=70 then "
             "json_extract(action_data,'$.status') end) virtual,action_action_plan_id text generated always "
             "as (case when _kind=70 then json_extract(action_data,'$.action_plan_id') end) "
-            'virtual,action_classification_id integer generated always as (case when _kind=70 then '
-            "json_extract(action_data,'$.classification_id') end) virtual,action_account_id text generated "
-            "always as (case when _kind=70 then json_extract(action_data,'$.account_id') end) "
             'virtual,action_external_action_key text generated always as (case when _kind=70 then '
             "json_extract(action_data,'$.external_action_key') end) virtual,action_next_attempt_at text "
             "generated always as (case when _kind=70 then json_extract(action_data,'$.next_attempt_at') end) "

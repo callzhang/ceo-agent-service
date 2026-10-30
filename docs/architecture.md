@@ -2330,3 +2330,7 @@ NULL authorization snapshot 和历史 category 仍是原有事实，计划 ID、
 显式 Store28.5→29.1 发布先核实零值/NULL、固定 channel、可精确重建的重复输入身份，
 未知或非中性事实在修改前拒绝。当前数据 inverse 从现有 owner 重建这些已证明的中性
 副本，不另存旧正文；更早已关闭的 Feedback/微信缓存发布链退出当前发布入口。
+
+### 直接邮件 Action 的字段归属
+
+直接邮件 Action 以 Plan ID 和 operation 定位不可变 Plan；classification、account 和对应 operation 参数从该 Plan 投影，Action 本身只保存执行状态等自身事实。账号变更和分类计划切换的 processing 阻挡经相同 Plan 关联检查。Store29.2 到 Store30.1 发布对全部源值及类型作精确核对，逆迁按同一 Plan 还原；其他 Action、回执和 Attempt payload 保留。

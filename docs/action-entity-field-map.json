@@ -3351,7 +3351,7 @@
     ],
     "current_release_ddl": "docs/action-entity-current-target.sql",
     "current_release_ddl_scope": "Exact 463-object Store29.2/Email54 target manifest; generated directly from current_objects(email_ledger=True). The original action-entity-target.sql remains the initial field-contract fixture rendered from the explicit Store25.2 Action declaration, not a runtime schema.",
-    "current_release_ddl_sha256": "d108cda5b5013b48d702a4e4eadf755892bfdb52718adc8b2e43c0c8d8e45d4f"
+    "current_release_ddl_sha256": "59a6cf83196193c147c232d99cc7ceff568fbe49164e8f56c2e20635be4af8ec"
   },
   "indexes": [
     {
@@ -3479,5 +3479,11 @@
       "app/action_storage.py:ENUMS.candidate_action_attempts",
       "app/action_storage.py:source caller uses verified status only for explicit verification"
     ]
+  },
+  "current_email_action_owner": {
+    "classification_id": "email_action_plans.classification_id via actions.action_action_plan_id",
+    "account_id": "email_action_plans.account_id via actions.action_action_plan_id",
+    "parameters_json": "email_action_plans.action_parameters_json[actions.action_operation], absent operation defaults to {}",
+    "source_contract": "The sources and target business_columns above describe the frozen initial Action conversion; current direct Email reads these three fields from the exact immutable Plan. Migration rejects mismatching typed source values before removal."
   }
 }

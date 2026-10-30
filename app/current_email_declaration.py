@@ -25,7 +25,7 @@ EMAIL_OBJECT_SQL = ('CREATE INDEX idx_emails_class_account_locator on '
  'class_status,class_current_action_plan_id on emails when old.classification_id is not null and '
  'new.classification_id is not null and (old.class_status is not new.class_status or '
  'old.class_current_action_plan_id is not new.class_current_action_plan_id) and exists(select 1 from actions '
- "a where a.record_type='action' and a.action_classification_id=old.classification_id and "
+ "a where a.record_type='action' and exists(select 1 from actions p where p.record_type='email_action_plans' and p.email_action_plan_id=a.action_action_plan_id and p.email_classification_id=old.classification_id) and "
  "a.action_status='processing' and a.action_operation in "
  "('archive','flag_important','mark_read','move','trash','label')) begin select "
  "raise(abort,'email_direct_action_in_flight'); end",

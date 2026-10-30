@@ -402,7 +402,7 @@ tests/test_meeting_delivery_health.py
 tests/test_business_candidate_storage.py
 tests/test_business_legacy_owner_storage.py
 tests/test_email_progress_backlog.py
-tests/test_attempt_run_ownership_release.py
+tests/test_email_action_owner_release.py
 tests/test_attempt_run_ownership.py
 tests/test_reply_attempt_action_storage.py
 tests/test_oa_history_storage.py

@@ -770,7 +770,7 @@ def test_direct_email_translation_preserves_attempt_identity_and_rewrites_histor
                 "action_plan_id": plan_id, "action_plan_version": index,
                 "classification_id": 1, "account_id": "account-1", "category": "work",
                 "classification_source": "model", "confidence": 0.5, "model_id": "model-1",
-                "config_version": "config-v1", "actions_json": "[]",
+                "config_version": "config-v1", "actions_json": '["archive"]' if index == 1 else '["label"]',
                 "action_parameters_json": "{}", "legacy_serialization_pre_v16": 0,
                 "created_at": f"plan-created-{index}",
             }
@@ -897,7 +897,7 @@ def test_direct_retry_parent_retargets_only_the_covered_action_reference(tmp_pat
             "action_plan_id": "plan-1", "action_plan_version": 1,
             "classification_id": 1, "account_id": "account-1", "category": "work",
             "classification_source": "model", "confidence": 0.5, "model_id": "model-1",
-            "config_version": "config-v1", "actions_json": "[]",
+            "config_version": "config-v1", "actions_json": '["archive"]',
             "action_parameters_json": "{}", "legacy_serialization_pre_v16": 0,
             "created_at": "plan-created",
         }

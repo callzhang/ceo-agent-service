@@ -223,6 +223,19 @@ DEFAULTS.update({
 })
 
 
+# Source-only declaration for the closed Action entity conversion. The current
+# schema has its own positive declaration and does not use this factory.
+_HISTORICAL_ACTION_FIELDS = (
+    'operation', 'parameters_json', 'status', 'action_plan_id', 'classification_id',
+    'account_id', 'external_action_key', 'next_attempt_at', 'started_at', 'created_at',
+    'updated_at', 'prepared_body', 'prepared_at', 'delivery_channel', 'delivery_key',
+    'feedback_token', 'postfix_version', 'delivery_receipt_id', 'conversation_id',
+    'trigger_message_id', 'recall_key', 'prepared_receipt_id', 'recall_status',
+    'recall_error', 'recalled_at', 'agent_run_id', 'business_object_key', 'action_identity',
+)
+_HISTORICAL_ACTION_INTEGERS = frozenset({'classification_id', 'agent_run_id', 'delivery_receipt_id', 'prepared_receipt_id'})
+
+
 @lru_cache(maxsize=4)
 def action_payloads(reply_variant, *, physical_provenance=False, selection_references=False, execution_owner=False, shared_lifecycle=False, specialized_claims=False, postfix_owner=False, action_entity=False):
     """Frozen historical payload slots for explicit release and inverse work."""
@@ -300,8 +313,8 @@ def _build_action_payloads(attempt_fields, memory_fields, *, physical_provenance
         from app.prepared_action_definitions import CHILDREN
         fields = {kind: names for kind, names in fields.items() if kind not in CHILDREN}
     if action_entity:
-        from app.action_entity_definitions import ACTION_FIELDS, ActionEntityRecordTypes
-        fields["action"] = ACTION_FIELDS
+        from app.action_entity_definitions import ActionEntityRecordTypes
+        fields["action"] = _HISTORICAL_ACTION_FIELDS
         record_types = ActionEntityRecordTypes(record_types)
     return ActionPayloads({kind: PayloadLayout(tuple(names)) for kind, names in fields.items()}, record_types)
 
@@ -602,8 +615,11 @@ def _action_definitions(include_receipts=False, include_postfix=False, include_d
         kind_declarations = "record_type text not null check(record_type in (" + ",".join(repr(k) for k in kinds) + "))"
     action_generated = ()
     if action_entity:
-        from app.action_entity_definitions import ACTION_GENERATED_COLUMNS
-        action_generated = ACTION_GENERATED_COLUMNS
+        action_generated = tuple(
+            f"action_{field} {'integer' if field in _HISTORICAL_ACTION_INTEGERS else 'text'} generated always as "
+            f"(case when _kind=70 then json_extract(action_data,'$.{field}') end) virtual"
+            for field in _HISTORICAL_ACTION_FIELDS
+        )
     table = (
         "create table actions (id integer primary key," + " " + kind_declarations
         + (f",legacy_key text check({key_check})," if action_entity else f",legacy_key text not null check({key_check}),")
