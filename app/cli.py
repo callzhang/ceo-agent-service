@@ -3451,10 +3451,20 @@ def run_runtime_attempt_reclaim_loop(
             store.recover_stale_runtime_attempts(
                 stale_after_seconds=stale_after_seconds
             )
+        except Exception:  # noqa: BLE001, S112 - persistent maintenance loop
+            # One failed recovery check must not block unrelated recovery work.
+            pass
+        try:
             store.recover_expired_terminal_task_runtime_attempts()
         except Exception:  # noqa: BLE001, S112 - persistent maintenance loop
+            pass
+        try:
+            store.recover_stale_processing_reply_tasks(
+                stale_after_seconds=stale_after_seconds
+            )
+        except Exception:  # noqa: BLE001, S112 - persistent maintenance loop
             # A reclaim miss just means the next interval tries again; it is
-            # never a reason to kill the service child over a stale lease.
+            # never a reason to kill the service child over a stale lock.
             pass
         sleep(RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS)
 

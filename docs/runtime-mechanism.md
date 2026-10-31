@@ -928,7 +928,13 @@ Agent Cron Scheduler 在保存触发记录时遇到 SQLite `BUSY`/`LOCKED`，且
 触发记录仍由原有原子校验与去重事务创建。
 
 任务卡死的回收由服务启动恢复、Consumer 的 stale-age 检查和 Dispatcher 的过期租约处理共同负责；
-不再依赖一个隐藏的业务级维护循环。`recover_stale_runtime_attempts` 与 `recover_expired_terminal_task_runtime_attempts` 由常驻组件 `runtime-attempt-reclaim` 每 5 分钟运行，回收运行期间过期的租约，使其不再卡住部署前的静默检查。
+不再依赖一个隐藏的业务级维护循环。常驻组件 `runtime-attempt-reclaim` 每 5 分钟运行
+`recover_stale_runtime_attempts`、`recover_expired_terminal_task_runtime_attempts` 和
+`recover_stale_processing_reply_tasks`。后者使用与 Consumer 相同的停滞阈值和 generation/CAS，
+只重新排队锁定时间已超阈值且当前执行代没有 `starting`/`running` Run 或 RuntimeAttempt 的
+Reply Task。它独立于同步业务 worker，因此即使该 worker 卡在单次 provider 调用中，其他过期任务仍可恢复；
+活跃执行仍保持 processing。邮箱退订的效果围栏与回执核对不变，重新排队本身不代表外部动作成功，
+也不绕过其既有重试/对账门禁。恢复结果不会卡住部署前的静默检查。
 
 启动恢复 `reconcile_done_reply_tasks_with_failed_current_run` 会校正当前执行代最新 run 为
 `failed`、但 task 投影误为 `done` 的回复任务，并保留成功外部动作和已收口错误的排除条件。
