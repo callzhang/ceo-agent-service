@@ -91,10 +91,9 @@ class _CommandDeadlineMixin:
         """Read one IMAP line with the remaining total deadline on each read.
 
         Closing an SSL socket from the timer thread does not reliably interrupt
-        macOS ``SSLSocket`` buffered reads.  Applying the remaining time to the
-        socket before each byte read makes the deadline effective even when a
-        peer trickles a line slowly and the socket's ordinary idle timeout keeps
-        getting reset.
+        macOS ``SSLSocket`` buffered reads.  Read directly from the TLS socket,
+        applying the remaining time before each receive, so a buffered file
+        object cannot retain a blocking read after its deadline.
         """
         line = bytearray()
         while not line.endswith(b"\n"):
@@ -110,7 +109,11 @@ class _CommandDeadlineMixin:
             if session_socket is not None:
                 session_socket.settimeout(read_timeout)
             try:
-                chunk = self.file.read(1)
+                chunk = (
+                    session_socket.recv(1)
+                    if session_socket is not None
+                    else self.file.read(1)
+                )
             except TimeoutError as exc:
                 if self._command_deadline_expired():
                     self._raise_command_timeout(exc)
@@ -148,7 +151,12 @@ class _CommandDeadlineMixin:
             if session_socket is not None:
                 session_socket.settimeout(read_timeout)
             try:
-                chunk = self.file.read1(min(size - len(data), imaplib._SAFE_BUF_SIZE))
+                read_size = min(size - len(data), imaplib._SAFE_BUF_SIZE)
+                chunk = (
+                    session_socket.recv(read_size)
+                    if session_socket is not None
+                    else self.file.read1(read_size)
+                )
             except TimeoutError as exc:
                 if self._command_deadline_expired():
                     self._raise_command_timeout(exc)

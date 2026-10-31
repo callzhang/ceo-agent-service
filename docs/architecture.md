@@ -529,7 +529,7 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 邮箱服务器中的当前文件夹是类别的唯一事实来源。服务维护“业务类别 → 每个账号的精确
 provider 文件夹”绑定并单向创建/校验目标文件夹；分类结果本身不能覆盖文件夹事实。定期把这份文件夹事实读进训练快照的观察任务，一条邮件解析失败（IMAP 读到 `fetch_uid_batch`
-Python 的 email 包无法解析的结构化邮件头）只跳过这一条、游标照常前进，不会重试同一条、也不会拖垮整批。Email worker 的 IMAP 会话（只读读取和确定性 provider 动作）使用共享 transport；socket 空闲超时、初始连接和服务器 greeting 总时限、每条命令总时限均为 90 秒。每次 TLS 缓冲行及 IMAP literal 读取都按同一绝对截止时间设置剩余 socket timeout；服务器持续零星返回字节也不能延长连接初始化或单条命令。任一超时都会让整条连接作废并重连，不能在同一连接上跳过继续读——response 会和下一条命令错位。Inbox
+Python 的 email 包无法解析的结构化邮件头）只跳过这一条、游标照常前进，不会重试同一条、也不会拖垮整批。Email worker 的 IMAP 会话（只读读取和确定性 provider 动作）使用共享 transport；socket 空闲超时、初始连接和服务器 greeting 总时限、每条命令总时限均为 90 秒。TLS 行与 IMAP literal 都直接从 socket 分块读取，每次 receive 使用同一绝对截止时间的剩余时长；服务器持续零星返回字节也不能延长连接初始化或单条命令。任一超时都会让整条连接作废并重连，不能在同一连接上跳过继续读——response 会和下一条命令错位。Inbox
 表示尚未分类，Spam/Trash 固定为内部 `junk`，Sent/Draft 不参加训练。`important` 不是类别，
 而是独立注意信号：兼容 provider 的 Starred/Important/Flagged 信号与成熟模型信号取并集，
 但 junk 始终抑制 important。控制台详情页的 Star / Flag 图标是主人本人的手动点击，直接让服务连上邮箱增删 `\Flagged` / `$Important` 这一个关键字并读回确认，不经过 ActionPlan；观察到的状态随后更新，下一轮扫描再对账。分类确认只保存最终类别、训练反馈和不可变 `ActionPlan`。确定性动作清单是
