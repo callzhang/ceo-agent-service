@@ -6451,6 +6451,57 @@ def test_email_agent_consumer_claims_only_email_channel_without_dingtalk_adapter
     assert calls[5] == ("finalize", task, result)
 
 
+def test_serial_email_consumer_leaves_next_task_pending_until_execution(tmp_path, monkeypatch):
+    module = _module()
+    store = AutoReplyStore(tmp_path / "serial-email.sqlite3")
+    for index in range(2):
+        store.enqueue_reply_task(
+            conversation_id=f"email-thread-{index}",
+            conversation_title="Email task",
+            single_chat=True,
+            trigger_message_id=f"email-message-{index}",
+            trigger_create_time="2026-10-31 00:00:00",
+            trigger_sender="sender@example.test",
+            trigger_text="Process this email",
+            channel="email",
+        )
+    task_ids = [task.id for task in store.peek_reply_tasks(2, channel="email")]
+    assert len(task_ids) == 2
+    processed = []
+    monkeypatch.setattr(
+        "app.task_lifecycle.validate_audited_email_task",
+        lambda _task, _context: True,
+    )
+
+    def process(task, _context, **_kwargs):
+        assert store.get_reply_task(task.id).status == "processing"
+        if not processed:
+            assert task.id == task_ids[0]
+            waiting = store.get_reply_task(task_ids[1])
+            assert waiting.status == "pending"
+            assert waiting.locked_at is None
+            assert waiting.attempts == 0
+        else:
+            assert task.id == task_ids[1]
+            assert store.get_reply_task(task_ids[0]).status == "done"
+        processed.append(task.id)
+        return object()
+
+    module.run_email_agent_task_loop(
+        store,
+        SimpleNamespace(process=process),
+        load_task_context=lambda _task: object(),
+        finalize_task=lambda task, _result: store.complete_reply_task(
+            task.id, expected_execution_generation=task.execution_generation
+        ),
+        sleep=lambda _seconds: None,
+        max_cycles=2,
+    )
+
+    assert processed == task_ids
+    assert [store.get_reply_task(task_id).status for task_id in task_ids] == ["done", "done"]
+
+
 def test_email_agent_consumer_does_not_execute_legacy_auto_reply_task():
     module = _module()
     task = SimpleNamespace(

@@ -32,8 +32,8 @@ CONSUMER_POLL_INTERVAL_SECONDS = 10
 TRAINING_INTERVAL_SECONDS = 60
 MAX_HEALTH_TEXT_LENGTH = 160
 _LOGGER = logging.getLogger(__name__)
-# Email Agent tasks are processed one at a time; keep the claimed tail short.
-EMAIL_TASK_CLAIM_BATCH = 5
+# The consumer executes serially; claim only the item being started.
+EMAIL_TASK_CLAIM_BATCH = 1
 # A claimed task without a live Agent run for this long is orphaned; one with
 # a run is reclaimed once its lock exceeds the hard cap.
 STALE_EMAIL_TASK_SECONDS = 10 * 60

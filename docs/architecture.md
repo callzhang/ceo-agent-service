@@ -524,6 +524,8 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 
 ### Email Agent task 映射
 
+Email task Consumer 串行执行，每轮只领取即将处理的一条任务；后续任务保持 pending，直到轮到它们才创建 processing 锁并开始计时，避免批次内等待被 stale watchdog 误算为执行停滞。领取后的执行、重试和回收阈值沿用现有机制。
+
 > **实现与部署状态：** Email folder classifier 与 audited-v2 lifecycle 已合入 `main`；本机
 > launchd 的独立 Email worker 已启用，并通过真实 IMAP 可逆验证。SMTP 与自动回复仍禁用。
 
