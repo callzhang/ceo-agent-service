@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import imaplib
+import select
 import socket
+import ssl
 import threading
 import time
 from typing import Any
@@ -87,6 +89,50 @@ class _CommandDeadlineMixin:
         with self._command_lock:
             return self._command_expired or time.monotonic() >= self._command_deadline
 
+    def _receive(self, size: int) -> bytes:
+        """Receive without entering a blocking TLS read outside the deadline."""
+        session_socket = getattr(self, "sock", None)
+        if session_socket is None:
+            return self.file.read(size)
+        while True:
+            remaining = self._command_deadline - time.monotonic()
+            if remaining <= 0:
+                self._raise_command_timeout(
+                    TimeoutError("IMAP receive exceeded its total deadline")
+                )
+            wait_timeout = remaining
+            if self._socket_timeout is not None:
+                wait_timeout = min(wait_timeout, self._socket_timeout)
+            try:
+                session_socket.setblocking(False)
+                try:
+                    return session_socket.recv(size)
+                except (BlockingIOError, ssl.SSLWantReadError):
+                    pending = getattr(session_socket, "pending", None)
+                    if callable(pending) and pending() > 0:
+                        continue
+                    readable, _, _ = select.select(
+                        [session_socket], [], [], wait_timeout
+                    )
+                    if readable:
+                        continue
+                except ssl.SSLWantWriteError:
+                    _, writable, _ = select.select(
+                        [], [session_socket], [], wait_timeout
+                    )
+                    if writable:
+                        continue
+            finally:
+                try:
+                    session_socket.settimeout(self._socket_timeout)
+                except OSError:
+                    pass
+            if self._command_deadline_expired():
+                self._raise_command_timeout(
+                    TimeoutError("IMAP receive exceeded its total deadline")
+                )
+            raise TimeoutError("IMAP socket idle read timed out")
+
     def _get_line(self) -> bytes:
         """Read one IMAP line with the remaining total deadline on each read.
 
@@ -102,15 +148,10 @@ class _CommandDeadlineMixin:
                 self._raise_command_timeout(
                     TimeoutError("IMAP line read exceeded its total deadline")
                 )
-            read_timeout = remaining
-            if self._socket_timeout is not None:
-                read_timeout = min(read_timeout, self._socket_timeout)
             session_socket = getattr(self, "sock", None)
-            if session_socket is not None:
-                session_socket.settimeout(read_timeout)
             try:
                 chunk = (
-                    session_socket.recv(1)
+                    self._receive(1)
                     if session_socket is not None
                     else self.file.read(1)
                 )
@@ -144,16 +185,11 @@ class _CommandDeadlineMixin:
                 self._raise_command_timeout(
                     TimeoutError("IMAP literal read exceeded its total deadline")
                 )
-            read_timeout = remaining
-            if self._socket_timeout is not None:
-                read_timeout = min(read_timeout, self._socket_timeout)
             session_socket = getattr(self, "sock", None)
-            if session_socket is not None:
-                session_socket.settimeout(read_timeout)
             try:
                 read_size = min(size - len(data), imaplib._SAFE_BUF_SIZE)
                 chunk = (
-                    session_socket.recv(read_size)
+                    self._receive(read_size)
                     if session_socket is not None
                     else self.file.read1(read_size)
                 )

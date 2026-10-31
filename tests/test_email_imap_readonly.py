@@ -2157,6 +2157,95 @@ def test_ssl_imap_literal_deadline_does_not_depend_on_shutdown_interrupting_read
     assert stopped.wait(0.5)
 
 
+def test_real_tls_imap_literal_deadline_stops_a_trickling_server(
+    tmp_path: Path,
+) -> None:
+    import ssl
+
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "localhost")])
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    certificate = (
+        x509.CertificateBuilder()
+        .subject_name(subject)
+        .issuer_name(subject)
+        .public_key(key.public_key())
+        .serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(
+            x509.SubjectAlternativeName([x509.DNSName("localhost")]),
+            critical=False,
+        )
+        .sign(key, hashes.SHA256())
+    )
+    cert_path = tmp_path / "imap-test-cert.pem"
+    key_path = tmp_path / "imap-test-key.pem"
+    cert_path.write_bytes(certificate.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(
+        key.private_bytes(
+            serialization.Encoding.PEM,
+            serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+    )
+    server_context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server_context.load_cert_chain(cert_path, key_path)
+    client_context = ssl.create_default_context(cafile=str(cert_path))
+
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    stopped = threading.Event()
+
+    def server() -> None:
+        try:
+            raw, _ = listener.accept()
+            with server_context.wrap_socket(raw, server_side=True) as connection:
+                stream = connection.makefile("rb")
+                connection.sendall(b"* OK server greeting\r\n")
+                capability = stream.readline().split()[0]
+                connection.sendall(
+                    b"* CAPABILITY IMAP4rev1\r\n"
+                    + capability
+                    + b" OK capabilities complete\r\n"
+                )
+                stream.readline()  # NOOP
+                connection.sendall(b"* 1 FETCH (BODY[] {110}\r\n")
+                for byte in b"x" * 110:
+                    connection.sendall(bytes((byte,)))
+                    time.sleep(0.02)
+        except OSError:
+            pass
+        finally:
+            listener.close()
+            stopped.set()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    session = DeadlineIMAP4SSL(
+        "localhost",
+        port,
+        ssl_context=client_context,
+        timeout=1.0,
+        command_timeout=0.12,
+    )
+    try:
+        with pytest.raises(TimeoutError, match="total deadline"):
+            session.noop()
+    finally:
+        session.shutdown()
+    assert time.monotonic() - started < 0.8
+    assert stopped.wait(0.5)
+
+
 def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) -> None:
     # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": a non-OK
     # login status used to raise a bare "IMAP login failed" with the server's
