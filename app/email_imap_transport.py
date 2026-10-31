@@ -22,7 +22,38 @@ class _CommandDeadlineMixin:
         self._command_timer: threading.Timer | None = None
         self._command_active = False
         self._command_expired = False
-        super().__init__(*args, **kwargs)
+        self._initialization_deadline_active = False
+        self._start_command_deadline()
+        self._initialization_deadline_active = True
+        try:
+            super().__init__(*args, **kwargs)
+        except Exception as exc:
+            expired = self._command_deadline_expired()
+            self._initialization_deadline_active = False
+            if expired and not (
+                isinstance(exc, TimeoutError) and "total deadline" in str(exc)
+            ):
+                self._raise_command_timeout(exc)
+            self._finish_command()
+            raise
+        else:
+            self._initialization_deadline_active = False
+            if self._command_deadline_expired():
+                self._raise_command_timeout(
+                    TimeoutError("IMAP initialization exceeded its total deadline")
+                )
+            self._finish_command()
+
+    def open(self, *args: Any, **kwargs: Any) -> Any:
+        result = super().open(*args, **kwargs)
+        if self._initialization_deadline_active and self._command_deadline_expired():
+            session_socket = getattr(self, "sock", None)
+            if session_socket is not None:
+                try:
+                    session_socket.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
+        return result
 
     def _start_command_deadline(self) -> None:
         with self._command_lock:
@@ -71,13 +102,16 @@ class _CommandDeadlineMixin:
         ) from cause
 
     def _command(self, name: str, *args: Any) -> bytes:
-        self._start_command_deadline()
+        initializing = self._initialization_deadline_active
+        if not initializing:
+            self._start_command_deadline()
         try:
             return super()._command(name, *args)
         except Exception as exc:
             if self._command_deadline_expired():
                 self._raise_command_timeout(exc)
-            self._finish_command()
+            if not initializing:
+                self._finish_command()
             raise
 
     def _get_tagged_response(self, tag: bytes, expect_bye: bool = False) -> Any:
@@ -88,13 +122,15 @@ class _CommandDeadlineMixin:
                 self._raise_command_timeout(exc)
             raise
         finally:
-            self._finish_command()
+            if not self._initialization_deadline_active:
+                self._finish_command()
 
     def _command_complete(self, name: str, tag: bytes) -> Any:
         try:
             return super()._command_complete(name, tag)
         finally:
-            self._finish_command()
+            if not self._initialization_deadline_active:
+                self._finish_command()
 
 
 class DeadlineIMAP4SSL(_CommandDeadlineMixin, imaplib.IMAP4_SSL):

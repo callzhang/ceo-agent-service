@@ -2000,6 +2000,43 @@ def test_readonly_imap_command_has_total_deadline_when_server_trickles_bytes() -
     assert stopped.wait(0.5)
 
 
+def test_imap_initial_greeting_has_total_deadline_when_server_trickles_bytes() -> None:
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    stopped = threading.Event()
+
+    def server() -> None:
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                stream = connection.makefile("rb")
+                for byte in b"* OK server greeting\r\n":
+                    connection.sendall(bytes((byte,)))
+                    time.sleep(0.02)
+                capability = stream.readline().split()[0]
+                connection.sendall(
+                    b"* CAPABILITY IMAP4rev1\r\n"
+                    + capability
+                    + b" OK capabilities complete\r\n"
+                )
+        except OSError:
+            pass
+        finally:
+            stopped.set()
+            listener.close()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="total deadline"):
+        _DeadlineIMAP4("127.0.0.1", port, timeout=1.0, command_timeout=0.12)
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.8
+    assert stopped.wait(0.5)
+
+
 def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) -> None:
     # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": a non-OK
     # login status used to raise a bare "IMAP login failed" with the server's
