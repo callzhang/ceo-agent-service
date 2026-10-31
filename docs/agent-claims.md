@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-list-query-identity-20261031 | frontend/src/pages/TasksPage.tsx; AttentionPage.tsx; HistoryPage.tsx; ListQueryIdentity.test.tsx; frontend/src/components/charts/StackedBarChart.tsx; focused list tests; docs/architecture.md and runtime-mechanism.md list-state paragraph only; docs/validation/2026-10-31-list-query-identity.json; own claim | Reproduce and fix current list query/result ownership and late responses; no DDL or external actions; standard coordinated release and owned cleanup | 2026-10-31 active |
 
 
 

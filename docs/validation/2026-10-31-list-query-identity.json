@@ -1,7 +1,7 @@
 {
   "scope": "Tasks/Attention/History list query ownership; frontend only, no DDL/API/policy changes",
   "baseline": "ab47055f9d08dbde15664623cce313d298432270",
-  "status": "reviewed_focused_green_pending_standard_release",
+  "status": "scoped_lists_released_verified_owned_artifacts_cleaned",
   "red": {
     "initial_cases": 37,
     "failed": 23,
@@ -51,7 +51,7 @@
         "total": null,
         "page": null,
         "page_size": null,
-        "ids": []
+        "sample_ids": []
       },
       {
         "kind": "tasks1",
@@ -62,27 +62,12 @@
         "total": 862,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "862",
           "861",
           "860",
           "859",
-          "858",
-          "857",
-          "856",
-          "855",
-          "854",
-          "853",
-          "852",
-          "851",
-          "850",
-          "849",
-          "848",
-          "847",
-          "846",
-          "845",
-          "844",
-          "843"
+          "858"
         ]
       },
       {
@@ -94,27 +79,12 @@
         "total": 862,
         "page": 2,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "842",
           "841",
           "840",
           "839",
-          "838",
-          "837",
-          "836",
-          "835",
-          "834",
-          "833",
-          "832",
-          "831",
-          "830",
-          "829",
-          "828",
-          "827",
-          "826",
-          "825",
-          "824",
-          "823"
+          "838"
         ]
       },
       {
@@ -126,27 +96,12 @@
         "total": 403,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "862",
           "860",
           "859",
           "857",
-          "856",
-          "855",
-          "852",
-          "851",
-          "846",
-          "843",
-          "833",
-          "832",
-          "830",
-          "826",
-          "824",
-          "823",
-          "822",
-          "821",
-          "820",
-          "819"
+          "856"
         ]
       },
       {
@@ -158,7 +113,7 @@
         "total": 1,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "100"
         ]
       },
@@ -171,22 +126,12 @@
         "total": 15,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "12",
           "7",
           "3",
           "2",
-          "11",
-          "9",
-          "5",
-          "15",
-          "14",
-          "13",
-          "10",
-          "1",
-          "8",
-          "6",
-          "4"
+          "11"
         ]
       },
       {
@@ -198,7 +143,7 @@
         "total": 4,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "12",
           "7",
           "3",
@@ -214,27 +159,12 @@
         "total": 33,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "1",
           "20",
           "21",
           "22",
-          "23",
-          "24",
-          "25",
-          "26",
-          "27",
-          "28",
-          "29",
-          "30",
-          "31",
-          "32",
-          "33",
-          "34",
-          "35",
-          "36",
-          "37",
-          "38"
+          "23"
         ]
       },
       {
@@ -246,7 +176,7 @@
         "total": 0,
         "page": null,
         "page_size": null,
-        "ids": []
+        "sample_ids": []
       },
       {
         "kind": "history1",
@@ -257,27 +187,12 @@
         "total": 39861,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "16481",
           "127830",
           "127826",
           "127824",
-          "127822",
-          "127821",
-          "127819",
-          "127817",
-          "127816",
-          "127814",
-          "127812",
-          "127804",
-          "127802",
-          "127776",
-          "16480",
-          "127799",
-          "16479",
-          "127762",
-          "127792",
-          "127790"
+          "127822"
         ]
       },
       {
@@ -289,27 +204,12 @@
         "total": 39861,
         "page": 2,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "127788",
           "127784",
           "127782",
           "127780",
-          "16478",
-          "127778",
-          "127774",
-          "127772",
-          "127768",
-          "16477",
-          "127766",
-          "16476",
-          "127764",
-          "429206",
-          "127756",
-          "127611",
-          "400874",
-          "400873",
-          "127592",
-          "429106"
+          "16478"
         ]
       },
       {
@@ -321,7 +221,7 @@
         "total": 0,
         "page": 1,
         "page_size": 50,
-        "ids": []
+        "sample_ids": []
       },
       {
         "kind": "history_search",
@@ -332,27 +232,12 @@
         "total": 6483,
         "page": 1,
         "page_size": 20,
-        "ids": [
+        "sample_ids": [
           "16481",
           "127814",
           "127812",
           "127776",
-          "127762",
-          "127782",
-          "127780",
-          "127778",
-          "127772",
-          "127768",
-          "16477",
-          "127766",
-          "127756",
-          "400874",
-          "400873",
-          "127726",
-          "127718",
-          "127715",
-          "127709",
-          "127703"
+          "127762"
         ]
       },
       {
@@ -364,7 +249,7 @@
         "total": 12,
         "page": 1,
         "page_size": 12,
-        "ids": []
+        "sample_ids": []
       },
       {
         "kind": "chart",
@@ -375,7 +260,7 @@
         "total": null,
         "page": null,
         "page_size": null,
-        "ids": []
+        "sample_ids": []
       },
       {
         "kind": "workers",
@@ -386,7 +271,7 @@
         "total": null,
         "page": null,
         "page_size": null,
-        "ids": []
+        "sample_ids": []
       }
     ],
     "schema": {
@@ -399,16 +284,424 @@
     "frontend_stamp": "f5f8e7b9f14571ca4bd541fb7fed85d324bf4110"
   },
   "release": {
-    "status": "pending",
-    "owner_coordination": "Parallel authorized Email owner will coordinate a single standard exact-target release; no concurrent deploy"
+    "status": "succeeded",
+    "installed": "df41fd7573a927c504094b85ce2570ead2785004",
+    "operation": "deploy-be36890c-600d-44ed-afc9-132b2409eb50",
+    "gate": {
+      "passed": 8578,
+      "skipped": 2,
+      "deselected": 1,
+      "seconds": 468.19,
+      "files": 429,
+      "passed_at": "2026-10-31T20:13:27+00:00",
+      "memory_limit": "2GB",
+      "time_limit_seconds": 600
+    },
+    "supervisor_pid_reported_by_owner": 86900,
+    "api_pid_independently_verified": "86917",
+    "coordination": "Parallel authorized Email owner performed the sole successful standard deployment; this task never started deploy. Frontend files unchanged from focused tested feature commit to installed target."
   },
   "cleanup": {
-    "status": "pending",
+    "status": "owned_paths_deleted_verified",
     "owned_tmp": "/private/tmp/ceo-list-query-identity.jeOG1Y",
     "generated_dev_build": "app/static/workbench",
-    "protected": "Production DB, native trajectories, parallel owner daily backup and artifacts"
+    "protected": "Production DB, native trajectories, parallel owner daily backup and artifacts",
+    "held_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-31.sqlite3",
+      "stat": {
+        "device": 16777231,
+        "inode": 846233485,
+        "mtime_ns": 1793477672969565187,
+        "size": 514969600
+      },
+      "integrity": "ok",
+      "complete_marker": "CEOB",
+      "unchanged_generation": true,
+      "deleted": false,
+      "hold_reason": "Explicit concurrent Email owner request; verification still active. Not owned by this UI task."
+    },
+    "release_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-be36890c-600d-44ed-afc9-132b2409eb50.sqlite3",
+      "status": "retired_by_native_verified_backup_workflow",
+      "path_and_sidecars_absent": true,
+      "manual_deletion": false
+    },
+    "deleted_paths": [
+      "/private/tmp/ceo-list-query-identity.jeOG1Y",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench"
+    ],
+    "no_open_references_before_deletion": true,
+    "deleted_paths_absent": true,
+    "production_db_and_frontend_preserved": true,
+    "post_cleanup_health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "post_cleanup_installed": "df41fd7573a927c504094b85ce2570ead2785004"
   },
   "limitations": [
-    "No production browser interaction claimed; production version/API/served assets readback pending."
-  ]
+    "Production browser clicks were not run because local browser use is disabled; evidence is real routed component interactions, actual production GETs and served asset byte comparisons.",
+    "Concurrent Email recovery business outcomes and held daily backup are owned by the parallel authorized task, not this list-state fix."
+  ],
+  "production_after": {
+    "observed_at": "2026-10-31T20:15:55Z",
+    "installed": "df41fd7573a927c504094b85ce2570ead2785004",
+    "reads": [
+      {
+        "kind": "health",
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.017,
+        "rows": 0,
+        "total": null,
+        "page": null,
+        "page_size": null,
+        "health": {
+          "ok": true,
+          "status": "ok"
+        },
+        "identities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sample_ids": []
+      },
+      {
+        "kind": "tasks1",
+        "path": "/api/console/tasks/all?page=1&page_size=20",
+        "status": 200,
+        "seconds": 0.042,
+        "rows": 20,
+        "total": 862,
+        "page": 1,
+        "page_size": 20,
+        "identities_sha256": "9c17ce3d71ff0f260ffde3fdf4c91a9e5fc971618d6a19d4fd664c2e3abca5b2",
+        "sample_ids": [
+          "862",
+          "861",
+          "860",
+          "859",
+          "858"
+        ]
+      },
+      {
+        "kind": "tasks2",
+        "path": "/api/console/tasks/all?page=2&page_size=20",
+        "status": 200,
+        "seconds": 0.018,
+        "rows": 20,
+        "total": 862,
+        "page": 2,
+        "page_size": 20,
+        "identities_sha256": "430b5fac5193b6a718d746b295b366805aeeb91e76016855cd7a97eb5c91c509",
+        "sample_ids": [
+          "842",
+          "841",
+          "840",
+          "839",
+          "838"
+        ]
+      },
+      {
+        "kind": "task_filter",
+        "path": "/api/console/tasks/all?stage=formal&status=open&owner=assigned&page=1&page_size=20",
+        "status": 200,
+        "seconds": 0.02,
+        "rows": 20,
+        "total": 403,
+        "page": 1,
+        "page_size": 20,
+        "filter_matches": true,
+        "identities_sha256": "c3c25e549a49492d865ea17965728ee98042ba52c8e6184cd30e590d7b0761b0",
+        "sample_ids": [
+          "862",
+          "860",
+          "859",
+          "857",
+          "856"
+        ]
+      },
+      {
+        "kind": "task_search",
+        "path": "/api/console/tasks/all?q=CEO&page=1&page_size=20",
+        "status": 200,
+        "seconds": 0.015,
+        "rows": 1,
+        "total": 1,
+        "page": 1,
+        "page_size": 20,
+        "identities_sha256": "751536909c188e0ab0053c7c5da0b5532617e841b18271b33c5e7bf41c6a33fc",
+        "sample_ids": [
+          "100"
+        ]
+      },
+      {
+        "kind": "business_attention",
+        "path": "/api/console/tasks/attention?page=1&page_size=20",
+        "status": 200,
+        "seconds": 0.003,
+        "rows": 15,
+        "total": 15,
+        "page": 1,
+        "page_size": 20,
+        "identities_sha256": "6fb1adcca8889e9f479cdeea31f0101262866d9a98432736d3ac1b13577ad547",
+        "sample_ids": [
+          "12",
+          "7",
+          "3",
+          "2",
+          "11"
+        ]
+      },
+      {
+        "kind": "attention_category",
+        "path": "/api/console/tasks/attention?category=decision&page=1&page_size=20",
+        "status": 200,
+        "seconds": 0.001,
+        "rows": 4,
+        "total": 4,
+        "page": 1,
+        "page_size": 20,
+        "filter_matches": true,
+        "identities_sha256": "c461c179a1730c5e6797ca0603055250f843382aa3318ac3b78be0196fc40acd",
+        "sample_ids": [
+          "12",
+          "7",
+          "3",
+          "2"
+        ]
+      },
+      {
+        "kind": "projects",
+        "path": "/api/console/tasks/projects?page=1&page_size=20&candidate_page=2&candidate_page_size=20",
+        "status": 200,
+        "seconds": 0.017,
+        "rows": 20,
+        "total": 33,
+        "page": 1,
+        "page_size": 20,
+        "identities_sha256": "2aebd77575d21e393ad4d79b566b76faafb60fbf888f0446cc4be35bd181342d",
+        "sample_ids": [
+          "1",
+          "20",
+          "21",
+          "22",
+          "23"
+        ]
+      },
+      {
+        "kind": "attention",
+        "path": "/api/console/attention",
+        "status": 200,
+        "seconds": 0.7,
+        "rows": 0,
+        "total": 0,
+        "page": null,
+        "page_size": null,
+        "identities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sample_ids": []
+      },
+      {
+        "kind": "history1",
+        "path": "/api/console/history?include_chart=0&page=1&page_size=20",
+        "status": 200,
+        "seconds": 0.56,
+        "rows": 20,
+        "total": 39865,
+        "page": 1,
+        "page_size": 20,
+        "identities_sha256": "63670469b11294fdabb20e840b0a834246ac09082db4d8ad386c7db2c0ac121c",
+        "sample_ids": [
+          "task-417957",
+          "16482",
+          "127837",
+          "127835",
+          "16481"
+        ]
+      },
+      {
+        "kind": "history2",
+        "path": "/api/console/history?include_chart=0&page=2&page_size=20",
+        "status": 200,
+        "seconds": 0.376,
+        "rows": 20,
+        "total": 39865,
+        "page": 2,
+        "page_size": 20,
+        "identities_sha256": "93662f5e5c2284269c8877a274ab250617dab6f698b687e4e364febe15ee246c",
+        "sample_ids": [
+          "16479",
+          "127762",
+          "127792",
+          "127790",
+          "127788"
+        ]
+      },
+      {
+        "kind": "history_filter",
+        "path": "/api/console/history?include_chart=0&status=failed&object_type=task&page=1&page_size=50",
+        "status": 200,
+        "seconds": 0.117,
+        "rows": 0,
+        "total": 0,
+        "page": 1,
+        "page_size": 50,
+        "identities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sample_ids": []
+      },
+      {
+        "kind": "history_search",
+        "path": "/api/console/history?include_chart=0&q=CEO&page=1&page_size=20",
+        "status": 200,
+        "seconds": 1.181,
+        "rows": 20,
+        "total": 6485,
+        "page": 1,
+        "page_size": 20,
+        "identities_sha256": "fe3cd000e697604b6fb4e88cf83a044fcd8156216fdb3ee0c90dfe3119776d3a",
+        "sample_ids": [
+          "127837",
+          "127835",
+          "16481",
+          "127814",
+          "127812"
+        ]
+      },
+      {
+        "kind": "history_types",
+        "path": "/api/console/history/types",
+        "status": 200,
+        "seconds": 0.002,
+        "rows": 12,
+        "total": 12,
+        "page": 1,
+        "page_size": 12,
+        "identities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sample_ids": []
+      },
+      {
+        "kind": "chart",
+        "path": "/api/console/history/chart?range=1w",
+        "status": 200,
+        "seconds": 0.147,
+        "rows": 0,
+        "total": null,
+        "page": null,
+        "page_size": null,
+        "identities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sample_ids": []
+      },
+      {
+        "kind": "workers",
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.526,
+        "rows": 0,
+        "total": null,
+        "page": null,
+        "page_size": null,
+        "top_level_fields": [
+          "attention_rows",
+          "components",
+          "connectors",
+          "database",
+          "dispatcher_queues",
+          "email",
+          "human_decision_rows",
+          "queues",
+          "service",
+          "summary",
+          "system_health",
+          "wechat"
+        ],
+        "queue_counts": {},
+        "queue_states": {
+          "service": {
+            "ok": true,
+            "returncode": 0
+          },
+          "connectors": {},
+          "email": {},
+          "database": {},
+          "summary": {
+            "queue_count": 11,
+            "pending": 2,
+            "processing": 1,
+            "failed": 24,
+            "retryable": 0,
+            "attention": 0
+          },
+          "wechat": {},
+          "system_health": {
+            "violations": 0
+          }
+        },
+        "identities_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945",
+        "sample_ids": []
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": []
+    },
+    "pid": "86917",
+    "frontend_tree": "3faa32e7a8a77bc8c324a7ea337ac4122e4df66e",
+    "frontend_stamp": "3faa32e7a8a77bc8c324a7ea337ac4122e4df66e",
+    "chunks": [
+      {
+        "page": "TasksPage",
+        "manifest_key": "src/pages/TasksPage.tsx",
+        "file": "assets/TasksPage-CpZBHhsU.js",
+        "served_exact": true,
+        "sha256": "f604799b7153b5a87e0ec496a2470971b13056bff8f0bb23d9a6baa185404a9e"
+      },
+      {
+        "page": "AttentionPage",
+        "manifest_key": "_AttentionPage-o9SIpDdY.js",
+        "file": "assets/AttentionPage-o9SIpDdY.js",
+        "served_exact": true,
+        "sha256": "8b4dfceeeb9112f0df026d9c2c4a49189488a211072b32e5b50aec09bdde4216"
+      },
+      {
+        "page": "HistoryPage",
+        "manifest_key": "_HistoryPage-zv62Trns.js",
+        "file": "assets/HistoryPage-zv62Trns.js",
+        "served_exact": true,
+        "sha256": "106674682cd67d4ec40bda1f8712c0b5ca902007272bd8ad00514a8779b98b17"
+      }
+    ],
+    "observed_page_overlap": {
+      "tasks": [],
+      "history": []
+    }
+  },
+  "feature_commit": "85fd8833b52b1c8175c7324e3c5d2f06debbf7c9",
+  "first_gate": {
+    "target": "8bed1f3a3b93248d6893c77298ea7bf18109f482",
+    "failed": 4,
+    "passed": 8574,
+    "skipped": 2,
+    "deselected": 1,
+    "seconds": 518.94,
+    "installed": false,
+    "failures": [
+      "tests/test_email_embedding_client.py::test_real_httpx_client_stops_slow_drip_at_absolute_deadline",
+      "tests/test_email_worker.py::test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams",
+      "tests/test_email_worker.py::test_execution_resolves_selected_candidate_before_executing",
+      "tests/test_email_worker.py::test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory"
+    ],
+    "resolution": "Release owner supplied existing current-position timestamp fields to worker fixtures, preserving production strict reads; unchanged HTTP timing test rechecked. All assertions and limits retained; full second gate passed."
+  },
+  "ui_validation": {
+    "new_component_cases": 48,
+    "commit_phase_stale_content_checked": true,
+    "manual_browser": "not_run: Local browser use is disabled in Work settings",
+    "production_api_reads": 16,
+    "all_http_200": true,
+    "served_page_chunks_exact": 3,
+    "schema_exact_before": true,
+    "fk_unchanged": true,
+    "observed_page_overlap_empty": true,
+    "search_and_filter_results_verified": true,
+    "readback_probe_correction": "Attention and History are shared Vite chunks, selected uniquely by actual manifest name; validation script corrected before final successful readback, no application change."
+  },
+  "closed_at": "2026-10-31T20:17:42Z"
 }
