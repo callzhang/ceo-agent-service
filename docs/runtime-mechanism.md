@@ -668,6 +668,8 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 
 Reply Task 的 stale 恢复另由独立 Email watchdog 周期执行，不依赖 Agent consumer 处理完当前任务。它复用 generation/CAS 恢复，只回收超过 stale 阈值且当前 generation 没有运行中 Run 或 RuntimeAttempt 的 Email Task；有活动执行记录的任务继续保持 processing。watchdog 只将原任务释放回队列，不执行外部邮件动作、不刷新租约，也不改写 History。
 
+退订入口原文读取复用 `EmailSourceReader`：按当前保存的来源坐标和文件夹事实精确读取原信，位置变化时使用该读取器既有的定位流程，继续核对 UIDVALIDITY、稳定 Message-ID 与原文版本。已知位置有效时不枚举所有文件夹或扫描全邮箱邮件头；读取失败继续进入原任务现有错误处理，不能替换为其他邮件或其他退订入口。
+
 Email task Consumer 串行执行，每轮只领取即将处理的一条任务；后续任务保持 pending，直到轮到它们才创建 processing 锁并开始计时，避免批次内等待被 stale watchdog 误算为执行停滞。领取后的执行、重试和回收阈值沿用现有机制。
 
 稳定 Message-ID 查找若在多个文件夹命中，属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试；超时、DNS 和连接错误仍可重试。身份问题解决后，才可重新处理该邮件动作。
