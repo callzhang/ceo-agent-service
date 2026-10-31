@@ -662,6 +662,8 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 永久删除、IMAP `EXPUNGE`
 和清空 Trash 不存在可调用路径。
 
+Reply Task 的 stale 恢复另由独立 Email watchdog 周期执行，不依赖 Agent consumer 处理完当前任务。它复用 generation/CAS 恢复，只回收超过 stale 阈值且当前 generation 没有运行中 Run 或 RuntimeAttempt 的 Email Task；有活动执行记录的任务继续保持 processing。watchdog 只将原任务释放回队列，不执行外部邮件动作、不刷新租约，也不改写 History。
+
 稳定 Message-ID 查找若在多个文件夹命中，属于确定性身份歧义：在只读状态定位阶段失败，不执行邮件写入，也不自动重试；超时、DNS 和连接错误仍可重试。身份问题解决后，才可重新处理该邮件动作。
 
 历史 move 因 `readback_missing` 成为 `skipped` 时，可针对单个 action 调用

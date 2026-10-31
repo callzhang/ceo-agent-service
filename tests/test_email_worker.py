@@ -2031,6 +2031,7 @@ def test_historical_job_is_not_an_automatic_worker_component():
         "email-classifier-agent",
         "email-provider-actions",
         "email-agent-consumer",
+        "email-task-recovery-watchdog",
         "email-training",
     ]
 
@@ -6140,14 +6141,16 @@ def test_email_worker_components_keep_discovery_outside_internal_daemon_threads(
         "ceo-agent-email-classifier-agent",
         "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-task-recovery-watchdog",
         "ceo-agent-email-training",
     ]
     assert all(event[2] is True for event in created)
-    assert len({id(event[3]) for event in created}) == 4
+    assert len({id(event[3]) for event in created}) == 5
     assert [event[1] for event in events if event[0] == "started"] == [
         "ceo-agent-email-classifier-agent",
         "ceo-agent-email-provider-actions",
         "ceo-agent-email-agent-consumer",
+        "ceo-agent-email-task-recovery-watchdog",
         "ceo-agent-email-training",
     ]
 
@@ -6166,12 +6169,14 @@ def test_email_worker_components_use_exact_independent_loop_functions():
         "email-classifier-agent",
         "email-provider-actions",
         "email-agent-consumer",
+        "email-task-recovery-watchdog",
         "email-training",
     )
     assert tuple(target.func for _name, target in components) == (
         module.run_email_classification_consumer_loop,
         module.run_email_provider_action_delivery_loop,
         module.run_email_agent_task_loop,
+        module.run_email_task_recovery_watchdog_loop,
         module.run_training_scheduler_loop,
     )
     assert components[1][1].keywords["provider_observation_complete"] is (

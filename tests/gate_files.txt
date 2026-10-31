@@ -230,6 +230,7 @@ tests/test_needs_human_authorization_gate.py
 tests/test_business_console_source_reader.py
 tests/test_provider_state_current.py
 tests/test_email_task_producer.py
+tests/test_email_task_recovery_watchdog.py
 tests/test_agent_reported_error.py
 tests/test_email_unsubscribe_evidence.py
 tests/test_schema_snapshots.py

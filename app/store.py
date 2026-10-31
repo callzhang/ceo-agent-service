@@ -9818,6 +9818,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         *,
         stale_after_seconds: int = 900,
         limit: int = 100,
+        channel: str | None = None,
     ) -> list[ReplyTask]:
         """Requeue a task holding a lock no run is working on any more.
 
@@ -9843,6 +9844,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 where tasks.kind='reply' and tasks.status='processing'
                   and trim(coalesce(tasks.locked_at, ''))<>''
                   and datetime(tasks.locked_at) < datetime('now', ?)
+                  and (? is null or canonical.channel=?)
                   and not exists (
                       select 1 from runs
                       where runs.task_id=tasks.id
@@ -9860,7 +9862,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 order by tasks.id
                 limit ?
                 """,
-                (f"-{int(stale_after_seconds)} seconds", limit),
+                (f"-{int(stale_after_seconds)} seconds", channel, channel, limit),
             ).fetchall()
             recovered: list[ReplyTask] = []
             for row in rows:

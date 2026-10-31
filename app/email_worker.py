@@ -1834,6 +1834,42 @@ def _recover_stale_email_tasks(task_store: object) -> None:
             )
 
 
+def run_email_task_recovery_watchdog_loop(
+    task_store: object,
+    *,
+    record_health: Callable[[str, Mapping[str, object]], object] = _ignore_health,
+    component_ready: Callable[[str], object] | None = None,
+    sleep: Callable[[float], None] = time.sleep,
+    max_cycles: int | None = None,
+) -> None:
+    """Recover stale, unowned Email tasks while the consumer is busy."""
+    cycles = 0
+    while max_cycles is None or cycles < max_cycles:
+        try:
+            recovered = task_store.recover_stale_processing_reply_tasks(
+                stale_after_seconds=STALE_EMAIL_TASK_SECONDS,
+                limit=100,
+                channel="email",
+            )
+            health: dict[str, object] = {
+                "status": "ready",
+                "recovered": len(recovered),
+            }
+        except Exception as exc:  # noqa: BLE001 - next watchdog pass retries
+            health = {
+                "status": "degraded",
+                "error_code": "stale_task_recovery_failed",
+                "error_type": type(exc).__name__[:MAX_HEALTH_TEXT_LENGTH],
+            }
+            _LOGGER.warning("email task recovery watchdog failed: %s", exc)
+        record_health("component:email-task-recovery-watchdog", health)
+        if health["status"] == "ready" and component_ready is not None:
+            component_ready("email-task-recovery-watchdog")
+        cycles += 1
+        if max_cycles is None or cycles < max_cycles:
+            sleep(CONSUMER_POLL_INTERVAL_SECONDS)
+
+
 def _recover_terminal_direct_unsubscribe_tasks(
     task_store: object,
     email_store: object,
@@ -2602,6 +2638,15 @@ def email_worker_components(
                 finalize_direct_unsubscribe_task=getattr(
                     dependencies, "finalize_direct_unsubscribe_task", None
                 ),
+            ),
+        ),
+        (
+            "email-task-recovery-watchdog",
+            partial(
+                run_email_task_recovery_watchdog_loop,
+                dependencies.task_store,
+                record_health=dependencies.record_health,
+                component_ready=component_ready,
             ),
         ),
         (
@@ -4706,6 +4751,7 @@ def run_email_worker(
             "email-classifier-agent",
             "email-provider-actions",
             "email-agent-consumer",
+            "email-task-recovery-watchdog",
         )
         component_names = readiness_component_names
         readiness = EmailWorkerReadiness(
