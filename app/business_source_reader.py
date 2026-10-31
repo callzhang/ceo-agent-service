@@ -282,11 +282,8 @@ def _source_input_from_fact(fact: BusinessTaskSignalFact, body: str):
     )
 
 
-def source_view(fact: BusinessTaskSignalFact, reading: SourceReadResult) -> dict[str, object]:
-    """Public Signal fields with an honest original availability result."""
-    if reading.binding != fact.source:
-        reading = UnavailableSource(fact.source, SourceUnavailableReason.BINDING_CONFLICT)
-    available = isinstance(reading, AvailableSource)
+def source_reference(fact: BusinessTaskSignalFact) -> dict[str, object]:
+    """Retained source coordinates, without claiming an original has been read."""
     return {
         "id": fact.id, "source_type": fact.source_type,
         "source_ref": fact.source_ref, "source_time": fact.source_time,
@@ -297,6 +294,16 @@ def source_view(fact: BusinessTaskSignalFact, reading: SourceReadResult) -> dict
         "author_kind": fact.author_kind.value,
         "context_json": fact.context_json, "dedupe_key": fact.dedupe_key,
         "created_at": fact.created_at,
+    }
+
+
+def source_view(fact: BusinessTaskSignalFact, reading: SourceReadResult) -> dict[str, object]:
+    """Public Signal fields with an honest original availability result."""
+    if reading.binding != fact.source:
+        reading = UnavailableSource(fact.source, SourceUnavailableReason.BINDING_CONFLICT)
+    available = isinstance(reading, AvailableSource)
+    return {
+        **source_reference(fact),
         "evidence_text": reading.body if available else None,
         "source_available": available,
         "source_unavailable_reason": None if available else reading.reason.value,

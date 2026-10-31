@@ -1,0 +1,40 @@
+{
+  "status": "focused_tests_review_passed_standard_release_pending",
+  "baseline_commit": "ce666f20a16eab324f1f371885c02d27f2345369",
+  "root_cause": "Project detail synchronously reconstructs every visible original; 20 source bindings,10provider-only reads, multi-page remote transcript reads serially block all project facts.",
+  "previous_version_comparison": {
+    "same_original_reads": true,
+    "reads_per_handler": 20,
+    "provider_only_reads": 10,
+    "same_detail_except_retired_topfield_and_timestamps": true
+  },
+  "timing_seconds": {
+    "original_native_and_database_without_provider": 1.119,
+    "original_actual_provider": 86.588,
+    "new_readonly_detail": 0.08
+  },
+  "provider_calls": 77,
+  "contract": "Project returns existing source reference metadata only; source body and availability remain in existing selected Signal endpoint. No cache, background prefetch, database field, compatibility or retry/audit/authorization change.",
+  "tests": {
+    "backend_red": "1 failed: project request eagerly read original",
+    "frontend_red": "1 failed/9passed: missing selected-original button",
+    "backend_focused": "48passed /11.50s, Project API and Business source/minutes readers",
+    "frontend": "57 passed",
+    "build": "passed",
+    "intermediate_failures": "Old eager-body test adapted to explicit read contract; new async tests initially shared calls because their beforeEach was inside another describe, moved to file scope; assertions retained."
+  },
+  "schema_before": {
+    "objects": 463,
+    "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+    "fk": []
+  },
+  "review": {
+    "verdict": "SPEC_PASS_QUALITY_PASS",
+    "reviewer": "independent terra/medium read-only reviewer",
+    "findings": [],
+    "limitations": "No independent rerun or browser project-switch race; root executed focused regressions and live read-only diagnosis."
+  },
+  "deployment": "pending",
+  "production_readback": "pending",
+  "cleanup": "pending"
+}

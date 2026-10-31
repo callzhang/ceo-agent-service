@@ -4,8 +4,8 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { BusinessProjectDetail, BusinessTaskSummary, ProjectContext } from "../api/console";
 
-const crmApi = vi.hoisted(() => ({ get: vi.fn<typeof import("../api/console").getBusinessProjectDetail>(), search: vi.fn(), confirm: vi.fn(), clear: vi.fn() }));
-vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessProjectDetail: crmApi.get, searchBusinessProjectCrmCustomers: crmApi.search, confirmBusinessProjectCrmCustomer: crmApi.confirm, clearBusinessProjectCrmCustomer: crmApi.clear }));
+const crmApi = vi.hoisted(() => ({ get: vi.fn<typeof import("../api/console").getBusinessProjectDetail>(), search: vi.fn(), confirm: vi.fn(), clear: vi.fn(), original: vi.fn() }));
+vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessProjectDetail: crmApi.get, getBusinessTaskSignalDetail: crmApi.original, searchBusinessProjectCrmCustomers: crmApi.search, confirmBusinessProjectCrmCustomer: crmApi.confirm, clearBusinessProjectCrmCustomer: crmApi.clear }));
 import { TaskProjectDetailPage } from "./TaskProjectDetailPage";
 
 const citation = (signal_id: number, source_ref: string, source_excerpt: string) => ({ signal_id, source_ref, source_excerpt });
@@ -27,14 +27,15 @@ function projectDetail(): BusinessProjectDetail {
   return {
     summary: { id: "2", title: "客户交付项目", registry_source: "经营会确认", canonical_anchor_id: 3, confirmed_task_count: 1, detail_url: "/tasks/project/2", overall_owner: "张三", overall_responsibility: "交付与验收", attention_reason: "回款风险仍需观察，材料完成不代表风险已解除。", responsible_content: "交付与验收", goal: context.goal, deadline: "", current_status: context.facts.map((fact) => fact.text).join("\n"), source_title: "", reporting_period: "", source_url: "", open_task_count: 0, done_task_count: 1, updated_at: "2026-10-04T08:00:00Z" },
     anchor: { id: 3, title: "客户项目" }, context, confirmed_tasks: [sourceTask], suggestions: [suggestion],
-    evidence_signals: [owner.evidence[0], role.evidence[0], paymentCitation, materialsCitation].map((source) => ({ id: source.signal_id, source_type: source.signal_id === 33 ? "dingtalk" : "meeting", source_ref: source.source_ref, source_time: "2026-10-03T09:00:00Z", evidence_text: `保存的完整原文 ${source.signal_id}\n${source.source_excerpt}`, source_available: true, source_unavailable_reason: null, context_json: JSON.stringify({ source_link: `https://example.com/source/${source.signal_id}` }) })),
+    evidence_signals: [owner.evidence[0], role.evidence[0], paymentCitation, materialsCitation].map((source) => ({ id: source.signal_id, source_type: source.signal_id === 33 ? "dingtalk" : "meeting", source_ref: source.source_ref, source_time: "2026-10-03T09:00:00Z", context_json: JSON.stringify({ source_link: `https://example.com/source/${source.signal_id}` }) })),
     context_revisions: [{ id: 9, project_id: 2, context, evidence_signal_ids: [31, 32, 33, 34], created_at: "2026-10-04T08:00:00Z" }],
     evidence_meta: pageMeta, context_revision_meta: { ...pageMeta, total: 1 },
   };
 }
 
+beforeEach(() => vi.clearAllMocks());
+
 describe("TaskProjectDetailPage", () => {
-  beforeEach(() => vi.clearAllMocks());
 
   it("puts persisted project accountability before source Tasks, suggestions and history", async () => {
     crmApi.get.mockResolvedValue({ item: projectDetail(), meta: { snapshot_at: "2026-10-04" } });
@@ -100,7 +101,8 @@ describe("TaskProjectDetailPage", () => {
     expect(screen.getByText("人员分工待明确。")).toBeInTheDocument();
     expect(screen.getByText("暂无关联任务。")).toBeInTheDocument();
     expect(screen.getByText("暂无 Agent 建议。")).toBeInTheDocument();
-    expect(screen.getByText(/^保存的完整原文 31/)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "读取来源 31 原文" })).toBeInTheDocument();
+    expect(crmApi.original).not.toHaveBeenCalled();
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();
     expect(screen.queryByText("李四")).not.toBeInTheDocument();
   });
@@ -160,4 +162,49 @@ describe("TaskProjectDetailPage", () => {
     render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
     expect(await screen.findByRole("alert")).toHaveTextContent("项目资料读取失败");
   });
+});
+
+
+it("loads only the explicitly selected original without blocking project facts", async () => {
+  const item = projectDetail();
+  crmApi.get.mockResolvedValue({ item, meta: { snapshot_at: "2026-10-30" } });
+  crmApi.original.mockResolvedValue({ item: { ...item.evidence_signals[0], evidence_text: "唯一完整会议原文", source_available: true, source_unavailable_reason: null }, meta: { snapshot_at: "2026-10-30" } });
+  render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
+  await screen.findByRole("heading", { name: "客户交付项目" });
+  expect(screen.getAllByText("张三总负责交付与验收。").length).toBeGreaterThan(0);
+  expect(crmApi.original).not.toHaveBeenCalled();
+  expect(screen.queryByText("原文不可用")).not.toBeInTheDocument();
+  await userEvent.click(screen.getByRole("button", { name: "读取来源 31 原文" }));
+  expect(await screen.findByText("唯一完整会议原文")).toBeInTheDocument();
+  expect(crmApi.original).toHaveBeenCalledTimes(1);
+  expect(crmApi.original.mock.calls[0][0]).toBe("31");
+});
+
+
+it("keeps facts usable during a slow original and shows exact unavailable results", async () => {
+  const item = projectDetail();
+  crmApi.get.mockResolvedValue({ item, meta: { snapshot_at: "now" } });
+  let finish: (value: unknown) => void = () => {};
+  crmApi.original.mockReturnValue(new Promise((resolve) => { finish = resolve; }));
+  render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
+  await screen.findByRole("heading", { name: "客户交付项目" });
+  await userEvent.click(screen.getByRole("button", { name: "读取来源 31 原文" }));
+  expect(screen.getByRole("button", { name: "读取来源 31 原文" })).toBeDisabled();
+  expect(screen.getAllByText("回款时间存在不确定性").length).toBeGreaterThan(0);
+  finish({ item: { ...item.evidence_signals[0], evidence_text: null, source_available: false, source_unavailable_reason: "version_mismatch" }, meta: { snapshot_at: "now" } });
+  expect(await screen.findByText("原文不可用")).toBeInTheDocument();
+  expect(crmApi.original).toHaveBeenCalledTimes(1);
+  expect(screen.getByRole("button", { name: "读取来源 32 原文" })).toBeEnabled();
+});
+
+it("shows a selected-original request failure without replacing project facts", async () => {
+  crmApi.get.mockResolvedValue({ item: projectDetail(), meta: { snapshot_at: "now" } });
+  crmApi.original.mockRejectedValue(new Error("来源请求失败"));
+  render(<MemoryRouter><TaskProjectDetailPage projectId="2" /></MemoryRouter>);
+  await screen.findByRole("heading", { name: "客户交付项目" });
+  await userEvent.click(screen.getByRole("button", { name: "读取来源 31 原文" }));
+  expect(await screen.findByRole("alert")).toHaveTextContent("来源请求失败");
+  expect(screen.getAllByText(context.goal).length).toBeGreaterThan(0);
+  expect(screen.queryByText("原文不可用")).not.toBeInTheDocument();
+  expect(screen.getByRole("button", { name: "读取来源 31 原文" })).toBeEnabled();
 });

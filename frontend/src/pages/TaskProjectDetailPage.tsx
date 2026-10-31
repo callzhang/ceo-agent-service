@@ -1,6 +1,6 @@
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 
-import { clearBusinessProjectCrmCustomer, confirmBusinessProjectCrmCustomer, getBusinessProjectDetail, searchBusinessProjectCrmCustomers, type BusinessProjectDetail, type BusinessTaskSignal, type ProjectContext, type ProjectResponsibility } from "../api/console";
+import { clearBusinessProjectCrmCustomer, confirmBusinessProjectCrmCustomer, getBusinessProjectDetail, getBusinessTaskSignalDetail, searchBusinessProjectCrmCustomers, type BusinessProjectDetail, type BusinessSignalReference, type BusinessTaskSignal, type ProjectContext, type ProjectResponsibility } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CitationList, DetailSection, LinkedTaskList, TaskSkeleton } from "./TaskParts";
@@ -10,18 +10,43 @@ import { dateTypeLabels, labelOf } from "./taskLabels";
 
 const trail = [{ label: "Tasks", to: "/tasks" }, { label: "正式项目", to: "/tasks?view=projects" }];
 
-function Responsibilities({ people, signals = [] }: { people: ProjectResponsibility[]; signals?: BusinessTaskSignal[] }) {
+function Responsibilities({ people, signals = [] }: { people: ProjectResponsibility[]; signals?: BusinessSignalReference[] }) {
   return people.length ? <ul className="business-responsibilities">{people.map((person, index) => <li key={`${person.person_user_id}-${index}`}>
     <strong>{person.person_name}</strong><p>{person.responsibility}</p><CitationList citations={person.evidence} signals={signals} />
   </li>)}</ul> : <p className="business-empty-line">人员分工待明确。</p>;
 }
 
-function ProjectFacts({ context, signals = [] }: { context: ProjectContext | null; signals?: BusinessTaskSignal[] }) {
+function ProjectFacts({ context, signals = [] }: { context: ProjectContext | null; signals?: BusinessSignalReference[] }) {
   return context?.facts.length ? <ul className="business-project-state">{context.facts.map((fact, index) => <li key={`${fact.key}-${index}`}>
     <p>{fact.text}</p>
     {fact.date_type && fact.date_value && <p className="business-typed-date">{labelOf(dateTypeLabels, fact.date_type)}：{fact.date_value}</p>}
     <CitationList citations={fact.evidence} signals={signals} />
   </li>)}</ul> : <p className="business-empty-line">待明确</p>;
+}
+
+
+function ProjectSourceRecord({ reference }: { reference: BusinessSignalReference }) {
+  const [original, setOriginal] = useState<BusinessTaskSignal | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const activeRead = useRef<AbortController | null>(null);
+  useEffect(() => () => activeRead.current?.abort(), []);
+  const readOriginal = async () => {
+    const controller = new AbortController();
+    activeRead.current = controller;
+    setLoading(true); setError("");
+    try {
+      const result = await getBusinessTaskSignalDetail(String(reference.id), controller.signal);
+      if (!controller.signal.aborted) setOriginal(result.item);
+    } catch (reason: unknown) {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "原文读取失败");
+    } finally { if (!controller.signal.aborted) setLoading(false); }
+  };
+  return <div>
+    <SourceRecordRows rows={[original ?? reference]} />
+    {!original && <button type="button" className="secondary-button" disabled={loading} aria-label={`读取来源 ${reference.id} 原文`} onClick={() => void readOriginal()}>{loading ? "读取原文中…" : "读取原文"}</button>}
+    {error && <p role="alert">{error}</p>}
+  </div>;
 }
 
 export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
@@ -114,9 +139,10 @@ export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
       <dl className="business-detail-facts"><div><dt>登记依据</dt><dd>{project.source_url ? <a href={project.source_url} target="_blank" rel="noreferrer">{sourceLabel}</a> : sourceLabel}</dd></div></dl>
       {project.source_excerpt && <blockquote>{project.source_excerpt}</blockquote>}
       <h3>来源证据</h3>
+      <p className="business-section-note">引用和项目资料可直接查看；需要完整内容时，选择对应来源读取原文。</p>
       <p className="business-section-note">已显示 {detail.evidence_signals.length} 条，共 {detail.evidence_meta.total} 条来源证据。</p>
       {detail.evidence_meta.has_more && <p className="business-section-note">仅展示最近 20 条及当前项目资料引用的来源，未展示全部历史。</p>}
-      {detail.evidence_signals.length ? <SourceRecordRows rows={detail.evidence_signals} /> : <p className="business-empty-line">暂无保存的来源证据。</p>}
+      {detail.evidence_signals.length ? detail.evidence_signals.map((reference) => <ProjectSourceRecord key={`${projectId}:${reference.id}`} reference={reference} />) : <p className="business-empty-line">暂无保存的来源证据。</p>}
       <h3>项目资料修订</h3>
       <p className="business-section-note">已显示 {detail.context_revisions.length} 条，共 {detail.context_revision_meta.total} 条资料修订。</p>
       {detail.context_revision_meta.has_more && <p className="business-section-note">仅展示最近 20 条修订，未展示全部历史。</p>}

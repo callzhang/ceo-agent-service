@@ -544,7 +544,7 @@ def register_console_routes(
     def console_business_project_detail(project_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_project_detail(store, project_id, source_reader=source_reader(store))
+            item = business_project_detail(store, project_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Business project not found")
         return ConsoleBusinessProjectDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -623,7 +623,7 @@ def register_console_routes(
                 candidates=candidates,
                 _db=db,
             )
-        detail = business_project_detail(store, project_id, source_reader=source_reader(store))
+        detail = business_project_detail(store, project_id)
         assert detail is not None
         return command_result(
             item=detail.summary.model_dump(mode="json"),

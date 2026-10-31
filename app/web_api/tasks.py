@@ -29,7 +29,7 @@ from app.task_semantic_models import (
 from app.business_source_reader import (
     BusinessTaskSignalFact, RequestSourceReader,
     SourceUnavailableReason,
-    source_view,
+    source_reference, source_view,
 )
 from app.web_api.common import (
     ApiItemEnvelope,
@@ -475,7 +475,7 @@ class ConsoleBusinessProjectListEnvelope(ApiListEnvelope):
     candidate_meta: ApiListMeta
 
 
-class ConsoleBusinessTaskSignalView(BaseModel):
+class ConsoleBusinessTaskSignalReference(BaseModel):
     model_config = ConfigDict(extra="forbid")
     id: int
     source_type: Nonblank
@@ -489,6 +489,9 @@ class ConsoleBusinessTaskSignalView(BaseModel):
     context_json: JsonObject
     dedupe_key: Nonblank
     created_at: str
+
+
+class ConsoleBusinessTaskSignalView(ConsoleBusinessTaskSignalReference):
     evidence_text: Nonblank | None
     source_available: bool
     source_unavailable_reason: SourceUnavailableReason | None
@@ -539,7 +542,7 @@ class ConsoleBusinessProjectDetail(BaseModel):
     confirmed_tasks: list[ConsoleBusinessTaskSummary]
     context: ProjectContext | None
     suggestions: list[ConsoleBusinessTaskSummary]
-    evidence_signals: list[ConsoleBusinessTaskSignalView]
+    evidence_signals: list[ConsoleBusinessTaskSignalReference]
     context_revisions: list[BusinessProjectContextRevision]
     evidence_meta: ApiListMeta
     context_revision_meta: ApiListMeta
@@ -968,8 +971,7 @@ def business_task_detail(store: Any, task_id: int, *,
     )
 
 
-def business_project_detail(store: Any, project_id: int, *,
-                           source_reader: RequestSourceReader | None = None) -> ConsoleBusinessProjectDetail | None:
+def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProjectDetail | None:
     project = store.get_business_project(project_id)
     if project is None:
         return None
@@ -1001,7 +1003,7 @@ def business_project_detail(store: Any, project_id: int, *,
         confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")],
         context=context,
         suggestions=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if task.origin == "agent_suggestion" and task.stage.value == "candidate"],
-        evidence_signals=business_signal_views(store, facts, source_reader=source_reader),
+        evidence_signals=[ConsoleBusinessTaskSignalReference.model_validate(source_reference(fact)) for fact in facts],
         context_revisions=list(revisions), evidence_meta=metadata(evidence_count, len(evidence)), context_revision_meta=metadata(revision_count, len(revisions)),
     )
 

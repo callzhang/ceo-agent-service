@@ -199,15 +199,17 @@ export interface TaskSuggestion {
   responsibility_evidence: SourceCitation[];
   basis_evidence: SourceCitation[];
 }
-export interface BusinessTaskSignal extends Record<string, unknown> {
+export interface BusinessSignalReference extends Record<string, unknown> {
   id: number;
   source_type: string;
   source_ref: string;
   source_time: string;
+  context_json: string;
+}
+export interface BusinessTaskSignal extends BusinessSignalReference {
   evidence_text: string | null;
   source_available: boolean;
   source_unavailable_reason: string | null;
-  context_json: string;
 }
 export interface ProjectContextRevision {
   id: number;
@@ -251,7 +253,7 @@ export interface BusinessProjectDetail {
   confirmed_tasks: BusinessTaskSummary[];
   context: ProjectContext | null;
   suggestions: BusinessTaskSummary[];
-  evidence_signals: BusinessTaskSignal[];
+  evidence_signals: BusinessSignalReference[];
   context_revisions: ProjectContextRevision[];
   evidence_meta: ConsoleListMeta;
   context_revision_meta: ConsoleListMeta;
@@ -836,9 +838,10 @@ const isProjectSummary = (item: Record<string, unknown>) => isIdentity(item.id)
 const isCitation = (value: unknown) => isRecord(value)
   && (value.signal_id === null || typeof value.signal_id === "number")
   && isString(value.source_ref) && isString(value.source_excerpt);
-const isBusinessTaskSignal = (value: unknown): value is BusinessTaskSignal => isRecord(value)
+const isBusinessSignalReference = (value: unknown): value is BusinessSignalReference => isRecord(value)
   && typeof value.id === "number"
-  && ["source_type", "source_ref", "source_time", "context_json"].every((field) => isString(value[field]))
+  && ["source_type", "source_ref", "source_time", "context_json"].every((field) => isString(value[field]));
+const isBusinessTaskSignal = (value: unknown): value is BusinessTaskSignal => isBusinessSignalReference(value)
   && (value.source_available === true
     ? isString(value.evidence_text) && value.evidence_text.length > 0 && value.source_unavailable_reason === null
     : value.source_available === false && value.evidence_text === null && isString(value.source_unavailable_reason) && value.source_unavailable_reason.length > 0);
@@ -899,9 +902,12 @@ export function getBusinessProjectDetail(id: string, signal?: AbortSignal): Prom
   return request<unknown>(`/api/console/tasks/projects/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessProjectDetail>(value, "project", (item) => isRecord(item.summary) && isProjectSummary(item.summary)
     && (item.context === null || isProjectContext(item.context))
     && [item.confirmed_tasks, item.suggestions].every((rows) => Array.isArray(rows) && rows.every((row) => isRecord(row) && isTaskSummary(row)))
-    && Array.isArray(item.evidence_signals) && item.evidence_signals.every(isBusinessTaskSignal)
+    && Array.isArray(item.evidence_signals) && item.evidence_signals.every(isBusinessSignalReference)
     && Array.isArray(item.context_revisions) && item.context_revisions.every((row) => isRecord(row) && typeof row.id === "number" && typeof row.project_id === "number" && isProjectContext(row.context) && Array.isArray(row.evidence_signal_ids) && row.evidence_signal_ids.every((id) => typeof id === "number") && isString(row.created_at))
     && isListMeta(item.evidence_meta) && isListMeta(item.context_revision_meta)));
+}
+export function getBusinessTaskSignalDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessTaskSignal>> {
+  return request<unknown>(`/api/console/tasks/signals/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskSignal>(value, "signal", isBusinessTaskSignal));
 }
 export function searchBusinessProjectCrmCustomers(projectId: string, customerLabel: string) {
   return command(`/api/console/tasks/projects/${encodeURIComponent(projectId)}/crm-customer-search`, { customer_label: customerLabel });

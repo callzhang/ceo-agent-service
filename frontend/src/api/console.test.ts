@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { ConsoleApiError, listAttention, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, getBusinessTaskDetail, listHistoryTypes, renameRuntimeRoute, getLegacyProjectDetail } from "./console";
+import { ConsoleApiError, listAttention, displayValue, parseConsoleList, request, listEmailClassifications, confirmEmailClassification, getStatus, listBusinessProjects, listBusinessTasks, getBusinessProjectDetail, getBusinessTaskDetail, getBusinessTaskSignalDetail, listHistoryTypes, renameRuntimeRoute, getLegacyProjectDetail } from "./console";
 
 function statusEnvelope() {
   return {
@@ -64,20 +64,18 @@ describe("console API helpers", () => {
       }
     } finally { globalThis.fetch = originalFetch; }
   });
-  it("accepts unavailable project originals only with a null body and reason", async () => {
-    const summary = { id: "2", title: "客户项目", registry_source: "经营会", canonical_anchor_id: 3, confirmed_task_count: 0, detail_url: "/tasks/project/2", overall_owner: "", overall_responsibility: "", attention_reason: "", updated_at: "now" };
-    const pageMeta = { page: 1, page_size: 20, total: 1, next_cursor: "", has_more: false, snapshot_at: "now" };
+  it("accepts unavailable selected originals only with a null body and reason", async () => {
     const signal: Record<string, unknown> = { id: 7, source_type: "ai_minutes", source_ref: "meeting-7", source_time: "now", conversation_id: "", conversation_title: "", author_user_id: "", author_name: "", author_kind: "unknown", context_json: "{}", dedupe_key: "signal-7", created_at: "now", evidence_text: null, source_available: false, source_unavailable_reason: "source_missing" };
-    const item = { summary, confirmed_tasks: [], context: null, suggestions: [], evidence_signals: [signal], context_revisions: [], evidence_meta: pageMeta, context_revision_meta: pageMeta };
+    const item = signal;
     const originalFetch = globalThis.fetch;
     globalThis.fetch = async () => new Response(JSON.stringify({ item, meta: { snapshot_at: "now" } }), { status: 200 });
     try {
-      expect((await getBusinessProjectDetail("2")).item.evidence_signals[0].evidence_text).toBeNull();
+      expect((await getBusinessTaskSignalDetail("7")).item.evidence_text).toBeNull();
       signal.source_unavailable_reason = null;
-      await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
+      await expect(getBusinessTaskSignalDetail("7")).rejects.toThrow("invalid business signal detail");
       signal.source_unavailable_reason = "source_missing";
       signal.evidence_text = "fabricated";
-      await expect(getBusinessProjectDetail("2")).rejects.toThrow("invalid business project detail");
+      await expect(getBusinessTaskSignalDetail("7")).rejects.toThrow("invalid business signal detail");
     } finally { globalThis.fetch = originalFetch; }
   });
   it("preserves 64-bit email IDs from JSON through the feedback URL", async () => {

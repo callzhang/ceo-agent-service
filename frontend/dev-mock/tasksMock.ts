@@ -155,15 +155,19 @@ const attentionDetail = (id: string): BusinessAttentionDetail | null => {
   };
 };
 
-const projectDetail = (id: string): BusinessProjectDetail | null => {
-  const summary = projects.find((row) => row.id === id);
-  if (!summary) return null;
-  const context = projectContexts[id];
-  const evidence = id === "1" ? [
+const projectSourceSignals = (id: string): BusinessTaskSignal[] => {
+  return id === "1" ? [
     { ...signal(501, "meeting", accountability.source_excerpt, { source_link: "https://example.com/synthetic/project-meeting" }), source_ref: accountability.source_ref },
     { ...signal(502, "dingtalk", payment.source_excerpt, { source_link: "https://example.com/synthetic/customer-payment" }), source_ref: payment.source_ref },
     { ...signal(503, "meeting", "要求李四在十月八日前提交验收材料。"), source_ref: "meeting-503" },
   ] : id === "2" ? [{ ...signal(504, "meeting", "评审还没有形成结论。"), source_ref: "review-504" }] : id === "4" ? [{ ...signal(502, "dingtalk", payment.source_excerpt), source_ref: payment.source_ref }] : [];
+};
+
+const projectDetail = (id: string): BusinessProjectDetail | null => {
+  const summary = projects.find((row) => row.id === id);
+  if (!summary) return null;
+  const context = projectContexts[id];
+  const evidence = projectSourceSignals(id).map(({ evidence_text, source_available, source_unavailable_reason, ...reference }) => reference);
   const revisions = context ? [{ id: Number(id) * 10, project_id: Number(id), context, evidence_signal_ids: evidence.map((source) => source.id), created_at: summary.updated_at }] : [];
   const meta = (total: number): ConsoleListMeta => ({ page: 1, page_size: 20, total, next_cursor: "", has_more: false, snapshot_at: snapshot() });
   return { summary, anchor: { id: Number(id), title: summary.title }, context, confirmed_tasks: formal.filter((task) => projectTaskIds[id].includes(Number(task.id))), suggestions: suggestions.filter((task) => task.id === (id === "1" ? "300" : id === "2" ? "301" : "")), evidence_signals: evidence, context_revisions: revisions, evidence_meta: meta(evidence.length), context_revision_meta: meta(revisions.length) };
@@ -209,6 +213,10 @@ function route(pathname: string, url: URL, scenario: string, method: string, bod
   if ((match = pathname.match(/^\/api\/console\/tasks\/attention\/(\d+)$/))) {
     const item = attentionDetail(match[1]);
     return item ? send({ item, meta }) : send({ detail: "Attention item not found" }, 404);
+  }
+  if ((match = pathname.match(/^\/api\/console\/tasks\/signals\/(\d+)$/))) {
+    const item = Object.keys(projectContexts).flatMap(projectSourceSignals).find((source) => source.id === Number(match![1]));
+    return item ? send({ item, meta }) : send({ detail: "Signal not found" }, 404);
   }
   if ((match = pathname.match(/^\/api\/console\/tasks\/projects\/(\d+)$/))) {
     const item = projectDetail(match[1]);

@@ -2,7 +2,7 @@ import { EyeOff, Undo2 } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { decideCandidateTask, type BusinessTaskSignal, type BusinessTaskSummary, type SourceCitation } from "../api/console";
+import { decideCandidateTask, type BusinessSignalReference, type BusinessTaskSummary, type SourceCitation } from "../api/console";
 import { TaskTime } from "./TaskTime";
 import { commitmentText, isCurrentSuggestion, labelOf, taskDateText, taskOriginLabel, taskOwnerText, taskStatusLabels } from "./taskLabels";
 
@@ -37,7 +37,7 @@ export function LinkedTaskList({ tasks }: { tasks: BusinessTaskSummary[] }) {
 }
 
 /** These are saved quotations, not a paraphrase or a new attribution. */
-export function CitationList({ citations, signals = [] }: { citations: SourceCitation[]; signals?: BusinessTaskSignal[] }) {
+export function CitationList({ citations, signals = [] }: { citations: SourceCitation[]; signals?: BusinessSignalReference[] }) {
   if (!citations.length) return null;
   return <ul className="business-citations">{citations.map((citation, index) => {
     const signal = signals.find((source) => source.id === citation.signal_id);

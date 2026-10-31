@@ -246,3 +246,32 @@ def test_task_summary_labels_only_matching_actual_deadline_evidence(tmp_path, da
     summary = business_task_detail(store, task_id).summary
     assert summary.deadline_at == "2026-10-09" and summary.deadline_type == date_type
     assert store.get_business_task(task_id).deadline_at == "2026-10-09"
+
+
+def test_project_detail_lists_source_references_without_reading_originals(tmp_path, monkeypatch):
+    from app.business_source_reader import AvailableSource, RequestSourceReader
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    project_id, _, citation, context = _project(store)
+    calls = []
+
+    def read_original(self, binding, **kwargs):
+        calls.append(binding.identity_key)
+        return AvailableSource(binding, citation.source_excerpt)
+
+    monkeypatch.setattr(RequestSourceReader, "resolve", read_original)
+    with _client(tmp_path) as client:
+        response = client.get(f"/api/console/tasks/projects/{project_id}")
+        assert response.status_code == 200
+        assert calls == []
+        detail = response.json()["item"]
+        assert detail["context"] == context.model_dump(mode="json")
+        reference = detail["evidence_signals"][0]
+        assert reference["id"] == citation.signal_id
+        assert reference["source_ref"] == citation.source_ref
+        assert not {"evidence_text", "source_available", "source_unavailable_reason"} & reference.keys()
+        original = client.get(f"/api/console/tasks/signals/{citation.signal_id}")
+        assert original.status_code == 200
+        assert len(calls) == 1
+        assert original.json()["item"]["evidence_text"] == citation.source_excerpt
+        assert original.json()["item"]["source_available"] is True
