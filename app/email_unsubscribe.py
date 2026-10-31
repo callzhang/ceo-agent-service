@@ -3261,6 +3261,10 @@ class PlaywrightUnsubscribeBrowser:
         try:
             if not dialog.is_visible():
                 return
+            if target.locator(
+                'xpath=ancestor-or-self::*[@role="dialog" and @aria-modal="true"]'
+            ).count():
+                return
             target_box = target.bounding_box()
             dialog_box = dialog.bounding_box()
         except Exception:
