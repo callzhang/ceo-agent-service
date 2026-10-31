@@ -5,7 +5,6 @@ from __future__ import annotations
 import email
 import email.policy
 from hashlib import sha256
-import imaplib
 import re
 import ssl
 from dataclasses import dataclass
@@ -27,6 +26,10 @@ from app.email_imap_folders import (
     ImapFolderListError,
     ParsedImapFolder,
     parse_imap_list_response,
+)
+from app.email_imap_transport import (
+    IMAP_COMMAND_TIMEOUT_SECONDS,
+    DeadlineIMAP4SSL,
 )
 from app.email_store import StoredEmailAction, StoredEmailLocator
 from app.email_provider_folders import ProviderFolder
@@ -550,11 +553,12 @@ class ImapDeterministicProvider:
         account_id: str,
         move_mode: Literal["move", "copy_as_move"] = "move",
     ) -> "ImapDeterministicProvider":
-        session = imaplib.IMAP4_SSL(
+        session = DeadlineIMAP4SSL(
             host,
             port,
             ssl_context=ssl.create_default_context(),
             timeout=timeout,
+            command_timeout=IMAP_COMMAND_TIMEOUT_SECONDS,
         )
         try:
             status, login_data = session.login(username, password)

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from importlib import import_module
+import imaplib
 import ssl
 from typing import Mapping
 
@@ -626,7 +627,7 @@ def test_production_imap_refreshes_capabilities_after_login(monkeypatch) -> None
             return "BYE", [b"logout"]
 
     session = LoginCapabilitySession()
-    monkeypatch.setattr(module.imaplib, "IMAP4_SSL", lambda *_args, **_kwargs: session)
+    monkeypatch.setattr(module, "DeadlineIMAP4SSL", lambda *_args, **_kwargs: session)
 
     provider = module.ImapDeterministicProvider.connect(
         "imap.example.com",
@@ -662,16 +663,17 @@ def test_production_imap_connect_verifies_certificate_and_hostname(monkeypatch) 
         def logout(self):
             return "BYE", [b"logout"]
 
-    def connect(host, port, *, ssl_context, timeout):
+    def connect(host, port, *, ssl_context, timeout, command_timeout):
         captured.update(
             host=host,
             port=port,
             ssl_context=ssl_context,
             timeout=timeout,
+            command_timeout=command_timeout,
         )
         return Session()
 
-    monkeypatch.setattr(module.imaplib, "IMAP4_SSL", connect)
+    monkeypatch.setattr(module, "DeadlineIMAP4SSL", connect)
 
     provider = module.ImapDeterministicProvider.connect(
         "imap.example.com",
@@ -685,6 +687,52 @@ def test_production_imap_connect_verifies_certificate_and_hostname(monkeypatch) 
     assert isinstance(context, ssl.SSLContext)
     assert context.verify_mode == ssl.CERT_REQUIRED
     assert context.check_hostname is True
+    assert captured["command_timeout"] == 90.0
+
+
+def test_deterministic_provider_uses_shared_imap_command_deadline(monkeypatch) -> None:
+    module = import_module("app.email_provider_actions")
+    captured: dict[str, object] = {}
+
+    class Session:
+        def __init__(self, host, port, *, ssl_context, timeout, command_timeout):
+            captured.update(
+                host=host,
+                port=port,
+                ssl_context=ssl_context,
+                timeout=timeout,
+                command_timeout=command_timeout,
+            )
+
+        def login(self, _username: str, _password: str):
+            return "OK", [b"logged in"]
+
+        def capability(self):
+            return "OK", [b"IMAP4rev1 MOVE UIDPLUS"]
+
+        def logout(self):
+            return "BYE", [b"logout"]
+
+    monkeypatch.setattr(module, "DeadlineIMAP4SSL", Session, raising=False)
+    monkeypatch.setattr(
+        imaplib,
+        "IMAP4_SSL",
+        lambda *_args, **_kwargs: pytest.fail(
+            "deterministic provider bypassed the shared IMAP deadline"
+        ),
+    )
+
+    provider = module.ImapDeterministicProvider.connect(
+        "imap.example.com",
+        "person@example.com",
+        "imap-secret",
+        account_id="account-1",
+        timeout=90.0,
+    )
+    provider.close()
+
+    assert captured["timeout"] == 90.0
+    assert captured["command_timeout"] == 90.0
 
 
 @pytest.mark.parametrize(
