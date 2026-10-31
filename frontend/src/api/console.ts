@@ -227,7 +227,7 @@ export interface BusinessAttentionDetail {
   };
   anchor?: Record<string, unknown> | null;
   linked_tasks: BusinessTaskSummary[];
-  evidence_signals: Array<Record<string, unknown>>;
+  evidence_signals: BusinessSignalReference[];
   events: Array<Record<string, unknown>>;
 }
 export interface BusinessTaskDetail {
@@ -237,7 +237,7 @@ export interface BusinessTaskDetail {
   formal_basis?: string;
   owner_user_id?: string;
   missing_evidence?: string[];
-  evidence: Array<Record<string, unknown>>;
+  evidence: Array<{ role: string; signal: BusinessSignalReference | null }>;
   date_evidence: Array<Record<string, unknown>>;
   events: Array<Record<string, unknown>>;
   relations: Array<Record<string, unknown>>;
@@ -881,10 +881,10 @@ function semanticDetail<T>(value: unknown, kind: string, valid: (item: Record<st
   return value as unknown as ConsoleResource<T>;
 }
 export function getBusinessAttentionDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessAttentionDetail>> {
-  return request<unknown>(`/api/console/tasks/attention/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessAttentionDetail>(value, "attention", (item) => isRecord(item.summary) && isAttentionSummary(item.summary) && Array.isArray(item.linked_tasks) && Array.isArray(item.events)));
+  return request<unknown>(`/api/console/tasks/attention/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessAttentionDetail>(value, "attention", (item) => isRecord(item.summary) && isAttentionSummary(item.summary) && Array.isArray(item.linked_tasks) && Array.isArray(item.events) && Array.isArray(item.evidence_signals) && item.evidence_signals.every(isBusinessSignalReference)));
 }
 export function getBusinessTaskDetail(id: string, signal?: AbortSignal): Promise<ConsoleResource<BusinessTaskDetail>> {
-  return request<unknown>(`/api/console/tasks/items/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskDetail>(value, "task", (item) => isRecord(item.summary) && isTaskSummary(item.summary) && (item.suggestion === null || isTaskSuggestion(item.suggestion)) && Array.isArray(item.evidence) && Array.isArray(item.events)));
+  return request<unknown>(`/api/console/tasks/items/${encodeURIComponent(id)}`, { signal }).then((value) => semanticDetail<BusinessTaskDetail>(value, "task", (item) => isRecord(item.summary) && isTaskSummary(item.summary) && (item.suggestion === null || isTaskSuggestion(item.suggestion)) && Array.isArray(item.evidence) && item.evidence.every((row) => isRecord(row) && isString(row.role) && (row.signal === null || isBusinessSignalReference(row.signal))) && Array.isArray(item.events)));
 }
 /** Derek, 2026-09-25: 催办 goes out only when he clicks send. */
 export function sendBusinessTaskFollowUp(taskId: string, followUpId: string, revision: number) {

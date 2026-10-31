@@ -511,7 +511,7 @@ class ConsoleBusinessAttentionDetail(BaseModel):
     summary: ConsoleBusinessAttentionSummary
     anchor: dict[str, Any]
     assessment: dict[str, Any]
-    evidence_signals: list[ConsoleBusinessTaskSignalView]
+    evidence_signals: list[ConsoleBusinessTaskSignalReference]
     linked_tasks: list[ConsoleBusinessTaskSummary]
     events: list[BusinessAttentionEvent]
 
@@ -568,13 +568,15 @@ class ConsoleBusinessTaskSignalDetailEnvelope(ApiItemEnvelope):
     item: ConsoleBusinessTaskSignalView
 
 
-def business_signal_views(
-    store: Any, facts: list[BusinessTaskSignalFact], *, source_reader: RequestSourceReader | None = None
-) -> list[ConsoleBusinessTaskSignalView]:
+def business_signal_references(facts: list[BusinessTaskSignalFact]) -> list[ConsoleBusinessTaskSignalReference]:
+    return [ConsoleBusinessTaskSignalReference.model_validate(source_reference(fact)) for fact in facts]
+
+
+def business_signal_view(
+    store: Any, fact: BusinessTaskSignalFact, *, source_reader: RequestSourceReader | None = None
+) -> ConsoleBusinessTaskSignalView:
     reader = source_reader or store.business_source_reader()
-    return [ConsoleBusinessTaskSignalView.model_validate(
-        source_view(fact, reader.resolve(fact.source))
-    ) for fact in facts]
+    return ConsoleBusinessTaskSignalView.model_validate(source_view(fact, reader.resolve(fact.source)))
 
 
 def _page(items: list[Any], *, page: int, page_size: int) -> tuple[list[Any], ApiListMeta]:
@@ -900,8 +902,7 @@ def business_project_list_response(store: Any, *, page: int, page_size: int, que
     )
 
 
-def business_attention_detail(store: Any, attention_id: int, *,
-                           source_reader: RequestSourceReader | None = None) -> ConsoleBusinessAttentionDetail | None:
+def business_attention_detail(store: Any, attention_id: int) -> ConsoleBusinessAttentionDetail | None:
     item = store.get_business_attention_item(attention_id)
     if item is None:
         return None
@@ -920,14 +921,13 @@ def business_attention_detail(store: Any, attention_id: int, *,
         summary=ConsoleBusinessAttentionSummary.model_validate(_attention_summary_payload(store, item, anchors)),
         anchor=json_safe(anchors[item.anchor_id]) if item.anchor_id in anchors else {},
         assessment=assessment,
-        evidence_signals=business_signal_views(store, facts, source_reader=source_reader),
+        evidence_signals=business_signal_references(facts),
         linked_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in linked if task is not None],
         events=events,
     )
 
 
-def business_task_detail(store: Any, task_id: int, *,
-                           source_reader: RequestSourceReader | None = None) -> ConsoleBusinessTaskDetail | None:
+def business_task_detail(store: Any, task_id: int) -> ConsoleBusinessTaskDetail | None:
     task = store.get_business_task(task_id)
     if task is None:
         return None
@@ -939,7 +939,7 @@ def business_task_detail(store: Any, task_id: int, *,
         if signal is not None:
             signal_facts.append(signal)
         evidence.append({"role": link.evidence_role.value, "signal_id": link.signal_id})
-    views = {view.id: view for view in business_signal_views(store, signal_facts, source_reader=source_reader)}
+    views = {view.id: view for view in business_signal_references(signal_facts)}
     evidence = [{"role": item["role"], "signal": views.get(item["signal_id"])}
                 for item in evidence]
     cluster_links = []
@@ -1003,7 +1003,7 @@ def business_project_detail(store: Any, project_id: int) -> ConsoleBusinessProje
         confirmed_tasks=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if not (task.origin == "agent_suggestion" and task.stage.value == "candidate")],
         context=context,
         suggestions=[ConsoleBusinessTaskSummary.model_validate(_task_summary_payload(store, task, anchors)) for task in tasks if task.origin == "agent_suggestion" and task.stage.value == "candidate"],
-        evidence_signals=[ConsoleBusinessTaskSignalReference.model_validate(source_reference(fact)) for fact in facts],
+        evidence_signals=business_signal_references(facts),
         context_revisions=list(revisions), evidence_meta=metadata(evidence_count, len(evidence)), context_revision_meta=metadata(revision_count, len(revisions)),
     )
 

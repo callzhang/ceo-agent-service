@@ -36,7 +36,7 @@ from app.web_api.tasks import (
     ConsoleSentTodoListEnvelope,
     business_attention_detail,
     business_attention_list_response,
-    business_signal_views,
+    business_signal_view,
     business_project_detail,
     business_project_evidence_response,
     business_project_list_response,
@@ -439,7 +439,7 @@ def register_console_routes(
     def console_business_attention_detail(attention_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_attention_detail(store, attention_id, source_reader=source_reader(store))
+            item = business_attention_detail(store, attention_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Attention item not found")
         return ConsoleBusinessAttentionDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -448,7 +448,7 @@ def register_console_routes(
     def console_business_task_detail(task_id: int):
         store = store_factory()
         with store.read_snapshot():
-            item = business_task_detail(store, task_id, source_reader=source_reader(store))
+            item = business_task_detail(store, task_id)
         if item is None:
             raise HTTPException(status_code=404, detail="Business task not found")
         return ConsoleBusinessTaskDetailEnvelope(item=item, meta=ApiMeta(snapshot_at=snapshot_at()))
@@ -581,7 +581,7 @@ def register_console_routes(
         if item is None:
             raise HTTPException(status_code=404, detail="Business task signal not found")
         return ConsoleBusinessTaskSignalDetailEnvelope(
-            item=business_signal_views(store, [item], source_reader=source_reader(store))[0],
+            item=business_signal_view(store, item, source_reader=source_reader(store)),
             meta=ApiMeta(snapshot_at=snapshot_at()),
         )
 

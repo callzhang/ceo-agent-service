@@ -1,8 +1,8 @@
 import { Send } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
-import { getBusinessTaskDetail, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type LegacyProjectDetail } from "../api/console";
+import { getBusinessTaskDetail, getBusinessTaskSignalDetail, type BusinessSignalReference, type BusinessTaskSignal, getLegacyProjectDetail, sendBusinessTaskFollowUp, type BusinessTaskDetail, type LegacyProjectDetail } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CandidateAction, CitationList, DetailSection, signalSourceLink, TaskSkeleton } from "./TaskParts";
@@ -59,6 +59,30 @@ export function SourceRecordRows({ rows }: { rows: Array<Record<string, unknown>
 export function SourceRecordList({ title, rows, open = true }: { title: string; rows: Array<Record<string, unknown>>; open?: boolean }) {
   if (!rows.length) return null;
   return <DetailSection title={title} count={rows.length} open={open}><SourceRecordRows rows={rows} /></DetailSection>;
+}
+
+export function SourceOriginalRecord({ reference, role }: { reference: BusinessSignalReference; role?: string }) {
+  const [original, setOriginal] = useState<BusinessTaskSignal | null>(null);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const activeRead = useRef<AbortController | null>(null);
+  useEffect(() => () => activeRead.current?.abort(), []);
+  const readOriginal = async () => {
+    const controller = new AbortController();
+    activeRead.current = controller;
+    setLoading(true); setError("");
+    try {
+      const result = await getBusinessTaskSignalDetail(String(reference.id), controller.signal);
+      if (!controller.signal.aborted) setOriginal(result.item);
+    } catch (reason: unknown) {
+      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "原文读取失败");
+    } finally { if (!controller.signal.aborted) setLoading(false); }
+  };
+  return <div>
+    <SourceRecordRows rows={[{ role, signal: original ?? reference }]} />
+    {!original && <button type="button" className="secondary-button" disabled={loading} aria-label={`读取来源 ${reference.id} 原文`} onClick={() => void readOriginal()}>{loading ? "读取原文中…" : "读取原文"}</button>}
+    {error && <p role="alert">{error}</p>}
+  </div>;
 }
 
 const followUpStatusLabels: Record<string, string> = { draft: "待你决定", approved: "待你决定", sent: "已发送", failed: "发送失败", cancelled: "已取消", completed: "Task 已完成", skipped: "已跳过" };
@@ -224,7 +248,11 @@ export function TaskDetailPage({ taskId }: { taskId: string }) {
         <h3>建议依据</h3><CitationList citations={suggestion.basis_evidence} />
       </DetailSection>}
       <FollowUpSection taskId={taskId} rows={detail.follow_ups || []} onChanged={() => setReloadKey((key) => key + 1)} />
-      <SourceRecordList title="来源证据" rows={detail.evidence || []} />
+      {detail.evidence.length > 0 && <DetailSection title="来源证据" count={detail.evidence.length}>
+        {detail.evidence.map((evidence, index) => evidence.signal
+          ? <SourceOriginalRecord key={`${taskId}:${evidence.signal.id}:${evidence.role}`} reference={evidence.signal} role={evidence.role} />
+          : <SourceRecordRows key={`${taskId}:missing:${index}`} rows={[evidence]} />)}
+      </DetailSection>}
       {!!detail.official_projects?.length && <DetailSection title="正式项目" count={detail.official_projects.length}><ul className="business-linked-list">{detail.official_projects.map((project) => <li key={project.id}><Link to={project.detail_url}>{project.title}</Link></li>)}</ul></DetailSection>}
       <SourceRecordList title="日期依据" rows={detail.date_evidence || []} open={false} />
       <SourceRecordList title="任务变化" rows={detail.events || []} open={false} />

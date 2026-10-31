@@ -1,10 +1,10 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 
-import { clearBusinessProjectCrmCustomer, confirmBusinessProjectCrmCustomer, getBusinessProjectDetail, getBusinessTaskSignalDetail, searchBusinessProjectCrmCustomers, type BusinessProjectDetail, type BusinessSignalReference, type BusinessTaskSignal, type ProjectContext, type ProjectResponsibility } from "../api/console";
+import { clearBusinessProjectCrmCustomer, confirmBusinessProjectCrmCustomer, getBusinessProjectDetail, searchBusinessProjectCrmCustomers, type BusinessProjectDetail, type BusinessSignalReference, type ProjectContext, type ProjectResponsibility } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { CitationList, DetailSection, LinkedTaskList, TaskSkeleton } from "./TaskParts";
-import { SourceRecordRows } from "./TaskDetailPage";
+import { SourceOriginalRecord } from "./TaskDetailPage";
 import { TaskTime } from "./TaskTime";
 import { dateTypeLabels, labelOf } from "./taskLabels";
 
@@ -24,30 +24,6 @@ function ProjectFacts({ context, signals = [] }: { context: ProjectContext | nul
   </li>)}</ul> : <p className="business-empty-line">待明确</p>;
 }
 
-
-function ProjectSourceRecord({ reference }: { reference: BusinessSignalReference }) {
-  const [original, setOriginal] = useState<BusinessTaskSignal | null>(null);
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState("");
-  const activeRead = useRef<AbortController | null>(null);
-  useEffect(() => () => activeRead.current?.abort(), []);
-  const readOriginal = async () => {
-    const controller = new AbortController();
-    activeRead.current = controller;
-    setLoading(true); setError("");
-    try {
-      const result = await getBusinessTaskSignalDetail(String(reference.id), controller.signal);
-      if (!controller.signal.aborted) setOriginal(result.item);
-    } catch (reason: unknown) {
-      if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "原文读取失败");
-    } finally { if (!controller.signal.aborted) setLoading(false); }
-  };
-  return <div>
-    <SourceRecordRows rows={[original ?? reference]} />
-    {!original && <button type="button" className="secondary-button" disabled={loading} aria-label={`读取来源 ${reference.id} 原文`} onClick={() => void readOriginal()}>{loading ? "读取原文中…" : "读取原文"}</button>}
-    {error && <p role="alert">{error}</p>}
-  </div>;
-}
 
 export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
   const [detail, setDetail] = useState<BusinessProjectDetail | null>(null);
@@ -142,7 +118,7 @@ export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
       <p className="business-section-note">引用和项目资料可直接查看；需要完整内容时，选择对应来源读取原文。</p>
       <p className="business-section-note">已显示 {detail.evidence_signals.length} 条，共 {detail.evidence_meta.total} 条来源证据。</p>
       {detail.evidence_meta.has_more && <p className="business-section-note">仅展示最近 20 条及当前项目资料引用的来源，未展示全部历史。</p>}
-      {detail.evidence_signals.length ? detail.evidence_signals.map((reference) => <ProjectSourceRecord key={`${projectId}:${reference.id}`} reference={reference} />) : <p className="business-empty-line">暂无保存的来源证据。</p>}
+      {detail.evidence_signals.length ? detail.evidence_signals.map((reference) => <SourceOriginalRecord key={`${projectId}:${reference.id}`} reference={reference} />) : <p className="business-empty-line">暂无保存的来源证据。</p>}
       <h3>项目资料修订</h3>
       <p className="business-section-note">已显示 {detail.context_revisions.length} 条，共 {detail.context_revision_meta.total} 条资料修订。</p>
       {detail.context_revision_meta.has_more && <p className="business-section-note">仅展示最近 20 条修订，未展示全部历史。</p>}

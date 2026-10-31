@@ -1,9 +1,10 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen } from "@testing-library/react";
 import { MemoryRouter } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
+const getBusinessTaskSignalDetail = vi.hoisted(() => vi.fn());
 const getBusinessAttentionDetail = vi.hoisted(() => vi.fn<typeof import("../api/console").getBusinessAttentionDetail>());
-vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessAttentionDetail }));
+vi.mock("../api/console", async (importOriginal) => ({ ...(await importOriginal<typeof import("../api/console")>()), getBusinessAttentionDetail, getBusinessTaskSignalDetail }));
 import { TaskAttentionDetailPage } from "./TaskAttentionDetailPage";
 
 describe("TaskAttentionDetailPage", () => {
@@ -57,11 +58,13 @@ describe("TaskAttentionDetailPage", () => {
     getBusinessAttentionDetail.mockResolvedValue({ item: {
       summary: { id: "9", category: "watch", business_area: "交付", title: "客户回款日期尚未明确", why_attention: "回款存在不确定性", current_state: "等待客户反馈", ceo_action: "当前无需你处理", anchor_label: "客户项目", linked_task_count: 0, updated_at: "2026-10-04", detail_url: "/tasks/attention/9" },
       assessment: { inference: "先观察，不创造催款承诺", evidence: [] }, linked_tasks: [], events: [],
-      evidence_signals: [{ id: 31, source_type: "dingtalk", source_ref: "chat-payment-31", source_time: "2026-10-03T09:00:00Z", evidence_text: "客户说付款时间还未确认。", context_json: JSON.stringify({ source_link: "https://example.com/chat/31" }) }],
+      evidence_signals: [{ id: 31, source_type: "dingtalk", source_ref: "chat-payment-31", source_time: "2026-10-03T09:00:00Z", context_json: JSON.stringify({ source_link: "https://example.com/chat/31" }) }],
     }, meta: { snapshot_at: "2026-10-04" } });
     render(<MemoryRouter><TaskAttentionDetailPage attentionId="9" /></MemoryRouter>);
     expect(await screen.findByText("暂无关联任务。")).toBeInTheDocument();
-    expect(screen.getByText("客户说付款时间还未确认。")).toBeInTheDocument();
+    getBusinessTaskSignalDetail.mockResolvedValue({ item: { id: 31, source_type: "dingtalk", source_ref: "chat-payment-31", source_time: "2026-10-03T09:00:00Z", context_json: JSON.stringify({ source_link: "https://example.com/chat/31" }), evidence_text: "客户说付款时间还未确认。", source_available: true, source_unavailable_reason: null }, meta: { snapshot_at: "now" } });
+    fireEvent.click(screen.getByRole("button", { name: "读取来源 31 原文", hidden: true }));
+    expect(await screen.findByText("客户说付款时间还未确认。")).toBeInTheDocument();
     expect(screen.getByText(/chat-payment-31/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开来源", hidden: true })).toHaveAttribute("href", "https://example.com/chat/31");
     expect(screen.queryByRole("alert")).not.toBeInTheDocument();

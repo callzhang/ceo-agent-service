@@ -88,7 +88,9 @@ def test_detail_routes_show_source_evidence_and_confirmed_membership(tmp_path, m
         task = client.get(f"/api/console/tasks/items/{task_id}").json()["item"]
         attention = client.get(f"/api/console/tasks/attention/{attention_id}").json()["item"]
         project = client.get(f"/api/console/tasks/projects/{project_id}").json()["item"]
-    assert task["evidence"][0]["signal"]["evidence_text"] == "Derek assigned Launch"
+        original = client.get(f"/api/console/tasks/signals/{signal_id}").json()["item"]
+    assert "evidence_text" not in task["evidence"][0]["signal"]
+    assert original["evidence_text"] == "Derek assigned Launch"
     assert task["evidence"][0]["signal"]["source_ref"] == "minutes-1"
     assert task["official_projects"][0]["id"] == project_id
     assert [row["id"] for row in attention["linked_tasks"]] == [task_id]
@@ -239,3 +241,48 @@ def test_signal_response_view_requires_honest_original_availability():
     ):
         with pytest.raises(ValidationError):
             ConsoleBusinessTaskSignalView.model_validate({**fields, **changes})
+
+
+@pytest.mark.parametrize("kind", ["task", "attention"])
+def test_detail_returns_facts_and_references_before_any_original_read(tmp_path, monkeypatch, kind):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task_id = seed_task(store, title="核实验收", stage="formal", formal_basis="explicit_assignment", business_relevance="relevant")
+    with store._immediate_write_transaction() as db:
+        signals = [store.create_business_task_signal_in_transaction(
+            source_type="meeting", source_ref=f"meeting:{i}", evidence_text=f"来源原文{i}",
+            dedupe_key=f"meeting:{i}", _db=db,
+        ) for i in range(2)]
+        for signal_id in signals:
+            store.link_business_task_evidence_in_transaction(task_id=task_id, signal_id=signal_id, evidence_role="assignment", _db=db)
+        anchor_id = store.create_business_anchor_in_transaction(anchor_type="company_priority", anchor_ref="acceptance", title="验收", _db=db)
+        attention_id = store.create_business_attention_item_in_transaction(stable_key="acceptance", category="watch", title="关注验收", business_area="交付", why_attention="等待验收", current_state="核实中", ceo_action="关注", anchor_id=anchor_id, evidence_signal_id=signals[0], now="2026-10-30T00:00:00Z", _db=db)
+        assessment = {"inference": "继续关注", "evidence": [{"signal_id": signals[1], "source_ref": "meeting:1", "source_excerpt": "来源原文1", "source_time": "", "source_link": ""}]}
+        update_business_candidate(db, "attention_item", attention_id, {"assessment_json": json.dumps(assessment)})
+        store.link_business_attention_task_in_transaction(attention_item_id=attention_id, task_id=task_id, _db=db)
+    calls = []
+
+    def resolve(self, binding, **kwargs):
+        calls.append(binding.source_ref)
+        return AvailableSource(binding, "来源原文" + binding.source_ref.rsplit(":", 1)[1])
+
+    monkeypatch.setattr(RequestSourceReader, "resolve", resolve)
+    path = f"/api/console/tasks/items/{task_id}" if kind == "task" else f"/api/console/tasks/attention/{attention_id}"
+    with _client(tmp_path) as client:
+        response = client.get(path)
+        assert response.status_code == 200
+        assert calls == []
+        detail = response.json()["item"]
+        if kind == "task":
+            references = [row["signal"] for row in detail["evidence"]]
+            assert [row["role"] for row in detail["evidence"]] == ["assignment", "assignment"]
+            assert detail["summary"]["title"] == "核实验收"
+        else:
+            references = detail["evidence_signals"]
+            assert detail["assessment"] == assessment
+            assert [row["id"] for row in detail["linked_tasks"]] == [task_id]
+        assert {row["id"] for row in references} == set(signals)
+        assert all(not {"evidence_text", "source_available", "source_unavailable_reason"} & row.keys() for row in references)
+        original = client.get(f"/api/console/tasks/signals/{signals[1]}")
+        assert original.status_code == 200
+        assert original.json()["item"]["evidence_text"] == "来源原文1"
+        assert calls == ["meeting:1"]

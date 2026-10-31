@@ -1193,7 +1193,7 @@ total/has_more/next_cursor；`GET /api/console/tasks/signals/{signal_id}` 再按
 `BusinessTaskSignal` 和不可变 source document 原文。长 JSON/原始正文不使用详情页的 2048 字符
 投影，也不经过 display normalization。未知 Project/Signal 返回 404，已存在但无证据的 Project
 返回空列表 200；读取在同一个 `read_snapshot` 中完成，不更新 Task、Project、Signal 或证据关系。
-Project 详情仍只展示原有 20 条有界来源并保留 context 引文 pinned 语义；初次请求只读取这些来源的坐标和元数据。完整原文由用户选择后调用现有 `/api/console/tasks/signals/{signal_id}` 单条读取，慢来源或读取失败不阻塞项目资料；未读取不显示为“原文不可用”。当前资料、历史修订、原文版本匹配及失败原因含义保持不变。
+Project 详情仍只展示原有 20 条有界来源并保留 context 引文 pinned 语义；初次请求只读取这些来源的坐标和元数据。Task、Attention 详情也只返回来源引用，保留各自业务事实、证据角色、原始引文与事件。三类页面的完整原文由用户选择后调用现有 `/api/console/tasks/signals/{signal_id}` 单条读取，慢来源或读取失败不阻塞详情；未读取不显示为“原文不可用”。当前资料、历史修订、原文版本匹配及失败原因含义保持不变。
 
 **每个决定引用什么**
 

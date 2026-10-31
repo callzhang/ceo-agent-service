@@ -4,7 +4,7 @@ import { getBusinessAttentionDetail, type BusinessAttentionDetail } from "../api
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { DetailSection, LinkedTaskList, TaskSkeleton } from "./TaskParts";
-import { SourceRecordList } from "./TaskDetailPage";
+import { SourceOriginalRecord, SourceRecordList } from "./TaskDetailPage";
 import { TaskTime } from "./TaskTime";
 import { categoryLabels } from "./taskLabels";
 
@@ -36,7 +36,9 @@ export function TaskAttentionDetailPage({ attentionId }: { attentionId: string }
     </li>)}</ol> : <p className="business-empty-line">暂无结构化来源事实。历史记录未保存引文依据。</p>}</DetailSection>
     <DetailSection title="Agent 判断"><p>{detail.assessment.inference ?? item.why_attention}</p></DetailSection>
     <DetailSection title="关联任务" count={detail.linked_tasks?.length ?? 0}>{detail.linked_tasks?.length ? <LinkedTaskList tasks={detail.linked_tasks} /> : <p className="business-empty-line">暂无关联任务。</p>}</DetailSection>
-    <SourceRecordList title="来源证据" rows={detail.evidence_signals || []} open={false} />
+    {detail.evidence_signals.length > 0 && <DetailSection title="来源证据" count={detail.evidence_signals.length} open={false}>
+      {detail.evidence_signals.map((reference) => <SourceOriginalRecord key={`${attentionId}:${reference.id}`} reference={reference} />)}
+    </DetailSection>}
     <SourceRecordList title="关注历程" rows={detail.events || []} open={false} />
   </div></ConsolePageLayout>;
 }

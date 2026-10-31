@@ -421,3 +421,4 @@ tests/test_meeting_claim_sql_budget.py
 tests/test_quality_gate_current_task.py
 tests/test_web_api_task_project_summary.py
 tests/test_email_imap_readonly.py
+tests/test_web_api_task_attention.py

@@ -1,0 +1,128 @@
+{
+  "status": "review_and_focused_tests_passed_awaiting_coordinated_release",
+  "baseline_commit": "bc24a9ec5b4a7f35551c22a8909a6b233c370d7f",
+  "scope": [
+    "Task detail",
+    "Attention detail",
+    "Project shared selected-original component"
+  ],
+  "root_cause": "Task and Attention called the same sequential multi-original reader in initial detail rendering. Collapsed UI sections did not defer backend original reads.",
+  "audit_boundary": {
+    "changed": "Current semantic Task/Attention/Project detail read paths only",
+    "single_original_endpoint": "Retained exact existing source/version validation",
+    "unchanged": "Agent semantic retrieval needs source-backed proof; historical detail facts and native History/Attempt readers do not use this multi-provider detail loop."
+  },
+  "sample_comparison": [
+    {
+      "kind": "task",
+      "id": 363,
+      "previous_original_reads": 7,
+      "provider_only": 0,
+      "retained_facts_identical": true
+    },
+    {
+      "kind": "task",
+      "id": 33,
+      "previous_original_reads": 5,
+      "provider_only": 5,
+      "retained_facts_identical": true
+    },
+    {
+      "kind": "task",
+      "id": 34,
+      "previous_original_reads": 5,
+      "provider_only": 5,
+      "retained_facts_identical": true
+    },
+    {
+      "kind": "attention",
+      "id": 14,
+      "previous_original_reads": 1,
+      "provider_only": 1,
+      "retained_facts_identical": true
+    },
+    {
+      "kind": "attention",
+      "id": 15,
+      "previous_original_reads": 1,
+      "provider_only": 1,
+      "retained_facts_identical": true
+    },
+    {
+      "kind": "attention",
+      "id": 5,
+      "previous_original_reads": 20,
+      "provider_only": 13,
+      "retained_facts_identical": true
+    }
+  ],
+  "new_readonly_samples": [
+    {
+      "kind": "task",
+      "id": 363,
+      "metadata_seconds": 0.018,
+      "eager_original_reads": 0,
+      "provider_only_reads": 0
+    },
+    {
+      "kind": "task",
+      "id": 33,
+      "metadata_seconds": 0.005,
+      "eager_original_reads": 0,
+      "provider_only_reads": 0
+    },
+    {
+      "kind": "task",
+      "id": 34,
+      "metadata_seconds": 0.004,
+      "eager_original_reads": 0,
+      "provider_only_reads": 0
+    },
+    {
+      "kind": "attention",
+      "id": 14,
+      "metadata_seconds": 0.001,
+      "eager_original_reads": 0,
+      "provider_only_reads": 0
+    },
+    {
+      "kind": "attention",
+      "id": 15,
+      "metadata_seconds": 0.003,
+      "eager_original_reads": 0,
+      "provider_only_reads": 0
+    },
+    {
+      "kind": "attention",
+      "id": 5,
+      "metadata_seconds": 0.023,
+      "eager_original_reads": 0,
+      "provider_only_reads": 0
+    }
+  ],
+  "schema": {
+    "objects": 463,
+    "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+    "exact_unchanged": true,
+    "ddl_changed": false
+  },
+  "tests": {
+    "backend_red": "2 failures: Task and Attention each eagerly invoked two original reads",
+    "backend_focused": "38 passed in33.50s",
+    "frontend_red": "2 failures: missing selected-original UI on both detail pages",
+    "frontend_focused": "74 passed across6files; after adding2mock and1abort cases the2affectedfiles had6passed, union77unique cases",
+    "frontend_build": "passed",
+    "ruff": "passed",
+    "corrections": "Build caught accidental substring edit of date_evidence type; restored its existing type before release. Existing original-body assertions moved to explicit click then same content/unavailable checks."
+  },
+  "compatibility": "No old field aliases, runtime fallback, cache, new persistent fields or policy edits. Retired multi-source helper replaced by reference projection and one-source read helper.",
+  "review": {
+    "status": "SPEC_PASS_QUALITY_PASS",
+    "reviewer": "independent terra/medium read-only",
+    "findings": [],
+    "limitation": "Reviewer did not rerun tests/live reads. Recorded pre-existing Task reloadKey>0 cross-task stale display risk, not introduced by this change and outside eager-original scope."
+  },
+  "deployment": "pending peer startup-ready commit/window",
+  "production_readback": "pending",
+  "cleanup": "pending"
+}

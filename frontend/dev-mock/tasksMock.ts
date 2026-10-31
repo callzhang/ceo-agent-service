@@ -5,7 +5,7 @@
 // empty, failed and loading states.
 import type { IncomingMessage, ServerResponse } from "node:http";
 import type { Plugin } from "vite";
-import type { BusinessAttentionDetail, BusinessAttentionSummary, BusinessProjectDetail, BusinessProjectSummary, BusinessTaskDetail, BusinessTaskSignal, BusinessTaskSummary, ConsoleListMeta, ProjectContext, SourceCitation } from "../src/api/console";
+import type { BusinessAttentionDetail, BusinessAttentionSummary, BusinessProjectDetail, BusinessProjectSummary, BusinessTaskDetail, BusinessTaskSignal, BusinessSignalReference, BusinessTaskSummary, ConsoleListMeta, ProjectContext, SourceCitation } from "../src/api/console";
 
 type Row = Record<string, unknown>;
 
@@ -96,8 +96,10 @@ const projectCandidates: Row[] = Array.from({ length: 25 }, (_, index) => ({
 
 const signal = (id: number, sourceType: string, evidence: string, context: Row = {}): BusinessTaskSignal => ({
   id, source_type: sourceType, source_ref: `ref-${id}`, source_time: "2026-09-24T11:29:21+08:00", conversation_id: "", conversation_title: "", author_user_id: "", author_name: "", author_kind: "unknown",
-  evidence_text: evidence, context_json: JSON.stringify(context), dedupe_key: `k-${id}`, created_at: "2026-09-24T23:48:47+00:00",
+  evidence_text: evidence, source_available: true, source_unavailable_reason: null, context_json: JSON.stringify(context), dedupe_key: `k-${id}`, created_at: "2026-09-24T23:48:47+00:00",
 });
+
+const signalReference = ({ evidence_text, source_available, source_unavailable_reason, ...reference }: BusinessSignalReference): BusinessSignalReference => reference;
 
 const followUps: Row[] = [
   { id: 7, revision: 3, status: "draft", question_text: "报价首版目前进展到哪一步？周五能否交付？", target_kind: "group", owner_name: "王明", scheduled_at: "2026-09-26 09:00:00" },
@@ -130,7 +132,7 @@ function taskDetail(id: number): BusinessTaskDetail | null {
   };
   if (id === 2) return { ...base, evidence: [{ role: "commitment", signal: signal(21, "meeting", "陈思睿：评审后再定上线时间。") }], events: [{ ...created, id: 9 }], follow_ups: [followUps[0]] };
   if (id === 7) return { ...base, evidence: [{ role: "assignment", signal: { ...signal(503, "meeting", "要求李四在十月八日前提交验收材料。"), source_ref: "meeting-503" } }], date_evidence: [{ id: 503, date_type: "requested_deadline_at", value_at: "2026-10-08", raw_phrase: "十月八日前提交" }], events: [created], official_projects: [projects[0]] };
-  return { ...base, evidence: [{ role: "discovery", signal: signal(id, "ai_minutes", JSON.stringify(meeting), { work_item_title: `${summary.title}行动项` }) }], events: [created] };
+  return { ...base, evidence: [{ role: "discovery", signal: signal(10000 + id, "ai_minutes", JSON.stringify(meeting), { work_item_title: `${summary.title}行动项` }) }], events: [created] };
 }
 
 const attentionDetail = (id: string): BusinessAttentionDetail | null => {
@@ -167,7 +169,7 @@ const projectDetail = (id: string): BusinessProjectDetail | null => {
   const summary = projects.find((row) => row.id === id);
   if (!summary) return null;
   const context = projectContexts[id];
-  const evidence = projectSourceSignals(id).map(({ evidence_text, source_available, source_unavailable_reason, ...reference }) => reference);
+  const evidence = projectSourceSignals(id).map(signalReference);
   const revisions = context ? [{ id: Number(id) * 10, project_id: Number(id), context, evidence_signal_ids: evidence.map((source) => source.id), created_at: summary.updated_at }] : [];
   const meta = (total: number): ConsoleListMeta => ({ page: 1, page_size: 20, total, next_cursor: "", has_more: false, snapshot_at: snapshot() });
   return { summary, anchor: { id: Number(id), title: summary.title }, context, confirmed_tasks: formal.filter((task) => projectTaskIds[id].includes(Number(task.id))), suggestions: suggestions.filter((task) => task.id === (id === "1" ? "300" : id === "2" ? "301" : "")), evidence_signals: evidence, context_revisions: revisions, evidence_meta: meta(evidence.length), context_revision_meta: meta(revisions.length) };
@@ -208,14 +210,19 @@ function route(pathname: string, url: URL, scenario: string, method: string, bod
   }
   if ((match = pathname.match(/^\/api\/console\/tasks\/items\/(\d+)$/))) {
     const item = taskDetail(Number(match[1]));
-    return item ? send({ item, meta }) : send({ detail: "Business task not found" }, 404);
+    return item ? send({ item: { ...item, evidence: item.evidence.map((row) => ({ ...row, signal: row.signal ? signalReference(row.signal) : null })) }, meta }) : send({ detail: "Business task not found" }, 404);
   }
   if ((match = pathname.match(/^\/api\/console\/tasks\/attention\/(\d+)$/))) {
     const item = attentionDetail(match[1]);
-    return item ? send({ item, meta }) : send({ detail: "Attention item not found" }, 404);
+    return item ? send({ item: { ...item, evidence_signals: item.evidence_signals.map(signalReference) }, meta }) : send({ detail: "Attention item not found" }, 404);
   }
   if ((match = pathname.match(/^\/api\/console\/tasks\/signals\/(\d+)$/))) {
-    const item = Object.keys(projectContexts).flatMap(projectSourceSignals).find((source) => source.id === Number(match![1]));
+    const originals = [
+      ...Object.keys(projectContexts).flatMap(projectSourceSignals),
+      ...allTasks.flatMap((row) => taskDetail(Number(row.id))?.evidence.flatMap((entry) => entry.signal ? [entry.signal] : []) ?? []),
+      ...attention.flatMap((row) => attentionDetail(String(row.id))?.evidence_signals ?? []),
+    ];
+    const item = originals.find((source) => source.id === Number(match![1]));
     return item ? send({ item, meta }) : send({ detail: "Signal not found" }, 404);
   }
   if ((match = pathname.match(/^\/api\/console\/tasks\/projects\/(\d+)$/))) {
