@@ -1,5 +1,5 @@
 {
-  "status": "review_and_focused_tests_passed_awaiting_coordinated_release",
+  "status": "ready_for_single_standard_integrated_release",
   "baseline_commit": "bc24a9ec5b4a7f35551c22a8909a6b233c370d7f",
   "scope": [
     "Task detail",
@@ -124,5 +124,39 @@
   },
   "deployment": "pending peer startup-ready commit/window",
   "production_readback": "pending",
-  "cleanup": "pending"
+  "cleanup": "pending",
+  "integration": {
+    "ui_commit": "3fb6c75c3",
+    "peer_commit": "25675b729ee49db532d826ab4b4783bce7ede07e",
+    "status": "followup_merged_and_focused_tests_passed",
+    "finding": "Peer startup-ready wait currently blocks audit-web initial start; owner notified to keep web independent and gate only email-worker. Not edited by this task.",
+    "supplied_sha_correction": "Peer corrected originally mistyped fullSHA to exact fetched branch object.",
+    "followup": "5b1a5e2ebb5e6b0c7ebbd7f0cd5df9c1d6f9d53d",
+    "verification": "Root reviewed delta: spawn service then audit web, wait ready before email worker;26 integrated supervisor+Task/Attention tests passed in14.04s; Ruff passed.",
+    "mail_before": {
+      "task": {
+        "id": 417955,
+        "status": "pending",
+        "updated_at": "2026-10-31 04:03:21",
+        "attempts": 6,
+        "execution_generation": "32a45a3355ff4649a0688e5da97f13c4"
+      },
+      "latest_attempt": {
+        "id": 16450,
+        "agent_run_id": null,
+        "send_status": "failed",
+        "send_error": "",
+        "created_at": "2026-10-31 04:09:07"
+      },
+      "runs": [],
+      "receipt": {
+        "rows": 0,
+        "facts_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "effects": {
+        "rows": 0,
+        "facts_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    }
+  }
 }
