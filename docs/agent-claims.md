@@ -5,6 +5,8 @@
 
 # Concurrent agent file claims
 
+| codex-task-detail-identity-20261031 | frontend/src/pages/TaskDetailPage.tsx; frontend/src/pages/TaskDetailIdentity.test.tsx; scoped architecture/runtime source-detail paragraphs; docs/validation/2026-10-31-task-detail-identity.json; this row | Reproduce stale detail after same-Task refresh and identity switch; bind detail and local action state to current Task identity. No DDL, compatibility or real outbound tests. Coordinate standard deployment with Email owner. | Active; isolated codex/task-detail-identity-20261031, baseline ccc0a3b41. |
+
 ## Current assessment implementation coordination
 
 | Owner | Files | What | Since |

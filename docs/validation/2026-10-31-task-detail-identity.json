@@ -1,0 +1,21 @@
+{
+  "status": "focused_verified_release_pending",
+  "baseline": "ccc0a3b41c1ad063bd107d76d4b492fc2953b0a3",
+  "scope": "Task detail local state only; no DDL/API/provider/policy change",
+  "root_cause": "reloadKey survives Task prop change. Loading is only set when reloadKey==0, so a refreshed Task detail and its controls remain rendered during another Task request.",
+  "reproduction": "Two deferred-request regressions failed before code change, both because facts1 remained after switching to2.",
+  "fix": "Key private TaskDetailContent by taskId; detail/snapshot/error/reload/action children reset as one identity. Same Task refresh keeps facts. Existing abort/signal checks remain.",
+  "tests": {
+    "red": "2 failed on retained old facts",
+    "focused": "33 passed across6detail files in50.99s; includes two new identity cases",
+    "build": "tsc --noEmit and vite build passed"
+  },
+  "review": {
+    "status": "SPEC_PASS_QUALITY_PASS",
+    "reviewer": "independent terra/medium read-only",
+    "findings": [],
+    "boundary": "Prop rerender regression; current route parameter wiring inspected. Reviewer did not rerun tests or live reads."
+  },
+  "production_readback": null,
+  "cleanup": null
+}

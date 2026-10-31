@@ -218,6 +218,10 @@ export function FollowUpSection({ taskId, rows, onChanged }: { taskId: string; r
 }
 
 export function TaskDetailPage({ taskId }: { taskId: string }) {
+  return <TaskDetailContent key={taskId} taskId={taskId} />;
+}
+
+function TaskDetailContent({ taskId }: { taskId: string }) {
   const [detail, setDetail] = useState<BusinessTaskDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");

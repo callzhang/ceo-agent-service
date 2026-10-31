@@ -1060,6 +1060,7 @@ Project 可选关联 Fxiaoke CRM 客户；CRM 身份单独保存为稳定 Accoun
 context=null 只补 Project↔Signal 关系；明确提供空分工快照才清空当前分工，旧版本仍可读。
 当前 Project 读取最新 context revision，不双存可失配的 current JSON；相同结构快照不追加版本。
 Project、Task 和 Attention 详情先返回已保存的业务事实和来源引用，不同步重读每条来源原文；Project／Attention 的 `evidence_signals` 和 Task 的 `evidence[].signal` 仅含现有来源坐标和元数据，不宣称原文可用或不可用。Task 保留证据角色、日期与事件，Attention 保留原始引文、assessment、事件和关联任务；三类页面共用单条原文读取组件。用户选择来源后，经既有 Signal 详情接口读取该条原文，保留精确版本核验和不可用原因；不新增正文缓存、持久副本或后台预取。
+Task 详情的页面状态以当前 Task 身份隔离：切换 Task 会立即卸载旧详情、操作控件和按需原文状态，并取消旧读取；同一 Task 的操作后刷新保留已展示事实，迟到响应不能写入其他 Task 的详情。
 Project 详情 API 的当前分工只在 `context.responsibilities` 中返回；历史分工从各个 `context_revisions[].context.responsibilities` 读取，context 为 null 时页面显示待明确。
 Agent 得到新事实时仍须返回完整的当前 ProjectContext 快照，带回先前有效职责、事实和出处；
 不能因本轮只讨论一项新风险，就把未变化资料从快照中丢掉。
