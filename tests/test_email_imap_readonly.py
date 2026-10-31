@@ -2093,6 +2093,70 @@ def test_ssl_imap_line_deadline_does_not_depend_on_shutdown_interrupting_read(
     assert stopped.wait(0.5)
 
 
+def test_ssl_imap_literal_deadline_does_not_depend_on_shutdown_interrupting_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, server_socket = socket.socketpair()
+
+    class SocketIgnoringShutdown:
+        def __init__(self, wrapped: socket.socket):
+            self.wrapped = wrapped
+
+        def __getattr__(self, name: str):
+            return getattr(self.wrapped, name)
+
+        def shutdown(self, how: int) -> None:
+            return None
+
+    class PassthroughSSLContext:
+        def wrap_socket(self, wrapped: socket.socket, *, server_hostname: str):
+            assert server_hostname == "imap.example.test"
+            return SocketIgnoringShutdown(wrapped)
+
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: client)
+    stopped = threading.Event()
+
+    def server() -> None:
+        try:
+            with server_socket:
+                stream = server_socket.makefile("rb")
+                server_socket.sendall(b"* OK server greeting\r\n")
+                capability = stream.readline().split()[0]
+                server_socket.sendall(
+                    b"* CAPABILITY IMAP4rev1\r\n"
+                    + capability
+                    + b" OK capabilities complete\r\n"
+                )
+                stream.readline()  # NOOP
+                literal = b"x" * 110
+                server_socket.sendall(b"* 1 FETCH (BODY[] {110}\r\n")
+                for byte in literal:
+                    server_socket.sendall(bytes((byte,)))
+                    time.sleep(0.02)
+        except OSError:
+            pass
+        finally:
+            stopped.set()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    session = DeadlineIMAP4SSL(
+        "imap.example.test",
+        993,
+        ssl_context=PassthroughSSLContext(),
+        timeout=1.0,
+        command_timeout=0.12,
+    )
+    try:
+        with pytest.raises(TimeoutError, match="total deadline"):
+            session.noop()
+    finally:
+        session.shutdown()
+    assert time.monotonic() - started < 0.5
+    assert stopped.wait(0.5)
+
+
 def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) -> None:
     # Derek 2026-09-28 "所有底层错误码都要带着到 agent 的报错里面": a non-OK
     # login status used to raise a bare "IMAP login failed" with the server's

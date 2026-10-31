@@ -130,6 +130,34 @@ class _CommandDeadlineMixin:
                 self._log("< %r" % result)
         return result
 
+    def read(self, size: int) -> bytes:
+        """Read an IMAP literal without allowing trickled bytes to extend it."""
+        if size <= 0:
+            return b""
+        data = bytearray()
+        while len(data) < size:
+            remaining = self._command_deadline - time.monotonic()
+            if remaining <= 0:
+                self._raise_command_timeout(
+                    TimeoutError("IMAP literal read exceeded its total deadline")
+                )
+            read_timeout = remaining
+            if self._socket_timeout is not None:
+                read_timeout = min(read_timeout, self._socket_timeout)
+            session_socket = getattr(self, "sock", None)
+            if session_socket is not None:
+                session_socket.settimeout(read_timeout)
+            try:
+                chunk = self.file.read1(min(size - len(data), imaplib._SAFE_BUF_SIZE))
+            except TimeoutError as exc:
+                if self._command_deadline_expired():
+                    self._raise_command_timeout(exc)
+                raise
+            if not chunk:
+                break
+            data.extend(chunk)
+        return bytes(data)
+
     def _finish_command(self) -> None:
         with self._command_lock:
             self._command_active = False
