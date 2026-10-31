@@ -251,6 +251,7 @@ tests/test_consumer_purpose_output.py
 tests/test_history_actions.py
 tests/test_console_attempt_detail_api.py
 tests/test_history_task_retry_api.py
+tests/test_history_unsubscribe_skip_retry.py
 tests/test_message_triage_skill.py
 tests/test_audit_rules.py
 tests/test_workbench_service_runtime.py

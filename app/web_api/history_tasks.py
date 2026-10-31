@@ -183,7 +183,7 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
                 {"ok": False, "code": "not_found", "message": "Task not found", "details": {}},
                 status_code=404,
             )
-        if task.status != "failed":
+        if task.status != "failed" and task.channel != "email":
             return JSONResponse(
                 {
                     "ok": False,
@@ -195,7 +195,7 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
             )
         if task.channel == "email":
             try:
-                retried = store.retry_failed_effect_free_email_unsubscribe_task(
+                retried = store.retry_email_unsubscribe_task(
                     task.id,
                     expected_execution_generation=task.execution_generation,
                 )
@@ -215,7 +215,7 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
                     "status": retried.status,
                     "execution_generation": retried.execution_generation,
                     "retried_generation": task.execution_generation,
-                    "failure_code": "effect_free_email_unsubscribe",
+                    "failure_code": retried.error.removeprefix("task_retry:"),
                 },
                 "meta": {"snapshot_at": snapshot_at()},
             }
