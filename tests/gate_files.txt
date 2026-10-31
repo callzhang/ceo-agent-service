@@ -355,6 +355,7 @@ tests/test_consumer_audit_business_eval.py
 tests/test_project_candidate_proof.py
 tests/test_store_history_cache_freshness.py
 tests/test_reviewed_source_revisions.py
+tests/test_email_source_reader.py
 tests/test_email_exact_source.py
 tests/test_native_reply_reconciliation.py
 tests/test_agent_turn_runner.py

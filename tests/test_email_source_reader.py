@@ -27,6 +27,7 @@ def stored(tmp_path):
                 uidvalidity=42,
                 uid=1,
                 rfc_message_id=LOCATOR.rfc_message_id,
+                updated_at="2026-01-01T00:00:00+00:00",
                 normalized_text="stored body must not be passed to source factory",
             ),
         )
@@ -125,18 +126,21 @@ def test_native_body_reference_does_not_invent_to_or_cc_from_flat_recipients(sto
     assert session.calls[-1] == ("logout",)
 
 
-def observe(store, folder):
+def observe(
+    store, folder, *, observed_at="2026-01-02T00:00:00+00:00",
+    stable_message_identity=LOCATOR.stable_message_identity,
+):
     with store._connect() as db:
         db.execute("begin immediate")
         insert_observation(
             db,
             {
                 "account_id": "a",
-                "stable_message_identity": LOCATOR.stable_message_identity,
+                "stable_message_identity": stable_message_identity,
                 "state": "available",
                 "provider_folder_id": folder,
                 "provider_folder_name": folder,
-                "observed_at": "current",
+                "observed_at": observed_at,
             },
         )
 
@@ -156,6 +160,38 @@ def test_observed_moved_folder_is_resolved_with_real_readonly_provider(stored):
         stored.get_email_source_location("a", LOCATOR.stable_message_identity)["uid"]
         == 1
     )
+
+
+def test_older_available_observation_does_not_override_newer_source_location(stored):
+    observe(stored, "Archive", observed_at="2025-12-31T23:59:59+00:00")
+    adapter, session = source(search_result=b"7", uidvalidity=99)
+
+    message = reader(stored, adapter).read("a", LOCATOR.stable_message_identity)
+
+    assert message["folder"] == "INBOX" and message["uid"] == 7
+    assert not any(call[:2] == ("select", "Archive") for call in session.calls)
+    assert session.calls[-1] == ("logout",)
+
+
+def test_observation_for_another_identity_does_not_override_source_location(stored):
+    observe(stored, "Archive", stable_message_identity="a:message-id:<other@example.test>")
+    adapter, session = source()
+
+    message = reader(stored, adapter).read("a", LOCATOR.stable_message_identity)
+
+    assert message["folder"] == "INBOX" and message["uid"] == 1
+    assert not any(call[:2] == ("select", "Archive") for call in session.calls)
+    assert session.calls[-1] == ("logout",)
+
+
+def test_invalid_observation_timestamp_is_not_treated_as_a_current_location(stored):
+    observe(stored, "Archive", observed_at="not-a-timestamp")
+    adapter, session = source(search_result=b"7", uidvalidity=99)
+
+    with pytest.raises(ValueError, match="timestamp is invalid"):
+        reader(stored, adapter).read("a", LOCATOR.stable_message_identity)
+
+    assert session.calls[-1] == ("logout",)
 
 
 def test_ambiguous_moved_original_is_unavailable_and_session_is_closed(stored):

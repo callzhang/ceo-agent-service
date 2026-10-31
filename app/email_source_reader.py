@@ -1,6 +1,7 @@
 """Accurate Email original reads outside SQLite transactions, with no cache."""
 
 import json
+from datetime import datetime, timezone
 
 from app.email_classifier_contracts import EmailProviderLocator
 
@@ -127,11 +128,18 @@ class EmailSourceReader:
             rfc_message_id=location["rfc_message_id"] or None,
             thread_id=location["thread_identity"] or None,
         )
-        folder = (
-            location["provider_folder_name"]
-            if location["state"] == "available"
-            else None
-        )
+        folder = None
+        if location["state"] == "available":
+            location_updated_at = _parse_source_location_timestamp(
+                location["updated_at"]
+            )
+            observation_observed_at = _parse_source_location_timestamp(
+                location["observed_at"]
+            )
+            if observation_observed_at >= location_updated_at:
+                folder = location["provider_folder_name"]
+            else:
+                folder = locator.folder
         same_folder_lookup = (
             folder == locator.folder and locator.rfc_message_id is not None
         )
@@ -153,3 +161,17 @@ class EmailSourceReader:
             return source.fetch_message(
                 current, stable_message_identity=stable_message_identity
             )
+
+
+def _parse_source_location_timestamp(value: object) -> datetime:
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError("email source location timestamp is unavailable")
+    try:
+        parsed = datetime.fromisoformat(value.strip().replace("Z", "+00:00"))
+    except ValueError as exc:
+        raise ValueError("email source location timestamp is invalid") from exc
+    # SQLite current_timestamp is UTC without a timezone suffix; observations
+    # are stored as timezone-aware UTC ISO timestamps.
+    if parsed.tzinfo is None or parsed.utcoffset() is None:
+        parsed = parsed.replace(tzinfo=timezone.utc)
+    return parsed.astimezone(timezone.utc)

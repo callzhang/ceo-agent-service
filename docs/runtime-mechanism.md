@@ -677,6 +677,8 @@ Reply Task 的 stale 恢复另由独立 Email watchdog 周期执行，不依赖 
 
 退订入口原文读取复用 `EmailSourceReader`：按当前保存的来源坐标和文件夹事实精确读取原信，位置变化时使用该读取器既有的定位流程，继续核对 UIDVALIDITY、稳定 Message-ID 与原文版本。已知位置有效时不枚举所有文件夹或扫描全邮箱邮件头；读取失败继续进入原任务现有错误处理，不能替换为其他邮件或其他退订入口。
 
+持久来源坐标的 `updated_at` 与 available provider 观察的 `observed_at` 按 UTC 时间比较：旧观察不能覆盖更新的已验证坐标；观察更新时仍按观察文件夹做原有精确定位。同一时刻沿用观察位置。SQLite 无时区时间按 UTC 解释，缺失或无效时间报错；UIDVALIDITY、稳定 Message-ID、原文版本与唯一性核验不变。
+
 退订浏览器的遮挡弹窗处理先核对 DOM 归属：若原已绑定目标位于确认弹窗内部，保留该弹窗并继续点击原目标；仅对弹窗外被遮挡的目标沿用既有关闭处理。
 
 Email task Consumer 串行执行，每轮只领取即将处理的一条任务；后续任务保持 pending，直到轮到它们才创建 processing 锁并开始计时，避免批次内等待被 stale watchdog 误算为执行停滞。领取后的执行、重试和回收阈值沿用现有机制。
