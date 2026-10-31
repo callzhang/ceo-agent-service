@@ -428,3 +428,4 @@ tests/test_web_api_task_attention.py
 tests/test_store_template.py
 tests/test_email_unsubscribe_dialog.py
 tests/test_source_fixture_transactions.py
+tests/test_email_body_source.py
