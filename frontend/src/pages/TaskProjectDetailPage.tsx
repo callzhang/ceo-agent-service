@@ -26,6 +26,10 @@ function ProjectFacts({ context, signals = [] }: { context: ProjectContext | nul
 
 
 export function TaskProjectDetailPage({ projectId }: { projectId: string }) {
+  return <ProjectDetailContent key={projectId} projectId={projectId} />;
+}
+
+function ProjectDetailContent({ projectId }: { projectId: string }) {
   const [detail, setDetail] = useState<BusinessProjectDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");

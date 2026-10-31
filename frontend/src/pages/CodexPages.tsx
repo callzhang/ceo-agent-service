@@ -154,12 +154,17 @@ function RelatedAttempts({ attempts }: { attempts: RelatedAttempt[] }) {
 
 export function CodexSessionDetailPage() {
   const { sessionId = "" } = useParams();
+  return <CodexSessionDetailContent key={sessionId} sessionId={sessionId} />;
+}
+
+function CodexSessionDetailContent({ sessionId }: { sessionId: string }) {
   const [payload, setPayload] = useState<CodexSessionPayload | null>(null);
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
   useEffect(() => {
     const controller = new AbortController();
     getCodexSession(sessionId, controller.signal).then((response) => {
+      if (controller.signal.aborted) return;
       setPayload(response.item);
       setSnapshot(response.meta.snapshot_at);
     }).catch((reason: unknown) => {

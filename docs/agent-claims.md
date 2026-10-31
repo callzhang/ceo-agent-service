@@ -5,6 +5,8 @@
 
 # Concurrent agent file claims
 
+| codex-detail-identity-boundaries-20261031 | frontend/src/pages/{TaskAttentionDetailPage,TaskProjectDetailPage,TaskDetailPage,AttemptDetailPage,HistoryTaskPage,BusinessDetailPage,RuntimeErrorDetailPage,CodexPages}.tsx; new detail identity regressions; scoped architecture/runtime detail paragraphs; docs/validation/2026-10-31-detail-identity-boundaries.json; this row | Audit routed detail identity, old content/action state and stale reads. Reproduce then use current identity boundaries/request cancellation, no API/DDL/policy/compatibility changes. Substitute all test commands. | Active in isolated codex/detail-identity-boundaries-20261031 baseline d91e7d7c0; coordinate serialized release with Email owner. |
+
 
 ## Current assessment implementation coordination
 

@@ -268,6 +268,10 @@ function TaskDetailContent({ taskId }: { taskId: string }) {
 }
 
 export function LegacyProjectDetailPage({ legacyProjectId }: { legacyProjectId: string }) {
+  return <HistoricalProjectDetailContent key={legacyProjectId} legacyProjectId={legacyProjectId} />;
+}
+
+function HistoricalProjectDetailContent({ legacyProjectId }: { legacyProjectId: string }) {
   const [detail, setDetail] = useState<LegacyProjectDetail | null>(null);
   const [error, setError] = useState("");
   useEffect(() => {

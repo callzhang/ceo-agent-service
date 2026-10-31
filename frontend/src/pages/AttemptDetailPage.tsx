@@ -503,6 +503,10 @@ function FeedbackPanel({ detail, onSaved }: { detail: AttemptDetail; onSaved: (m
 
 export function AttemptDetailPage() {
   const { attemptId = "", role = "" } = useParams();
+  return <AttemptDetailContent key={JSON.stringify([attemptId, role])} attemptId={attemptId} role={role} />;
+}
+
+function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: string }) {
   const [detail, setDetail] = useState<AttemptDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -514,6 +518,7 @@ export function AttemptDetailPage() {
     const controller = new AbortController();
     setState("loading");
     getAttemptDetail(attemptId, controller.signal).then((response) => {
+      if (controller.signal.aborted) return;
       setDetail(response.item);
       setSnapshot(response.meta.snapshot_at);
       setState("ready");

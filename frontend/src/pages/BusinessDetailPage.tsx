@@ -126,6 +126,10 @@ function MeetingToolUses({ uses, available }: { uses: MeetingToolUse[]; availabl
 
 export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
   const { runId = "" } = useParams();
+  return <MeetingAttemptContent key={JSON.stringify([endpoint, runId])} endpoint={endpoint} runId={runId} />;
+}
+
+function MeetingAttemptContent({ endpoint, runId }: { endpoint: string; runId: string }) {
   const [payload, setPayload] = useState<MeetingDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");
@@ -135,6 +139,7 @@ export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
     setState("loading");
     setMessage("");
     getResource(endpoint.replace(":id", encodeURIComponent(runId)), controller.signal).then((response) => {
+      if (controller.signal.aborted) return;
       setPayload(response.item as MeetingDetail);
       setSnapshot(response.meta.snapshot_at);
       setState("ready");
@@ -169,10 +174,14 @@ export function MeetingAttemptPage({ endpoint }: { endpoint: string }) {
 function GenericBusinessDetailPage({ kind, endpoint, attemptActions = false }: { kind: string; endpoint: string; attemptActions?: boolean }) {
   const params = useParams();
   const id = params.attemptId || params.runId || params.processInstanceId || "";
+  return <GenericBusinessDetailContent key={JSON.stringify([kind, endpoint, id])} kind={kind} endpoint={endpoint} id={id} attemptActions={attemptActions} />;
+}
+
+function GenericBusinessDetailContent({ kind, endpoint, id, attemptActions }: { kind: string; endpoint: string; id: string; attemptActions: boolean }) {
   const [payload, setPayload] = useState<Record<string, unknown> | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [message, setMessage] = useState("");
-  useEffect(() => { const controller = new AbortController(); getResource(endpoint.replace(":id", encodeURIComponent(id)), controller.signal).then((response) => { setPayload(response.item); setSnapshot(response.meta.snapshot_at); }).catch((error: unknown) => { if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "加载失败"); }); return () => controller.abort(); }, [endpoint, id]);
+  useEffect(() => { const controller = new AbortController(); getResource(endpoint.replace(":id", encodeURIComponent(id)), controller.signal).then((response) => { if (controller.signal.aborted) return; setPayload(response.item); setSnapshot(response.meta.snapshot_at); }).catch((error: unknown) => { if (!controller.signal.aborted) setMessage(error instanceof Error ? error.message : "加载失败"); }); return () => controller.abort(); }, [endpoint, id]);
   const runAction = async (action: string) => { setMessage("操作进行中…"); try { const result = await command(`/api/console/history/${encodeURIComponent(id)}/${action}`); setMessage(result.message); } catch (error) { setMessage(error instanceof Error ? error.message : "操作失败"); } };
   return <ConsolePageLayout title={kind} actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/history">返回 History</Link></>}><section className="console-card">{message && <p className="page-state">{message}</p>}{!payload && !message ? <p className="page-state" role="status">正在加载…</p> : payload ? <><div className="task-overview-meta"><StatusBadge value={displayValue(payload.status)} /><span>{displayValue(payload.title)}</span></div><dl className="detail-definition-list">{["input", "decision", "output", "reviewer_feedback", "corrected_reply"].map((key) => <div key={key}><dt>{key}</dt><dd>{displayValue(payload[key])}</dd></div>)}</dl>{attemptActions && <div className="console-page-actions"><button type="button" className="secondary-button" onClick={() => void runAction("rerun")}>重跑</button><button type="button" className="secondary-button" onClick={() => void runAction("feedback")}>提交反馈</button></div>}<details><summary>Runtime details</summary><pre className="technical-details">{JSON.stringify(payload.runtime || {}, null, 2)}</pre></details></> : <div className="page-state page-state-error" role="alert">{message}</div>}</section></ConsolePageLayout>;
 }

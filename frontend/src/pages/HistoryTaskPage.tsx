@@ -26,6 +26,10 @@ function shortTime(value: string) {
 /** One History record is a task; its attempts and runs are what happened to it. */
 export function HistoryTaskPage() {
   const { taskId = "" } = useParams();
+  return <HistoryTaskContent key={taskId} taskId={taskId} />;
+}
+
+function HistoryTaskContent({ taskId }: { taskId: string }) {
   const [history, setHistory] = useState<TaskHistory | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [error, setError] = useState("");
@@ -35,7 +39,7 @@ export function HistoryTaskPage() {
     setHistory(null);
     setError("");
     getResource(`/api/console/history/tasks/${encodeURIComponent(taskId)}`, controller.signal)
-      .then((response) => { setHistory(response.item as unknown as TaskHistory); setSnapshot(response.meta.snapshot_at); })
+      .then((response) => { if (controller.signal.aborted) return; setHistory(response.item as unknown as TaskHistory); setSnapshot(response.meta.snapshot_at); })
       .catch((reason: unknown) => { if (!controller.signal.aborted) setError(reason instanceof Error ? reason.message : "加载失败"); });
     return () => controller.abort();
   }, [taskId]);

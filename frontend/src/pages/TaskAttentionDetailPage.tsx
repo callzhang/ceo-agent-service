@@ -11,6 +11,10 @@ import { categoryLabels } from "./taskLabels";
 const trail = [{ label: "Tasks", to: "/tasks" }, { label: "需关注", to: "/tasks" }];
 
 export function TaskAttentionDetailPage({ attentionId }: { attentionId: string }) {
+  return <AttentionDetailContent key={attentionId} attentionId={attentionId} />;
+}
+
+function AttentionDetailContent({ attentionId }: { attentionId: string }) {
   const [detail, setDetail] = useState<BusinessAttentionDetail | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [state, setState] = useState<"loading" | "ready" | "error">("loading");

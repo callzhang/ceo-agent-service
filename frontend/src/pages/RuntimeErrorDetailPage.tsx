@@ -8,6 +8,10 @@ import { StatusBadge } from "../components/status/StatusBadge";
 
 export function RuntimeErrorDetailPage() {
   const { errorId = "" } = useParams();
+  return <RuntimeErrorDetailContent key={errorId} errorId={errorId} />;
+}
+
+function RuntimeErrorDetailContent({ errorId }: { errorId: string }) {
   const [item, setItem] = useState<Record<string, unknown> | null>(null);
   const [snapshot, setSnapshot] = useState("");
   const [error, setError] = useState("");
@@ -18,6 +22,7 @@ export function RuntimeErrorDetailPage() {
     setError("");
     getResource(`/api/console/history/errors/${encodeURIComponent(errorId)}`, controller.signal)
       .then((response) => {
+        if (controller.signal.aborted) return;
         setItem(response.item);
         setSnapshot(response.meta.snapshot_at);
       })

@@ -1,0 +1,45 @@
+{
+  "status": "focused_verified_release_pending",
+  "baseline": "d91e7d7c0a3f60b1c783537fe8642241b671ab8c",
+  "scope": [
+    "Attention",
+    "Project",
+    "retained read-only historical Project",
+    "History Task",
+    "Attempt and execution role",
+    "Meeting Attempt",
+    "OA approval",
+    "service error",
+    "native session"
+  ],
+  "root_causes": [
+    "Resetting detail in passive effects leaves old DOM in the navigation commit.",
+    "Six readers could commit a successful late response after abort.",
+    "Project CRM state and Attempt feedback/decision state remained owned by the previous mounted page across entity changes."
+  ],
+  "fix": "Use current keyed content components with exact entity identity, role or resource endpoint/kind where applicable; retain existing abort cleanup and add missing aborted-success guards. No generic state framework, compatibility aliases, API, DDL or policy changes.",
+  "tests": {
+    "red": "Initial34 routed layout/deferred/action cases:26 failed,8 passed on unchanged production code.",
+    "focused": "127 passed across11files in8.59s;37 new identity cases plus90 existing detail cases",
+    "build": "tsc --noEmit and vite build passed",
+    "diff_check": "passed"
+  },
+  "review": {
+    "status": "SPEC_PASS_QUALITY_PASS",
+    "reviewer": "independent terra/medium read-only",
+    "findings": [],
+    "boundary": "Inspected actual router, exact identity keys and async callbacks. No tests or live reads by reviewer."
+  },
+  "schema_before": {
+    "objects": 463,
+    "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+    "fk": []
+  },
+  "audit_boundary": "Routed current detail pages only; retained historical facts remain a current read-only product feature, not legacy schema compatibility. Existing Task identity fix reused unchanged. Email inline detail/operational recovery owned by the concurrent release task is outside this change.",
+  "ui_validation": {
+    "actual_navigation": "37 current router component regressions; includes layout-commit observation before passive effects",
+    "manual_browser": "not_run; browser availability will be checked at readback"
+  },
+  "production_readback": null,
+  "cleanup": null
+}
