@@ -82,8 +82,9 @@ def run_supervisor(
         "email-worker": email_worker_command,
     }
     children: dict[str, subprocess.Popen] = {}
+    service_ready_fds: dict[str, int] = {}
 
-    def wait_for_service_startup(child: subprocess.Popen, ready_fd: int) -> bool:
+    def wait_for_startup_signal(child: subprocess.Popen, ready_fd: int) -> bool:
         try:
             while not shutdown_requested and child.poll() is None:
                 readable, _, _ = select.select([ready_fd], [], [], POLL_INTERVAL_SECONDS)
@@ -94,7 +95,7 @@ def run_supervisor(
         finally:
             os.close(ready_fd)
 
-    def start_service() -> None:
+    def spawn_service() -> None:
         while not shutdown_requested:
             ready_read_fd, ready_write_fd = os.pipe()
             child_env = os.environ.copy()
@@ -115,16 +116,31 @@ def run_supervisor(
                     os.close(ready_write_fd)
                 except OSError:
                     pass
-            if wait_for_service_startup(child, ready_read_fd):
-                children["worker"] = child
+            children["worker"] = child
+            service_ready_fds["worker"] = ready_read_fd
+            return
+
+    def wait_for_service_startup() -> None:
+        while not shutdown_requested:
+            child = children["worker"]
+            ready_fd = service_ready_fds["worker"]
+            if wait_for_startup_signal(child, ready_fd):
+                service_ready_fds.pop("worker")
                 return
+            service_ready_fds.pop("worker")
             stop_children((child,), sleep=sleep, monotonic=monotonic)
+            children.pop("worker")
             if not shutdown_requested:
                 print(
                     "service exited before startup recovery was ready; restarting",
                     flush=True,
                 )
                 sleep(CHILD_RESTART_DELAY_SECONDS)
+                spawn_service()
+
+    def start_service() -> None:
+        spawn_service()
+        wait_for_service_startup()
 
     def start_child(name: str) -> None:
         if name == "worker":
@@ -138,8 +154,11 @@ def run_supervisor(
                 sleep(CHILD_RESTART_DELAY_SECONDS)
 
     try:
-        for name in commands:
-            start_child(name)
+        spawn_service()
+        start_child("audit-web")
+        wait_for_service_startup()
+        if not shutdown_requested:
+            start_child("email-worker")
         while not shutdown_requested:
             for name, child in tuple(children.items()):
                 returncode = child.poll()
