@@ -119,9 +119,11 @@ def _mock_current_email_source_location(monkeypatch, store, locator, *, current_
         "uid": locator.uid,
         "rfc_message_id": locator.rfc_message_id,
         "thread_identity": locator.thread_id,
+        "updated_at": "2026-01-01T00:00:00+00:00",
         "message_source_reference_json": None,
         "state": "available",
         "provider_folder_name": current_folder or locator.folder,
+        "observed_at": "2026-01-02T00:00:00+00:00",
     }
     monkeypatch.setattr(
         store, "get_email_source_locations",
