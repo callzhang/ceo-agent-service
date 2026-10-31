@@ -422,6 +422,8 @@ key 是 `manual:<attempt 编号>`；该 attempt 在反馈到达之后又有一�
 服务启动时，`reconcile_done_reply_tasks_with_failed_current_run` 只把当前执行代的最新 run 确为
 `failed`、且没有成功外部动作或已收口错误的 `done` task 改回真实失败投影。
 
+Service supervisor 启动主 service 后，等待该进程完成启动期任务恢复并通过一次性管道发出 ready 信号，才启动 Email worker。主 service 在运行中重启时，supervisor 先停止 Email worker，再等待新 service 的恢复信号后重新启动它；Audit web 保持独立。这样恢复流程不会把另一个刚启动消费者领取的 Reply task 误判为上次进程遗留。
+
 只有明确的操作员决定可以停止仍处于 `external_action_uncertain` 的失败 Reply task：先读取
 `GET /api/console/reply-tasks/{task_id}` 的当前 generation，再向对应 `/skip` 入口提交 generation
 和非空原因。写入原子检查失败状态与 generation，将 task 投影为 `skipped` 并追加
