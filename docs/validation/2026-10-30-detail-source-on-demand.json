@@ -1,5 +1,5 @@
 {
-  "status": "ready_for_single_standard_integrated_release",
+  "status": "scoped_detail_fix_released_verified_and_cleaned",
   "baseline_commit": "bc24a9ec5b4a7f35551c22a8909a6b233c370d7f",
   "scope": [
     "Task detail",
@@ -122,13 +122,194 @@
     "findings": [],
     "limitation": "Reviewer did not rerun tests/live reads. Recorded pre-existing Task reloadKey>0 cross-task stale display risk, not introduced by this change and outside eager-original scope."
   },
-  "deployment": "pending peer startup-ready commit/window",
-  "production_readback": "pending",
-  "cleanup": "pending",
+  "deployment": {
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-fcefbf55-e8e8-4ec7-aa96-23373424de8b.sqlite3",
+    "branch_name": "",
+    "commit_message": "",
+    "error": "",
+    "expected_fingerprint": "79dcabbade50c5a6e0c471bc439c732c2e5a5b64c8d13f3f3a84c7db242494ce",
+    "installed_commit": "a239faa033204ad638cb6c34fa704109af1863f0",
+    "operation_id": "deploy-fcefbf55-e8e8-4ec7-aa96-23373424de8b",
+    "original_commit": "bc24a9ec5b4a7f35551c22a8909a6b233c370d7f",
+    "status": "succeeded",
+    "target_commit": "a239faa033204ad638cb6c34fa704109af1863f0",
+    "updated_at": "2026-10-31T05:21:11.055102+00:00"
+  },
+  "production_readback": {
+    "installed": "a239faa033204ad638cb6c34fa704109af1863f0",
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.02
+      },
+      {
+        "path": "/api/console/tasks/items/363",
+        "status": 200,
+        "seconds": 0.105,
+        "retained_facts_exact": true,
+        "source_reference_count": 7,
+        "initial_original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/items/33",
+        "status": 200,
+        "seconds": 0.031,
+        "retained_facts_exact": true,
+        "source_reference_count": 5,
+        "initial_original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/items/34",
+        "status": 200,
+        "seconds": 0.026,
+        "retained_facts_exact": true,
+        "source_reference_count": 5,
+        "initial_original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/attention/14",
+        "status": 200,
+        "seconds": 0.022,
+        "retained_facts_exact": true,
+        "source_reference_count": 1,
+        "initial_original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/attention/15",
+        "status": 200,
+        "seconds": 0.021,
+        "retained_facts_exact": true,
+        "source_reference_count": 1,
+        "initial_original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/attention/5",
+        "status": 200,
+        "seconds": 0.033,
+        "retained_facts_exact": true,
+        "source_reference_count": 20,
+        "initial_original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/projects/1",
+        "status": 200,
+        "seconds": 0.065,
+        "project_reference_contract_preserved": true
+      },
+      {
+        "path": "/api/console/tasks/projects/49",
+        "status": 200,
+        "seconds": 0.034,
+        "project_reference_contract_preserved": true
+      },
+      {
+        "path": "/api/console/tasks/projects/20",
+        "status": 200,
+        "seconds": 0.031,
+        "project_reference_contract_preserved": true
+      },
+      {
+        "path": "/api/console/tasks/signals/957",
+        "status": 200,
+        "seconds": 0.039,
+        "original_available": true,
+        "body_sha256": "ef23e74411af137e0e43e2ad45b79079c6fe72adcec49d80386849030c4ce8ca"
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.428
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 1.06
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.966,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.251,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&status=failed&include_chart=false",
+        "status": 200,
+        "seconds": 0.949,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.263,
+        "receipt_present": true
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "exact_unchanged": true,
+      "fk": []
+    },
+    "operation": {
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-fcefbf55-e8e8-4ec7-aa96-23373424de8b.sqlite3",
+      "branch_name": "",
+      "commit_message": "",
+      "error": "",
+      "expected_fingerprint": "79dcabbade50c5a6e0c471bc439c732c2e5a5b64c8d13f3f3a84c7db242494ce",
+      "installed_commit": "a239faa033204ad638cb6c34fa704109af1863f0",
+      "operation_id": "deploy-fcefbf55-e8e8-4ec7-aa96-23373424de8b",
+      "original_commit": "bc24a9ec5b4a7f35551c22a8909a6b233c370d7f",
+      "status": "succeeded",
+      "target_commit": "a239faa033204ad638cb6c34fa704109af1863f0",
+      "updated_at": "2026-10-31T05:21:11.055102+00:00"
+    },
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-fcefbf55-e8e8-4ec7-aa96-23373424de8b.sqlite3",
+    "frontend_tree": "abe6d3b3137b64cbb699a0fd54b403a1a4cbf154",
+    "frontend_stamp": "abe6d3b3137b64cbb699a0fd54b403a1a4cbf154",
+    "frontend_chunks": [
+      {
+        "page": "TaskDetailPage",
+        "served_build_exact": true
+      },
+      {
+        "page": "TaskAttentionDetailPage",
+        "served_build_exact": true
+      },
+      {
+        "page": "TaskProjectDetailPage",
+        "served_build_exact": true
+      }
+    ],
+    "listener_pids": [
+      "83637"
+    ]
+  },
+  "cleanup": {
+    "status": "deleted_verified_absent",
+    "owned_root": "/private/tmp/ceo-detail-sources.kWx7iw",
+    "development_build": "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench",
+    "sizes_before_cleanup": {
+      "root": "36MiB",
+      "development_build": "1.6MiB"
+    },
+    "peer_worktree": "Not owned by this task; preserved.",
+    "removed_paths": [
+      "/private/tmp/ceo-detail-sources.kWx7iw",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench"
+    ],
+    "no_open_references_before_deletion": true,
+    "production_database_and_frontend_preserved": true
+  },
   "integration": {
     "ui_commit": "3fb6c75c3",
     "peer_commit": "25675b729ee49db532d826ab4b4783bce7ede07e",
-    "status": "followup_merged_and_focused_tests_passed",
+    "status": "standard_release_and_native_readback_passed",
     "finding": "Peer startup-ready wait currently blocks audit-web initial start; owner notified to keep web independent and gate only email-worker. Not edited by this task.",
     "supplied_sha_correction": "Peer corrected originally mistyped fullSHA to exact fetched branch object.",
     "followup": "5b1a5e2ebb5e6b0c7ebbd7f0cd5df9c1d6f9d53d",
@@ -157,6 +338,123 @@
         "rows": 0,
         "facts_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
       }
-    }
-  }
+    },
+    "mail_after": {
+      "task": {
+        "id": 417955,
+        "status": "processing",
+        "updated_at": "2026-10-31 05:21:57",
+        "attempts": 7,
+        "execution_generation": "32a45a3355ff4649a0688e5da97f13c4"
+      },
+      "latest_attempt": {
+        "id": 16450,
+        "agent_run_id": null,
+        "send_status": "failed",
+        "send_error": "",
+        "created_at": "2026-10-31 04:09:07"
+      },
+      "runs": [],
+      "receipt": {
+        "rows": 0,
+        "facts_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      },
+      "effects": {
+        "rows": 0,
+        "facts_sha256": "4f53cda18c2baa0c0354bb5f9a3ecbe5ed12ab4d8e11ba873c2f11161202b945"
+      }
+    },
+    "mail_history": {
+      "attempt_id": 16450,
+      "http": 200,
+      "item_keys": [
+        "id",
+        "title",
+        "type",
+        "conversation",
+        "status",
+        "metadata",
+        "consumer_result",
+        "trigger",
+        "audit_explanation",
+        "generated_reply",
+        "delivery",
+        "email",
+        "references",
+        "feedback",
+        "decision_options",
+        "human_decision",
+        "system_execution",
+        "audit_summary",
+        "draft_reply",
+        "failure_reason",
+        "recovery_state",
+        "action_pills",
+        "quality_warnings",
+        "context_only_info",
+        "tool_uses",
+        "historical_attempt",
+        "what_happened",
+        "agent_execution_record",
+        "revision_count",
+        "oa",
+        "calendar",
+        "actions",
+        "agent_sessions",
+        "runtime_attempts",
+        "created_at",
+        "updated_at"
+      ],
+      "id": 16450,
+      "status": {
+        "raw": "running",
+        "subject": "Immutable ActionPlan authorizes unsubscribe.",
+        "message": "当前状态：running。",
+        "requires_decision": false,
+        "attention": {
+          "kind": "",
+          "reason": "",
+          "external_effect": "",
+          "retry_at": ""
+        }
+      }
+    },
+    "mail_outcome": "Existing worker naturally claimed pending Task:attempts6to7;stored historical Attempt16450 remainsfailed, current History rendersrunning fromprocessing Task. Receipt/effect stillnone at observation. No manualreplay and no businesscompletion claim; peer owns continued investigation."
+  },
+  "gate": {
+    "commit": "a239faa033204ad638cb6c34fa704109af1863f0",
+    "passed_at": "2026-10-31T05:20:50+00:00",
+    "files": 423,
+    "summary": "8513 passed, 2 skipped, 1 deselected in 474.58s (0:07:54)"
+  },
+  "backup_cleanup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3",
+    "signature": [
+      16777231,
+      843588768,
+      1793424131313121280,
+      514969600
+    ],
+    "integrity": "ok",
+    "complete_marker": true,
+    "schema_exact": true,
+    "fk": [],
+    "no_open_references": true,
+    "generation_guarded": true,
+    "deleted": true,
+    "removed_paths": [
+      "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-30.sqlite3"
+    ]
+  },
+  "release_mode": "One standard exact-target install; natural quiet; no skip-quiet or policy change.",
+  "ui_validation": {
+    "manual_browser_clicks": "not_run",
+    "evidence": "77 focused frontend cases in grouped runs, successfulbuild, actual API facts and current built bytes served for all3detail chunks."
+  },
+  "outside_scope_observation": {
+    "issue": "Pre-existing Task reloadKey>0 cross-task stale display risk",
+    "basis": "Code review, not a live incident reproduced here; existing effect setsloading only whenreloadKey===0.",
+    "status": "separate from eager-original fix; not silently markedfixed"
+  },
+  "closed_at": "2026-10-31T05:26:24.517966+00:00"
 }
