@@ -1631,25 +1631,14 @@ def register_console_routes(
     @app.post("/api/console/feedback/batches/{batch_id}/resolve")
     async def console_feedback_batch_resolve(batch_id: str, request: Request):
         payload = await json_object(request)
-        allowed = {
-            "commit_sha",
-            "test_evidence",
-            "tests",
-            "restart_evidence",
-            "restart",
-            "health_evidence",
-            "health",
-            "associations",
-            "feedback_ids",
+        # Keep queue snapshots server-owned; derive receipt fields from the contract.
+        allowed = (set(ResolutionEvidence.model_fields) - {"backlog_evidence"}) | {
+            "tests", "restart", "health", "feedback_ids",
         }
         if set(payload) - allowed:
             return JSONResponse(
-                {
-                    "ok": False,
-                    "code": "feedback_resolution_invalid",
-                    "message": "unsupported feedback resolution field",
-                    "details": {},
-                },
+                {"ok": False, "code": "feedback_resolution_invalid",
+                 "message": "unsupported feedback resolution field", "details": {}},
                 status_code=409,
             )
         feedback_ids = payload.get("feedback_ids")
@@ -1678,34 +1667,37 @@ def register_console_routes(
         try:
             from app.config import repo_root
             commit_sha = evidence.commit_sha.strip()
-            if len(commit_sha) != 40 or any(
-                character not in "0123456789abcdefABCDEF" for character in commit_sha
-            ):
-                raise ValueError("resolution requires a 40-character commit SHA")
-            commit_check = subprocess.run(
-                ["git", "cat-file", "-e", f"{commit_sha}^{{commit}}"],
-                cwd=repo_root(),
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=5,
-            )
-            if commit_check.returncode != 0:
-                raise ValueError("resolution commit does not exist")
-            ancestor_check = subprocess.run(
-                ["git", "merge-base", "--is-ancestor", commit_sha, "main"],
-                cwd=repo_root(),
-                capture_output=True,
-                text=True,
-                check=False,
-                timeout=5,
-            )
-            if ancestor_check.returncode != 0:
-                raise ValueError("resolution commit is not an ancestor of local main")
+            commit_is_ancestor = False
+            if commit_sha:
+                if len(commit_sha) != 40 or any(
+                    character not in "0123456789abcdefABCDEF" for character in commit_sha
+                ):
+                    raise ValueError("resolution requires a 40-character commit SHA")
+                commit_check = subprocess.run(
+                    ["git", "cat-file", "-e", f"{commit_sha}^{{commit}}"],
+                    cwd=repo_root(),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                )
+                if commit_check.returncode != 0:
+                    raise ValueError("resolution commit does not exist")
+                ancestor_check = subprocess.run(
+                    ["git", "merge-base", "--is-ancestor", commit_sha, "main"],
+                    cwd=repo_root(),
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    timeout=5,
+                )
+                if ancestor_check.returncode != 0:
+                    raise ValueError("resolution commit is not an ancestor of local main")
+                commit_is_ancestor = True
             resolved = store_factory().resolve_feedback_processing_batch(
                 batch_id,
                 evidence,
-                commit_is_ancestor=True,
+                commit_is_ancestor=commit_is_ancestor,
                 feedback_keys=feedback_ids,
             )
         except (ValueError, subprocess.SubprocessError, OSError) as exc:

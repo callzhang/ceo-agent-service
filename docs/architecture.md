@@ -513,12 +513,13 @@ Feedback API 提交一个不为空的确切 `reason`；服务不生成、重写�
 结案只能作用于当前 `processing` 轮次，旧轮次的证据不能满足新一轮。
 
 Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 Agent
-共用；它不对公网暴露，也不增加 feedback 专用鉴权。完成一个当前轮次时，
-后端必须从当前轮次回执中同时确认：代码已实现，测试成功，提交存在且是
-本地 `main` 的祖先，`com.ceo-agent-service.main` 已重启且 PID 实际变更，
-本地健康接口返回 HTTP 200 和 `ok=true`，权威实时的 `processing` / `failed` /
-`retryable` 数量由独立队列投影报告，不作为单个反馈项目的结案门槛；状态和证据必须通过 API
-持久化后回读一致。
+共用；它不对公网暴露，也不增加 feedback 专用鉴权。结案入口接收现有
+`ResolutionEvidence` 的配置、Skill revision 与 load receipt 字段，并交由 Store 按当前已持久化
+的 decision scope 校验：`code`/`mixed` 仍要求本地 `main` 祖先提交；纯配置或 Skill 修复
+使用原有配置关系及精确加载回执，不额外要求代码提交。调用者仍不能提交服务队列快照，
+未知字段继续拒绝。当前轮次的关联、测试、不同 PID 的重启、health 及适用回执必须完整且一致；
+权威实时的 `processing` / `failed` / `retryable` 数量由独立队列投影报告，不作为单个反馈项目的
+结案门槛。状态和证据必须通过 API 持久化后回读一致。
 
 该能力不在 Agent 页面增加第二套流程，也不使用模型合成重新打开理由或新回执。
 

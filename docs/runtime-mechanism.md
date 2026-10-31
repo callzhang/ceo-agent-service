@@ -635,6 +635,11 @@ code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项�
 的项目，不重复结案或重放已结案项目的任务或外部动作。所有关联、证据和结果仍须通过
 Feedback API 持久化并回读一致。
 
+结案 HTTP 入口与原生 `ResolutionEvidence` 使用同一字段合同，完整传入配置 ID、前一配置 ID、
+load receipt 和 Skill revision 证据；是否需要代码提交由原有 Store scope 校验决定。
+若请求提供提交 SHA，HTTP 仍先核实提交存在且为本地 `main` 祖先；未提供时，`code`/`mixed`
+及无 scope 的代码结案仍由 Store 拒绝。客户端 `backlog_evidence` 和未知字段仍不可提交。
+
 Feedback API 是现有本地后端边界内的操作接口，供 Workbench 和仓库 Agent 共用；它不对
 公网暴露，也不增加 feedback 专用鉴权或第二套 Agent 流程。
 
