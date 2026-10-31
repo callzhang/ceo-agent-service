@@ -5950,7 +5950,7 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
 
     assert events[:2] == ["accounts", "model"]
     assert output.getvalue().strip() == (
-        "email-worker starting accounts=1 components=4"
+        "email-worker starting accounts=1 components=5"
     )
     assert events[2:] == [
         ("create", "ceo-agent-email-classifier-agent", True),
@@ -5959,6 +5959,8 @@ def test_startup_loads_enabled_accounts_and_active_model_before_ready_and_thread
         ("start", "ceo-agent-email-provider-actions"),
         ("create", "ceo-agent-email-agent-consumer", True),
         ("start", "ceo-agent-email-agent-consumer"),
+        ("create", "ceo-agent-email-task-recovery-watchdog", True),
+        ("start", "ceo-agent-email-task-recovery-watchdog"),
         ("create", "ceo-agent-email-training", True),
         ("start", "ceo-agent-email-training"),
         "wait",
@@ -8709,15 +8711,16 @@ def test_startup_records_process_heartbeat_only_after_dependencies_are_ready():
             {
                 "status": "starting",
                 "accounts": 1,
-                "runtime_loops": 4,
+                "runtime_loops": 5,
                 "runtime_loop_scopes": [
                     "component:email-classifier-agent",
                     "component:email-provider-actions",
                     "component:email-agent-consumer",
+                    "component:email-task-recovery-watchdog",
                     "component:email-training",
                 ],
                 "readiness_ready": 0,
-                "readiness_total": 3,
+                "readiness_total": 4,
             },
         ),
     ]
@@ -8731,6 +8734,7 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
             "email-classifier-agent",
             "email-provider-actions",
             "email-agent-consumer",
+            "email-task-recovery-watchdog",
             "email-training",
         ),
         record_health=lambda scope, payload: health.append((scope, payload)),
@@ -8739,6 +8743,7 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
             "component:email-classifier-agent",
             "component:email-provider-actions",
             "component:email-agent-consumer",
+            "component:email-task-recovery-watchdog",
             "component:email-training",
         ),
     )
@@ -8749,21 +8754,24 @@ def test_readiness_barrier_reports_ready_only_after_all_component_heartbeats():
     assert [scope for scope, _payload in health] == []
 
     barrier.mark_ready("email-agent-consumer")
+    assert health == []
+    barrier.mark_ready("email-task-recovery-watchdog")
     assert health == [
         (
             "process:email-worker",
             {
                 "status": "ready",
                 "accounts": 1,
-                "runtime_loops": 4,
+                "runtime_loops": 5,
                 "runtime_loop_scopes": [
                     "component:email-classifier-agent",
                     "component:email-provider-actions",
                     "component:email-agent-consumer",
+                    "component:email-task-recovery-watchdog",
                     "component:email-training",
                 ],
-                "readiness_ready": 4,
-                "readiness_total": 4,
+                "readiness_ready": 5,
+                "readiness_total": 5,
             },
         )
     ]
@@ -8777,6 +8785,7 @@ def test_process_readiness_does_not_wait_for_training_maintenance():
             "email-classifier-agent",
             "email-provider-actions",
             "email-agent-consumer",
+            "email-task-recovery-watchdog",
         ),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
@@ -8784,6 +8793,7 @@ def test_process_readiness_does_not_wait_for_training_maintenance():
             "component:email-classifier-agent",
             "component:email-provider-actions",
             "component:email-agent-consumer",
+            "component:email-task-recovery-watchdog",
             "component:email-training",
         ),
     )
@@ -8793,21 +8803,23 @@ def test_process_readiness_does_not_wait_for_training_maintenance():
     assert health == []
 
     barrier.mark_ready("email-agent-consumer")
+    barrier.mark_ready("email-task-recovery-watchdog")
     assert health == [
         (
             "process:email-worker",
             {
                 "status": "ready",
                 "accounts": 1,
-                "runtime_loops": 4,
+                "runtime_loops": 5,
                 "runtime_loop_scopes": [
                     "component:email-classifier-agent",
                     "component:email-provider-actions",
                     "component:email-agent-consumer",
+                    "component:email-task-recovery-watchdog",
                     "component:email-training",
                 ],
-                "readiness_ready": 3,
-                "readiness_total": 3,
+                "readiness_ready": 4,
+                "readiness_total": 4,
             },
         )
     ]
@@ -8821,6 +8833,7 @@ def test_process_readiness_callback_ignores_independent_training_component():
             "email-classifier-agent",
             "email-provider-actions",
             "email-agent-consumer",
+            "email-task-recovery-watchdog",
         ),
         record_health=lambda scope, payload: health.append((scope, payload)),
         accounts=1,
@@ -8828,6 +8841,7 @@ def test_process_readiness_callback_ignores_independent_training_component():
             "component:email-classifier-agent",
             "component:email-provider-actions",
             "component:email-agent-consumer",
+            "component:email-task-recovery-watchdog",
             "component:email-training",
         ),
     )
@@ -8837,6 +8851,7 @@ def test_process_readiness_callback_ignores_independent_training_component():
             "email-classifier-agent",
             "email-provider-actions",
             "email-agent-consumer",
+            "email-task-recovery-watchdog",
         ),
     )
 
@@ -8846,21 +8861,23 @@ def test_process_readiness_callback_ignores_independent_training_component():
     mark_ready("email-classifier-agent")
     mark_ready("email-provider-actions")
     mark_ready("email-agent-consumer")
+    mark_ready("email-task-recovery-watchdog")
     assert health == [
         (
             "process:email-worker",
             {
                 "status": "ready",
                 "accounts": 1,
-                "runtime_loops": 4,
+                "runtime_loops": 5,
                 "runtime_loop_scopes": [
                     "component:email-classifier-agent",
                     "component:email-provider-actions",
                     "component:email-agent-consumer",
+                    "component:email-task-recovery-watchdog",
                     "component:email-training",
                 ],
-                "readiness_ready": 3,
-                "readiness_total": 3,
+                "readiness_ready": 4,
+                "readiness_total": 4,
             },
         )
     ]
