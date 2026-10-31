@@ -9656,7 +9656,9 @@ class EmailStore:
             and not exists(select 1 from ({_EMAIL_CLASSIFICATION_SQL}) t
                 where t.stable_message_identity=emails.stable_message_identity and t.status<>'done')
             and not exists(select 1 from ({REPLY_TASK_CURRENT_SQL}) t where t.channel='email'
-                and json_extract(t.trigger_message_json,'$.classification_id')=emails.classification_id
+                and case when t.input_compacted=1
+                    then json_extract(t.input_provenance_json,'$.source.classification_id')
+                    else json_extract(t.trigger_message_json,'$.classification_id') end=emails.classification_id
                 and t.status not in ('done','skipped'))
             and not exists(select 1 from actions a where
                 (a.record_type='action' and exists(select 1 from ({EMAIL_PLAN_SQL}) p

@@ -189,6 +189,43 @@ def test_pending_reply_task_keeps_original(body_store):
         source_reader=SimpleNamespace(read=lambda *args: pytest.fail("pending action task needs input")))
 
 
+@pytest.mark.parametrize("classification_id", [101, 999])
+@pytest.mark.parametrize("status", ["done", "pending", "processing"])
+def test_compacted_task_keeps_its_body_retirement_dependency(body_store, classification_id, status):
+    from types import SimpleNamespace
+    from app.store import AutoReplyStore
+
+    tasks = AutoReplyStore(body_store.path)
+    task = tasks.ensure_reply_task(
+        channel="email", conversation_id="email:completed", conversation_title="Email task",
+        single_chat=False, trigger_message_id="completed", trigger_create_time="",
+        trigger_sender="sender", trigger_text="reply",
+        trigger_message_json=json.dumps({"classification_id": classification_id}),
+    )
+    assert [item.id for item in tasks.claim_reply_tasks(1, channel="email")] == [task.id]
+    tasks.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    with tasks._connect() as db:
+        compacted = db.execute(
+            "select input_compacted,trigger_message_json from task_inputs where task_id=?",
+            (task.id,),
+        ).fetchone()
+        assert tuple(compacted) == (1, "")
+    if status != "done":
+        from app.task_entity_storage import update_task_cas
+
+        with tasks._connect() as db:
+            update_task_cas(db, task_id=task.id, expected={"status": "done"},
+                            changes={"status": status})
+    should_compact = status == "done" or classification_id != 101
+
+    def read(*args):
+        assert should_compact, "unfinished task still requires the original"
+        return _provider_message("complete body")
+    assert body_store.compact_email_message_body(
+        101, source_reader=SimpleNamespace(read=read),
+    ) is should_compact
+
+
 def _processed_store_with_operation(tmp_path, kind):
     """A processed message whose only open work is one operation of ``kind``."""
     from app.email_classifier_contracts import EmailAction, EmailClassificationStatus

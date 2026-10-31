@@ -677,6 +677,8 @@ Reply Task 的 stale 恢复另由独立 Email watchdog 周期执行，不依赖 
 
 退订入口原文读取复用 `EmailSourceReader`：按当前保存的来源坐标和文件夹事实精确读取原信，位置变化时使用该读取器既有的定位流程，继续核对 UIDVALIDITY、稳定 Message-ID 与原文版本。已知位置有效时不枚举所有文件夹或扫描全邮箱邮件头；读取失败继续进入原任务现有错误处理，不能替换为其他邮件或其他退订入口。
 
+邮件原文与模型输入清理的未完成任务检查，按 `input_compacted` 从当前输入正文或原生 `input_provenance_json.source` 读取同一个 `classification_id`。正式恢复后的 compacted pending/processing 任务仍保留对应原文依赖；无关任务不阻塞清理，也不把已清空的正文当 JSON 解析。
+
 持久来源坐标的 `updated_at` 与 available provider 观察的 `observed_at` 按 UTC 时间比较：旧观察不能覆盖更新的已验证坐标；观察更新时仍按观察文件夹做原有精确定位。同一时刻沿用观察位置。SQLite 无时区时间按 UTC 解释，缺失或无效时间报错；UIDVALIDITY、稳定 Message-ID、原文版本与唯一性核验不变。
 
 `POST /api/console/history/tasks/{task_id}/retry` 的邮件退订分支统一经 `retry_email_unsubscribe_task` 恢复：既有无效果失败路径保持原限制；有回执时仅允许执行器共享的 `skipped_no_reliable_entry`／`skipped_login_required` 重新判读。恢复在同一事务内核对当前 Task/input/generation、当前 ActionPlan、账号／消息／线程／入口与回执及效果摘要，拒绝已取消、成功或其他不可重试回执、未知围栏、活动 Run/Runtime Attempt、未结束 claim/continuation。CAS 只将同一 Task 放回 pending 并生成新代次，原 Attempt、回执、effect 与 step 不变；与无效果失败共用动作身份级累计重试预算，换代不能返还预算。接口自身不调用 provider，原 worker 仍先读取当前页面再按原授权继续。已精简邮件输入只用保留 provenance 核对身份与原入口，再从原文读取器取得并验证真实邮件；不从历史结果重造原文。启动时的自动 receipt 投影恢复规则不变，不因这个手动入口在每次重启重开跳过任务。
