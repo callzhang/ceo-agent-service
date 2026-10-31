@@ -32,6 +32,7 @@ from app.email_imap_readonly import (
     ephemeral_body_html,
     parse_rfc822_message,
 )
+from app.email_imap_transport import DeadlineIMAP4SSL
 from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_store import EmailStore
 from app.email_unsubscribe import EmailOtpChallenge, email_otp_context_reference
@@ -2034,6 +2035,61 @@ def test_imap_initial_greeting_has_total_deadline_when_server_trickles_bytes() -
         _DeadlineIMAP4("127.0.0.1", port, timeout=1.0, command_timeout=0.12)
     elapsed = time.monotonic() - started
     assert elapsed < 0.8
+    assert stopped.wait(0.5)
+
+
+def test_ssl_imap_line_deadline_does_not_depend_on_shutdown_interrupting_read(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    client, server_socket = socket.socketpair()
+
+    class SocketIgnoringShutdown:
+        def __init__(self, wrapped: socket.socket):
+            self.wrapped = wrapped
+
+        def __getattr__(self, name: str):
+            return getattr(self.wrapped, name)
+
+        def shutdown(self, how: int) -> None:
+            # macOS SSL buffered reads can remain blocked after shutdown from
+            # another thread. Model that behaviour and require read timeouts.
+            return None
+
+    class PassthroughSSLContext:
+        def wrap_socket(self, wrapped: socket.socket, *, server_hostname: str):
+            assert server_hostname == "imap.example.test"
+            return SocketIgnoringShutdown(wrapped)
+
+    monkeypatch.setattr(socket, "create_connection", lambda *args, **kwargs: client)
+    stopped = threading.Event()
+
+    def server() -> None:
+        try:
+            with server_socket:
+                # This line takes over two seconds at the trickle rate. The
+                # ordinary one-second idle timeout does not fire, so only a
+                # per-read remaining total deadline can stop it promptly.
+                greeting = b"* OK " + (b"x" * 110) + b"\r\n"
+                for byte in greeting:
+                    server_socket.sendall(bytes((byte,)))
+                    time.sleep(0.02)
+        except OSError:
+            pass
+        finally:
+            stopped.set()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    with pytest.raises(TimeoutError, match="total deadline"):
+        DeadlineIMAP4SSL(
+            "imap.example.test",
+            993,
+            ssl_context=PassthroughSSLContext(),
+            timeout=1.0,
+            command_timeout=0.12,
+        )
+    assert time.monotonic() - started < 0.5
     assert stopped.wait(0.5)
 
 

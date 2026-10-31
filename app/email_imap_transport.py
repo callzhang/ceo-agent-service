@@ -5,6 +5,7 @@ from __future__ import annotations
 import imaplib
 import socket
 import threading
+import time
 from typing import Any
 
 IMAP_READ_TIMEOUT_SECONDS = 90.0
@@ -22,6 +23,8 @@ class _CommandDeadlineMixin:
         self._command_timer: threading.Timer | None = None
         self._command_active = False
         self._command_expired = False
+        self._command_deadline = 0.0
+        self._socket_timeout = kwargs.get("timeout")
         self._initialization_deadline_active = False
         self._start_command_deadline()
         self._initialization_deadline_active = True
@@ -61,6 +64,7 @@ class _CommandDeadlineMixin:
                 raise RuntimeError("IMAP commands cannot overlap on one session")
             self._command_active = True
             self._command_expired = False
+            self._command_deadline = time.monotonic() + self._command_timeout
             timer = threading.Timer(self._command_timeout, self._expire_command)
             timer.daemon = True
             self._command_timer = timer
@@ -81,7 +85,50 @@ class _CommandDeadlineMixin:
 
     def _command_deadline_expired(self) -> bool:
         with self._command_lock:
-            return self._command_expired
+            return self._command_expired or time.monotonic() >= self._command_deadline
+
+    def _get_line(self) -> bytes:
+        """Read one IMAP line with the remaining total deadline on each read.
+
+        Closing an SSL socket from the timer thread does not reliably interrupt
+        macOS ``SSLSocket`` buffered reads.  Applying the remaining time to the
+        socket before each byte read makes the deadline effective even when a
+        peer trickles a line slowly and the socket's ordinary idle timeout keeps
+        getting reset.
+        """
+        line = bytearray()
+        while not line.endswith(b"\n"):
+            remaining = self._command_deadline - time.monotonic()
+            if remaining <= 0:
+                self._raise_command_timeout(
+                    TimeoutError("IMAP line read exceeded its total deadline")
+                )
+            read_timeout = remaining
+            if self._socket_timeout is not None:
+                read_timeout = min(read_timeout, self._socket_timeout)
+            session_socket = getattr(self, "sock", None)
+            if session_socket is not None:
+                session_socket.settimeout(read_timeout)
+            try:
+                chunk = self.file.read(1)
+            except TimeoutError as exc:
+                if self._command_deadline_expired():
+                    self._raise_command_timeout(exc)
+                raise
+            if not chunk:
+                raise self.abort("socket error: EOF")
+            line.extend(chunk)
+            if len(line) > imaplib._MAXLINE:
+                raise self.error(f"got more than {imaplib._MAXLINE} bytes")
+        if not line.endswith(b"\r\n"):
+            raise self.abort(f"socket error: unterminated line: {bytes(line)!r}")
+        result = bytes(line[:-2])
+        if __debug__:
+            if self.debug >= 4:
+                self._mesg("< %r" % result)
+            else:
+                self._log("< %r" % result)
+        return result
 
     def _finish_command(self) -> None:
         with self._command_lock:
