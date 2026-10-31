@@ -1,5 +1,5 @@
 {
-  "status": "focused_verified_release_pending",
+  "status": "scoped_details_released_verified_owned_artifacts_cleaned",
   "baseline": "d91e7d7c0a3f60b1c783537fe8642241b671ab8c",
   "scope": [
     "Attention",
@@ -38,10 +38,245 @@
   "audit_boundary": "Routed current detail pages only; retained historical facts remain a current read-only product feature, not legacy schema compatibility. Existing Task identity fix reused unchanged. Email inline detail/operational recovery owned by the concurrent release task is outside this change.",
   "ui_validation": {
     "actual_navigation": "37 current router component regressions; includes layout-commit observation before passive effects",
-    "manual_browser": "not_run; browser availability will be checked at readback"
+    "manual_browser": "not_run: native browser tool reports Local browser use is disabled in Work settings",
+    "served_artifacts": "8 exact production chunks and matching source-tree stamp independently read back"
   },
-  "production_readback": null,
-  "cleanup": null,
+  "production_readback": {
+    "installed": "5e45cad575868135e34c8b00c71e987173a9fac5",
+    "api": [
+      {
+        "kind": "health",
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.024
+      },
+      {
+        "kind": "Task",
+        "path": "/api/console/tasks/items/363",
+        "status": 200,
+        "seconds": 0.055,
+        "facts_sha256": "3d9f713d5cd5a27b137119afe3c656741ca79e71c9d47f0204d11d2fe05a8037",
+        "id": 363,
+        "source_references": 7
+      },
+      {
+        "kind": "Task",
+        "path": "/api/console/tasks/items/33",
+        "status": 200,
+        "seconds": 0.033,
+        "facts_sha256": "00ce178b246ad2fa36eba9e28db4ef3886937ebaf4043e74361c282dc6083e4f",
+        "id": 33,
+        "source_references": 5
+      },
+      {
+        "kind": "Attention",
+        "path": "/api/console/tasks/attention/5",
+        "status": 200,
+        "seconds": 0.037,
+        "facts_sha256": "532d5ca61907e8d103655d1edaa61b66fe9e0b3b3f22ec3ab7f962d1adef4f06"
+      },
+      {
+        "kind": "Project",
+        "path": "/api/console/tasks/projects/1",
+        "status": 200,
+        "seconds": 0.081,
+        "facts_sha256": "7f77b3e452876ea997be9d9f75ee7f3dfa935d9765699b772d8015dfbd1f996a"
+      },
+      {
+        "kind": "historical Project",
+        "path": "/api/console/tasks/legacy-projects/1",
+        "status": 200,
+        "seconds": 0.155,
+        "facts_sha256": "120c59bedd143fe59bc478ddcd9d2f59b46af76bb2a729ac509142b46381f4b6",
+        "id": null
+      },
+      {
+        "kind": "History Task",
+        "path": "/api/console/history/tasks/417955",
+        "status": 200,
+        "seconds": 0.093,
+        "facts_sha256": "0ab9da588bae0426f3bf73f3062d2d20823b7bcffd2d09ecf7ae3742fc8d617d"
+      },
+      {
+        "kind": "Attempt",
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.277,
+        "facts_sha256": "d8dfd52bea4257aca44233cada9f2a2f3d1468f392373c9cdb6b22f2981d40a3",
+        "id": 16429,
+        "delivery_present": true,
+        "actions_count": 21
+      },
+      {
+        "kind": "Attention status",
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.296,
+        "count": 0
+      },
+      {
+        "kind": "queue",
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.653
+      },
+      {
+        "kind": "History page1",
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.846,
+        "items": 5
+      },
+      {
+        "kind": "History page2",
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.081,
+        "items": 5
+      },
+      {
+        "kind": "Meeting",
+        "path": "/api/console/meeting-attempts/400852",
+        "status": 200,
+        "seconds": 0.025,
+        "facts_sha256": "b853732f85886d407c0111ef1da621256cd1301de82fa2d14b76a98689c47eeb",
+        "id": 400852
+      },
+      {
+        "kind": "OA",
+        "path": "/api/console/oa-approvals/CJd7PnwxR6yD2_WH3bcvnA03641793258344",
+        "status": 200,
+        "seconds": 0.179,
+        "facts_sha256": "063bc101fa41748f79ecb623db09a2097afd9049ed7f88777f4b784321e1f4c9"
+      },
+      {
+        "kind": "service error",
+        "path": "/api/console/history/errors/16170",
+        "status": 200,
+        "seconds": 0.003,
+        "facts_sha256": "08210226e59b40b3ef879845076a377344434022448982f40bf89d9ffdd30170"
+      },
+      {
+        "kind": "session",
+        "path": "/api/console/codex/sessions/01a19166-41b9-7472-9789-c1ec8282cbde",
+        "status": 200,
+        "seconds": 0.18,
+        "facts_sha256": "ff8dbf3ee39f3a6447b0e674a3c499a18cf49aa37490236e5b9e57cfebcdd21e"
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "exact_before": true,
+      "fk": []
+    },
+    "frontend_tree": "f5f8e7b9f14571ca4bd541fb7fed85d324bf4110",
+    "frontend_stamp": "f5f8e7b9f14571ca4bd541fb7fed85d324bf4110",
+    "frontend_stamp_matches": true,
+    "feature_present": true,
+    "chunks": [
+      {
+        "page": "src/pages/AttemptDetailPage.tsx",
+        "file": "assets/AttemptDetailPage-DsklUN1j.js",
+        "served_exact": true,
+        "sha256": "2c924f668397199a1f083f0f3d6c73bd3267112eca8cd1801e86b22d2313b92c"
+      },
+      {
+        "page": "src/pages/BusinessDetailPage.tsx",
+        "file": "assets/BusinessDetailPage-Wyo3N9HP.js",
+        "served_exact": true,
+        "sha256": "650e8eaeeaebea72cc60e57487988735fe05eecd66ada8bde799d416725382c1"
+      },
+      {
+        "page": "src/pages/CodexPages.tsx",
+        "file": "assets/CodexPages-C7jhU3IP.js",
+        "served_exact": true,
+        "sha256": "3bc563605f073915b4325c829173383f240e12474b0b83cf936f939019fd8a6c"
+      },
+      {
+        "page": "src/pages/HistoryTaskPage.tsx",
+        "file": "assets/HistoryTaskPage-DCs1P8pw.js",
+        "served_exact": true,
+        "sha256": "026c9d942a87e29d33c768b88e2b702b8501255429ae17e5ade1d25cdcc2b566"
+      },
+      {
+        "page": "src/pages/RuntimeErrorDetailPage.tsx",
+        "file": "assets/RuntimeErrorDetailPage-CRhTpxHr.js",
+        "served_exact": true,
+        "sha256": "5d699f058a2c22e45ca90c957db4ec2cd122acc91f24c98d119c06b7bd05d3c0"
+      },
+      {
+        "page": "src/pages/TaskAttentionDetailPage.tsx",
+        "file": "assets/TaskAttentionDetailPage-BHH0-2on.js",
+        "served_exact": true,
+        "sha256": "3d9ae29e104535c0b5becca4774210e4745662e5932333ffb5b95cdd666ea736"
+      },
+      {
+        "page": "src/pages/TaskDetailPage.tsx",
+        "file": "assets/TaskDetailPage-CDsgoNBB.js",
+        "served_exact": true,
+        "sha256": "fe2c1d27895d7bcf9f1ef52e6b21e3861d13c98839fdcbf0aa0515bb81b76b6c"
+      },
+      {
+        "page": "src/pages/TaskProjectDetailPage.tsx",
+        "file": "assets/TaskProjectDetailPage-7fjtCaWB.js",
+        "served_exact": true,
+        "sha256": "880c3177ed81f63c62130da4c4b6cf5c5a83d72513990048be6e66cab30b0f7c"
+      }
+    ],
+    "web_pids": [
+      "34879"
+    ]
+  },
+  "cleanup": {
+    "owned_root": "/private/tmp/ceo-detail-identity-audit.Nr31yj",
+    "owned_gate_artifacts": {
+      "failed_gate_clone": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.ctu98f86",
+      "failed_gate_pytest_base": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5275",
+      "integrated_gate_pytest_base": "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5280",
+      "integrated_gate_pytest_pid": 19718
+    },
+    "production_database_native_trajectory_peer_artifacts": "preserve",
+    "verified_no_open_references": true,
+    "failed_gate_clone_commit": "3af84b2a878b236fad1d98130a0a6ea7c2d4714f",
+    "sizes_before": {
+      "failed_gate_clone": "128MiB",
+      "failed_gate_pytest_base": "9.6MiB",
+      "successful_gate_pytest_base": "16KiB",
+      "owned_root": "42MiB",
+      "development_build": "1.6MiB"
+    },
+    "removed_paths": [
+      "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.ctu98f86",
+      "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5275",
+      "/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/pytest-of-derek/pytest-5280",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench",
+      "/private/tmp/ceo-detail-identity-audit.Nr31yj"
+    ],
+    "all_removed_paths_absent": true,
+    "production_build_preserved": true,
+    "backup": {
+      "release_backup_and_sidecars_absent": {
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-8c25782a-cf3e-484d-8b44-0a7cd8f81b33.sqlite3": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-8c25782a-cf3e-484d-8b44-0a7cd8f81b33.sqlite3-wal": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-8c25782a-cf3e-484d-8b44-0a7cd8f81b33.sqlite3-shm": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-8c25782a-cf3e-484d-8b44-0a7cd8f81b33.sqlite3-journal": true
+      },
+      "later_workflow_backup": {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-31.sqlite3",
+        "signature": [
+          16777231,
+          845607130,
+          1793443975164938672,
+          514969600
+        ],
+        "integrity": "ok",
+        "complete_marker": true,
+        "status": "preserved by explicit concurrent Email workflow owner request; no deletion and no new user confirmation needed",
+        "owner_confirmation": "Concurrent Email workflow owner explicitly requested retention of inode845607130; no additional user authorization requested."
+      }
+    },
+    "scope": "All5 exact attributed paths deleted; original production database/build/trajectory and concurrent worktrees retained. Unattributed shared test caches are not task-owned deletion scope."
+  },
   "baseline_readback": {
     "installed": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
     "api": [
@@ -303,5 +538,67 @@
     "ui_feature": "3af84b2a878b236fad1d98130a0a6ea7c2d4714f",
     "peer_dialog_feature": "74b75834b00f7630c2f1e1779fd76b4a67a2c8f6",
     "boundary": "Peer user-approved generic dialog ancestor fix remains its separate commit/tests, peer owns subsequent Email business result; root performs one serialized exact-target release."
-  }
+  },
+  "deployment": {
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-8c25782a-cf3e-484d-8b44-0a7cd8f81b33.sqlite3",
+    "branch_name": "",
+    "commit_message": "",
+    "error": "",
+    "expected_fingerprint": "5264517fb61cf34522f7fe396950dd342128411d7af3bf620a77dcb433495017",
+    "installed_commit": "5e45cad575868135e34c8b00c71e987173a9fac5",
+    "operation_id": "deploy-8c25782a-cf3e-484d-8b44-0a7cd8f81b33",
+    "original_commit": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+    "status": "succeeded",
+    "target_commit": "5e45cad575868135e34c8b00c71e987173a9fac5",
+    "updated_at": "2026-10-31T10:52:02.250645+00:00"
+  },
+  "gate": {
+    "commit": "5e45cad575868135e34c8b00c71e987173a9fac5",
+    "passed_at": "2026-10-31T10:51:40+00:00",
+    "files": 426,
+    "summary": "8527 passed, 2 skipped, 1 deselected in 500.23s (0:08:20)"
+  },
+  "facts_comparison": {
+    "Task:/api/console/tasks/items/363": true,
+    "Task:/api/console/tasks/items/33": true,
+    "Attention:/api/console/tasks/attention/5": true,
+    "Project:/api/console/tasks/projects/1": false,
+    "historical Project:/api/console/tasks/legacy-projects/1": true,
+    "History Task:/api/console/history/tasks/417955": true,
+    "Attempt:/api/console/history/16429": true,
+    "Meeting:/api/console/meeting-attempts/400852": true,
+    "OA:/api/console/oa-approvals/CJd7PnwxR6yD2_WH3bcvnA03641793258344": true,
+    "service error:/api/console/history/errors/16170": true,
+    "session:/api/console/codex/sessions/01a19166-41b9-7472-9789-c1ec8282cbde": true
+  },
+  "project_hash_boundary": {
+    "repeat_read_probe": {
+      "repeat_read_differences": [
+        "/evidence_meta/snapshot_at",
+        "/context_revision_meta/snapshot_at"
+      ],
+      "project_id": 1,
+      "project_updated_at": "2026-10-26 16:24:26",
+      "evidence_meta": {
+        "snapshot_at": "2026-10-31T10:54:02.386902Z",
+        "page": 1,
+        "page_size": 20,
+        "total": 34,
+        "next_cursor": "",
+        "has_more": true
+      },
+      "context_revision_meta": {
+        "snapshot_at": "2026-10-31T10:54:02.386917Z",
+        "page": 1,
+        "page_size": 20,
+        "total": 0,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    "interpretation": "Whole-item Project hash includes generated nested pagination snapshot times; raw before body was not retained, so no exact historical Project body-equality claim. Current Project backend code unchanged; present facts/references and live API verified.",
+    "backend_scope_unchanged": "git diff d9..5e45 -- app/web_api app/store.py empty"
+  },
+  "closed_at": "2026-10-31T11:00:27.577674+00:00",
+  "remaining_scope": "No code/test/release/attributed-cleanup work remains for this routed detail identity fix. Concurrent Email recovery and its held post-release daily backup remain owned by the other task."
 }

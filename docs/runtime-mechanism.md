@@ -1207,7 +1207,7 @@ total/has_more/next_cursor；`GET /api/console/tasks/signals/{signal_id}` 再按
 投影，也不经过 display normalization。未知 Project/Signal 返回 404，已存在但无证据的 Project
 返回空列表 200；读取在同一个 `read_snapshot` 中完成，不更新 Task、Project、Signal 或证据关系。
 Project 详情仍只展示原有 20 条有界来源并保留 context 引文 pinned 语义；初次请求只读取这些来源的坐标和元数据。Task、Attention 详情也只返回来源引用，保留各自业务事实、证据角色、原始引文与事件。三类页面的完整原文由用户选择后调用现有 `/api/console/tasks/signals/{signal_id}` 单条读取，慢来源或读取失败不阻塞详情；未读取不显示为“原文不可用”。当前资料、历史修订、原文版本匹配及失败原因含义保持不变。
-Task、Attention、Project、历史 Project、History Task／Attempt、Meeting、OA、服务错误和原生会话详情的页面状态均按当前实体身份隔离；Attempt 执行子页还区分 role，通用资源详情包含 endpoint／kind。切换身份会在该次渲染中卸载旧事实、快照、输入、忙碌状态、操作消息和按需原文状态，并取消旧读取；读取成功／失败回调均检查取消状态。已发出的业务操作仍归原实体，其迟到回调不能写入新详情；同一 Task 的操作后刷新继续保留已展示事实。
+Task、Attention、Project、历史 Project、History Task／Attempt、Meeting、OA、服务错误和原生会话详情的页面状态均按当前实体身份隔离；Attempt 执行子页还区分 role，通用资源详情包含 endpoint／kind。切换身份会在该次渲染中卸载旧事实、快照、输入、忙碌状态、操作消息和按需原文状态；旧页的初始详情请求及按需原文读取会被取消，其读取回调检查取消状态。已发出的业务操作仍归原实体，其迟到回调不能写入新详情；同一 Task 的操作后刷新继续保留已展示事实。
 
 **每个决定引用什么**
 
