@@ -83,6 +83,7 @@ def run_supervisor(
     }
     children: dict[str, subprocess.Popen] = {}
     service_ready_fds: dict[str, int] = {}
+
     def wait_for_startup_signal(child: subprocess.Popen, ready_fd: int) -> bool:
         try:
             while not shutdown_requested and child.poll() is None:

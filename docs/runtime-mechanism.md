@@ -649,6 +649,10 @@ corrected reply 的原条件。
 
 ### Email task 的运行边界
 
+Service supervisor 先启动主 service，等待其完成启动期任务恢复并发出一次性 ready 信号，才启动
+Email worker。主 service 运行中重启时，先停止 Email worker，再等待新 service 的恢复信号后启动；
+Audit web 独立运行。这样启动恢复不会把另一个进程刚领取的 Reply task 误判为上次运行遗留。
+
 > **实现与部署状态：** Email folder classifier 与 audited-v2 lifecycle 已合入 `main`；本机
 > launchd 的独立 Email worker 已启用，并通过真实 IMAP 可逆验证。SMTP 与自动回复仍禁用。
 
