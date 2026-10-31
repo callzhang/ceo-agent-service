@@ -2,7 +2,6 @@ import inspect
 import os
 import subprocess
 import threading
-import time
 from argparse import Namespace
 from pathlib import Path
 
@@ -302,6 +301,7 @@ def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
     email_worker = FakeChild()
     handlers = {}
     recovery_ready = threading.Event()
+    allow_ready_signal = threading.Event()
     commands = []
 
     def register_signal(current_signal, handler):
@@ -315,7 +315,7 @@ def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
             ready_fd = os.dup(kwargs["pass_fds"][0])
 
             def signal_ready():
-                time.sleep(0.02)
+                allow_ready_signal.wait(0.05)
                 os.write(ready_fd, b"ready")
                 os.close(ready_fd)
                 recovery_ready.set()
@@ -323,6 +323,8 @@ def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
             threading.Thread(target=signal_ready, daemon=True).start()
             return service
         if command == ["audit-web"]:
+            assert not recovery_ready.is_set()
+            allow_ready_signal.set()
             return audit_web
         assert command == ["email-worker"]
         assert recovery_ready.is_set()
