@@ -4,8 +4,8 @@ A fresh `AutoReplyStore` or `EmailStore` costs 0.5-1 s (507 schema objects), and
 most tests build at least one. The first construction in each pytest process
 is built by the real constructor and kept as a template; every later
 construction on a path that does not exist yet starts from a copy of it. The
-real constructor still runs on the copy and validates the schema, so only the
-DDL execution is skipped.
+real constructor still runs on the copy with the original keyword options and
+validates the schema, so only the DDL execution is skipped.
 """
 
 import gc
@@ -72,7 +72,7 @@ def install(store_class, kind: str) -> None:
         target = Path(path)
         if not target.exists():
             _forget_live_events_of(target)
-        if not args and not kwargs and not target.exists() and target.parent.is_dir():
+        if not args and not target.exists() and target.parent.is_dir():
             template = _copy_of_template(kind, lambda built: _build(original, store_class, built))
             if template is not None:
                 shutil.copyfile(template, target)
