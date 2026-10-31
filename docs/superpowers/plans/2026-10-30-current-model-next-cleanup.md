@@ -171,3 +171,7 @@ CASE WHEN record_type='project' THEN 'project' ELSE '' END
 本轮临时根目录`/private/tmp/ceo-current-model-cleanup.cjKfGA`（约71MiB）、本轮SDD工作目录（约500KiB）和开发树生成的`app/static/workbench`（约1.6MiB）均在确认无打开引用、无注册测试worktree后删除并核实路径不存在；简洁测试、审查与发布证据保留在验收JSON。生产数据库、生产前端产物、原生trajectory及其他任务产物保留。本轮已核验的备份代次已清除；不删除负责人后续产生的新代次。
 
 任务1–3的实现、审查、一次标准发布、核心生产合同读回和本轮清理均已结束。Project1额外延迟观察仍独立未关闭，浏览器点击受环境设置限制未执行；这两项边界保留在验收记录，不冒充全站无问题。Task4未执行。最终收尾仅更新文档，不再部署，不将临时／备份清理宣称为业务数据库空间优化。
+
+## Project1后续独立修复结案
+
+上述额外延迟观察已由Derek单独授权修复。旧handler实测86.588秒；与准确上一版本对同一snapshot比较，20次原文读取集合相同，除已退休顶层职责及时间字段外详情一致，根因为已有同步远端原文重建。636b4201a将Project详情改为现有来源坐标／元数据，完整原文由既有单Signal接口按需读取；没有DDL、缓存或旧结构兼容。生产Project1为200／0.290秒，20来源和60关联任务、历史修订保真；完整原文957 hash仍匹配。完整gate8421PASS／2skip／1deselected，496.75秒。本轮经明确授权skip quiet后标准发布，保留备份与回滚；原始超时证据不删除，详见[独立修复验收](../../validation/2026-10-30-project-detail-latency.json)。

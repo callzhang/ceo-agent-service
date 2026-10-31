@@ -1,5 +1,5 @@
 {
-  "status": "focused_tests_review_passed_standard_release_pending",
+  "status": "released_verified_and_cleaned",
   "baseline_commit": "ce666f20a16eab324f1f371885c02d27f2345369",
   "root_cause": "Project detail synchronously reconstructs every visible original; 20 source bindings,10provider-only reads, multi-page remote transcript reads serially block all project facts.",
   "previous_version_comparison": {
@@ -21,7 +21,8 @@
     "backend_focused": "48passed /11.50s, Project API and Business source/minutes readers",
     "frontend": "57 passed",
     "build": "passed",
-    "intermediate_failures": "Old eager-body test adapted to explicit read contract; new async tests initially shared calls because their beforeEach was inside another describe, moved to file scope; assertions retained."
+    "intermediate_failures": "Old eager-body test adapted to explicit read contract; new async tests initially shared calls because their beforeEach was inside another describe, moved to file scope; assertions retained.",
+    "attention_regression": "8 passed /11.84s"
   },
   "schema_before": {
     "objects": 463,
@@ -34,7 +35,180 @@
     "findings": [],
     "limitations": "No independent rerun or browser project-switch race; root executed focused regressions and live read-only diagnosis."
   },
-  "deployment": "pending",
-  "production_readback": "pending",
-  "cleanup": "pending"
+  "deployment": {
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-96e97362-9321-47a4-84ae-54e6dc5b2341.sqlite3",
+    "branch_name": "",
+    "commit_message": "",
+    "error": "",
+    "expected_fingerprint": "2b01a82df1770f0aef7e9ef06399663b4d4cfa4d2117bacaedaeac7025fe05ba",
+    "installed_commit": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+    "operation_id": "deploy-96e97362-9321-47a4-84ae-54e6dc5b2341",
+    "original_commit": "d6ee155fc39988b5c32c323ce9c7ff3506af2595",
+    "status": "succeeded",
+    "target_commit": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+    "updated_at": "2026-10-31T00:57:43.144254+00:00"
+  },
+  "production_readback": {
+    "installed": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.031
+      },
+      {
+        "path": "/api/console/tasks/projects/1",
+        "status": 200,
+        "seconds": 0.29,
+        "context_revisions_preserved": true,
+        "references_preserved": true,
+        "tasks_preserved": true,
+        "source_reference_count": 20,
+        "original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/projects/49",
+        "status": 200,
+        "seconds": 0.174,
+        "context_revisions_preserved": true,
+        "references_preserved": true,
+        "tasks_preserved": true,
+        "source_reference_count": 4,
+        "original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/projects/20",
+        "status": 200,
+        "seconds": 0.088,
+        "context_revisions_preserved": true,
+        "references_preserved": true,
+        "tasks_preserved": true,
+        "source_reference_count": 0,
+        "original_fields_absent": true
+      },
+      {
+        "path": "/api/console/tasks/signals/957",
+        "status": 200,
+        "seconds": 0.102,
+        "original_available": true,
+        "body_sha256_matches": true
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 1.106
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 1.664
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 9.474,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 5.556,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&status=failed&include_chart=false",
+        "status": 200,
+        "seconds": 4.163,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 3.402,
+        "detail_has_receipt": true
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "exact_unchanged": true,
+      "fk": []
+    },
+    "operation": {
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-96e97362-9321-47a4-84ae-54e6dc5b2341.sqlite3",
+      "branch_name": "",
+      "commit_message": "",
+      "error": "",
+      "expected_fingerprint": "2b01a82df1770f0aef7e9ef06399663b4d4cfa4d2117bacaedaeac7025fe05ba",
+      "installed_commit": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+      "operation_id": "deploy-96e97362-9321-47a4-84ae-54e6dc5b2341",
+      "original_commit": "d6ee155fc39988b5c32c323ce9c7ff3506af2595",
+      "status": "succeeded",
+      "target_commit": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+      "updated_at": "2026-10-31T00:57:43.144254+00:00"
+    },
+    "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-96e97362-9321-47a4-84ae-54e6dc5b2341.sqlite3",
+    "frontend_tree": "9397f922e03a15da33d4bf817c1f030c82c613ef",
+    "frontend_stamp": "9397f922e03a15da33d4bf817c1f030c82c613ef",
+    "listener_pids": [
+      "38812"
+    ]
+  },
+  "cleanup": {
+    "status": "deleted_verified_absent",
+    "owned_root": "/private/tmp/ceo-project-detail.LDf9TW",
+    "development_build": "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench",
+    "precleanup_sizes": {
+      "root": "32MiB",
+      "development_build": "1.6MiB"
+    },
+    "removed_paths": [
+      "/private/tmp/ceo-project-detail.LDf9TW",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench"
+    ],
+    "no_open_references_before_deletion": true,
+    "production_database_and_bundle_preserved": true,
+    "other_workflow_artifacts_preserved": true
+  },
+  "gate": {
+    "commit": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+    "passed_at": "2026-10-31T00:54:45+00:00",
+    "files": 420,
+    "summary": "8421 passed, 2 skipped, 1 deselected in 496.75s (0:08:16)"
+  },
+  "frontend_readback": {
+    "project_chunk_http": 200,
+    "served_matches_production_build": true,
+    "sha256": "19674d7f962e2910c12c0a6e8366c9d3052f4b2f57657909c78845b7972e3ad9",
+    "manual_browser_clicks": "not_run; focused component click tests and actual API/asset readback used",
+    "initial_probe": "Wrong /assets path returned SPA HTML; corrected to existing /workbench-assets mount, no application change."
+  },
+  "backup_cleanup": {
+    "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-96e97362-9321-47a4-84ae-54e6dc5b2341.sqlite3",
+    "signature": [
+      16777231,
+      842762768,
+      1793408254179229190,
+      514969600
+    ],
+    "integrity": "ok",
+    "complete_marker": true,
+    "schema_exact": true,
+    "fk": [],
+    "generation_guarded": true,
+    "no_open_references": true,
+    "removed_paths": [
+      "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-96e97362-9321-47a4-84ae-54e6dc5b2341.sqlite3"
+    ],
+    "deleted": true
+  },
+  "release_authorization": {
+    "skip_quiet_explicitly_approved_this_round": true,
+    "cancelled_wait_pid": 20183,
+    "cancelled_wait_exit": 130,
+    "gate_reused": true,
+    "effective_production_installs": 1,
+    "external_mail_task_replayed_by_this_fix": false
+  },
+  "resolved_previous_observation": "Project1 detail60s/20s timeouts from previous cleanup acceptance are resolved by current production0.290s; preserve historical observations and link resolution.",
+  "closed_at": "2026-10-31T01:01:40.447179+00:00"
 }

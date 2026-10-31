@@ -337,16 +337,16 @@
     "evidence_boundary": "Health200 and Project49fullcontractpassed. Parent inspected handler diff: only retiredtype/responsefield removal; no query/source-read logic changed. No prechange Project1 latency measurement, so cause and regression attribution unverified. No unrelated query/SourceReader/policyfix added.",
     "next_evidence": "Trace exact Project1 source/DB waits and compare same-input precedingcode before proposing a separatefix."
   },
-  "open_followups": [
-    {
-      "issue": "Project1 detail read latency",
-      "observed": "60s and20s timeouts; health200",
-      "attribution": "unverified; no prechangeProject1timing",
-      "scope": "Separate investigation; notsilentlyfixed or markedpass."
-    }
-  ],
+  "open_followups": [],
   "retired_symbol_count": 12,
   "email_schema_fallback_groups_removed": 5,
   "email_method_fallback_sites_removed": 8,
-  "closed_at": "2026-10-30T22:59:04.836452+00:00"
+  "closed_at": "2026-10-30T22:59:04.836452+00:00",
+  "followup_resolution": {
+    "issue": "Project1 detail read latency",
+    "status": "resolved_after_separate_authorized_fix",
+    "release_commit": "636b4201ad03e3cf7ecbc817ff70e8e5c1a796a2",
+    "production_http_seconds": 0.29,
+    "evidence": "2026-10-30-project-detail-latency.json"
+  }
 }
