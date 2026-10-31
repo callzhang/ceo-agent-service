@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { Link, useSearchParams } from "react-router-dom";
 
 import { confirmBusinessProjectCandidate, listBusinessAttention, listBusinessProjects, listBusinessTasks, type AttentionCategory, type BusinessAttentionSummary, type BusinessProjectCandidateSummary, type BusinessProjectCustomerGroup, type BusinessProjectSummary, type BusinessTaskSummary, type TaskView } from "../api/console";
@@ -100,7 +100,9 @@ function Pagination({ label, page, pages, previous, next, previousLabel = "上�
 }
 
 interface Loaded {
-  view: TaskView;
+  queryKey: string;
+  total: number;
+  snapshot: string;
   items: BusinessAttentionSummary[] | BusinessTaskSummary[] | BusinessProjectSummary[];
   candidates: BusinessProjectCandidateSummary[];
   candidateMeta: { page: number; page_size: number; total: number };
@@ -120,11 +122,14 @@ export function TasksPage() {
   const sort = params.get("sort") || "";
   const page = Math.max(1, Number(params.get("page") || 1));
   const candidatePage = Math.max(1, Number(params.get("candidate_page") || 1));
+  const queryKey = JSON.stringify([view, category, q, stage, status, owner, sort, page, candidatePage]);
+  const currentQuery = useRef(queryKey);
+  useLayoutEffect(() => { currentQuery.current = queryKey; }, [queryKey]);
+  const refresh = () => { if (currentQuery.current === queryKey) setReloadKey((key) => key + 1); };
   const [loaded, setLoaded] = useState<Loaded | null>(null);
-  const [total, setTotal] = useState(0);
-  const [snapshot, setSnapshot] = useState("");
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState("");
+  const [requestState, setRequestState] = useState<{ key: string; status: "loading" | "ready" | "error"; error: string }>({ key: queryKey, status: "loading", error: "" });
+  const state = requestState.key === queryKey ? requestState.status : "loading";
+  const error = requestState.key === queryKey ? requestState.error : "";
   const [reloadKey, setReloadKey] = useState(0);
   const workspace = useRef<HTMLDivElement>(null);
   const firstRender = useRef(true);
@@ -134,8 +139,7 @@ export function TasksPage() {
 
   useEffect(() => {
     const controller = new AbortController();
-    setState("loading");
-    setError("");
+    setRequestState({ key: queryKey, status: "loading", error: "" });
     const request = view === "attention"
       ? listBusinessAttention({ category, page, page_size: 20 }, controller.signal)
       : taskView
@@ -144,22 +148,21 @@ export function TasksPage() {
     request.then((result) => {
       if (controller.signal.aborted) return;
       setLoaded({
-        view,
+        queryKey,
+        total: result.meta.total,
+        snapshot: result.meta.snapshot_at,
         items: result.items,
         candidates: "candidates" in result ? result.candidates.filter((candidate) => candidate.provisional) : [],
         candidateMeta: "candidate_meta" in result ? result.candidate_meta : { page: 1, page_size: 20, total: 0 },
         customerGroups: "customer_groups" in result ? result.customer_groups || [] : [],
       });
-      setTotal(result.meta.total);
-      setSnapshot(result.meta.snapshot_at);
-      setState("ready");
+      setRequestState({ key: queryKey, status: "ready", error: "" });
     }).catch((reason: unknown) => {
       if (controller.signal.aborted) return;
-      setError(reason instanceof Error ? reason.message : "加载失败");
-      setState("error");
+      setRequestState({ key: queryKey, status: "error", error: reason instanceof Error ? reason.message : "加载失败" });
     });
     return () => controller.abort();
-  }, [view, category, q, stage, status, owner, sort, page, candidatePage, reloadKey]);
+  }, [view, category, q, stage, status, owner, sort, page, candidatePage, reloadKey, queryKey]);
 
   // Turning a page should land on the top of the list, not stay at the bottom where the button was.
   useEffect(() => {
@@ -174,11 +177,12 @@ export function TasksPage() {
     if (key !== "candidate_page") next.delete("candidate_page");
     setParams(next);
   };
+  // Only the exact current query owns rows, totals and pagination.
+  const data = loaded?.queryKey === queryKey ? loaded : null;
+  const total = data?.total || 0;
   const pages = Math.max(1, Math.ceil(total / 20));
-  const candidateMeta = loaded?.candidateMeta ?? { page: 1, page_size: 20, total: 0 };
+  const candidateMeta = data?.candidateMeta ?? { page: 1, page_size: 20, total: 0 };
   const candidatePages = Math.max(1, Math.ceil(candidateMeta.total / candidateMeta.page_size));
-  // Rows of another tab must never be drawn by this tab's renderer; within one tab, the previous page stays (dimmed) while the next loads.
-  const data = loaded?.view === view ? loaded : null;
   const filtered = taskView ? Boolean(q || stage || status || owner) : projectView ? Boolean(q) : Boolean(category);
   const clearFilters = () => setParams(new URLSearchParams(view === "attention" ? { } : { view }));
 
@@ -190,8 +194,8 @@ export function TasksPage() {
   else if (view === "attention") body = data.items.length ? <div className="business-attention-list">{(data.items as BusinessAttentionSummary[]).map((item) => <AttentionCard key={item.id} item={item} />)}</div> : empty(filtered ? "该类别下没有事项。" : "当前没有需要关注的事项。");
   else if (taskView) body = data.items.length
     ? view === "candidates"
-      ? <CandidateGroups tasks={data.items as BusinessTaskSummary[]} onChanged={() => setReloadKey((key) => key + 1)} />
-      : <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul>
+      ? <CandidateGroups tasks={data.items as BusinessTaskSummary[]} onChanged={refresh} />
+      : <ul className="business-task-list">{(data.items as BusinessTaskSummary[]).map((item) => <TaskRow key={item.id} item={item} onChanged={refresh} />)}</ul>
     : empty(filtered ? "没有符合条件的任务。" : view === "formal" ? "暂无正式任务。" : view === "candidates" ? "暂无待确认线索或建议。" : "暂无任务。");
   else body = <>
     {view === "projects_by_customer"
@@ -199,12 +203,12 @@ export function TasksPage() {
       : data.items.length ? <ul className="business-task-list">{(data.items as BusinessProjectSummary[]).map((item) => <ProjectRow key={item.id} item={item} />)}</ul> : empty(filtered ? "没有符合条件的项目。" : "暂无正式项目。")}
     {view === "projects" && candidateMeta.total > 0 && <details className="business-project-candidates" open={data.items.length === 0}>
       <summary><h2>待确认的项目线索 <span>{candidateMeta.total}</span></h2></summary>
-      <ul className="business-task-list">{data.candidates.map((item) => <ProjectCandidateRow key={item.id} item={item} onChanged={() => setReloadKey((key) => key + 1)} />)}</ul>
+      <ul className="business-task-list">{data.candidates.map((item) => <ProjectCandidateRow key={item.id} item={item} onChanged={refresh} />)}</ul>
       <Pagination label="项目线索分页" page={candidatePage} pages={candidatePages} previous={() => update("candidate_page", candidatePage - 1)} next={() => update("candidate_page", candidatePage + 1)} previousLabel="项目线索上一页" nextLabel="项目线索下一页" />
     </details>}
   </>;
 
-  return <ConsolePageLayout title="Tasks" description="从真实上下文发现任务，聚焦需要你关注的业务进展。" actions={<SnapshotBadge timestamp={snapshot} refreshing={state === "loading"} />}>
+  return <ConsolePageLayout title="Tasks" description="从真实上下文发现任务，聚焦需要你关注的业务进展。" actions={<SnapshotBadge timestamp={data?.snapshot || ""} refreshing={state === "loading"} />}>
     <div className="tasks-page task-domain-page" role="region" aria-label="Tasks workspace" ref={workspace}>
       <nav className="business-task-tabs" aria-label="Tasks 视图">
         <Link to="/tasks" aria-current={view === "attention" ? "page" : undefined}>需关注</Link>
