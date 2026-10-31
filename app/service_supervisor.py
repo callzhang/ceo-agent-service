@@ -142,6 +142,49 @@ def run_supervisor(
         spawn_service()
         wait_for_service_startup()
 
+    def wait_for_service_startup(child: subprocess.Popen, ready_fd: int) -> bool:
+        try:
+            while not shutdown_requested and child.poll() is None:
+                readable, _, _ = select.select([ready_fd], [], [], POLL_INTERVAL_SECONDS)
+                if not readable:
+                    continue
+                return os.read(ready_fd, 5) == b"ready"
+            return False
+        finally:
+            os.close(ready_fd)
+
+    def start_service() -> None:
+        while not shutdown_requested:
+            ready_read_fd, ready_write_fd = os.pipe()
+            child_env = os.environ.copy()
+            child_env[SERVICE_STARTUP_READY_ENV] = str(ready_write_fd)
+            try:
+                child = popen(
+                    commands["worker"],
+                    pass_fds=(ready_write_fd,),
+                    env=child_env,
+                )
+            except OSError:
+                os.close(ready_read_fd)
+                os.close(ready_write_fd)
+                sleep(CHILD_RESTART_DELAY_SECONDS)
+                continue
+            finally:
+                try:
+                    os.close(ready_write_fd)
+                except OSError:
+                    pass
+            if wait_for_service_startup(child, ready_read_fd):
+                children["worker"] = child
+                return
+            stop_children((child,), sleep=sleep, monotonic=monotonic)
+            if not shutdown_requested:
+                print(
+                    "service exited before startup recovery was ready; restarting",
+                    flush=True,
+                )
+                sleep(CHILD_RESTART_DELAY_SECONDS)
+
     def start_child(name: str) -> None:
         if name == "worker":
             start_service()

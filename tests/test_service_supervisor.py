@@ -2,6 +2,10 @@ import inspect
 import os
 import subprocess
 import threading
+<<<<<<< HEAD
+=======
+import time
+>>>>>>> 25675b729 (fix(service): wait for startup recovery before email worker)
 from argparse import Namespace
 from pathlib import Path
 
@@ -301,7 +305,10 @@ def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
     email_worker = FakeChild()
     handlers = {}
     recovery_ready = threading.Event()
+<<<<<<< HEAD
     allow_ready_signal = threading.Event()
+=======
+>>>>>>> 25675b729 (fix(service): wait for startup recovery before email worker)
     commands = []
 
     def register_signal(current_signal, handler):
@@ -315,7 +322,11 @@ def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
             ready_fd = os.dup(kwargs["pass_fds"][0])
 
             def signal_ready():
+<<<<<<< HEAD
                 allow_ready_signal.wait(0.05)
+=======
+                time.sleep(0.02)
+>>>>>>> 25675b729 (fix(service): wait for startup recovery before email worker)
                 os.write(ready_fd, b"ready")
                 os.close(ready_fd)
                 recovery_ready.set()
@@ -323,8 +334,11 @@ def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
             threading.Thread(target=signal_ready, daemon=True).start()
             return service
         if command == ["audit-web"]:
+<<<<<<< HEAD
             assert not recovery_ready.is_set()
             allow_ready_signal.set()
+=======
+>>>>>>> 25675b729 (fix(service): wait for startup recovery before email worker)
             return audit_web
         assert command == ["email-worker"]
         assert recovery_ready.is_set()
