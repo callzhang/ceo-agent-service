@@ -1,5 +1,5 @@
 {
-  "status": "focused_verified_release_pending",
+  "status": "scoped_fix_released_verified_and_owned_artifacts_cleaned",
   "baseline": "ccc0a3b41c1ad063bd107d76d4b492fc2953b0a3",
   "scope": "Task detail local state only; no DDL/API/provider/policy change",
   "root_cause": "reloadKey survives Task prop change. Loading is only set when reloadKey==0, so a refreshed Task detail and its controls remain rendered during another Task request.",
@@ -16,6 +16,236 @@
     "findings": [],
     "boundary": "Prop rerender regression; current route parameter wiring inspected. Reviewer did not rerun tests or live reads."
   },
-  "production_readback": null,
-  "cleanup": null
+  "production_readback": {
+    "installed": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.019
+      },
+      {
+        "path": "/api/console/tasks/items/363",
+        "status": 200,
+        "seconds": 0.087,
+        "id": 363,
+        "facts_sha256": "3d9f713d5cd5a27b137119afe3c656741ca79e71c9d47f0204d11d2fe05a8037",
+        "source_count": 7
+      },
+      {
+        "path": "/api/console/tasks/items/33",
+        "status": 200,
+        "seconds": 0.025,
+        "id": 33,
+        "facts_sha256": "00ce178b246ad2fa36eba9e28db4ef3886937ebaf4043e74361c282dc6083e4f",
+        "source_count": 5
+      },
+      {
+        "path": "/api/console/tasks/attention/5",
+        "status": 200,
+        "seconds": 0.036
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.887,
+        "counts": {
+          "count": 0
+        }
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 0.942
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 0.87,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.293,
+        "detail_id": 16429,
+        "delivery_present": true,
+        "actions_count": 21
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "exact_before": true,
+      "fk": []
+    },
+    "chunks": [
+      {
+        "page": "src/pages/TaskDetailPage.tsx",
+        "file": "assets/TaskDetailPage-2XJ7l575.js",
+        "served_exact": true,
+        "sha256": "b27da2521eb3cd60deee79e9226f45391fa98315ae0a2041077bc6fda05234ea"
+      }
+    ],
+    "frontend_tree": "ac35d7969cf937ca38e047f776ff0ad677f27f63",
+    "frontend_stamp": "ac35d7969cf937ca38e047f776ff0ad677f27f63",
+    "frontend_stamp_matches": true,
+    "contains_feature": true,
+    "pids": [
+      "58608"
+    ],
+    "task_facts_exact_before": {
+      "/api/console/tasks/items/363": true,
+      "/api/console/tasks/items/33": true
+    }
+  },
+  "cleanup": {
+    "development_build": "removed after no-open-reference check; production build preserved",
+    "temporary_root": "deleted_verified_absent",
+    "backup": "Exact release backup and sidecars absent after native verified replacement; post-release daily generation preserved for concurrent owner.",
+    "temporary_path": "/private/tmp/ceo-task-detail-identity.eXEhML",
+    "temporary_size_before": "1.5MiB",
+    "no_open_references_before_delete": true,
+    "development_build_path": "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench",
+    "development_build_absent": true,
+    "production_build_preserved": true,
+    "release_ledger_backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f.sqlite3",
+    "release_ledger_backup_absent": true,
+    "backup_verification": {
+      "native_release_backup_and_sidecars_absent": {
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f.sqlite3": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f.sqlite3-wal": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f.sqlite3-shm": true,
+        "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f.sqlite3-journal": true
+      },
+      "later_workflow_backup_preserved": {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-10-31.sqlite3",
+        "signature": [
+          16777231,
+          845322447,
+          1793441341606211180,
+          514969600
+        ],
+        "integrity": "ok",
+        "complete_marker": true,
+        "reason": "mtime10:09:01Z after release succeeded10:07:55Z; release owner explicitly holds later workflow generation; no deletion by this UI task"
+      }
+    }
+  },
+  "feature_commit": "9aba45363",
+  "integration_main": "8f459149137a0450c42167e1f96aff23dd5af302",
+  "baseline_readback": {
+    "installed": "e92a589065561939c2e37e6c409af09436951e5f",
+    "api": [
+      {
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.142
+      },
+      {
+        "path": "/api/console/tasks/items/363",
+        "status": 200,
+        "seconds": 0.513,
+        "id": 363,
+        "facts_sha256": "3d9f713d5cd5a27b137119afe3c656741ca79e71c9d47f0204d11d2fe05a8037",
+        "source_count": 7
+      },
+      {
+        "path": "/api/console/tasks/items/33",
+        "status": 200,
+        "seconds": 0.133,
+        "id": 33,
+        "facts_sha256": "00ce178b246ad2fa36eba9e28db4ef3886937ebaf4043e74361c282dc6083e4f",
+        "source_count": 5
+      },
+      {
+        "path": "/api/console/tasks/attention/5",
+        "status": 200,
+        "seconds": 0.126
+      },
+      {
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 1.575,
+        "counts": {
+          "count": 0
+        }
+      },
+      {
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 1.206
+      },
+      {
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.798,
+        "items": 5
+      },
+      {
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.267,
+        "detail_id": 16429
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "exact_before": true,
+      "fk": []
+    },
+    "chunks": [
+      {
+        "page": "src/pages/TaskDetailPage.tsx",
+        "file": "assets/TaskDetailPage-B9Nu04qw.js",
+        "served_exact": true,
+        "sha256": "2e9ff259b40e0e0b0b54ab792ed0879f7b0d2dfd3f48764c7109dd473321e5dd"
+      }
+    ],
+    "frontend_tree": "abe6d3b3137b64cbb699a0fd54b403a1a4cbf154",
+    "stamps": [],
+    "pids": [
+      "67409"
+    ]
+  },
+  "ui_validation": {
+    "component_interaction": "33 focused tests,2 new regressions RED then GREEN",
+    "manual_browser": "not_run; native tool reports Local browser use is disabled in Work settings",
+    "production_validation": "Installed ancestor contains feature; frontend stamp matches exact tree; served TaskDetailPage chunk bytes match rebuilt local production asset."
+  },
+  "release_coordination": {
+    "owner_thread": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
+    "first_gate": "ccc0a3b41:fixed600s timeout before install; overlapping focused tests at that time, no assertion failure reported",
+    "second_gate": "8f4591491:fixed600s timeout at97% in test_email_metadata_schema.py::test_both_constructor_orders_and_mixed_pairs[email]; no assertion failure, no install",
+    "next": "Owner optimizing duplicate schema fixture cost without raising limit or removing assertions; UI owner starts no concurrent tests/deploy.",
+    "test_cost_fix": "d9ebe7df3:real constructors and kwargs retained; independent template regression added; 286 focused87.38s reported by owner; actualdiff independently inspected"
+  },
+  "gate": {
+    "commit": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+    "passed_at": "2026-10-31T10:07:34+00:00",
+    "files": 424,
+    "summary": "8523 passed, 2 skipped, 1 deselected in 583.96s (0:09:43)"
+  },
+  "deployment": {
+    "target": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+    "operation_id": "deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f",
+    "status": "succeeded",
+    "owner": "existing Email release task; one serialized release, no duplicate deploy",
+    "main_pid_reported": 58604,
+    "web_pid_independently_observed": 58608,
+    "ledger": {
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f.sqlite3",
+      "branch_name": "",
+      "commit_message": "",
+      "error": "",
+      "expected_fingerprint": "d6e2d3643f8c8e1ece58748ab8e9a22468aa19efe32cf7446e916b9498f3ff65",
+      "installed_commit": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+      "operation_id": "deploy-14eff5d8-3532-43ec-ab90-9fc860c4455f",
+      "original_commit": "e92a589065561939c2e37e6c409af09436951e5f",
+      "status": "succeeded",
+      "target_commit": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+      "updated_at": "2026-10-31T10:07:55.455860+00:00"
+    }
+  },
+  "closed_at": "2026-10-31T10:13:33.061607+00:00",
+  "remaining_scope": "No remaining code/test/release/owned-cleanup work for Task detail identity fix. Concurrent Email business outcome and post-release daily backup remain with their owner."
 }
