@@ -72,6 +72,7 @@ def is_external_task_error(error: str) -> bool:
 # expired session (Derek 2026-09-25).
 EXTERNAL_TASK_ERROR_PREFIXES = (
     "email_provider_transient",
+    "email_unsubscribe_external_dependency_unavailable",
     "okr_headless_session_expired",
     "okr_authorization_required",
 )

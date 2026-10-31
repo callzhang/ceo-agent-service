@@ -516,7 +516,7 @@ class DirectEmailUnsubscribeOperation:
                 if not is_transient_external_error(exc):
                     raise
                 return _failed_call(
-                    f"email_provider_transient:{type(exc).__name__}",
+                    "email_unsubscribe_external_dependency_unavailable",
                     detail=_rejection_detail(exc),
                     retryable=True,
                 )

@@ -7123,6 +7123,58 @@ def test_direct_unsubscribe_provider_read_timeout_stops_after_automatic_budget()
     assert calls == [("attempt", "failed"), ("fail", 102, code)]
 
 
+def test_direct_unsubscribe_external_dependency_uses_shared_retry_budget(monkeypatch):
+    module = _module()
+    task = SimpleNamespace(
+        id=103,
+        execution_generation="generation-103",
+        attempts=1,
+        error="email_unsubscribe_external_dependency_unavailable:2",
+        conversation_id="email-thread:103",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:source-103",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, *args, **kwargs):
+            calls.append(("defer", args, kwargs))
+
+    monkeypatch.setattr(
+        module,
+        "_email_task_retry_available_at",
+        lambda failures: f"backoff-{failures}",
+    )
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "error": {
+                "code": "email_unsubscribe_external_dependency_unavailable",
+                "retryable": True,
+            },
+        },
+    )
+
+    assert calls[1] == (
+        "defer",
+        (103, "email_unsubscribe_external_dependency_unavailable:3"),
+        {
+            "expected_execution_generation": "generation-103",
+            "available_at": "backoff-3",
+        },
+    )
+
+
 def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
     module = _module()
     task = SimpleNamespace(

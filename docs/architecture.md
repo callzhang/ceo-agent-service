@@ -949,7 +949,7 @@ Workbench public parent and Turn IDs are decimal strings backed by canonical `ta
 非重试错误直接终止，任何外部效果不确定时先对账原对象，不因次数预算自动重放。
 这些是彼此独立的预算，不合并相加；等待时间、Agent 内部模型轮数和只读轮询不是自动重试次数。
 
-邮件退订在执行标记建立前读取并确认原邮件身份；该阶段的瞬时 provider 传输故障使用同一有界指数退避预算，且不会建立执行标记或触发退订。读取/身份/策略错误不重试。执行标记建立后的动作继续使用原回执与效果围栏规则；退订失败仍留在 History，不进入管理者 Attention。
+邮件退订在执行标记建立前读取并确认原邮件身份；该阶段经共享外部依赖判定器识别的 provider/source 读取故障统一记录为 `email_unsubscribe_external_dependency_unavailable`，并使用同一有界指数退避预算，不建立执行标记或触发退订。读取/身份/策略错误不重试。执行标记建立后的动作继续使用原回执与效果围栏规则；退订失败仍留在 History，不进入管理者 Attention。
 
 OA 权限预算耗尽后停止文件重读，由 Consumer 再运行一次提出普通 OA `return` 候选；
 该轮不得再次申请权限或安排重试，但退回前必须对被阻塞文件实读一次：能读则按正常审批处理，仍读不了才提退回。候选仍经 Audit、System Execution 和节点读回，

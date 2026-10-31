@@ -47,6 +47,19 @@ def test_detailed_internal_unsubscribe_failure_stays_in_internal_attention():
     ).fetchone()[0]
 
 
+def test_external_unsubscribe_dependency_failure_stays_out_of_internal_attention():
+    error = "email_unsubscribe_external_dependency_unavailable:2"
+
+    assert is_external_task_error(error)
+
+    db = sqlite3.connect(":memory:")
+    db.execute("create table reply_tasks (error text)")
+    db.execute("insert into reply_tasks values (?)", (error,))
+    assert db.execute(
+        f"select {external_task_error_sql()} from reply_tasks"
+    ).fetchone()[0]
+
+
 @pytest.mark.parametrize(
     "error",
     (

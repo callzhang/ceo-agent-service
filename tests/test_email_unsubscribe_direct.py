@@ -651,7 +651,7 @@ def test_exact_source_absence_uses_bounded_retry_before_any_effect(tmp_path: Pat
     result = operation.execute(task.id)
 
     assert result["status"] == "failed"
-    assert result["error"]["code"] == "email_provider_transient:EmailSourceMessageMissing"
+    assert result["error"]["code"] == "email_unsubscribe_external_dependency_unavailable"
     assert result["error"]["retryable"] is True
     assert browser.calls == []
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
@@ -676,7 +676,7 @@ def test_transient_source_provider_timeout_is_retryable_before_execution_marker(
     result = operation.execute(task.id)
 
     assert result["status"] == "failed"
-    assert result["error"]["code"] == "email_provider_transient:TimeoutError"
+    assert result["error"]["code"] == "email_unsubscribe_external_dependency_unavailable"
     assert result["error"]["retryable"] is True
     assert browser.calls == []
     assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) is None
