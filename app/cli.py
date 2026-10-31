@@ -4048,6 +4048,17 @@ def _seed_scheduled_tasks_on_service_start(
         store.resolve_errors_recovered_by_scheduled_task_seed()
 
 
+def _signal_service_startup_ready() -> None:
+    ready_fd_value = os.environ.get("CEO_SERVICE_STARTUP_READY_FD")
+    if ready_fd_value is None:
+        return
+    ready_fd = int(ready_fd_value)
+    try:
+        os.write(ready_fd, b"ready")
+    finally:
+        os.close(ready_fd)
+
+
 def run_service(
     settings: WorkerSettings,
     *,
@@ -4080,6 +4091,7 @@ def run_service(
     _recover_okr_review_requests_on_service_start(settings)
     _recover_meeting_alignment_jobs_on_service_start(settings)
     _resolve_recovered_errors_on_service_start(settings)
+    _signal_service_startup_ready()
     doctor_mcp_command(
         settings,
         service_mcp_config=service_mcp_config_path(),

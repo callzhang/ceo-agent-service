@@ -1,6 +1,8 @@
 """Keep the worker and audit web isolated under one launchd service."""
 
 import argparse
+import os
+import select
 import signal
 import subprocess
 import sys
@@ -12,6 +14,7 @@ from pathlib import Path
 POLL_INTERVAL_SECONDS = 0.2
 SHUTDOWN_GRACE_SECONDS = 1.0
 CHILD_RESTART_DELAY_SECONDS = 1.0
+SERVICE_STARTUP_READY_ENV = "CEO_SERVICE_STARTUP_READY_FD"
 
 
 def build_child_command(command: str, args: argparse.Namespace) -> list[str]:
@@ -58,7 +61,7 @@ def run_supervisor(
     audit_web_command: Sequence[str],
     email_worker_command: Sequence[str],
     *,
-    popen: Callable[[Sequence[str]], subprocess.Popen] = subprocess.Popen,
+    popen: Callable[..., subprocess.Popen] = subprocess.Popen,
     sleep: Callable[[float], None] = time.sleep,
     monotonic: Callable[[], float] = time.monotonic,
 ) -> int:
@@ -80,7 +83,53 @@ def run_supervisor(
     }
     children: dict[str, subprocess.Popen] = {}
 
+    def wait_for_service_startup(child: subprocess.Popen, ready_fd: int) -> bool:
+        try:
+            while not shutdown_requested and child.poll() is None:
+                readable, _, _ = select.select([ready_fd], [], [], POLL_INTERVAL_SECONDS)
+                if not readable:
+                    continue
+                return os.read(ready_fd, 5) == b"ready"
+            return False
+        finally:
+            os.close(ready_fd)
+
+    def start_service() -> None:
+        while not shutdown_requested:
+            ready_read_fd, ready_write_fd = os.pipe()
+            child_env = os.environ.copy()
+            child_env[SERVICE_STARTUP_READY_ENV] = str(ready_write_fd)
+            try:
+                child = popen(
+                    commands["worker"],
+                    pass_fds=(ready_write_fd,),
+                    env=child_env,
+                )
+            except OSError:
+                os.close(ready_read_fd)
+                os.close(ready_write_fd)
+                sleep(CHILD_RESTART_DELAY_SECONDS)
+                continue
+            finally:
+                try:
+                    os.close(ready_write_fd)
+                except OSError:
+                    pass
+            if wait_for_service_startup(child, ready_read_fd):
+                children["worker"] = child
+                return
+            stop_children((child,), sleep=sleep, monotonic=monotonic)
+            if not shutdown_requested:
+                print(
+                    "service exited before startup recovery was ready; restarting",
+                    flush=True,
+                )
+                sleep(CHILD_RESTART_DELAY_SECONDS)
+
     def start_child(name: str) -> None:
+        if name == "worker":
+            start_service()
+            return
         while not shutdown_requested:
             try:
                 children[name] = popen(commands[name])
@@ -100,7 +149,15 @@ def run_supervisor(
                         f"child {name} exited returncode={returncode}; restarting",
                         flush=True,
                     )
-                    start_child(name)
+                    if name == "worker":
+                        email_worker = children.pop("email-worker", None)
+                        if email_worker is not None:
+                            stop_children((email_worker,), sleep=sleep, monotonic=monotonic)
+                        start_child("worker")
+                        if not shutdown_requested:
+                            start_child("email-worker")
+                    else:
+                        start_child(name)
                     break
             sleep(POLL_INTERVAL_SECONDS)
         return 0

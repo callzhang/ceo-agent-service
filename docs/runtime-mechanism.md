@@ -945,6 +945,7 @@ Reply Task。它独立于同步业务 worker，因此即使该 worker 卡在单�
 ## 进程、租约和恢复
 
 - 生产入口是 launchd 管理的 `com.ceo-agent-service.main`，由 supervisor 管理 worker 和 audit-web。
+- Supervisor 用每个主 service 进程独有的一次性管道信号等待启动恢复完成，之后才启动 Email worker。主 service 运行中退出时先停止 Email worker，再等待 replacement service 的恢复信号并重启 Email worker；Audit web 独立运行。
 - 同一 `conversation_id` 同时只能有一个执行 Agent 持有 Codex session lock。
 - 每个执行/审核 run 都有独立 lease、revision 和 transcript 范围。
 - Dispatcher 对“租约已过期但 owner 进程仍存活”的来源不重新领取，以免重复执行。处理函数已经返回、只是以错误结束（记下 lease error）时，dispatcher 会把该租约标成“owner 已不在”（`owner_pid=0`、清空到期时间，按 owner 与 generation 围栏），来源随即按常规规则可再领取。

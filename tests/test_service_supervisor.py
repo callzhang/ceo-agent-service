@@ -1,10 +1,13 @@
-import os
 import inspect
+import os
 import subprocess
+import threading
+import time
 from argparse import Namespace
 from pathlib import Path
 
-from app import service_supervisor
+from app import cli, service_supervisor
+from app.cli import WorkerSettings, run_service
 
 
 class FakeChild:
@@ -172,12 +175,16 @@ def test_supervisor_requires_all_three_child_commands():
 
 
 def test_supervisor_restarts_only_the_child_that_exits(monkeypatch, capsys):
-    worker = FakeChild(returncode=7)
+    worker = FakeChild()
     replacement_worker = FakeChild()
+    replacement_email_worker = FakeChild()
     audit_web = FakeChild()
     email_worker = FakeChild()
-    children = iter((worker, audit_web, email_worker, replacement_worker))
+    children = iter(
+        (worker, audit_web, email_worker, replacement_worker, replacement_email_worker)
+    )
     handlers = {}
+    commands = []
     sleep_calls = 0
 
     def register_signal(current_signal, handler):
@@ -197,11 +204,20 @@ def test_supervisor_restarts_only_the_child_that_exits(monkeypatch, capsys):
 
     monkeypatch.setattr(service_supervisor.signal, "signal", register_signal)
 
+    def popen(command, **kwargs):
+        commands.append(tuple(command))
+        child = next(children)
+        if "pass_fds" in kwargs:
+            os.write(kwargs["pass_fds"][0], b"ready")
+        if command == ["email-worker"]:
+            worker.returncode = 7
+        return child
+
     result = service_supervisor.run_supervisor(
         ["worker"],
         ["audit-web"],
         ["email-worker"],
-        popen=lambda _command: next(children),
+        popen=popen,
         sleep=sleep,
     )
 
@@ -212,6 +228,14 @@ def test_supervisor_restarts_only_the_child_that_exits(monkeypatch, capsys):
     assert email_worker.terminated is True
     assert email_worker.waited is True
     assert replacement_worker.terminated is True
+    assert replacement_email_worker.terminated is True
+    assert commands == [
+        ("worker",),
+        ("audit-web",),
+        ("email-worker",),
+        ("worker",),
+        ("email-worker",),
+    ]
     assert "child worker exited returncode=7" in capsys.readouterr().out
 
 
@@ -225,8 +249,10 @@ def test_supervisor_restarts_only_email_worker_and_stops_all_children(monkeypatc
     commands = []
     sleep_calls = 0
 
-    def popen(command):
+    def popen(command, **kwargs):
         commands.append(tuple(command))
+        if "pass_fds" in kwargs:
+            os.write(kwargs["pass_fds"][0], b"ready")
         return next(children)
 
     def register_signal(current_signal, handler):
@@ -266,6 +292,110 @@ def test_supervisor_restarts_only_email_worker_and_stops_all_children(monkeypatc
     for child in (service, audit_web, replacement_email_worker):
         assert child.terminated is True
         assert child.waited is True
+
+
+def test_supervisor_waits_for_service_startup_recovery_before_email_worker(
+    monkeypatch,
+):
+    service = FakeChild()
+    audit_web = FakeChild()
+    email_worker = FakeChild()
+    handlers = {}
+    recovery_ready = threading.Event()
+    commands = []
+
+    def register_signal(current_signal, handler):
+        previous = handlers.get(current_signal)
+        handlers[current_signal] = handler
+        return previous
+
+    def popen(command, **kwargs):
+        commands.append(tuple(command))
+        if command == ["service"]:
+            ready_fd = os.dup(kwargs["pass_fds"][0])
+
+            def signal_ready():
+                time.sleep(0.02)
+                os.write(ready_fd, b"ready")
+                os.close(ready_fd)
+                recovery_ready.set()
+
+            threading.Thread(target=signal_ready, daemon=True).start()
+            return service
+        if command == ["audit-web"]:
+            return audit_web
+        assert command == ["email-worker"]
+        assert recovery_ready.is_set()
+        handlers[service_supervisor.signal.SIGTERM](
+            service_supervisor.signal.SIGTERM,
+            None,
+        )
+        return email_worker
+
+    monkeypatch.setattr(service_supervisor.signal, "signal", register_signal)
+
+    result = service_supervisor.run_supervisor(
+        ["service"],
+        ["audit-web"],
+        ["email-worker"],
+        popen=popen,
+    )
+
+    assert result == 0
+    assert commands == [("service",), ("audit-web",), ("email-worker",)]
+    assert service.terminated and service.waited
+    assert audit_web.terminated and audit_web.waited
+    assert email_worker.terminated and email_worker.waited
+
+
+def test_service_signals_startup_ready_only_after_recovery_completes(
+    tmp_path, monkeypatch
+):
+    events = []
+    read_fd, write_fd = os.pipe()
+    monkeypatch.setenv("CEO_SERVICE_STARTUP_READY_FD", str(write_fd))
+    monkeypatch.setattr(cli, "doctor_mcp_command", lambda *_args, **_kwargs: None)
+    monkeypatch.setattr(cli, "_wechat_service_components", lambda _settings: ())
+    monkeypatch.setattr(cli, "_prepare_runtime_skills_on_service_start", lambda _s: None)
+    monkeypatch.setattr(cli, "_seed_scheduled_tasks_on_service_start", lambda _s, _r: None)
+    monkeypatch.setattr(cli, "_initialize_meeting_discovery_on_service_start", lambda _s: None)
+    monkeypatch.setattr(
+        cli,
+        "_recover_orphaned_reply_tasks_on_service_start",
+        lambda _s: events.append("recovery-complete"),
+    )
+    monkeypatch.setattr(cli, "_recover_processing_work_summary_inputs_on_service_start", lambda _s: None)
+    monkeypatch.setattr(cli, "_normalize_user_rejected_wechat_deliveries_on_service_start", lambda _s: None)
+    monkeypatch.setattr(cli, "_recover_okr_review_requests_on_service_start", lambda _s: None)
+    monkeypatch.setattr(cli, "_recover_meeting_alignment_jobs_on_service_start", lambda _s: None)
+    monkeypatch.setattr(cli, "_resolve_recovered_errors_on_service_start", lambda _s: None)
+    original_write = os.write
+    monkeypatch.setattr(
+        cli.os,
+        "write",
+        lambda fd, data: events.append("ready-signal") or original_write(fd, data),
+    )
+
+    class FakeThread:
+        def __init__(self, target, name, daemon):
+            del target, name, daemon
+
+        def start(self):
+            pass
+
+    try:
+        run_service(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3"),
+            host="127.0.0.1",
+            port=8765,
+            thread_factory=FakeThread,
+            wait=lambda: None,
+        )
+
+        assert events == ["recovery-complete", "ready-signal"]
+        assert os.read(read_fd, 5) == b"ready"
+    finally:
+        os.close(read_fd)
 
 
 def test_main_supervises_email_worker(monkeypatch, tmp_path):
@@ -315,10 +445,11 @@ def test_supervisor_retries_audit_web_start_without_reaping_worker(monkeypatch):
     handlers = {}
     sleep_calls = 0
 
-    def popen(_command):
+    def popen(_command, **kwargs):
         nonlocal calls
         calls += 1
         if calls == 1:
+            os.write(kwargs["pass_fds"][0], b"ready")
             return worker
         if calls == 2:
             raise OSError("audit web cannot start")
