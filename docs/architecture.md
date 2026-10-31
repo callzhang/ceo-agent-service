@@ -721,6 +721,10 @@ updater 在共享 Git 锁内重新校验指纹，必要时按用户确认的分�
 覆盖旧 Email 表和当前 common Action 的状态字段；没有 Email migration ledger 的 Store-only 数据库
 不贡献 Email 动作计数。仍锁定的会议投递继续阻止部署。静默轮询每次只读计数后关闭数据库连接，
 避免长等待累积 SQLite 句柄。
+服务常驻的 `runtime-attempt-reclaim` 每五分钟还会用现有 generation/CAS 恢复回收超阈值、
+没有同代活动 Run 或 RuntimeAttempt 的 processing Reply Task；因此单个同步业务 worker 卡住时，
+其他停滞 Reply Task 仍可恢复。带活动执行证据的任务保持 processing。该恢复只重新排队，
+邮件外部动作仍由原有执行围栏、重试条件和回执核对控制。
 紧急部署可显式使用 `python -m app.deploy --skip-quiet-wait` 跳过在途工作等待；部署仍通过
 updater 正常停止服务后才备份和切换检出，重启时由既有任务恢复逻辑接管中断工作。若切换在新版本
 安装前失败，updater 会重新启动旧版本并检查健康；设置重启也会在 launchd 任务已卸载时重新 bootstrap。

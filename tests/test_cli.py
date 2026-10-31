@@ -1152,6 +1152,13 @@ def test_runtime_attempt_reclaim_loop_reclaims_each_interval(tmp_path, monkeypat
         "recover_expired_terminal_task_runtime_attempts",
         lambda self: calls.append(("recover_terminal",)),
     )
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "recover_stale_processing_reply_tasks",
+        lambda self, *, stale_after_seconds: calls.append(
+            ("recover_reply_tasks", stale_after_seconds)
+        ),
+    )
 
     def sleep(seconds):
         calls.append(("sleep", seconds))
@@ -1164,9 +1171,11 @@ def test_runtime_attempt_reclaim_loop_reclaims_each_interval(tmp_path, monkeypat
     assert calls == [
         ("recover_stale", cli._work_summary_processing_stale_seconds(settings)),
         ("recover_terminal",),
+        ("recover_reply_tasks", cli._work_summary_processing_stale_seconds(settings)),
         ("sleep", cli.RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS),
         ("recover_stale", cli._work_summary_processing_stale_seconds(settings)),
         ("recover_terminal",),
+        ("recover_reply_tasks", cli._work_summary_processing_stale_seconds(settings)),
         ("sleep", cli.RUNTIME_ATTEMPT_RECLAIM_INTERVAL_SECONDS),
     ]
 
@@ -1190,6 +1199,13 @@ def test_runtime_attempt_reclaim_loop_survives_unexpected_failure(tmp_path, monk
         "recover_expired_terminal_task_runtime_attempts",
         lambda self: calls.append("recover_terminal"),
     )
+    monkeypatch.setattr(
+        AutoReplyStore,
+        "recover_stale_processing_reply_tasks",
+        lambda self, *, stale_after_seconds: calls.append(
+            ("recover_reply_tasks", stale_after_seconds)
+        ),
+    )
 
     def sleep(_seconds):
         calls.append("sleep")
@@ -1199,7 +1215,16 @@ def test_runtime_attempt_reclaim_loop_survives_unexpected_failure(tmp_path, monk
     with pytest.raises(StopLoop):
         cli.run_runtime_attempt_reclaim_loop(settings, sleep=sleep)
 
-    assert calls == ["recover_stale", "sleep", "recover_stale", "sleep"]
+    assert calls == [
+        "recover_stale",
+        "recover_terminal",
+        ("recover_reply_tasks", cli._work_summary_processing_stale_seconds(settings)),
+        "sleep",
+        "recover_stale",
+        "recover_terminal",
+        ("recover_reply_tasks", cli._work_summary_processing_stale_seconds(settings)),
+        "sleep",
+    ]
 
 
 def test_claude_skills_link_is_created_and_is_idempotent(tmp_path, monkeypatch):
