@@ -4347,6 +4347,7 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
         browser_unsubscribe_entries,
         extract_unsubscribe_entries,
     )
+    from app.email_source_reader import EmailSourceReader
     from app.email_imap_readonly import ephemeral_body_html
     from app.store import AutoReplyStore
 
@@ -4362,6 +4363,7 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
     source_factory = _build_registry_source_factory(
         _build_email_connector_registry(email_store), ConnectorPriority.HIGH
     )
+    source_reader = EmailSourceReader(email_store, source_factory=source_factory)
     browser_profile = EmailBrowserProfile(
         Path(settings.db_path).parent / "email-browser-runtime"
     )
@@ -4372,38 +4374,27 @@ def _build_email_unsubscribe_context(settings: object) -> SimpleNamespace:
         expected_reference: str,
         authentication: UnsubscribeAuthenticationEvidence | None = None,
     ):
-        account = email_store.get_account(locator.account_id)
-        if not isinstance(account, Mapping):
-            raise ValueError("email unsubscribe account is unavailable")
-        source = source_factory(account)
-        try:
-            current_locator = source.locate_message_across_folders(locator)
-            message = source.fetch_message(
-                current_locator,
-                stable_message_identity=locator.stable_message_identity,
+        message = source_reader.read(locator.account_id, locator.stable_message_identity)
+        entries = extract_unsubscribe_entries(
+            list_unsubscribe=str(message.get("listUnsubscribe") or ""),
+            list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
+            body_text=str(
+                message.get("textBody") or message.get("markdownBody") or ""
+            ),
+            body_html=ephemeral_body_html(message),
+            authentication_evidence=authentication,
+        )
+        entries = tuple(
+            entry
+            for entry in browser_unsubscribe_entries(
+                entries,
+                normalize_indexes=True,
             )
-            entries = extract_unsubscribe_entries(
-                list_unsubscribe=str(message.get("listUnsubscribe") or ""),
-                list_unsubscribe_post=str(message.get("listUnsubscribePost") or ""),
-                body_text=str(
-                    message.get("textBody") or message.get("markdownBody") or ""
-                ),
-                body_html=ephemeral_body_html(message),
-                authentication_evidence=authentication,
-            )
-            entries = tuple(
-                entry
-                for entry in browser_unsubscribe_entries(
-                    entries,
-                    normalize_indexes=True,
-                )
-                if entry.reference == expected_reference
-            )
-            if len(entries) != 1:
-                raise ValueError("email unsubscribe entry changed")
-            return entries
-        finally:
-            _close_email_source(source)
+            if entry.reference == expected_reference
+        )
+        if len(entries) != 1:
+            raise ValueError("email unsubscribe entry changed")
+        return entries
 
     return SimpleNamespace(
         email_store=email_store,

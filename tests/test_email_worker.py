@@ -110,6 +110,25 @@ def _schedule_failed_mark_read_retry(store) -> None:
             ) is not None
 
 
+def _mock_current_email_source_location(monkeypatch, store, locator, *, current_folder=None):
+    location = {
+        "account_id": locator.account_id,
+        "stable_message_identity": locator.stable_message_identity,
+        "folder": locator.folder,
+        "uidvalidity": locator.uidvalidity,
+        "uid": locator.uid,
+        "rfc_message_id": locator.rfc_message_id,
+        "thread_identity": locator.thread_id,
+        "message_source_reference_json": None,
+        "state": "available",
+        "provider_folder_name": current_folder or locator.folder,
+    }
+    monkeypatch.setattr(
+        store, "get_email_source_locations",
+        lambda _keys: {(locator.account_id, locator.stable_message_identity): location},
+    )
+
+
 def _module():
     return import_module("app.email_worker")
 
@@ -5192,9 +5211,9 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
         def fetch_uid_batch(self, folder, *, cursor_uidvalidity, last_seen_uid, limit):
             raise AssertionError("known UID must use exact source read")
 
-        def locate_message_across_folders(self, locator):
+        def locate_message(self, locator, *, folder):
             source_events.append(
-                ("locate_unique", locator.account_id, locator.rfc_message_id)
+                ("locate_folder", folder, locator.rfc_message_id)
             )
             return moved_locator
 
@@ -5285,6 +5304,9 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
         rfc_message_id="<mail-7@example.com>",
         thread_id="thread-7",
     )
+    _mock_current_email_source_location(
+        monkeypatch, operation.email_store, locator, current_folder="Archive"
+    )
     assert operation.resolve_entries(
         locator,
         entry.reference,
@@ -5293,8 +5315,8 @@ def test_build_audited_email_unsubscribe_operation_wires_real_runtime_seams(
     # rather than really logging out -- see _ConnectorBackedSource.
     assert source_events == [
         (
-            "locate_unique",
-            "account-1",
+            "locate_folder",
+            "Archive",
             "<mail-7@example.com>",
         ),
         (
@@ -5401,7 +5423,7 @@ def test_execution_resolves_selected_candidate_before_executing(
 
     class Source:
         def locate_message_across_folders(self, locator):
-            return locator
+            raise AssertionError("known source must not scan all folders")
 
         def fetch_message(self, locator, *, stable_message_identity):
             assert locator.uid == 8
@@ -5451,6 +5473,7 @@ def test_execution_resolves_selected_candidate_before_executing(
         thread_id="thread-multi-origin",
     )
 
+    _mock_current_email_source_location(monkeypatch, operation.email_store, locator)
     resolved = operation.resolve_entries(
         locator,
         str(selection["candidate_reference"]),
@@ -5501,7 +5524,7 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
 
     class Source:
         def locate_message_across_folders(self, locator):
-            return locator
+            raise AssertionError("known source must not scan all folders")
 
         def fetch_message(self, locator, *, stable_message_identity):
             assert locator.uid == 7
@@ -5550,6 +5573,7 @@ def test_audited_unsubscribe_resolves_html_only_provider_entry_in_memory(
         thread_id="thread-7",
     )
 
+    _mock_current_email_source_location(monkeypatch, operation.email_store, locator)
     assert operation.resolve_entries(
         locator,
         entry.reference,
