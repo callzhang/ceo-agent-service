@@ -4,6 +4,9 @@ from datetime import datetime, timedelta, timezone
 import email.message
 import imaplib
 import json
+import socket
+import threading
+import time
 from pathlib import Path
 from typing import Mapping
 
@@ -22,6 +25,7 @@ from app.email_classifier_scan import (
 )
 from app.email_classifier_training import CategoryEligibility, EmailActionEligibility
 from app.email_imap_readonly import (
+    _DeadlineIMAP4,
     ImapReadonlyAdapter,
     ImapUidBatch,
     ProviderFolderFingerprint,
@@ -1922,19 +1926,21 @@ def test_imap_connect_defaults_to_a_wide_socket_timeout(monkeypatch) -> None:
     captured = {}
 
     class FakeSSL:
-        def __init__(self, host, port, timeout=None):
+        def __init__(self, host, port, timeout=None, command_timeout=None):
             captured["timeout"] = timeout
+            captured["command_timeout"] = command_timeout
 
         def login(self, username, password):
             return "OK", [b""]
 
-    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+    monkeypatch.setattr("app.email_imap_readonly._DeadlineIMAP4SSL", FakeSSL)
 
     ImapReadonlyAdapter.connect(
         "imap.example.test", "user@example.test", "secret", account_id="account-a"
     )
 
     assert captured["timeout"] == 90.0
+    assert captured["command_timeout"] == 90.0
 
     ImapReadonlyAdapter.connect(
         "imap.example.test",
@@ -1945,6 +1951,53 @@ def test_imap_connect_defaults_to_a_wide_socket_timeout(monkeypatch) -> None:
     )
 
     assert captured["timeout"] == 5.0
+    assert captured["command_timeout"] == 90.0
+
+
+def test_readonly_imap_command_has_total_deadline_when_server_trickles_bytes() -> None:
+    listener = socket.socket()
+    listener.bind(("127.0.0.1", 0))
+    listener.listen(1)
+    port = listener.getsockname()[1]
+    stopped = threading.Event()
+
+    def server() -> None:
+        try:
+            connection, _ = listener.accept()
+            with connection:
+                stream = connection.makefile("rb")
+                connection.sendall(b"* OK ready\r\n")
+                capability = stream.readline().split()[0]
+                connection.sendall(
+                    b"* CAPABILITY IMAP4rev1\r\n"
+                    + capability
+                    + b" OK capabilities complete\r\n"
+                )
+                command = stream.readline().split()[0]
+                response = command + b" OK completed\r\n"
+                for byte in response:
+                    connection.sendall(bytes((byte,)))
+                    time.sleep(0.02)
+        except OSError:
+            pass
+        finally:
+            stopped.set()
+            listener.close()
+
+    thread = threading.Thread(target=server, daemon=True)
+    thread.start()
+    started = time.monotonic()
+    session = _DeadlineIMAP4(
+        "127.0.0.1", port, timeout=1.0, command_timeout=0.12
+    )
+    try:
+        with pytest.raises(TimeoutError, match="total deadline"):
+            session.noop()
+    finally:
+        session.shutdown()
+    elapsed = time.monotonic() - started
+    assert elapsed < 0.8
+    assert stopped.wait(0.5)
 
 
 def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) -> None:
@@ -1952,7 +2005,7 @@ def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) ->
     # login status used to raise a bare "IMAP login failed" with the server's
     # own response text discarded as `_`.
     class FakeSSL:
-        def __init__(self, host, port, timeout=None):
+        def __init__(self, host, port, timeout=None, command_timeout=None):
             pass
 
         def login(self, username, password):
@@ -1964,7 +2017,7 @@ def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) ->
         def shutdown(self):
             pass
 
-    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+    monkeypatch.setattr("app.email_imap_readonly._DeadlineIMAP4SSL", FakeSSL)
 
     with pytest.raises(ConnectionError) as excinfo:
         ImapReadonlyAdapter.connect(
@@ -1976,7 +2029,7 @@ def test_imap_connect_login_failure_keeps_the_servers_own_reason(monkeypatch) ->
 
 def test_imap_connect_login_exception_keeps_its_own_message(monkeypatch) -> None:
     class FakeSSL:
-        def __init__(self, host, port, timeout=None):
+        def __init__(self, host, port, timeout=None, command_timeout=None):
             pass
 
         def login(self, username, password):
@@ -1988,7 +2041,7 @@ def test_imap_connect_login_exception_keeps_its_own_message(monkeypatch) -> None
         def shutdown(self):
             pass
 
-    monkeypatch.setattr(imaplib, "IMAP4_SSL", FakeSSL)
+    monkeypatch.setattr("app.email_imap_readonly._DeadlineIMAP4SSL", FakeSSL)
 
     with pytest.raises(ConnectionError) as excinfo:
         ImapReadonlyAdapter.connect(
