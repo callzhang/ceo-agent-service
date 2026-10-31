@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 import imaplib
 import select
 import socket
@@ -26,6 +27,9 @@ class _CommandDeadlineMixin:
         self._command_active = False
         self._command_expired = False
         self._command_deadline = 0.0
+        self._operation_deadline: float | None = None
+        self._active_deadline_scope = "command"
+        self._active_deadline_seconds = command_timeout
         self._socket_timeout = kwargs.get("timeout")
         self._initialization_deadline_active = False
         self._start_command_deadline()
@@ -60,17 +64,69 @@ class _CommandDeadlineMixin:
                     pass
         return result
 
+    @contextmanager
+    def operation_deadline(self, timeout: float):
+        """Bound a sequence of IMAP commands by one shared deadline."""
+        if timeout <= 0:
+            raise ValueError("operation timeout must be positive")
+        with self._command_lock:
+            if self._command_active:
+                raise RuntimeError("cannot start an operation during an IMAP command")
+            previous_deadline = self._operation_deadline
+            candidate = time.monotonic() + timeout
+            self._operation_deadline = (
+                min(previous_deadline, candidate)
+                if previous_deadline is not None
+                else candidate
+            )
+        try:
+            yield
+        finally:
+            with self._command_lock:
+                if self._command_active:
+                    raise RuntimeError("IMAP operation ended during an active command")
+                active_deadline = self._operation_deadline
+                self._operation_deadline = previous_deadline
+            if active_deadline is not None and time.monotonic() >= active_deadline:
+                self._active_deadline_scope = "operation"
+                self._active_deadline_seconds = timeout
+                self._raise_command_timeout(
+                    TimeoutError("IMAP operation exceeded its total deadline")
+                )
+
     def _start_command_deadline(self) -> None:
         with self._command_lock:
             if self._command_active:
                 raise RuntimeError("IMAP commands cannot overlap on one session")
-            self._command_active = True
-            self._command_expired = False
-            self._command_deadline = time.monotonic() + self._command_timeout
-            timer = threading.Timer(self._command_timeout, self._expire_command)
-            timer.daemon = True
-            self._command_timer = timer
-            timer.start()
+            now = time.monotonic()
+            timeout = self._command_timeout
+            self._active_deadline_scope = "command"
+            if self._operation_deadline is not None:
+                remaining = self._operation_deadline - now
+                if remaining <= 0:
+                    self._active_deadline_scope = "operation"
+                    self._active_deadline_seconds = 0.0
+                    expired_before_command = True
+                else:
+                    expired_before_command = False
+                    if remaining < timeout:
+                        timeout = remaining
+                        self._active_deadline_scope = "operation"
+            else:
+                expired_before_command = False
+            if not expired_before_command:
+                self._active_deadline_seconds = timeout
+                self._command_deadline = now + timeout
+                self._command_active = True
+                self._command_expired = False
+                timer = threading.Timer(timeout, self._expire_command)
+                timer.daemon = True
+                self._command_timer = timer
+                timer.start()
+        if expired_before_command:
+            self._raise_command_timeout(
+                TimeoutError("IMAP operation exceeded its total deadline")
+            )
 
     def _expire_command(self) -> None:
         with self._command_lock:
@@ -216,9 +272,17 @@ class _CommandDeadlineMixin:
             self.file.close()
         except Exception:
             pass
-        raise TimeoutError(
-            f"IMAP command exceeded its {self._command_timeout:g}s total deadline"
-        ) from cause
+        if self._active_deadline_scope == "operation":
+            message = (
+                "IMAP operation exceeded its "
+                f"{self._active_deadline_seconds:g}s total deadline"
+            )
+        else:
+            message = (
+                "IMAP command exceeded its "
+                f"{self._active_deadline_seconds:g}s total deadline"
+            )
+        raise TimeoutError(message) from cause
 
     def _command(self, name: str, *args: Any) -> bytes:
         initializing = self._initialization_deadline_active
@@ -246,7 +310,12 @@ class _CommandDeadlineMixin:
 
     def _command_complete(self, name: str, tag: bytes) -> Any:
         try:
-            return super()._command_complete(name, tag)
+            result = super()._command_complete(name, tag)
+            if self._command_deadline_expired():
+                self._raise_command_timeout(
+                    TimeoutError("IMAP command ended after its total deadline")
+                )
+            return result
         finally:
             if not self._initialization_deadline_active:
                 self._finish_command()

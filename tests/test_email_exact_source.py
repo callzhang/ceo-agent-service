@@ -1,9 +1,12 @@
 """Exact Email originals: full selected body, immutable locator, no mailbox writes."""
+from contextlib import nullcontext
+
 import pytest
 
 from app.email_classifier_contracts import EmailProviderLocator
 from app.email_imap_readonly import (
     EmailSourceMessageMissing,
+    IMAP_SOURCE_LOOKUP_TIMEOUT_SECONDS,
     ImapReadonlyAdapter,
     fallback_stable_message_identity,
 )
@@ -189,6 +192,12 @@ def test_cross_folder_locator_requires_one_exact_current_match():
         def __init__(self, matches):
             self.matches = matches
             self.searched = []
+            self.session = self
+            self.operation_timeouts = []
+
+        def operation_deadline(self, timeout):
+            self.operation_timeouts.append(timeout)
+            return nullcontext()
 
         def list_folders(self):
             return (
@@ -207,11 +216,13 @@ def test_cross_folder_locator_requires_one_exact_current_match():
     unique = FolderSearch({'Archive': archive})
     assert resolver(unique, LOCATOR) == archive
     assert unique.searched == ['INBOX', 'Archive']
+    assert unique.operation_timeouts == [IMAP_SOURCE_LOOKUP_TIMEOUT_SECONDS]
 
     ambiguous = FolderSearch({'INBOX': LOCATOR, 'Archive': archive})
     with pytest.raises(LookupError, match='ambiguous'):
         resolver(ambiguous, LOCATOR)
     assert ambiguous.searched == ['INBOX', 'Archive']
+    assert ambiguous.operation_timeouts == [IMAP_SOURCE_LOOKUP_TIMEOUT_SECONDS]
 
     missing = FolderSearch({})
     with pytest.raises(EmailSourceMessageMissing, match='Message-ID is missing'):

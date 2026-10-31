@@ -2001,6 +2001,56 @@ def test_readonly_imap_command_has_total_deadline_when_server_trickles_bytes() -
     assert stopped.wait(0.5)
 
 
+def test_readonly_imap_operation_shares_deadline_across_commands(monkeypatch) -> None:
+    delays = []
+    now = [100.0]
+
+    class FakeTimer:
+        def __init__(self, delay, callback):
+            delays.append(delay)
+            self.callback = callback
+
+        def start(self):
+            pass
+
+        def cancel(self):
+            pass
+
+    class FakeFile:
+        closed = False
+
+        def close(self):
+            self.closed = True
+
+    import app.email_imap_transport as imap_transport
+
+    monkeypatch.setattr(imap_transport.time, "monotonic", lambda: now[0])
+    monkeypatch.setattr(imap_transport.threading, "Timer", FakeTimer)
+    session = object.__new__(_DeadlineIMAP4)
+    session._command_timeout = 90.0
+    session._command_lock = threading.Lock()
+    session._command_timer = None
+    session._command_active = False
+    session._command_expired = False
+    session._command_deadline = 0.0
+    session._operation_deadline = None
+    session._socket_timeout = 1.0
+    session.sock = None
+    session.file = FakeFile()
+
+    with pytest.raises(TimeoutError, match="operation.*deadline"):
+        with session.operation_deadline(10.0):
+            session._start_command_deadline()
+            assert delays[-1] == 10.0
+            session._finish_command()
+            now[0] += 6.0
+            session._start_command_deadline()
+            assert delays[-1] == 4.0
+            session._finish_command()
+            now[0] += 5.0
+    assert session.file.closed
+
+
 def test_imap_initial_greeting_has_total_deadline_when_server_trickles_bytes() -> None:
     listener = socket.socket()
     listener.bind(("127.0.0.1", 0))

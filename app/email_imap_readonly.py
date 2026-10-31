@@ -14,6 +14,7 @@ import quopri
 import re
 import unicodedata
 from collections.abc import Iterable, Mapping
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import date, datetime, timezone
 from hashlib import sha256
@@ -48,6 +49,7 @@ _HEADER_FETCH = (
     "IN-REPLY-TO LIST-UNSUBSCRIBE LIST-UNSUBSCRIBE-POST AUTO-SUBMITTED)])"
 )
 _MAX_TEXT_FETCH_BYTES = 64 * 1024
+IMAP_SOURCE_LOOKUP_TIMEOUT_SECONDS = 8 * 60
 
 
 class EmailSourceMessageMissing(LookupError):
@@ -585,14 +587,21 @@ class ImapReadonlyAdapter:
             raise ValueError("email source account mismatch")
         if locator.rfc_message_id is None:
             raise LookupError("email source has no Message-ID for moved lookup")
-        matches = []
-        for folder in self.list_folders():
-            try:
-                matches.append(
-                    self.locate_message(locator, folder=folder.display_name)
-                )
-            except EmailSourceMessageMissing:
-                continue
+        operation_deadline = getattr(self.session, "operation_deadline", None)
+        deadline_scope = (
+            operation_deadline(IMAP_SOURCE_LOOKUP_TIMEOUT_SECONDS)
+            if callable(operation_deadline)
+            else nullcontext()
+        )
+        with deadline_scope:
+            matches = []
+            for folder in self.list_folders():
+                try:
+                    matches.append(
+                        self.locate_message(locator, folder=folder.display_name)
+                    )
+                except EmailSourceMessageMissing:
+                    continue
         if not matches:
             raise EmailSourceMessageMissing("email source Message-ID is missing")
         if len(matches) > 1:
