@@ -52,10 +52,10 @@ def _source_database(path):
     with closing(sqlite3.connect(path)) as db:
         register_task8_functions(db)
         db.execute("pragma foreign_keys=off")
+        db.execute("begin")
         for kind, name, table, sql in sorted(
                 source_objects("fresh_memory_fk"), key=lambda item: item[0] != "table"):
             db.execute(sql)
-        db.execute("begin")
         insert_state(db, "service_state", {"key": "store_schema_version", "value": SOURCE_VERSION,
                                             "updated_at": SOURCE_MARKER_TIME})
         db.execute("insert into email_schema_migrations(version,applied_at) values(53,' email marker ')")

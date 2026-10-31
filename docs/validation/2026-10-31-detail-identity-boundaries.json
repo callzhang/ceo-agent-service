@@ -41,5 +41,267 @@
     "manual_browser": "not_run; browser availability will be checked at readback"
   },
   "production_readback": null,
-  "cleanup": null
+  "cleanup": null,
+  "baseline_readback": {
+    "installed": "d9ebe7df36b4b74c833b36b869c545c328a05e42",
+    "api": [
+      {
+        "kind": "health",
+        "path": "/healthz",
+        "status": 200,
+        "seconds": 0.049
+      },
+      {
+        "kind": "Task",
+        "path": "/api/console/tasks/items/363",
+        "status": 200,
+        "seconds": 0.553,
+        "facts_sha256": "3d9f713d5cd5a27b137119afe3c656741ca79e71c9d47f0204d11d2fe05a8037",
+        "id": 363,
+        "source_references": 7
+      },
+      {
+        "kind": "Task",
+        "path": "/api/console/tasks/items/33",
+        "status": 200,
+        "seconds": 0.061,
+        "facts_sha256": "00ce178b246ad2fa36eba9e28db4ef3886937ebaf4043e74361c282dc6083e4f",
+        "id": 33,
+        "source_references": 5
+      },
+      {
+        "kind": "Attention",
+        "path": "/api/console/tasks/attention/5",
+        "status": 200,
+        "seconds": 0.083,
+        "facts_sha256": "532d5ca61907e8d103655d1edaa61b66fe9e0b3b3f22ec3ab7f962d1adef4f06"
+      },
+      {
+        "kind": "Project",
+        "path": "/api/console/tasks/projects/1",
+        "status": 200,
+        "seconds": 0.569,
+        "facts_sha256": "d04381dbc3689cbab4e76d4b0c92d9d3a8326b55258c4c9e6a361778ab49c93a"
+      },
+      {
+        "kind": "historical Project",
+        "path": "/api/console/tasks/legacy-projects/1",
+        "status": 200,
+        "seconds": 0.316,
+        "facts_sha256": "120c59bedd143fe59bc478ddcd9d2f59b46af76bb2a729ac509142b46381f4b6",
+        "id": null
+      },
+      {
+        "kind": "History Task",
+        "path": "/api/console/history/tasks/417955",
+        "status": 200,
+        "seconds": 0.14,
+        "facts_sha256": "0ab9da588bae0426f3bf73f3062d2d20823b7bcffd2d09ecf7ae3742fc8d617d"
+      },
+      {
+        "kind": "Attempt",
+        "path": "/api/console/history/16429",
+        "status": 200,
+        "seconds": 0.843,
+        "facts_sha256": "d8dfd52bea4257aca44233cada9f2a2f3d1468f392373c9cdb6b22f2981d40a3",
+        "id": 16429,
+        "delivery_present": true,
+        "actions_count": 21
+      },
+      {
+        "kind": "Attention status",
+        "path": "/api/attention/status",
+        "status": 200,
+        "seconds": 0.463,
+        "count": 0
+      },
+      {
+        "kind": "queue",
+        "path": "/api/workers/status",
+        "status": 200,
+        "seconds": 1.804
+      },
+      {
+        "kind": "History page1",
+        "path": "/api/console/history?page=1&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 1.953,
+        "items": 5
+      },
+      {
+        "kind": "History page2",
+        "path": "/api/console/history?page=2&page_size=5&include_chart=false",
+        "status": 200,
+        "seconds": 2.039,
+        "items": 5
+      },
+      {
+        "kind": "Meeting",
+        "path": "/api/console/meeting-attempts/400852",
+        "status": 200,
+        "seconds": 0.084,
+        "facts_sha256": "b853732f85886d407c0111ef1da621256cd1301de82fa2d14b76a98689c47eeb",
+        "id": 400852
+      },
+      {
+        "kind": "OA",
+        "path": "/api/console/oa-approvals/CJd7PnwxR6yD2_WH3bcvnA03641793258344",
+        "status": 200,
+        "seconds": 0.332,
+        "facts_sha256": "063bc101fa41748f79ecb623db09a2097afd9049ed7f88777f4b784321e1f4c9"
+      },
+      {
+        "kind": "service error",
+        "path": "/api/console/history/errors/16170",
+        "status": 200,
+        "seconds": 0.004,
+        "facts_sha256": "08210226e59b40b3ef879845076a377344434022448982f40bf89d9ffdd30170"
+      },
+      {
+        "kind": "session",
+        "path": "/api/console/codex/sessions/01a19166-41b9-7472-9789-c1ec8282cbde",
+        "status": 200,
+        "seconds": 0.355,
+        "facts_sha256": "ff8dbf3ee39f3a6447b0e674a3c499a18cf49aa37490236e5b9e57cfebcdd21e"
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "exact_before": true,
+      "fk": []
+    },
+    "frontend_tree": "ac35d7969cf937ca38e047f776ff0ad677f27f63",
+    "frontend_stamp": "ac35d7969cf937ca38e047f776ff0ad677f27f63",
+    "frontend_stamp_matches": true,
+    "feature_present": false,
+    "chunks": [
+      {
+        "page": "src/pages/AttemptDetailPage.tsx",
+        "file": "assets/AttemptDetailPage-C2m1EhiJ.js",
+        "served_exact": true,
+        "sha256": "bb5b2b633f7eb9f173ff11b31c7148041fdabdc5af238706cde3d283b48c6799"
+      },
+      {
+        "page": "src/pages/BusinessDetailPage.tsx",
+        "file": "assets/BusinessDetailPage-C60A6Kuu.js",
+        "served_exact": true,
+        "sha256": "2ae2864996f0c6eb7a01067880bbc37c24caacecb6e30b4920e4caf753249b95"
+      },
+      {
+        "page": "src/pages/CodexPages.tsx",
+        "file": "assets/CodexPages-D8G8DBrP.js",
+        "served_exact": true,
+        "sha256": "095bae942dbea9e3b6df532d2baa94d0238f7623d97365efe7e994f9350b3727"
+      },
+      {
+        "page": "src/pages/HistoryTaskPage.tsx",
+        "file": "assets/HistoryTaskPage-DMqiKOYj.js",
+        "served_exact": true,
+        "sha256": "d43041eca97cdcd47ada7cccf6d21fbc85f2867b9c8e508f223ddfd0bd2c29e6"
+      },
+      {
+        "page": "src/pages/RuntimeErrorDetailPage.tsx",
+        "file": "assets/RuntimeErrorDetailPage-Uw5DyuAH.js",
+        "served_exact": true,
+        "sha256": "78f9f47b63fd123dbcd9c347809ccd8a2525fa4bca496ec0565d4863ffe99a3e"
+      },
+      {
+        "page": "src/pages/TaskAttentionDetailPage.tsx",
+        "file": "assets/TaskAttentionDetailPage-DlKhHh9O.js",
+        "served_exact": true,
+        "sha256": "63b9458657ea837df58c94f2868af2f2dd5d4be5f638f5300302905c0141aa43"
+      },
+      {
+        "page": "src/pages/TaskDetailPage.tsx",
+        "file": "assets/TaskDetailPage-2XJ7l575.js",
+        "served_exact": true,
+        "sha256": "b27da2521eb3cd60deee79e9226f45391fa98315ae0a2041077bc6fda05234ea"
+      },
+      {
+        "page": "src/pages/TaskProjectDetailPage.tsx",
+        "file": "assets/TaskProjectDetailPage-CXTxTgsz.js",
+        "served_exact": true,
+        "sha256": "4127601a948e642ad7ef903e4a65c8195a39279ecf4561720ec2e55fd1459a9d"
+      }
+    ],
+    "web_pids": [
+      "58608"
+    ]
+  },
+  "release_attempts": [
+    {
+      "commit": "3af84b2a878b236fad1d98130a0a6ea7c2d4714f",
+      "status": "fixed600s_gate_timeout_no_install",
+      "last_test": "tests/test_validate_email_action_owner_copy.py::test_seeded_plan_validates_as_native_immutable_snapshot",
+      "progress": "96%",
+      "assertion_failure_reported": false
+    }
+  ],
+  "gate_fixture_repair": {
+    "scope": "Frozen test source transaction start only; no runtime/migration DDL or assertions changed.",
+    "red": "2 partial-schema rollback regressions failed before fix",
+    "focused": "33 passed42.43s; all31 existing migration cases retained",
+    "benchmark_before": {
+      "store29": {
+        "seconds": [
+          0.173235,
+          0.171403,
+          0.210695
+        ],
+        "fingerprints": [
+          "f3242834bd2fc8c524ef7c56322021ee5d50527afa79a8322bb108082d618769",
+          "f3242834bd2fc8c524ef7c56322021ee5d50527afa79a8322bb108082d618769",
+          "f3242834bd2fc8c524ef7c56322021ee5d50527afa79a8322bb108082d618769"
+        ]
+      },
+      "action-source": {
+        "seconds": [
+          0.334504,
+          0.24429,
+          0.209931
+        ],
+        "fingerprints": [
+          "e65a677e96453d2fb75a2d5f944041ba2e544f8438d3d3723026273194f7ca91",
+          "e65a677e96453d2fb75a2d5f944041ba2e544f8438d3d3723026273194f7ca91",
+          "e65a677e96453d2fb75a2d5f944041ba2e544f8438d3d3723026273194f7ca91"
+        ]
+      }
+    },
+    "benchmark_after": {
+      "store29": {
+        "seconds": [
+          0.081667,
+          0.087817,
+          0.080502
+        ],
+        "fingerprints": [
+          "f3242834bd2fc8c524ef7c56322021ee5d50527afa79a8322bb108082d618769",
+          "f3242834bd2fc8c524ef7c56322021ee5d50527afa79a8322bb108082d618769",
+          "f3242834bd2fc8c524ef7c56322021ee5d50527afa79a8322bb108082d618769"
+        ]
+      },
+      "action-source": {
+        "seconds": [
+          0.200936,
+          0.116285,
+          0.110658
+        ],
+        "fingerprints": [
+          "e65a677e96453d2fb75a2d5f944041ba2e544f8438d3d3723026273194f7ca91",
+          "e65a677e96453d2fb75a2d5f944041ba2e544f8438d3d3723026273194f7ca91",
+          "e65a677e96453d2fb75a2d5f944041ba2e544f8438d3d3723026273194f7ca91"
+        ]
+      }
+    },
+    "typed_schema_and_facts_exact": true,
+    "net_gate_benefit": "Not claimed until complete exact-target gate passes.",
+    "direct_callers_and_manifest": "9 passed2.12s; all4 direct source function consumers plus manifest checks",
+    "review": "Independent SPEC/QUALITY passed; manifest entry race finding closed by reviewer after actual addition.",
+    "ruff": "passed"
+  },
+  "integration": {
+    "ui_feature": "3af84b2a878b236fad1d98130a0a6ea7c2d4714f",
+    "peer_dialog_feature": "74b75834b00f7630c2f1e1779fd76b4a67a2c8f6",
+    "boundary": "Peer user-approved generic dialog ancestor fix remains its separate commit/tests, peer owns subsequent Email business result; root performs one serialized exact-target release."
+  }
 }
