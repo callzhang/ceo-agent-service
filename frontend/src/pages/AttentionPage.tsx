@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { Link } from "react-router-dom";
 
 import { displayValue, listAttention, type AttentionItem } from "../api/console";
@@ -15,25 +15,39 @@ export function AttentionPanel({ onCountChange, refreshKey, compact=false }: { o
   const [error, setError] = useState("");
   const [snapshot, setSnapshot] = useState("");
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const activeRequest = useRef<AbortController | null>(null);
   const unresolvedCount = rows.reduce((total, row) => total + Math.max(0, row.count), 0);
   const load = useCallback(() => {
+    activeRequest.current?.abort();
+    const controller = new AbortController();
+    activeRequest.current = controller;
     setState("loading");
     setError("");
-    return listAttention().then((page) => {
+    return listAttention(controller.signal).then((page) => {
+      if (controller.signal.aborted) return;
       setRows(page.items);
+      setExpandedId((id) => page.items.some((row) => row.id === id) ? id : null);
       onCountChange?.(page.items.reduce((total, row) => total + Math.max(0, row.count), 0));
       setSnapshot(page.meta.snapshot_at);
       setState("ready");
     }).catch((reason: unknown) => {
+      if (controller.signal.aborted) return;
       setError(reason instanceof Error ? reason.message : "加载失败");
       setState("error");
+    }).finally(() => {
+      if (activeRequest.current === controller) activeRequest.current = null;
     });
   }, [onCountChange]);
   useEffect(() => {
     void load();
-    if (refreshKey !== undefined) return;
-    const refreshTimer = window.setInterval(() => { void load(); }, ATTENTION_REFRESH_INTERVAL_MS);
-    return () => window.clearInterval(refreshTimer);
+    const refreshTimer = refreshKey === undefined ? window.setInterval(() => {
+      if (!activeRequest.current) void load();
+    }, ATTENTION_REFRESH_INTERVAL_MS) : undefined;
+    return () => {
+      window.clearInterval(refreshTimer);
+      activeRequest.current?.abort();
+      activeRequest.current = null;
+    };
   }, [load, refreshKey]);
 
   return (

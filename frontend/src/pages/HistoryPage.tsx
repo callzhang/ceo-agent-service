@@ -39,10 +39,10 @@ export function splitStatusCode(text: string): { copy: string; code: string } {
   return { copy: text.slice(0, match.index).trim(), code: match[1] };
 }
 
-function HistoryChart({ chart, loading }: { chart?: HistoryChartData; loading?: boolean }) {
+function HistoryChart({ chart, loading, error }: { chart?: HistoryChartData; loading?: boolean; error?: string }) {
   const [searchParams, setSearchParams] = useSearchParams();
   const range = searchParams.get("chart_range") || "24h";
-  return <StackedBarChart chart={chart} loading={loading} range={range} onRangeChange={(nextRange) => { const next = new URLSearchParams(searchParams); next.set("chart_range", nextRange); next.delete("page"); setSearchParams(next); }} />;
+  return <StackedBarChart chart={chart} loading={loading} error={error} range={range} onRangeChange={(nextRange) => { const next = new URLSearchParams(searchParams); next.set("chart_range", nextRange); next.delete("page"); setSearchParams(next); }} />;
 }
 
 // `done` also covers sent replies on the service side, so there is no separate 已发送.
@@ -73,13 +73,10 @@ function Pagination({ page, pageSize, total, onPageChange }: { page: number; pag
 
 export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
   const [searchParams, setSearchParams] = useSearchParams();
-  const [rows, setRows] = useState<HistoryItem[]>([]);
-  const [totalCount, setTotalCount] = useState(0);
-  const [chart, setChart] = useState<HistoryChartData>();
-  const [state, setState] = useState<"loading" | "ready" | "error">("loading");
-  const [chartState, setChartState] = useState<"loading" | "ready" | "error">("loading");
-  const [error, setError] = useState("");
-  const [snapshot, setSnapshot] = useState("");
+  const [result, setResult] = useState<{ key: string; rows: HistoryItem[]; total: number; snapshot: string }>();
+  const [chartResult, setChartResult] = useState<{ range: string; chart: HistoryChartData | undefined }>();
+  const [requestState, setRequestState] = useState<{ key: string; status: "loading" | "ready" | "error"; error: string }>();
+  const [chartRequestState, setChartRequestState] = useState<{ range: string; status: "loading" | "ready" | "error"; error: string }>();
   const [refreshEpoch, setRefreshEpoch] = useState(0);
   // The service owns the type list (Derek 2026-09-25); if it cannot be read,
   // the filter offers only 全部 rather than a stale copy.
@@ -94,16 +91,24 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
   const page = Math.max(1, Number(searchParams.get("page") || 1));
   const pageSizeValue = Number(searchParams.get("page_size") || 20);
   const pageSize = pageSizes.includes(pageSizeValue) ? pageSizeValue : 20;
+  const queryKey = JSON.stringify([query, status, objectType, page, pageSize]);
+  const current = result?.key === queryKey ? result : undefined;
+  const rows = current?.rows || [];
+  const totalCount = current?.total || 0;
+  const snapshot = current?.snapshot || "";
+  const state = requestState?.key === queryKey ? requestState.status : "loading";
+  const error = requestState?.key === queryKey ? requestState.error : "";
+  const chart = chartResult?.range === chartRange ? chartResult.chart : undefined;
+  const chartState = chartRequestState?.range === chartRange ? chartRequestState.status : "loading";
 
   useEffect(() => {
     const controller = new AbortController();
     const generation = ++requestGeneration.current;
     historyRequestPending.current = true;
-    setState("loading");
-    setError("");
-    listHistory({ q: query, status, object_type: objectType, page, page_size: pageSize, include_chart: 0 }, controller.signal).then((result) => { if (generation !== requestGeneration.current) return; setRows(result.items); setTotalCount(result.meta.total || 0); setSnapshot(result.meta.snapshot_at); setState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setError(reason instanceof Error ? reason.message : "加载失败"); setState("error"); }).finally(() => { if (generation === requestGeneration.current) historyRequestPending.current = false; });
+    setRequestState({ key: queryKey, status: "loading", error: "" });
+    listHistory({ q: query, status, object_type: objectType, page, page_size: pageSize, include_chart: 0 }, controller.signal).then((result) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setResult({ key: queryKey, rows: result.items, total: result.meta.total || 0, snapshot: result.meta.snapshot_at }); setRequestState({ key: queryKey, status: "ready", error: "" }); }).catch((reason: unknown) => { if (controller.signal.aborted || generation !== requestGeneration.current) return; setRequestState({ key: queryKey, status: "error", error: reason instanceof Error ? reason.message : "加载失败" }); }).finally(() => { if (generation === requestGeneration.current) historyRequestPending.current = false; });
     return () => controller.abort();
-  }, [query, status, objectType, page, pageSize, refreshEpoch]);
+  }, [query, status, objectType, page, pageSize, refreshEpoch, queryKey]);
 
   useEffect(() => {
     const controller = new AbortController();
@@ -122,8 +127,8 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
 
   useEffect(() => {
     const controller = new AbortController();
-    setChartState("loading");
-    getHistoryChart(chartRange, controller.signal).then((value) => { if (controller.signal.aborted) return; setChart(value); setChartState("ready"); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setChartState("error"); setError(reason instanceof Error ? reason.message : "图表加载失败"); });
+    setChartRequestState({ range: chartRange, status: "loading", error: "" });
+    getHistoryChart(chartRange, controller.signal).then((value) => { if (controller.signal.aborted) return; setChartResult({ range: chartRange, chart: value }); setChartRequestState({ range: chartRange, status: "ready", error: "" }); }).catch((reason: unknown) => { if (controller.signal.aborted) return; setChartRequestState({ range: chartRange, status: "error", error: reason instanceof Error ? reason.message : "图表加载失败" }); });
     return () => controller.abort();
   }, [chartRange]);
 
@@ -134,7 +139,7 @@ export function HistoryPage({embedded=false}: {embedded?:boolean} = {}) {
   // A value the service no longer lists (the retired `replay`) filters nothing there, so the menu says 全部 too.
   const selectedTypes = listParam(objectType).filter((value) => typeLabels.has(value));
 
-  const content = <div className="history-page" role="region" aria-label="History workspace">{!embedded && <AttentionPanel />}<HistoryChart chart={chart} loading={chartState === "loading"} /><section className="card history-workspace-card"><FilterBar><div className="filter-bar-main"><SearchField id="history-search-input" label="搜索历史" value={query} placeholder="搜索标题、内容或来源" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><MultiSelectField id="history-status-filter" label="状态" allLabel="全部状态" options={statusOptions} values={selectedStatuses} onChange={(values) => update("status", values.join(","))} /><MultiSelectField id="history-type-filter" label="任务类型" allLabel="全部类型" options={typeOptions} values={selectedTypes} onChange={(values) => update("object_type", values.join(","))} /></div><div className="filter-bar-side"><SelectField id="history-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} /><span className="table-toolbar-total">共 {total} 条</span></div></FilterBar>{state === "error" ? <div className="page-state page-state-error" role="alert">{error}</div> : state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载…</div> : !rows.length ? <div className="page-state">No reply attempts recorded.</div> : <><section className="history-row-list" aria-label="执行历史">{rows.map((row) => {
+  const content = <div className="history-page" role="region" aria-label="History workspace">{!embedded && <AttentionPanel />}<HistoryChart chart={chart} loading={chartState === "loading"} error={chartState === "error" ? chartRequestState?.error : ""} /><section className="card history-workspace-card"><FilterBar><div className="filter-bar-main"><SearchField id="history-search-input" label="搜索历史" value={query} placeholder="搜索标题、内容或来源" onChange={(value) => update("q", value)} onClear={() => update("q", "")} /><MultiSelectField id="history-status-filter" label="状态" allLabel="全部状态" options={statusOptions} values={selectedStatuses} onChange={(values) => update("status", values.join(","))} /><MultiSelectField id="history-type-filter" label="任务类型" allLabel="全部类型" options={typeOptions} values={selectedTypes} onChange={(values) => update("object_type", values.join(","))} /></div><div className="filter-bar-side"><SelectField id="history-page-size" label="每页" value={String(pageSize)} options={pageSizes.map((size) => ({ value: String(size), label: `${size} 条` }))} onChange={(value) => update("page_size", value)} />{current && <span className="table-toolbar-total">共 {total} 条</span>}</div></FilterBar>{state === "error" ? <div className="page-state page-state-error" role="alert">{error}</div> : state === "loading" && !rows.length ? <div className="page-state" role="status">正在加载…</div> : !rows.length ? <div className="page-state">No reply attempts recorded.</div> : <><section className="history-row-list" aria-label="执行历史">{rows.map((row) => {
   const typeName = typeLabels.get(row.type) || row.type || row.kind || "History";
   const { copy, code } = splitStatusCode(previewText(row.output || row.summary || row.input));
   const when = localTime(row.occurred_at);
