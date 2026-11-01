@@ -1,5 +1,7 @@
 # 邮件取消退订依赖与 Zillow：验收及阻塞（2026-11-01）
 
+**主线结案决定：** Derek于2026-11-01确认数据库与业务模型精简主线正式结案。已批准阶段、发布验收及本轮已识别备份／临时产物清理的既有证据保留；原报告417999已完成的Audit、执行与真实消息读回不重跑。Zillow单列为独立只读核验事项，不再阻塞该主线结案。本次只更新验收记录，不部署、不修改数据库或未决业务状态。
+
 本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；最新服务b33与Skill809已发布并独立验收，本代备份已清；Zillow账号状态仍未核验，原Task417999／Attempt16492已完成，Audit、系统执行及真实群消息已独立只读核验。Zillow仍未核验。
 
 ## 已完成：取消决定释放原获授权清理
@@ -11,6 +13,8 @@
 原退订Task386312仍skipped／email_unsubscribe_cancelled_by_principal，正式retain_subscription决定及其摘要未变，退订receipt/effect/step均仍0。完成的是原获授权移入已删除，不是重新执行退订，不是永久删除邮件。
 
 ## 未完成：Zillow
+
+与数据结构的关系：现有证据未显示数据库／业务模型精简造成Zillow未决。已观察到的当前核验阻塞属于浏览器运行环境；原Task、执行marker及依赖动作在迁移后的独立读回中仍保留，没有据此执行或伪造结果。最初退订结果为何未能确认的完整因果链尚未查实，不能仅凭浏览器被禁用就声称已经排除全部历史关联。该项保留未完成，后续仅核对账号当前状态，不重做真实退订。
 
 Task405078仍failed／email_unsubscribe_outcome_unresolved，旧执行marker完整摘要未变。依赖Action119039仍pending／attempt0，没有被推断放行；退订receipt/effect/step仍0，这不能反推原未决操作从未产生外部效果。
 
@@ -76,4 +80,4 @@ DWS原生messages-mget只读返回1requested／1found／0failed／complete true�
 
 后续两轮失败gate没有创建新备份或部署恢复引用，负责人明确无需继续hold；r7beelp9／cf6kchp8失败clone及唯一profiling输出由其核对后清理。本chat独立确认两个gate目录与自己旧临时目录均不存在，备份目录无sqlite3文件；本次状态核对没有新增临时产物。以上段落指先前c356轮次；最新ddd代次见前节，不能混用两次清理证据。
 
-证据见[精简验收记录](validation/2026-11-01-email-zillow-closeout.json)，最新总表见[当前进度](business-model-execution-progress.md)。这是“已完成部分验收并准确登记阻塞”，不是Zillow或所有生产问题的完成证明；最新服务／Skill版本验收、该代清理及原报告恢复终态已核验完成；仅Zillow只读核验仍受环境阻塞。负责人最新CUA复核仍为Mac locked／Local browser use disabled，未重放或修改未决标记。
+证据见[精简验收记录](validation/2026-11-01-email-zillow-closeout.json)，最新总表见[当前进度](business-model-execution-progress.md)。数据库与业务模型精简主线已获Derek确认正式结案；最新服务／Skill版本验收、该代清理及原报告恢复终态已核验完成。Zillow独立只读核验仍未完成，不将其写成成功，也不再扩大为本主线未结案；负责人最后一次CUA复核为Mac locked／Local browser use disabled，未重放或修改未决标记。此结案不证明所有生产问题已解决或全库绝对最优。
