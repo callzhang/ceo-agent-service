@@ -55,6 +55,7 @@ tests/test_email_dws_move_continuation.py
 tests/test_email_embedding_cache.py
 tests/test_email_embedding_classifier.py
 tests/test_email_embedding_client.py
+tests/test_email_embedding_retry.py
 tests/test_email_embedding_warmup.py
 tests/test_email_fasttext_model.py
 tests/test_email_folder_truth.py
