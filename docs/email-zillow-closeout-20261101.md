@@ -52,13 +52,15 @@ workers pending1/processing0/failed26/Attention1；唯一Attention仍为安装�
 
 负责人在独立读回通过后明确释放本轮DB恢复引用；旧报告认证故障不要求回滚此DB。UUID备份已被原生daily替代，实际daily为inode848222618／mtime_ns1793535212343900643／514969600字节。04:20:16 PST持原生目录锁、核对本轮succeeded账本、精确代次、integrity ok、CEOB、schema/FK及lsof无打开引用后，由本chat唯一执行删除并确认不存在。不能将这次代次与早先847704430混用。负责人清理的失败gate.zhixab5c、成功gate.haat2zca及诊断ceo-gate-timing-s417m2k0也独立确认不存在；活动worktree、417999源回执、生产库与原生trajectory保留。本chat没有新建临时副本或原文文件。
 
-## 新报告417999：有界只读认证核对
+## 新报告417999：有界只读源核对
 
 实际类型是ceo-weekly-okr-report。原生session01a196c4-7605-7262-b7ca-b3adb2985320的274行与现行DB身份核对：Run400922—400925、RuntimeAttempt400964—400967均failed且first_effect空；Task417999／Attempt16492无effect、执行回执、provider结果或文档结果。轨迹没有文档写入或消息发送调用，本chat没有恢复或重跑。
 
 scheduled run433762有18人roster，前9份有效成员源回执（8 collected、1 goals_missing）保留，第10成员两次读取均返回shared/fetch的okr_authentication_readiness_failed／okr_headless_session_expired。当前DWS唯一isOrgCurrent与源配置同组织，正式auth status authenticated/token_valid为true；独立Dingteam会话不能用DWS有效替代。
 
 只读代码核对进一步限定原因：当前capture过滤已过期JWT；但本地SSO helper只在真实DingTalk OAuth URL触发，若SPA始终留在dingokr且capture为空，最后也会抛同一session_expired。因此原错误不足以证明本地SSO曾尝试且失败，实际页面URL/SSO状态未知。Dingteam没有公开只读status leaf，本chat未读取cache/token/profile、未启动浏览器、刷新或登录。正式恢复由负责人经现有源及Consumer/Audit链路核对，保留当前run已成功回执，只继续缺失/失败者；公开login入口存在但不保证适用于这个未证实分支。不换Agoal、不切DWS组织、不重做旧417666或118427。
+
+负责人随后完成的当前受控源诊断在既有220秒上限结束并回收全部进程，未得到完整源结果。无敏感函数追踪显示_get_headless_headers在0.001秒内返回；55／110秒堆栈位于fetch_with_headers→findKrDetail→urllib→SSL握手，165秒位于同一调用的SSL读取，220秒终止。无凭据DNS探针0.004秒、HTTPS首页200／3.377秒只证明相应基础入口可达，不证明KR详情接口正常。三次堆栈不足以确定网络或请求数量的最终根因；当前阻断不能继续全归因于原run的会话过期。上述为负责人提供的诊断结果，本chat未重跑；原9有效源回执、417999／16492失败状态未改，没有报告重跑、文档写入或发送。负责人已核实诊断目录身份和无打开引用后清除，业务task-artifacts保留。
 
 ## 清理与保留
 

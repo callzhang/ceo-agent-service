@@ -370,7 +370,7 @@
       "attempt_send_status": "failed",
       "attempt_document_result_empty": true
     },
-    "current_Dingteam_auth_state": "not independently revalidated; no public read-only status command",
+    "current_Dingteam_auth_state": "Latest owner-controlled probe returned headers within0.001s; no complete source result. Original session_expired remains historical and does not establish current blocking stage.",
     "public_login_leaf_verified": true,
     "capture_branch_review": {
       "expired_candidate_filtered": true,
@@ -378,6 +378,23 @@
       "empty_capture_can_raise_same_expired_error": true,
       "actual_url_and_sso_attempt_unknown": true,
       "no_public_force_sso_for_still_dingokr_page": true
+    },
+    "latest_source_probe": {
+      "evidence_source": "release owner final bounded diagnostic; root did not rerun",
+      "total_timeout_seconds": 220,
+      "complete_source_result": false,
+      "headers_return_seconds_upper_bound": 0.001,
+      "sampled_stage": "fetch_with_headers -> findKrDetail -> urllib;55/110s SSL handshake;165s SSL read",
+      "processes_reaped": true,
+      "credential_free_dns_seconds": 0.004,
+      "https_home_status": 200,
+      "https_home_seconds": 3.377,
+      "root_cause": "not established; neither global session expiry nor a final network/request-count cause can be inferred",
+      "original_nine_source_receipts_preserved": true,
+      "task417999_attempt16492_unchanged": true,
+      "report_rerun_document_write_send": false,
+      "temporary_diagnostic_directory_cleaned_by_owner_after_identity_and_lsof_checks": true,
+      "business_task_artifacts_preserved": true
     }
   },
   "current_installed_commit": "ddd845f71e5a3399725890616783e6df58c05b3c",
