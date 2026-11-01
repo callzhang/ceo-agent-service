@@ -36,7 +36,7 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 兼容层。当前字段、约束和类型定义见 `app/task_run_entity_definitions.py`.
 
 截至 2026-10-25，Task/Run 统一已部署并构成当前生产运行时。当前部署和证据边界见
-[业务模型当前进度](archive/records/business-model-execution-progress.md)。
+[业务模型当前进度](business-model-execution-progress.md)。
 
 ## 运行角色
 

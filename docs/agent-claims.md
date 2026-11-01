@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-workbench-weekly-closeout-20261101 | docs/business-model-execution-progress.md; docs/workbench-weekly-closeout-20261101.md; docs/validation/2026-11-01-workbench-weekly-closeout.json; archived progress top pointer only; architecture/runtime current-progress link only; own claim | Read-only final WB/weekly identities, provider receipt and production acceptance; docs-only closeout, no replay/deploy or real unsubscribe | 2026-11-01 active |
 
 
 

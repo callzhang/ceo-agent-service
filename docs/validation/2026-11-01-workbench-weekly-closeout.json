@@ -1,0 +1,187 @@
+{
+  "checked_at_local": "2026-11-01T01:54:05.452593-07:00",
+  "status": "verified_documented_and_owned_temp_cleaned",
+  "scope": "Read-only Workbench/weekly final acceptance and current progress docs. No new task, resolve, retry, send, recall, deploy or real unsubscribe.",
+  "production": {
+    "installed_commit": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+    "launchd": {
+      "pid": "15879",
+      "state": "running"
+    },
+    "health_http": 200,
+    "attention_count": 0,
+    "quality_violations": 0,
+    "workers_failed": 24,
+    "history_failed_total": 15,
+    "history_page2_rows": 20,
+    "get_count": 8,
+    "all_gets_http200": true,
+    "frontend_stamp_matches": true,
+    "schema": {
+      "objects": 463,
+      "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": []
+    }
+  },
+  "workbench": {
+    "task_id": 404261,
+    "turn_id": 417997,
+    "status": "completed",
+    "runtime_attempt_id": 400963,
+    "runtime_status": "completed",
+    "result_schema_id": "workbench.result.v2",
+    "session_id": "01a195c6-aa4e-7d00-b448-89d8ce13ba07",
+    "result": {
+      "status": "completed",
+      "text_length": 4908,
+      "sha256": "9d6dd8a4362c7729bc9630952bcd475ddad7c91ce982a5b28ebdae0efeaea014",
+      "includes_local_skill_references": true,
+      "native_terminal_text_exact_match": true
+    },
+    "historical_failed_turns_preserved": [
+      {
+        "id": 417989,
+        "status": "failed",
+        "error_code": "runtime_result_invalid"
+      },
+      {
+        "id": 417996,
+        "status": "failed",
+        "error_code": "runtime_execution_failed"
+      }
+    ]
+  },
+  "weekly": {
+    "task_id": 417666,
+    "attempt_id": 16220,
+    "task_status": "done",
+    "attempt_status": "completed",
+    "current_input_id": 417975,
+    "claimed_input_id": 417975,
+    "input_version": 2,
+    "input_compacted": true,
+    "scheduled_task_id": 6,
+    "source_occurrence_id": 413610,
+    "consumer_run_id": 400920,
+    "audit_run_id": 400921,
+    "parent_generation_and_candidate_digest_match": true,
+    "review_id": 2083,
+    "decision": "approve",
+    "candidate_digest": "351c42b39349e1e6830b4e8eac5a83e0548010e0bda590682f4f06847334814f",
+    "execution_id": 400920,
+    "execution_status": "done",
+    "action_id": 127916,
+    "operation": "send_group_message",
+    "action_status": "verified",
+    "provider_receipt_id": 22680,
+    "provider_status": "verified",
+    "provider_open_task_id": "WJGAnBkfIE+iGGhoBhqpBQ6ItclmeGx1mwE09hBsYhs=",
+    "live_receipt_record_send_status": "SUCCESS",
+    "delivery_receipt_id": 22682,
+    "delivery_provider_reference": 22680,
+    "verified_actions": 1,
+    "total_actions": 1,
+    "new_document_publish_action_in_adopted_plan": false
+  },
+  "external_messages": [
+    {
+      "role": "revision",
+      "message_id": "msg5oaO4XrufmOTIUgo0CW73g==",
+      "conversation_id": "cidmrAMSG+6/4bzXWWm1YgAKg==",
+      "provider_created_time_raw": "2026-11-01 14:15:47",
+      "complete": true,
+      "messages_complete": true,
+      "has_more": false,
+      "failures": [],
+      "found": 1,
+      "text_length": 707,
+      "text_sha256": "2f86f1e8125b723a52219480ef800c1f774249ef5edf533906252074a88662dd",
+      "prepared_markdown_length": 697,
+      "prepared_exact_bytes_equal": false,
+      "observed_differences": "Only Markdown heading/emphasis markers and whitespace differ; all other character spans are unchanged. No runtime matching policy added."
+    },
+    {
+      "role": "original",
+      "message_id": "msgnPi0FJExakLNqxVmmYsXJw==",
+      "conversation_id": "cidmrAMSG+6/4bzXWWm1YgAKg==",
+      "provider_created_time_raw": "2026-10-28 05:56:28",
+      "complete": true,
+      "messages_complete": true,
+      "has_more": false,
+      "failures": [],
+      "found": 1,
+      "text_length": 794,
+      "text_sha256": "26801ef7590549823caa86997838024ec15a761af7a4fc85e219e41c2d5bf0c1",
+      "prepared_markdown_length": 788,
+      "prepared_exact_bytes_equal": false,
+      "observed_differences": "Only Markdown heading/emphasis markers and whitespace differ; all other character spans are unchanged. No runtime matching policy added."
+    }
+  ],
+  "feedback": {
+    "batches": [
+      {
+        "batch_id": "5688bd9b3a4a4b2d991143dd6fd12d94",
+        "status": "resolved",
+        "requested_count": 6,
+        "resolved_at": "2026-11-01 06:37:06"
+      },
+      {
+        "batch_id": "okr-correction-16220-20261101",
+        "status": "resolved",
+        "requested_count": 1,
+        "resolved_at": "2026-11-01 06:37:09"
+      }
+    ],
+    "resolved_items": 7,
+    "resolved_current_round_ids": [
+      415584,
+      415585,
+      415586,
+      415587,
+      415588,
+      415589,
+      415590
+    ],
+    "all_bind_completed_workbench_turn": 417997,
+    "business_recovery_round_ids": [
+      415584,
+      415590
+    ],
+    "business_attempt_id": 16220,
+    "business_audit_run_id": 400921,
+    "pure_verification_round_count": 5,
+    "pure_verification_attempt_and_run_ids": 0,
+    "no_resolve_invoked_by_this_chat": true
+  },
+  "material_evidence_boundary": {
+    "source": "release-owner handoff in chat 01a13efe-9537-77e1-9a50-b43f2f2351c5",
+    "claim": "Owner compared latest saved version, version time and parent for 19 existing personal materials; unchanged. No new document write claimed.",
+    "not_claimed": "This chat did not re-read/hash all19 bodies. Later independent GTM/Marketing, finance policy v156 and I22 checks are post-run corroboration, not evidence that this Consumer/Audit read those sources during the run."
+  },
+  "beehiiv": {
+    "no_real_unsubscribe": true,
+    "current_attempt_counts": [
+      4,
+      3
+    ],
+    "original_receipt_and_text_digests_unchanged": true,
+    "actual_unsubscribe_success_confirmed": false,
+    "prior_acceptance": "2026-10-31-beehiiv-page-evidence.json"
+  },
+  "cleanup": {
+    "no_backup_or_database_copy_created": true,
+    "prior_owned_paths_and_backup_still_absent": true,
+    "new_task_temp": "/private/tmp/ceo-wb-weekly-closeout.933J5M",
+    "new_temp_deleted": true,
+    "preserved_active_other_worktree": "/private/tmp/ceo-startup-recovery-release-20261031",
+    "raw_message_bodies_and_transcript_copies_retained": false,
+    "no_open_references_before_cleanup": true,
+    "path_verified_absent": true
+  },
+  "separate_followups": {
+    "email_dependency_repair": "Release owner owns approved source changes and sole exact-target deployment7dc7ffa6bbc6e57443d70e77b2657dd42fa5474a. Not included in these WB/weekly completion claims.",
+    "zillow": "Still separately followed by owner; this chat has not verified restoration.",
+    "global_optimality": "No claim of global database optimality or all-service outstanding tasks complete."
+  },
+  "closed_at_local": "2026-11-01T01:59:50.441924-07:00"
+}

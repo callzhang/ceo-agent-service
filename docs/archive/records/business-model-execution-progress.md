@@ -1,5 +1,7 @@
 # Business model simplification: current completion and closeout
 
+> 历史记录：下方保留2026-10-28及以前各时点的原始状态，不代表这些旧“待完成”项仍未上线。最新后续验收见[当前总表](../../business-model-execution-progress.md)。
+
 ## 模型退休执行进度 — 2026-10-28
 
 | 批次 | 当前状态 | 验收边界 |
