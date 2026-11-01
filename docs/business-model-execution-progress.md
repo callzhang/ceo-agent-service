@@ -11,8 +11,9 @@
 | 对应反馈结案 | 七项resolved，身份逐项核实 | 业务项用16220／400921，纯核验项业务ID0，绑定真正完成的WB417997；本chat不重复resolve |
 | Beehiiv真实退订 | 本轮未执行，历史仍为跳过，成功未确认 | 不重放；两个动作Attempt4/3与原回执摘要保持不变 |
 | 邮件取消退订依赖 | 444759475已标准发布并实际完成原Action118427一次清理 | [本次验收](email-zillow-closeout-20261101.md)；receipt22692及DWS已删除目录精确原ID读回，retain_subscription决定未变，未重退订 |
-| Zillow恢复 | **未完成／环境阻塞** | Task405078仍outcome_unresolved、旧marker保留，依赖119039仍pending0；Local browser被Work settings禁用，待环境启用后仅只读核对，禁止再次退订 |
-| 新增独立上游故障 | **处理中，生产业务健康非全绿** | 最新读回444／PID9333/API9344，HTTP health200但system_health degraded／violations1、Attention total3；负责人用无邮件内容合成probe复现embedding上游HTTP502，继续独立处理 |
+| Zillow恢复 | **未完成／环境阻塞** | Task405078仍outcome_unresolved、旧marker保留，依赖119039仍pending0；用户截图Browser总开关已on，但重置后CUA仍拒绝；待核实codex exec启动禁用来源，再用获准会话只读核对，禁止再次退订 |
+| embedding上游故障 | **负责人报告已自然恢复；后续代码发布未验收** | 09:49Z Attention0／healthy／violations0，合成embedding1×1024及连续扫描成功；恢复发生于新代码部署前。c356fcc8d第二轮标准gate尚待最终，保留此前444独立读回快照 |
+| 后续发布与新一代清理 | **待完成** | 发布负责人独占gate／deploy；待准确安装提交、生产读回及恢复引用释放后，才核验并清理该轮备份。此前备份已删不代表新一代已清 |
 
 本次完整边界、只读生产快照及临时清理状态见[精简验收记录](validation/2026-11-01-workbench-weekly-closeout.json)。19份材料版本与父目录不变、事后底层读源和当轮Agent实际读源是不同证据，不混写。此前时点、旧失败与原回执不改写为当前成功。
 

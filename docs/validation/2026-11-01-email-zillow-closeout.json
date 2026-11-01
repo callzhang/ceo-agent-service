@@ -1,6 +1,6 @@
 {
   "checked_at_local": "2026-11-01T01:24:44.463893-08:00",
-  "status": "email_repair_verified_and_owned_cleanup_complete; Zillow_environment_blocked; upstream_incident_open",
+  "status": "email_repair_verified_and_its_cleanup_complete; Zillow_runtime_browser_blocked; upstream_naturally_recovered_owner_reported; followup_release_and_its_cleanup_pending",
   "scope": "Independent read-only acceptance and docs; no new deploy, task creation, resolve, retry, move, mark, send or real unsubscribe by this chat.",
   "release": {
     "installed_commit": "444759475229a8da399649493e4351778a775283",
@@ -107,16 +107,19 @@
       "steps": 0
     },
     "account_subscription_state_independently_read": false,
-    "browser_denial": "Owner rechecked: Local browser use is disabled in Work settings",
+    "browser_denial": "Owner rechecked twice, including a CUA REPL reset: browsers=[]; Local browser use is disabled in Work settings. Desktop toggle is enabled in user screenshot; effective runtime restriction source is not yet independently established.",
     "setting_change_requested_in_this_chat": true,
-    "setting_change_answer_received": false,
-    "next_step": "Enable Local browser, then owner may verify current account state read-only through a non-executing account page. Do not reopen execution URL, resubmit unsubscribe, clear unknown marker or release trash merely by inference."
+    "setting_change_answer_received": true,
+    "next_step": "Verify exact startup disable source; use an already permitted browser session for a non-executing account-state read only. Do not reopen unsubscribe execution URL, resubmit, clear unknown marker or infer release of trash.",
+    "user_screenshot_browser_toggle_enabled": true,
+    "user_reported_startup_cause": "Derek says codex exec was disabled at startup; owner asked to verify exact process, launch arguments and effective tool capability source. Do not confuse service exec with desktop chat."
   },
   "separate_new_incident": {
     "owner_chat": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
-    "status": "open",
+    "status": "owner_reported_natural_recovery; followup_code_release_pending",
     "owner_reported_source": "Scheduled task10 email-message-check-once / Gmail classification raised OnlineEmbeddingBatchError. A production-config synthetic probe containing no email body independently returned HTTP502 from upstream embedding service; health endpoints also502. Owner is locating upstream read-only.",
-    "boundary": "This is not a confirmed complete production recovery or a claim of model decision error. This chat did not change upstream, model routing, retry, audit or authorization policies."
+    "boundary": "This is not a confirmed complete production recovery or a claim of model decision error. This chat did not change upstream, model routing, retry, audit or authorization policies.",
+    "owner_followup_report": "09:49Z Attention0/system_health healthy/violations0; production-config synthetic embedding1x1024; schedule10 occurrences433512..433532 accounts2/discovered0/failures0. Recovery occurred BEFORE new code deployment; not attributed to the exception-chain fix."
   },
   "cleanup": {
     "deployment_uuid_backup": "93bae historical upgrade path was natively retired before this cleanup; absence alone did not mean all backups gone.",
@@ -148,5 +151,13 @@
     "raw_mail_bodies_retained_in_committed_evidence": false,
     "post_cleanup_backup_and_sidecars_absent": true,
     "closed_at_local": "2026-11-01T01:36:47.777195-08:00"
-  }
+  },
+  "followup_release": {
+    "owner": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
+    "target": "c356fcc8d",
+    "status": "not yet proven deployed; owner reports second standard gate ongoing after first fixed600s timeout",
+    "new_backup_cleanup": "pending owner final readback, exact generation and recovery-reference release; not covered by earlier verified deletion",
+    "this_chat_did_not_deploy_or_replay": true
+  },
+  "followup_updated_at_local": "2026-11-01T02:09:04.033041-08:00"
 }
