@@ -35,9 +35,8 @@ from app.workbench.runtime import (
 )
 
 
-_WORKBENCH_RESULT_CODEC = RoutedResultCodec.text(
-    schema_id="workbench.result.v1",
-    allow_evidence_source_refs=True,
+_WORKBENCH_RESULT_CODEC = RoutedResultCodec.internal_text(
+    schema_id="workbench.result.v2",
 )
 _WORKBENCH_DEVELOPER_INSTRUCTIONS = (
     "Complete the user's main-page task using the service runtime and its available "

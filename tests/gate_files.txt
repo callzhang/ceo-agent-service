@@ -430,3 +430,4 @@ tests/test_email_unsubscribe_dialog.py
 tests/test_source_fixture_transactions.py
 tests/test_email_body_source.py
 tests/test_feedback_workbench_resolution.py
+tests/test_workbench_result_codec.py

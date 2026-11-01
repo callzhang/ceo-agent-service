@@ -950,6 +950,8 @@ Task Agent 的正常 liveness 由结构化 provider 事件驱动：每个有效 
 
 Workbench public parent and Turn IDs are decimal strings backed by canonical `tasks.id`; Turn-specific control facts remain on `workbench_turns(task_id)`. Claims, leases, stop/recovery/completion, native events and artifact reads/writes use that Task owner directly. Workbench RuntimeAttempts use the exact `workload_kind='workbench'` and canonical Turn Task ID key; no logical Run or UUID execution alias is created. The retired confirmation workflow and `waiting_confirmation` status are absent from the current Turn contract; no production Turn uses that status.
 
+Workbench 的本地内部最终文本使用通用 `internal_text` 结果格式（`workbench.result.v2`），允许普通文本及 Markdown 中的本机文件／Skill 引用，不再对内部结果施加本地路径拦截。凭据检查、文本类型与固定结果大小上限在编码和读回时继续生效；其他文本 codec 的路径检查及对外审核、授权和发送门禁不变。所有可执行 Workbench 的路线共用该合同，不按运行路线分支，也不改写已有失败运行。最终正文仍由现有原生轨迹／Artifact 所有者提供，不新增 SQLite 正文副本。
+
 ### Workbench 启动恢复竞争
 
 审计 Web 启动时会执行 Workbench 恢复。若恰好与 worker 的 SQLite 写事务重叠，恢复会对短暂

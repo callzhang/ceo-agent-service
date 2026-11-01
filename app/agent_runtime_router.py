@@ -363,6 +363,11 @@ class RoutedResultCodec[ResultT]:
             seal=_ROUTED_RESULT_CODEC_SEAL,
         )
 
+    @classmethod
+    def internal_text(cls, *, schema_id: str) -> RoutedResultCodec[str]:
+        """Internal workspace text may cite local files; credentials remain forbidden."""
+        return cls(schema_id=schema_id, kind="internal_text", seal=_ROUTED_RESULT_CODEC_SEAL)
+
     def encode(self, value: ResultT) -> str:
         self._validate(value)
         encoded = json.dumps(
@@ -398,6 +403,8 @@ class RoutedResultCodec[ResultT]:
         return value
 
     def _contains_runtime_leak(self, value: object) -> bool:
+        if self._kind == "internal_text":
+            return False
         if not self._allow_evidence_source_refs:
             return contains_local_runtime_leak(json.dumps(value, ensure_ascii=False))
         return _contains_local_runtime_leak_outside_evidence_refs(value)
