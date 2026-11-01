@@ -2,6 +2,7 @@
 
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import closing
+import gc
 import os
 import sqlite3
 from threading import Barrier
@@ -190,16 +191,23 @@ def test_email_search_function_is_connection_initialization_not_search_state(sto
 
 @pytest.mark.skipif(not os.path.isdir("/dev/fd"), reason="process fd listing requires /dev/fd")
 def test_idle_reuse_keeps_file_descriptors_bounded_and_cleanup_releases_them(store):
-    cold = len(os.listdir("/dev/fd"))
-    assert store.get_account("missing") is None
-    warm = len(os.listdir("/dev/fd"))
-    assert warm <= cold + 3
-    for _ in range(100):
+    gc.collect()
+    gc_was_enabled = gc.isenabled()
+    gc.disable()
+    try:
+        cold = len(os.listdir("/dev/fd"))
         assert store.get_account("missing") is None
-        assert store.list_accounts() == []
-    assert len(os.listdir("/dev/fd")) == warm
-    _close_idle_connections()
-    assert len(os.listdir("/dev/fd")) == cold
+        warm = len(os.listdir("/dev/fd"))
+        assert warm <= cold + 3
+        for _ in range(100):
+            assert store.get_account("missing") is None
+            assert store.list_accounts() == []
+        assert len(os.listdir("/dev/fd")) == warm
+        _close_idle_connections()
+        assert len(os.listdir("/dev/fd")) == cold
+    finally:
+        if gc_was_enabled:
+            gc.enable()
 
 
 def test_failed_scan_rolls_back_tombstones_and_leaves_no_temp_state(store, monkeypatch):
