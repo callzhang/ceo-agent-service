@@ -1,6 +1,6 @@
 {
   "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
-  "status": "focused_validation_passed; corrected exact-target full gate pending",
+  "status": "focused_validation_passed; deployment_blocked_on_fixed-budget_gate_preparation_cost",
   "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
   "root_causes": [
     "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
@@ -55,6 +55,20 @@
       "memory_limit_gib": 2,
       "log_retained_until_readback": true,
       "production_commit_after": "ec2bdcc68760cd1570d884da99769a2890bdc199"
+    },
+    {
+      "commit": "8f049908dcd660073347a59e62bdb63361dc2483",
+      "status": "600-second hard limit at 99 percent; no assertion failure marker before stop",
+      "stopped_at": "tests/test_email_body_source.py::test_unfinished_mailbox_or_delivery_operation_keeps_original[reply_dispatch]",
+      "production_changed": false,
+      "budget_seconds": 600,
+      "memory_limit_gib": 2,
+      "log_retained_until_readback": true
     }
-  ]
+  ],
+  "test_preparation_measurement": {
+    "new_direct_nodes": "5 passed in 4.42s; call durations 0.65-1.14s",
+    "new_api_nodes": "4 passed in 3.28s; call durations 0.23-0.58s",
+    "decision": "Keep all assertions and test nodes. General fixture preparation diagnosis/optimization separately owned by release owner; no unchanged third gate retry."
+  }
 }
