@@ -1,6 +1,6 @@
 # 邮件取消退订依赖与 Zillow：验收及阻塞（2026-11-01）
 
-本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；最新服务b33与Skill809已发布并独立验收，本代备份已清；Zillow账号状态仍未核验，新报告417999已恢复采集但未终态。
+本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；最新服务b33与Skill809已发布并独立验收，本代备份已清；Zillow账号状态仍未核验，新报告417999来源已收齐并继续分析、未终态。
 
 ## 已完成：取消决定释放原获授权清理
 
@@ -60,9 +60,9 @@ workers pending1/processing0/failed26/Attention1；唯一Attention仍为安装�
 
 05:18 PST独立只读验收：实际b33／launchd86688 running、前端stamp匹配；schema463/hash799027…/FK[]与前代一致。health／workers／Attention／History／16492／417999共6个GET全部200。原邮件Action118427仍done1、receipt22692原值；Zillow依赖119039仍pending0，取消386312与未决405078保持原义。此时workers pending1/processing1/failed24，Attention0、quality0违规只表示恢复处理中，不是报告完成。
 
-原Attempt16492恢复沿同Task417999，execution_generation12721af4206442f39f50bda041c5cc19。新Consumer400926误用旧失败artifact的失败保留，最新Consumer400927／RTA400969实际读取。本chat只读原生工具返回元数据，已独立确认原失败成员在92.2396秒返回309257bytes／collected，另有真实goals_missing及其他已采集返回；未读取成员原文。对应时点6个本Task Run的effect／执行receipt／provider结果仍全0，尚无完整报告、文档发布或消息发送终态。本chat没有重跑报告、登录、读取token/cache/profile或发送；恢复由负责人经原Consumer→Audit→System继续。
+原Attempt16492恢复沿同Task417999，execution_generation12721af4206442f39f50bda041c5cc19。新Consumer400926误用旧失败artifact的失败保留，最新Consumer400927／RTA400969实际读取。本chat只读原生工具返回元数据，已独立确认原失败成员在92.2396秒返回309257bytes／collected，另有真实goals_missing及其他已采集返回；未读取成员原文。对应时点6个本Task Run的effect／执行receipt／provider结果仍全0。负责人随后确认原系统已完成全部18源（16collected／2goals_missing），当前generation的prepare原生工具exit0、source.json生成，旧9有效源按同occurrence复用，未把根探针写回。Consumer400927仍继续分析，尚无完整报告、文档发布或消息发送终态。本chat没有重跑报告、登录、读取token/cache/profile或发送；恢复由负责人经原Consumer→Audit→System继续。
 
-负责人明确释放这次新发布DB恢复引用。原UUID已被原生daily替代，05:19:58 PST以d0f8 succeeded账本核对daily新代inode848342909／mtime_ns1793538580291036465／514969600字节，持原生目录锁验证integrity ok／CEOB／schema/FK／lsof空及同代次后删除并确认不存在。不是前一c16b的inode848222618，不沿用旧清理证明；业务task-artifacts、native trajectory和活动worktree保留。其余本轮临时目录归属已向负责人确认，不删除未知或活动目录。Zillow仍只读受阻，禁止再次真实退订。
+负责人明确释放这次新发布DB恢复引用。原UUID已被原生daily替代，05:19:58 PST以d0f8 succeeded账本核对daily新代inode848342909／mtime_ns1793538580291036465／514969600字节，持原生目录锁验证integrity ok／CEOB／schema/FK／lsof空及同代次后删除并确认不存在。不是前一c16b的inode848222618，不沿用旧清理证明；业务task-artifacts、native trajectory和活动worktree保留。负责人确认本轮成功gate clone已原生清理，三个源计时／正式CLI诊断目录（含临时完整源）经身份和lsof核对清理，已clean/pushed且无引用的Skill隔离worktree通过git worktree remove移除，安装patch/meta临时根也已清理。上述非备份清理由负责人核实，本chat未自行扫描或删除未知路径；生产共享SDK、服务活动worktree及原始／当前generation业务artifact和原生日志保留。Zillow仍只读受阻，禁止再次真实退订。
 
 ## 清理与保留
 

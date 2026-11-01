@@ -1,6 +1,6 @@
 {
   "checked_at_local": "2026-11-01T01:24:44.463893-08:00",
-  "status": "current_service_and_skill_verified; current_release_backup_cleanup_complete; report417999_collecting_not_terminal; Zillow_unverified",
+  "status": "current_service_and_skill_verified; current_release_backup_and_owner_confirmed_nonbusiness_temp_cleanup_complete; report417999_sources_complete_analysis_pending; Zillow_unverified",
   "scope": "Independent read-only acceptance and docs; no new deploy, task creation, resolve, retry, move, mark, send or real unsubscribe by this chat.",
   "release": {
     "installed_commit": "444759475229a8da399649493e4351778a775283",
@@ -450,7 +450,18 @@
       "task_status": "processing",
       "terminal_report_or_send_receipt": false,
       "old_failed400926_preserved": true,
-      "root_did_not_read_member_bodies_or_run_source": true
+      "root_did_not_read_member_bodies_or_run_source": true,
+      "system_collection_owner_reported": {
+        "members": 18,
+        "collected": 16,
+        "goals_missing": 2,
+        "prepare_native_exit_code": 0,
+        "source_json_generated": true,
+        "old_nine_valid_receipts_reused_same_occurrence": true,
+        "root_probe_not_written_back": true,
+        "consumer400927_still_analyzing": true,
+        "report_publish_send_not_terminal": true
+      }
     }
   },
   "current_installed_commit": "b33e57d8e3d92b4391cad1ad2b7f7142116fdf9b",
@@ -804,8 +815,9 @@
     "business_task_artifacts_preserved": true,
     "native_trajectory_preserved": true,
     "root_created_no_temp_or_database": true,
-    "other_current_temp_ownership_confirmation": "requested from owner; no unknown active directory removed",
+    "other_current_temp_ownership_confirmation": "Owner confirmed native successful gate clone removed; three source timing/official CLI diagnostic dirs identity+lsof checked and removed; clean/pushed unused Skill worktree removed via git worktree remove; install patch/meta temp root removed. Production shared SDK, active service worktree, original/current task artifacts and native logs preserved.",
     "post_cleanup_backup_sqlite_files": [],
-    "post_cleanup_checked_at_local": "2026-11-01T05:29:18.298994-08:00"
+    "post_cleanup_checked_at_local": "2026-11-01T05:29:18.298994-08:00",
+    "nonbackup_cleanup_confirmed_by_owner_not_independently_deleted_by_root": true
   }
 }
