@@ -31,8 +31,8 @@
   "checks": {
     "core_three_files": "138 passed in 51.61s",
     "worker_targeted": "17 passed, 215 deselected in 4.20s",
-    "frontend_two_files": "85 passed in 2.13s; final wording rerun pending",
-    "build": "tsc --noEmit and vite build passed; final wording rebuild pending",
+    "frontend_two_files": "85 passed in 2.13s on final wording",
+    "build": "tsc --noEmit and vite build passed on final wording",
     "ruff": "passed",
     "independent_review": "PASS, no blockers; reviewer did not run tests"
   },
