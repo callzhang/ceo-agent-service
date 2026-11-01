@@ -1,6 +1,6 @@
 {
   "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
-  "status": "focused_validation_passed; deployment_pending_parallel_release",
+  "status": "focused_validation_passed; corrected exact-target full gate pending",
   "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
   "root_causes": [
     "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
@@ -35,7 +35,7 @@
     "build": "tsc --noEmit and vite build passed on final wording",
     "ruff": "passed",
     "independent_review": "PASS, no blockers; reviewer did not run tests",
-    "documentation_contract": "13 passed in 0.26s; current cached-result/local evidence contract replaces stale exact wording"
+    "documentation_contract": "13 passed in 0.12s on current local-evidence/cached-reference contract"
   },
   "schema_before": {
     "objects": 463,
@@ -47,9 +47,14 @@
   "gate_attempts": [
     {
       "commit": "81a9148ee8f38fa973fc2a7c59bb2f0adbc397c8",
-      "status": "failure marker at 11%; full failure summary pending",
+      "status": "failed; 600-second hard limit at 96 percent, plus earlier documentation assertion failure marker",
       "production_changed": false,
-      "diagnosis": "Local documentation contract reproduced the stale exact sentence assertions after current behavior wording changed. Current docs and assertions synchronized, no runtime compatibility added."
+      "diagnosis": "Local documentation contract reproduced the stale exact sentence assertions after current behavior wording changed. Current docs and assertions synchronized, no runtime compatibility added.",
+      "stopped_at": "tests/test_email_metadata_schema.py::test_preview_bound_counts_unicode_and_embedded_nul[unicode]",
+      "budget_seconds": 600,
+      "memory_limit_gib": 2,
+      "log_retained_until_readback": true,
+      "production_commit_after": "ec2bdcc68760cd1570d884da99769a2890bdc199"
     }
   ]
 }
