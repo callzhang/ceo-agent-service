@@ -64,6 +64,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-json-artifact-input-20261101 | app/agent_cli.py (consumer_artifact_write only); tests/test_agent_cli_artifacts.py; docs/architecture.md; docs/runtime-mechanism.md | Investigate generic JSON artifact encoding: native input strings already lack closing delimiters and were saved unchanged; prepare failing regressions and align input contract before implementation; do not edit live business artifacts or interrupt Run400927 | 2026-11-01 |
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
