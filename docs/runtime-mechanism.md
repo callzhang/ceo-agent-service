@@ -677,6 +677,8 @@ Email 的分类确认不是 Agent 运行，也不会创建通用 `reply_task`。
 永久删除、IMAP `EXPUNGE`
 和清空 Trash 不存在可调用路径。
 
+计划中 `trash` 的退订前置条件可由真实退订终态回执，或正式取消退订、保留订阅的决定完成。决定须精确匹配当前账号/稳定邮件身份、classification、ActionPlan 及版本，并绑定仍为取消退订 `skipped` 的原 Task、execution generation 和 input version；存在未决执行标记或退订 claim 时不放行。保留订阅只完成这个前置步骤，不记录退订成功、不重放退订、不替代后续 Trash 自己的 provider 回执。原 worker 随后领取原计划已授权的清理并读回；其他动作依赖、身份不符和未决状态的阻止行为不变。
+
 Reply Task 的 stale 恢复另由独立 Email watchdog 周期执行，不依赖 Agent consumer 处理完当前任务。它复用 generation/CAS 恢复，只回收超过 stale 阈值且当前 generation 没有运行中 Run 或 RuntimeAttempt 的 Email Task；有活动执行记录的任务继续保持 processing。watchdog 只将原任务释放回队列，不执行外部邮件动作、不刷新租约，也不改写 History。
 
 退订入口原文读取复用 `EmailSourceReader`：按当前保存的来源坐标和文件夹事实精确读取原信，位置变化时使用该读取器既有的定位流程，继续核对 UIDVALIDITY、稳定 Message-ID 与原文版本。已知位置有效时不枚举所有文件夹或扫描全邮箱邮件头；读取失败继续进入原任务现有错误处理，不能替换为其他邮件或其他退订入口。
