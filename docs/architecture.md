@@ -521,6 +521,7 @@ Feedback API 跟随现有后端的本地访问边界，供 Workbench 和仓库 A
 权威实时的 `processing` / `failed` / `retryable` 数量由独立队列投影报告，不作为单个反馈项目的
 结案门槛。状态和证据必须通过 API 持久化后回读一致。
 显式提交 `associations` 时，其项目集合必须恰好等于本次 `feedback_ids` 选中的项目，每个关联字段仍与当前轮次精确比较；不要求附带未选中项的关联。省略 `feedback_ids` 时仍按整批校验。
+结案的处理身份是当前轮次关联的真实 Workbench task/turn：turn 必须属于该 task 且已完成，最新原生 `runtime_attempts(workload_kind=workbench, workload_key=turn ID)` 也必须完成，完成时间不能早于该反馈轮次开始。Workbench 不创建业务 ReplyAttempt/AgentRun，因此 `attempt_id` / `agent_run_id` 可同时省略（存为 0）；实际重跑业务任务时才附带这两个真实 ID，并核验 Attempt 绑定该已完成 Run 且 Run 完成于当前反馈轮次。单边 ID、无关业务引用、未完成或旧轮次原生运行不能结案。该身份核验不替代决策范围、测试、重启、健康和业务结果证据。
 
 该能力不在 Agent 页面增加第二套流程，也不使用模型合成重新打开理由或新回执。
 

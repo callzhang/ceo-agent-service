@@ -1,3 +1,4 @@
+from tests.feedback_processing_fixtures import completed_workbench_association
 from tests.task_input_fixtures import bind_claimed_input
 from concurrent.futures import ThreadPoolExecutor
 from contextvars import ContextVar
@@ -2330,12 +2331,13 @@ def test_native_feedback_completion_decision_resolve_reopen_cycle(tmp_path, monk
         FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
     )
 
-    store = _target_store(tmp_path / "feedback-native-completion.sqlite3")
+    store = AutoReplyStore(tmp_path / "feedback-native-completion.sqlite3")
     monkeypatch.setattr(store, "feedback_iteration_enabled", lambda: True)
     for key in ("feedback-a", "feedback-b"):
         _add_feedback_event(store, key)
     store.create_feedback_processing_batch(["feedback-a", "feedback-b"], batch_id="batch-a")
     claimed = store.claim_feedback_processing_items("batch-a", ["feedback-a", "feedback-b"])
+    native = completed_workbench_association(store)
     for item in claimed:
         empty = store.associate_feedback_processing_turn(
             item.feedback_key, expected_batch_id="batch-a",
@@ -2344,8 +2346,7 @@ def test_native_feedback_completion_decision_resolve_reopen_cycle(tmp_path, monk
         assert empty.workbench_task_id == empty.workbench_turn_id == ""
         store.associate_feedback_processing_turn(
             item.feedback_key, expected_batch_id="batch-a",
-            workbench_task_id="wb-task", workbench_turn_id="wb-turn",
-            attempt_id=13, agent_run_id=27,
+            **native,
         )
         store.patch_feedback_processing_item_evidence(
             item.feedback_key, commit_sha="a" * 40,
@@ -2386,7 +2387,7 @@ def test_native_feedback_completion_decision_resolve_reopen_cycle(tmp_path, monk
         ),
     )
     record = store.record_feedback_iteration_decision(
-        "batch-a", decision, workbench_task_id="wb-task", workbench_turn_id="wb-turn",
+        "batch-a", decision, workbench_task_id=native["workbench_task_id"], workbench_turn_id=native["workbench_turn_id"],
     )
     assert set(record.feedback_keys) == {"feedback-a", "feedback-b"}
     assert len(record.round_ids) == 2
@@ -2410,9 +2411,7 @@ def test_native_feedback_completion_decision_resolve_reopen_cycle(tmp_path, monk
         health_evidence={"url": "http://127.0.0.1:8765/healthz",
                          "status_code": 200, "ok": True},
         backlog_evidence={"processing": 0, "failed": 0, "retryable": 0},
-        associations={key: {"workbench_task_id": "wb-task", "workbench_turn_id": "wb-turn",
-                            "attempt_id": 13, "agent_run_id": 27}
-                      for key in ("feedback-a", "feedback-b")},
+        associations={key: native for key in ("feedback-a", "feedback-b")},
     )
     assert store.resolve_feedback_processing_batch(
         "batch-a", receipt, commit_is_ancestor=True,
@@ -2645,7 +2644,7 @@ def test_native_feedback_supported_config_scopes_use_actual_load_receipts(
         FeedbackIterationAcceptance, FeedbackIterationDecision, ResolutionEvidence,
     )
 
-    store = _target_store(tmp_path / f"feedback-native-{scope}.sqlite3")
+    store = AutoReplyStore(tmp_path / f"feedback-native-{scope}.sqlite3")
     skill = revision_one = revision_two = None
     if scope in {"skill_only", "mixed"}:
         skill = store.create_managed_skill("scope-test", "Scope Test")
@@ -2687,11 +2686,8 @@ def test_native_feedback_supported_config_scopes_use_actual_load_receipts(
     batch_id = f"batch-{scope}"
     store.create_feedback_processing_batch([key], batch_id=batch_id)
     item = store.claim_feedback_processing_items(batch_id, [key])[0]
-    store.associate_feedback_processing_turn(
-        key, expected_batch_id=batch_id,
-        workbench_task_id=f"task-{scope}", workbench_turn_id=f"turn-{scope}",
-        attempt_id=21, agent_run_id=31,
-    )
+    native = completed_workbench_association(store)
+    store.associate_feedback_processing_turn(key, expected_batch_id=batch_id, **native)
     commit_sha = "c" * 40 if scope == "mixed" else ""
     test_evidence = {"focused": {"exit_code": 0}}
     restart_evidence = {
@@ -2725,8 +2721,8 @@ def test_native_feedback_supported_config_scopes_use_actual_load_receipts(
         ),
     )
     store.record_feedback_iteration_decision(
-        batch_id, decision, workbench_task_id=f"task-{scope}",
-        workbench_turn_id=f"turn-{scope}",
+        batch_id, decision, workbench_task_id=native["workbench_task_id"],
+        workbench_turn_id=native["workbench_turn_id"],
     )
     evidence = ResolutionEvidence(
         commit_sha=commit_sha, test_evidence=test_evidence,
@@ -2740,11 +2736,7 @@ def test_native_feedback_supported_config_scopes_use_actual_load_receipts(
               "sha256": revision_two.sha256}]
             if skill is not None else []
         ),
-        associations={key: {
-            "workbench_task_id": f"task-{scope}",
-            "workbench_turn_id": f"turn-{scope}",
-            "attempt_id": 21, "agent_run_id": 31,
-        }},
+        associations={key: native},
     )
     assert store.resolve_feedback_processing_batch(
         batch_id, evidence, commit_is_ancestor=(scope == "mixed"),

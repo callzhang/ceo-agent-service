@@ -3,6 +3,26 @@ from app.feedback_processing import ResolutionEvidence
 from app.store import AutoReplyStore
 
 
+def completed_workbench_association(store: AutoReplyStore) -> dict[str, object]:
+    """Create real local native completion; never call an Agent or provider."""
+    from app.workbench.store import WorkbenchStore
+
+    workbench = WorkbenchStore(store.path)
+    task = workbench.create_task(title="Fixture feedback repair", runtime_kind="codex")
+    turn = workbench.create_turn(task.id, user_text="Verify repair", client_request_id=f"repair-{task.id}")
+    assert workbench.claim_next_turn(owner="feedback-fixture") is not None
+    runtime = store.claim_runtime_operation_attempt(
+        "workbench", turn.id, "codex_oauth", "codex_cli", "local_oauth", "test-model",
+        owner="feedback-fixture",
+    )
+    store.complete_agent_runtime_attempt(
+        runtime.id, "fixture-session", "", 0, 1, owner="feedback-fixture",
+    )
+    workbench.complete_turn(turn.id, status="completed", final_text="Verified", owner="feedback-fixture")
+    return {"workbench_task_id": task.id, "workbench_turn_id": turn.id,
+            "attempt_id": 0, "agent_run_id": 0}
+
+
 def resolve_feedback_fixture(
     store: AutoReplyStore, feedback_key: str, *, batch_id: str | None = None
 ) -> None:
@@ -31,10 +51,7 @@ def resolve_feedback_fixture(
     assert store.claim_feedback_processing_items(selected_batch, [feedback_key])
     store.associate_feedback_processing_turn(
         feedback_key,
-        workbench_task_id="task-fixture",
-        workbench_turn_id="turn-fixture",
-        attempt_id=71,
-        agent_run_id=72,
+        **completed_workbench_association(store),
     )
     store.patch_feedback_processing_item_evidence(
         feedback_key,
