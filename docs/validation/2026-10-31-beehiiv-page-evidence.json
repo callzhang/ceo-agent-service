@@ -1,6 +1,6 @@
 {
   "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
-  "status": "cache_key_fix_approved; independent_validation_and_standard_release_pending",
+  "status": "approved_cache_fix_merged_and_focused_checks_passed; exact_target_gate_and_deployment_pending",
   "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
   "root_causes": [
     "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
@@ -107,5 +107,18 @@
     },
     "beehiiv_fix_installed": false,
     "new_real_unsubscribe": false
+  },
+  "cache_fix": {
+    "commit": "9349e3c69ebaf8fa7cdc742a1b31f69c49463253",
+    "approved": true,
+    "change": "Normalize default/explicit false and true catalog requests to the same two semantic LRU entries. Preserve existing cache controls, maxsize2 and full actual DB comparison/invalidation.",
+    "owner_red": "12 constructions instead of2",
+    "owner_green": "15 tests including DDL/replaced-file/backup restore; catalogs exactly equal",
+    "owner_abba": "before 1.273/.887s, 12 constructions/0hits; after .147/.154s, 2 constructions/10hits",
+    "integration": "28 passed in 2.90s; Ruff/diff checks passed",
+    "schema_ddl_change": false,
+    "fixed_budget_seconds": 600,
+    "fixed_memory_gib": 2,
+    "gate_tests_removed": 0
   }
 }
