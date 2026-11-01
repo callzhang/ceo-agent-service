@@ -240,8 +240,8 @@ class FeedbackProcessingAssociation(_StrictProcessingModel):
 
     workbench_task_id: str
     workbench_turn_id: str
-    attempt_id: int
-    agent_run_id: int
+    attempt_id: int = 0
+    agent_run_id: int = 0
 
 
 class ResolutionSkillRevision(_StrictProcessingModel):

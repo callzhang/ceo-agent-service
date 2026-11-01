@@ -34,7 +34,7 @@ import app.store as store_module
 from app.store import AutoReplyStore, UserFeedbackItem
 from app.action_feedback_definitions import feedback_projection
 from app.action_feedback_storage import insert_feedback_action, set_feedback_action
-from tests.feedback_processing_fixtures import resolve_feedback_fixture
+from tests.feedback_processing_fixtures import resolve_feedback_fixture, completed_workbench_association
 
 
 _NATIVE_FEEDBACK_PREDECESSOR = "1ab1ded2e548fb459afe15ebdf801ec5dc381995"
@@ -1616,17 +1616,12 @@ def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
     assert {item.feedback_key for item in claimed} == {"feedback-1", "feedback-2"}
     assert all(item.status == "processing" for item in claimed)
 
-    associated = store.associate_feedback_processing_turn(
-        "feedback-1",
-        workbench_task_id="task-1",
-        workbench_turn_id="turn-1",
-        attempt_id=12,
-            agent_run_id=34,
-    )
+    native = completed_workbench_association(store)
+    associated = store.associate_feedback_processing_turn("feedback-1", **native)
     assert associated is not None
-    assert associated.workbench_turn_id == "turn-1"
-    assert associated.attempt_id == 12
-    assert associated.agent_run_id == 34
+    assert associated.workbench_turn_id == native["workbench_turn_id"]
+    assert associated.attempt_id == 0
+    assert associated.agent_run_id == 0
 
     store.patch_feedback_processing_item_evidence(
         "feedback-1",
@@ -1635,7 +1630,7 @@ def test_claim_associate_patch_and_resolve_feedback_batch(tmp_path: Path):
         health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"},
         commit_sha="a" * 40,
     )
-    store.associate_feedback_processing_turn("feedback-2", workbench_task_id="task-1", workbench_turn_id="turn-1", attempt_id=13, agent_run_id=35)
+    store.associate_feedback_processing_turn("feedback-2", **completed_workbench_association(store))
     store.patch_feedback_processing_item_evidence("feedback-2", test_evidence={"passed": {"exit_code": 0}}, restart_evidence={"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, commit_sha="a" * 40)
     assert store.resolve_feedback_processing_batch("batch-1", {"commit_sha": "a" * 40, "test_evidence": {"passed": {"exit_code": 0}}, "restart_evidence": {"process": "new", "launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, "health_evidence": {"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"}, "backlog_evidence": {"processing": 0, "failed": 0, "retryable": 0}}, commit_is_ancestor=True) is True
     assert store.get_feedback_processing_batch("batch-1").status == "resolved"
@@ -1868,7 +1863,7 @@ def test_resolve_evidence_marks_every_item_in_batch_atomically(tmp_path: Path):
         store.upsert_feedback_event(key=key, feedback_token=key)
     store.claim_feedback_processing_items("batch-1", ["feedback-1", "feedback-2"])
     for key in ("feedback-1", "feedback-2"):
-        store.associate_feedback_processing_turn(key, workbench_task_id="task", workbench_turn_id="turn", attempt_id=1, agent_run_id=2)
+        store.associate_feedback_processing_turn(key, **completed_workbench_association(store))
         store.patch_feedback_processing_item_evidence(key, commit_sha="a" * 40, test_evidence={"pytest": {"exit_code": 0}}, restart_evidence={"launchd_label": "com.ceo-agent-service.main", "before_pid": 1, "after_pid": 2}, health_evidence={"status_code": 200, "ok": True, "url": "http://127.0.0.1:8765/healthz"})
     head = "a" * 40
     evidence = ResolutionEvidence(
@@ -2412,13 +2407,7 @@ def test_resolve_uses_only_current_round_receipt_and_updates_batch_atomically(
     old_round_id = _seed_resolved_feedback_round(store, "feedback-1")
     store.reopen_feedback_processing_item("feedback-1", reason="premature")
     claimed = store.claim_feedback_processing_items("batch-2", ["feedback-1"])[0]
-    store.associate_feedback_processing_turn(
-        "feedback-1",
-        workbench_task_id="task-new",
-        workbench_turn_id="turn-new",
-        attempt_id=56,
-        agent_run_id=78,
-    )
+    store.associate_feedback_processing_turn('feedback-1', **completed_workbench_association(store))
     stale_receipt = _complete_resolution_receipt("a" * 40)
     receipt = _complete_resolution_receipt()
 
@@ -2588,13 +2577,7 @@ def _prepare_processing_round(
     )
     item = store.claim_feedback_processing_items(batch_id, [feedback_key])[0]
     receipt = _complete_resolution_receipt()
-    store.associate_feedback_processing_turn(
-        feedback_key,
-        workbench_task_id="task-current",
-        workbench_turn_id="turn-current",
-        attempt_id=71,
-        agent_run_id=72,
-    )
+    store.associate_feedback_processing_turn(feedback_key, **completed_workbench_association(store))
     store.patch_feedback_processing_item_evidence(
         feedback_key,
         commit_sha=receipt.commit_sha,
@@ -2706,13 +2689,7 @@ def test_resolve_shares_one_timestamp_across_delayed_multi_item_batch(
         "batch-1", ["feedback-1", "feedback-2"]
     )
     for index, key in enumerate(("feedback-1", "feedback-2"), start=1):
-        store.associate_feedback_processing_turn(
-            key,
-            workbench_task_id="task-current",
-            workbench_turn_id="turn-current",
-            attempt_id=70 + index,
-            agent_run_id=80 + index,
-        )
+        store.associate_feedback_processing_turn(key, **completed_workbench_association(store))
         store.patch_feedback_processing_item_evidence(
             key,
             commit_sha=receipt.commit_sha,
@@ -3230,7 +3207,6 @@ def test_supplied_association_keys_must_exactly_close_batch(
         },
         {
             "workbench_task_id": "task",
-            "workbench_turn_id": "turn",
             "attempt_id": 1,
         },
     ),
@@ -3411,13 +3387,7 @@ def _prepare_old_batch_with_newer_batch(
     store.claim_feedback_processing_items("batch-2", feedback_keys)
     newer_receipt = _complete_resolution_receipt("c" * 40)
     for index, feedback_key in enumerate(feedback_keys, start=1):
-        store.associate_feedback_processing_turn(
-            feedback_key,
-            workbench_task_id="task-newer",
-            workbench_turn_id="turn-newer",
-            attempt_id=100 + index,
-            agent_run_id=200 + index,
-        )
+        store.associate_feedback_processing_turn(feedback_key, **completed_workbench_association(store))
         store.patch_feedback_processing_item_evidence(
             feedback_key,
             commit_sha=newer_receipt.commit_sha,
@@ -3878,13 +3848,7 @@ def _prepare_two_member_processing_batch(
         "batch-1", ["feedback-1", "feedback-2"]
     )
     for index, feedback_key in enumerate(("feedback-1", "feedback-2"), start=1):
-        store.associate_feedback_processing_turn(
-            feedback_key,
-            workbench_task_id="task-processing",
-            workbench_turn_id="turn-processing",
-            attempt_id=300 + index,
-            agent_run_id=400 + index,
-        )
+        store.associate_feedback_processing_turn(feedback_key, **completed_workbench_association(store))
         store.patch_feedback_processing_item_evidence(
             feedback_key,
             commit_sha=receipt.commit_sha,
@@ -4330,13 +4294,7 @@ def _prepare_old_members_in_same_newer_resolved_batch(
         )
     store.claim_feedback_processing_items("batch-1", feedback_keys)
     for index, feedback_key in enumerate(feedback_keys, start=1):
-        store.associate_feedback_processing_turn(
-            feedback_key,
-            workbench_task_id="task-old",
-            workbench_turn_id="turn-old",
-            attempt_id=500 + index,
-            agent_run_id=600 + index,
-        )
+        store.associate_feedback_processing_turn(feedback_key, **completed_workbench_association(store))
         store.patch_feedback_processing_item_evidence(
             feedback_key,
             commit_sha=old_receipt.commit_sha,
@@ -4359,13 +4317,7 @@ def _prepare_old_members_in_same_newer_resolved_batch(
     newer_receipt = _complete_resolution_receipt("c" * 40)
     store.claim_feedback_processing_items("batch-2", feedback_keys)
     for index, feedback_key in enumerate(feedback_keys, start=1):
-        store.associate_feedback_processing_turn(
-            feedback_key,
-            workbench_task_id="task-newer",
-            workbench_turn_id="turn-newer",
-            attempt_id=700 + index,
-            agent_run_id=800 + index,
-        )
+        store.associate_feedback_processing_turn(feedback_key, **completed_workbench_association(store))
         store.patch_feedback_processing_item_evidence(
             feedback_key,
             commit_sha=newer_receipt.commit_sha,

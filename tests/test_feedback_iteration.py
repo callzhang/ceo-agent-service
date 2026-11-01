@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from tests.feedback_processing_fixtures import completed_workbench_association
+
 import pytest
 from pydantic import ValidationError
 
@@ -133,9 +135,9 @@ def test_skill_only_decision_resolves_with_loaded_revision_and_no_commit(tmp_pat
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
+    native_1 = completed_workbench_association(store)
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="batch-1", workbench_task_id="task-1",
-        workbench_turn_id="turn-1", attempt_id=1, agent_run_id=2,
+        "manual:1", expected_batch_id="batch-1", **native_1,
     )
     store.patch_feedback_processing_item_evidence(
         "manual:1",
@@ -152,7 +154,7 @@ def test_skill_only_decision_resolves_with_loaded_revision_and_no_commit(tmp_pat
         }
     )
     store.record_feedback_iteration_decision(
-        "batch-1", decision, workbench_task_id="task-1", workbench_turn_id="turn-1"
+        "batch-1", decision, workbench_task_id=native_1["workbench_task_id"], workbench_turn_id=native_1["workbench_turn_id"]
     )
 
     assert store.resolve_feedback_processing_batch(
@@ -186,9 +188,9 @@ def test_skill_only_decision_resolves_with_loaded_revision_and_no_commit(tmp_pat
     assert reopened is not None and reopened.status == "pending"
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-2")
     store.claim_feedback_processing_items("batch-2", ["manual:1"])
+    native_2 = completed_workbench_association(store)
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="batch-2", workbench_task_id="task-2",
-        workbench_turn_id="turn-2", attempt_id=3, agent_run_id=4,
+        "manual:1", expected_batch_id="batch-2", **native_2,
     )
     store.patch_feedback_processing_item_evidence(
         "manual:1",
@@ -209,7 +211,7 @@ def test_skill_only_decision_resolves_with_loaded_revision_and_no_commit(tmp_pat
         }
     )
     store.record_feedback_iteration_decision(
-        "batch-2", mixed_decision, workbench_task_id="task-2", workbench_turn_id="turn-2"
+        "batch-2", mixed_decision, workbench_task_id=native_2["workbench_task_id"], workbench_turn_id=native_2["workbench_turn_id"]
     )
     mixed_evidence = _resolution_receipt(
         commit_sha="c" * 40, runtime_config_id=target_config.id,
@@ -240,9 +242,9 @@ def test_runtime_config_decision_replay_rejects_an_alternate_load_receipt(tmp_pa
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
+    native_1 = completed_workbench_association(store)
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="batch-1", workbench_task_id="task-1",
-        workbench_turn_id="turn-1", attempt_id=1, agent_run_id=2,
+        "manual:1", expected_batch_id="batch-1", **native_1,
     )
     store.patch_feedback_processing_item_evidence(
         "manual:1",
@@ -259,7 +261,7 @@ def test_runtime_config_decision_replay_rejects_an_alternate_load_receipt(tmp_pa
         }
     )
     store.record_feedback_iteration_decision(
-        "batch-1", decision, workbench_task_id="task-1", workbench_turn_id="turn-1"
+        "batch-1", decision, workbench_task_id=native_1["workbench_task_id"], workbench_turn_id=native_1["workbench_turn_id"]
     )
     evidence = _resolution_receipt(
         commit_sha="", runtime_config_id=target.id,
@@ -309,13 +311,13 @@ def test_persisted_decision_is_strict_and_append_only(tmp_path):
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.create_feedback_processing_batch(["manual:1"], batch_id="batch-1")
     store.claim_feedback_processing_items("batch-1", ["manual:1"])
+    native_1 = completed_workbench_association(store)
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="batch-1", workbench_task_id="task-1",
-        workbench_turn_id="turn-1", attempt_id=1, agent_run_id=2,
+        "manual:1", expected_batch_id="batch-1", **native_1,
     )
 
     recorded = store.record_feedback_iteration_decision(
-        "batch-1", _decision(feedback_key="manual:1"), workbench_task_id="task-1", workbench_turn_id="turn-1"
+        "batch-1", _decision(feedback_key="manual:1"), workbench_task_id=native_1["workbench_task_id"], workbench_turn_id=native_1["workbench_turn_id"]
     )
 
     assert store.list_feedback_iteration_decisions("batch-1") == (recorded,)

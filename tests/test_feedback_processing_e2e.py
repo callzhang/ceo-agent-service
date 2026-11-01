@@ -9,6 +9,7 @@ from app.action_feedback_storage import insert_feedback_action
 import subprocess
 import time
 from pathlib import Path
+from tests.feedback_processing_fixtures import completed_workbench_association
 
 import pytest
 from fastapi import FastAPI
@@ -24,7 +25,6 @@ import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
 from app.web_api.registration import register_console_routes
-from test_store_task_entity_creator import _target_store
 
 
 class _NonExecutingExecutor:
@@ -78,7 +78,7 @@ def _registered_route_client(
     },
 ) -> tuple[TestClient, AutoReplyStore]:
     db_path = tmp_path / "route-worker.sqlite3"
-    store = _target_store(db_path)
+    store = AutoReplyStore(db_path)
     app = FastAPI()
     register_console_routes(
         app,
@@ -191,10 +191,7 @@ def _seed_processing_batch_for_resolution(
     store.claim_feedback_processing_items(batch_id, ["feedback-backlog"])
     store.associate_feedback_processing_turn(
         "feedback-backlog",
-        workbench_task_id="101",
-        workbench_turn_id="102",
-        attempt_id=1,
-        agent_run_id=2,
+        **completed_workbench_association(store),
     )
     store.patch_feedback_processing_item_evidence(
         "feedback-backlog",
@@ -259,11 +256,9 @@ def test_feedback_batch_resolve_api_can_resolve_selected_items(
     for key in keys:
         store.upsert_feedback_event(key=key, feedback_token=key)
     store.claim_feedback_processing_items("batch-itemwise", keys)
+    associations = {key: completed_workbench_association(store) for key in keys}
     for key in keys:
-        store.associate_feedback_processing_turn(
-            key, workbench_task_id=f"task-{key}",
-            workbench_turn_id=f"turn-{key}", attempt_id=1, agent_run_id=2,
-        )
+        store.associate_feedback_processing_turn(key, **associations[key])
         store.patch_feedback_processing_item_evidence(
             key,
             commit_sha=receipt["commit_sha"],
@@ -278,11 +273,6 @@ def test_feedback_batch_resolve_api_can_resolve_selected_items(
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "", ""),
     )
 
-    associations = {
-        key: {"workbench_task_id": f"task-{key}",
-              "workbench_turn_id": f"turn-{key}", "attempt_id": 1, "agent_run_id": 2}
-        for key in keys
-    }
     partial_receipt = {**receipt, "feedback_ids": ["feedback-a"]}
     final_receipt = {**receipt, "feedback_ids": ["feedback-b"]}
     if include_associations:
@@ -789,10 +779,7 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         patched = client.patch(
             "/api/console/feedback/items/feedback-8308",
             json={
-                "workbench_task_id": "124",
-                "workbench_turn_id": "445",
-                "attempt_id": 8308,
-                "agent_run_id": 445,
+                **completed_workbench_association(store),
                 **round_one_receipt,
             },
         )
@@ -932,10 +919,7 @@ def test_attempt_8308_feedback_processing_requires_complete_receipts(
         patched_again = client.patch(
             "/api/console/feedback/items/feedback-8308",
             json={
-                "workbench_task_id": "224",
-                "workbench_turn_id": "545",
-                "attempt_id": 8308,
-                "agent_run_id": 545,
+                **completed_workbench_association(store),
                 **round_two_receipt,
             },
         )

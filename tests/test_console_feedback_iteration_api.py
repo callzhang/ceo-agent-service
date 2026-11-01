@@ -5,6 +5,8 @@ from fastapi.testclient import TestClient
 import pytest
 
 from app.web_api.registration import register_console_routes
+from app.store import AutoReplyStore
+from tests.feedback_processing_fixtures import completed_workbench_association
 from test_store_task_entity_creator import _target_store
 
 
@@ -126,16 +128,16 @@ def test_feedback_resolve_api_preserves_native_scope_evidence(
     from app.feedback_processing import FeedbackIterationDecision
     from test_feedback_iteration import _decision, _resolution_receipt
 
-    store = _target_store(tmp_path / "scope-api.sqlite3")
+    store = AutoReplyStore(tmp_path / "scope-api.sqlite3")
     previous = store.create_runtime_skill_config({}, expected_parent_id=None)
     store.record_runtime_skill_load(previous.id, pid=201, loaded={})
     target = store.create_runtime_skill_config({}, expected_parent_id=previous.id)
     load = store.record_runtime_skill_load(target.id, pid=202, loaded={})
     store.upsert_feedback_event(key="manual:1", feedback_token="token")
     store.claim_feedback_processing_items("scope-api", ["manual:1"])
+    native = completed_workbench_association(store)
     store.associate_feedback_processing_turn(
-        "manual:1", expected_batch_id="scope-api", workbench_task_id="101",
-        workbench_turn_id="102", attempt_id=1, agent_run_id=2,
+        "manual:1", expected_batch_id="scope-api", **native,
     )
     evidence = _resolution_receipt(
         commit_sha="", runtime_config_id=target.id,
@@ -155,7 +157,8 @@ def test_feedback_resolve_api_preserves_native_scope_evidence(
         "target_runtime_config_id": target.id if scope == "runtime_config" else None,
     })
     store.record_feedback_iteration_decision(
-        "scope-api", decision, workbench_task_id="101", workbench_turn_id="102",
+        "scope-api", decision, workbench_task_id=native["workbench_task_id"],
+        workbench_turn_id=native["workbench_turn_id"],
     )
     app = FastAPI()
     register_console_routes(

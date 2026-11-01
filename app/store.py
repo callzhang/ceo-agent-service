@@ -17071,12 +17071,54 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             or str(item["resolved_at"] or "") != str(current_round["resolved_at"] or "")
             or not str(current_round["workbench_task_id"] or "").strip()
             or not str(current_round["workbench_turn_id"] or "").strip()
-            or type(current_round["attempt_id"]) is not int
-            or int(current_round["attempt_id"]) <= 0
-            or type(current_round["agent_run_id"]) is not int
-            or int(current_round["agent_run_id"]) <= 0
         ):
             raise ValueError("resolved feedback processing round is incomplete")
+
+    @staticmethod
+    def _validate_feedback_business_reference_shape(current_round: sqlite3.Row) -> None:
+        attempt_id = current_round["attempt_id"]
+        run_id = current_round["agent_run_id"]
+        if (type(attempt_id) is not int or type(run_id) is not int
+                or attempt_id < 0 or run_id < 0 or (attempt_id == 0) != (run_id == 0)):
+            raise ValueError("feedback business references must be an exact pair or absent")
+
+    @classmethod
+    def _validate_feedback_processing_execution(
+        cls, db: sqlite3.Connection, current_round: sqlite3.Row,
+    ) -> None:
+        """Verify the native execution that actually processed this feedback round."""
+        task_id = str(current_round["workbench_task_id"] or "")
+        turn_id = str(current_round["workbench_turn_id"] or "")
+        turn = db.execute(
+            "select t.status,w.completed_at from workbench_turns w "
+            "join tasks t on t.id=w.task_id and t.kind='workbench_turn' "
+            "where cast(w.task_id as text)=? and cast(w.workbench_task_id as text)=?",
+            (turn_id, task_id),
+        ).fetchone()
+        if turn is None or turn["status"] != "completed" or not turn["completed_at"]:
+            raise ValueError("resolution requires a completed owning Workbench turn")
+        runtime = db.execute(
+            "select status,finished_at from runtime_attempts "
+            "where workload_kind='workbench' and workload_key=? order by id desc limit 1",
+            (turn_id,),
+        ).fetchone()
+        if (runtime is None or runtime["status"] != "completed"
+                or not runtime["finished_at"] or not current_round["started_at"]
+                or runtime["finished_at"] < current_round["started_at"]):
+            raise ValueError("resolution requires completed native execution for the current round")
+        cls._validate_feedback_business_reference_shape(current_round)
+        if current_round["attempt_id"] == 0:
+            return
+        business = db.execute(
+            f"select r.status,r.completed_at from ({REPLY_ATTEMPT_COMMON_SQL}) a "
+            "join runs r on r.id=a.agent_run_id where a.id=? and r.id=?",
+            (current_round["attempt_id"], current_round["agent_run_id"]),
+        ).fetchone()
+        if (business is None or business["status"] != "completed"
+                or not business["completed_at"]
+                or business["completed_at"] < current_round["started_at"]):
+            raise ValueError("resolution business references require a matching completed current-round run")
+
     @staticmethod
     def _resolved_feedback_processing_round_evidence(
         current_round: sqlite3.Row,
@@ -17085,12 +17127,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             not str(current_round["resolved_at"] or "").strip()
             or not str(current_round["workbench_task_id"] or "").strip()
             or not str(current_round["workbench_turn_id"] or "").strip()
-            or type(current_round["attempt_id"]) is not int
-            or current_round["attempt_id"] <= 0
-            or type(current_round["agent_run_id"]) is not int
-            or current_round["agent_run_id"] <= 0
         ):
             raise ValueError("resolved feedback processing round is incomplete")
+        AutoReplyStore._validate_feedback_business_reference_shape(current_round)
         evidence_by_name: dict[str, dict[str, object]] = {}
         for name in (
             "test_evidence",
@@ -18835,13 +18874,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "attempt_id",
                     "agent_run_id",
                 )
-                if (
-                    not str(current_round["workbench_task_id"] or "").strip()
-                    or not str(current_round["workbench_turn_id"] or "").strip()
-                    or int(current_round["attempt_id"] or 0) <= 0
-                    or int(current_round["agent_run_id"] or 0) <= 0
-                ):
-                    raise ValueError("resolution requires complete item associations")
+                self._validate_feedback_processing_execution(db, current_round)
                 feedback_key = str(item["feedback_key"])
                 if normalized_evidence.associations:
                     association = normalized_evidence.associations.get(feedback_key)
