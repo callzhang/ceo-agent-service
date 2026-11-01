@@ -47,6 +47,36 @@ def _codex_command() -> list[str]:
     ]
 
 
+@pytest.mark.parametrize("resume", [False, True])
+@pytest.mark.parametrize("feature", [
+    "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser",
+])
+@pytest.mark.parametrize("value", ["true", "false"])
+def test_consumer_preserves_native_browser_cli_configuration(tmp_path, monkeypatch, resume, feature, value):
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    configured = f"features.{feature}={value}"
+    command = ["codex", "exec", *(["resume", "session-id"] if resume else []), "--json", "-c", configured, "-"]
+
+    make_consumer_agent_command(command, task_workspace=str(tmp_path))
+
+    assert [option for option in command if option.startswith(f"features.{feature}=")] == [configured]
+    assert "features.computer_use=false" in command
+    assert "features.in_app_local_automation=false" in command
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+
+
+@pytest.mark.parametrize("feature", [
+    "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser",
+])
+def test_consumer_leaves_unset_native_browser_configuration_to_cli_home(tmp_path, monkeypatch, feature):
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = ["codex", "exec", "--json", "-"]
+
+    make_consumer_agent_command(command, task_workspace=str(tmp_path))
+
+    assert not any(option.startswith(f"features.{feature}=") for option in command)
+
+
 def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, monkeypatch) -> None:
     home = tmp_path / "codex-home"
     home.mkdir()
@@ -71,11 +101,14 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     for feature in ("apps", "plugins", "remote_plugin"):
         assert f"features.{feature}=false" in audit
         assert not any(o.startswith(f"features.{feature}=") for o in consumer)
+    assert consumer.count("features.browser_use=true") == 1
+    for feature in ("browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser"):
+        assert f"features.{feature}=false" in audit
+        assert f"features.{feature}=false" not in consumer
     for command in (consumer, audit):
         assert "features.computer_use=false" in command
         for feature in (
-            "browser_use", "browser_use_external", "browser_use_full_cdp_access",
-            "in_app_browser", "in_app_local_automation", "in_app_chat",
+            "in_app_local_automation", "in_app_chat",
             "image_generation", "multi_agent",
             "skill_mcp_dependency_install", "memories",
         ):
@@ -562,7 +595,7 @@ def test_consumer_inherits_cli_home_servers_but_not_manifest_disabled_ones(
         for o in command
     )
     # The fan-out and computer-use surfaces stay off for the Consumer too.
-    for feature in ("multi_agent", "computer_use", "browser_use"):
+    for feature in ("multi_agent", "computer_use"):
         assert f"features.{feature}=false" in command
 
 

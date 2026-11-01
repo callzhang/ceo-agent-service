@@ -98,7 +98,7 @@ Codex Consumer 的工作工具面不是白名单（Derek 2026-10-24）：`make_r
 `features.apps`、`features.plugins`、`features.remote_plugin`，也不再关闭 `~/.codex/config.toml` 里的其他 MCP server
 或限制它们的工具，而是沿用本机 CLI 的配置，并对这些 server 设置 `default_tools_approval_mode="approve"`
 （Audit 的 `approval_policy="never"` 下否则工具会被拒绝）。仍然关闭的是：服务 MCP 清单（Settings → MCP）的 `disabled_servers`、桌面控制类 server（`computer-use`、`computer-history`、`cua_repl`，代码常量 `CONSUMER_ALWAYS_DISABLED_SERVERS`）、
-`multi_agent`、`computer_use`、`browser_use*` 等原生功能。读取 Figma 这类外部信息属于处理过程中的工作工具，不走提议；
+`multi_agent`、`computer_use`、`in_app_local_automation` 等原生功能。Consumer 的 `browser_use`、`browser_use_external`、`browser_use_full_cdp_access` 和 `in_app_browser` 沿用 CLI 原生配置；显式传入的 `-c` 值保留，未传入时不注入覆盖值，新建和续跑命令行为一致。可继承功能（包含 apps/plugins）的显式参数同样不被清除。原生浏览器权限仍由宿主运行时决定，配置存在不证明已取得浏览器或账户访问；Audit 继续关闭浏览器，电脑控制类 MCP 的禁止列表保持不变。Email 退订仍由系统独立执行器负责，不因 Consumer 浏览器配置变化而重试或改变回执。读取 Figma 这类外部信息属于处理过程中的工作工具，不走提议；
 只有发消息和发邮件等需要 Audit 的终态动作走 typed action，该约束仍是提示词约束（Consumer 不得经 shell 的 `dws` 发消息、发邮件）。
 Audit 的命令不变：仍关闭上述功能，只启用 `ROLE_MCP_READ_TOOLS` 列出的只读工具，并强制关闭其余 server。
 Runtime Context 对没有 `enabled_tools` 限制的 server 声明 `mcp__<server>__*`（全部工具，参数以本轮工具 schema 为准），不再逐个枚举。

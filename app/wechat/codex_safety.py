@@ -130,12 +130,15 @@ ROLE_DISABLED_NATIVE_FEATURES = (
     "skill_mcp_dependency_install", "memories",
 )
 
-# Derek 2026-10-24: the Consumer works with whatever the local machine offers
-# (app connectors such as Figma, plugins, and every MCP server in the CLI home);
+# The Consumer works with its native CLI configuration
+# (app connectors such as Figma, plugins, browsers, and MCP servers in the CLI home);
 # only sending messages and email is a terminal action that goes through a
 # proposal. These features are therefore left to the CLI's own configuration for
 # the Consumer instead of being forced off. Audit still receives them disabled.
-CONSUMER_INHERITED_NATIVE_FEATURES = frozenset({"apps", "plugins", "remote_plugin"})
+CONSUMER_INHERITED_NATIVE_FEATURES = frozenset({
+    "apps", "plugins", "remote_plugin",
+    "browser_use", "browser_use_external", "browser_use_full_cdp_access", "in_app_browser",
+})
 
 # Desktop-control servers stay off for the Consumer whatever the manifest says
 # (Derek 2026-10-24: computer use stays disabled).
@@ -280,7 +283,8 @@ def make_role_agent_command(
             *(() if role == "consumer" else ("approval_policy=", "approvals_reviewer=")),
             "tools.enabled_tools=",
             "sandbox_mode=", "sandbox_workspace_write.", "default_permissions=",
-            *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
+            *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES
+              if not (role == "consumer" and feature in CONSUMER_INHERITED_NATIVE_FEATURES)),
             "features.code_mode=", "features.code_mode_only=",
             "features.code_mode.enabled=",
             "features.code_mode.excluded_tool_namespaces=",
