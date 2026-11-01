@@ -242,8 +242,9 @@ def test_runtime_config_resolution_receipt_ignores_global_backlog():
     )
 
 
+@pytest.mark.parametrize("include_associations", [False, True])
 def test_feedback_batch_resolve_api_can_resolve_selected_items(
-    tmp_path: Path, monkeypatch
+    tmp_path: Path, monkeypatch, include_associations: bool,
 ):
     receipt = _resolution_receipt(
         "a" * 40, test_name="itemwise-resolution", before_pid=10, after_pid=11,
@@ -277,10 +278,34 @@ def test_feedback_batch_resolve_api_can_resolve_selected_items(
         lambda command, **kwargs: subprocess.CompletedProcess(command, 0, "", ""),
     )
 
+    associations = {
+        key: {"workbench_task_id": f"task-{key}",
+              "workbench_turn_id": f"turn-{key}", "attempt_id": 1, "agent_run_id": 2}
+        for key in keys
+    }
+    partial_receipt = {**receipt, "feedback_ids": ["feedback-a"]}
+    final_receipt = {**receipt, "feedback_ids": ["feedback-b"]}
+    if include_associations:
+        partial_receipt["associations"] = {"feedback-a": associations["feedback-a"]}
+        final_receipt["associations"] = {"feedback-b": associations["feedback-b"]}
+
     with client:
+        if include_associations:
+            for bad_associations in (
+                {"feedback-b": associations["feedback-b"]},
+                {"feedback-a": {**associations["feedback-a"], "agent_run_id": 999}},
+            ):
+                rejected = client.post(
+                    "/api/console/feedback/batches/batch-itemwise/resolve",
+                    json={**partial_receipt, "associations": bad_associations},
+                )
+                assert rejected.status_code == 409, rejected.text
+                assert [store.get_feedback_processing_item(key).status for key in keys] == [
+                    "processing", "processing",
+                ]
         partial = client.post(
             "/api/console/feedback/batches/batch-itemwise/resolve",
-            json={**receipt, "feedback_ids": ["feedback-a"]},
+            json=partial_receipt,
         )
         assert partial.status_code == 200, partial.text
         assert partial.json()["item"] == {
@@ -294,7 +319,7 @@ def test_feedback_batch_resolve_api_can_resolve_selected_items(
 
         finished = client.post(
             "/api/console/feedback/batches/batch-itemwise/resolve",
-            json={**receipt, "feedback_ids": ["feedback-b"]},
+            json=final_receipt,
         )
         assert finished.status_code == 200, finished.text
         assert finished.json()["item"] == {

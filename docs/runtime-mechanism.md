@@ -634,6 +634,7 @@ code 与 Skill/config 条件。`needs_human` 不接受 resolution receipt，项�
 批次才变为 `resolved`。后续处理应只选择仍处于 `processing`
 的项目，不重复结案或重放已结案项目的任务或外部动作。所有关联、证据和结果仍须通过
 Feedback API 持久化并回读一致。
+显式提交 `associations` 时，其项目集合必须恰好等于本次 `feedback_ids` 选中的项目，每个关联字段仍与当前轮次精确比较；不要求附带未选中项的关联。省略 `feedback_ids` 时仍按整批校验。
 
 结案 HTTP 入口与原生 `ResolutionEvidence` 使用同一字段合同，完整传入配置 ID、前一配置 ID、
 load receipt 和 Skill revision 证据；是否需要代码提交由原有 Store scope 校验决定。

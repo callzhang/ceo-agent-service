@@ -18782,8 +18782,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ]
             if normalized_evidence.associations and set(
                 normalized_evidence.associations
-            ) != set(item_keys):
-                raise ValueError("resolution receipt associations do not match batch")
+            ) != selected_key_set:
+                raise ValueError("resolution receipt associations do not match selected items")
             round_by_id = {int(round_row["id"]): round_row for round_row in round_rows}
             decision_record = self._resolution_feedback_iteration_decision(
                 db,
