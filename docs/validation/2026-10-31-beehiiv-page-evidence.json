@@ -1,0 +1,46 @@
+{
+  "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
+  "status": "focused_validation_passed; deployment_pending_parallel_release",
+  "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
+  "root_causes": [
+    "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
+    "Same-outcome retry retained canonical receipt and discarded the new local observation; worker saved summary only.",
+    "Attempt API borrowed current action-level receipt and all action steps for historical Attempts."
+  ],
+  "repair": [
+    "Hash exact Developer instructions plus actual bounded User prompt.",
+    "Store current normalized local result, journal, digests and real measured times on existing Attempt.mail_action_result_json before marker settlement.",
+    "Preserve real recorded Attempt identity after settlement error; worker does not duplicate.",
+    "Cached terminal outcome carries reused_receipt and reference only; no copied original page/times.",
+    "Detail uses exact Attempt result; failed/cached/missing-text cases explicit, no fallback/backfill."
+  ],
+  "evidence_boundary": {
+    "observed_native_page_judge_results": "Four resolved native Codex sessions returned action_required for claw.beehiiv.com with unsubscribe and continue controls. Native trajectories were inspected in place and not copied.",
+    "unproven": "No captured DOM proves a modal/control-discovery defect; no modal change was made.",
+    "real_business_outcome": "Existing Tasks 417954/417957 and Attempts 16482/16483 remain historical skipped_no_reliable_entry, not confirmed unsubscribe. No new real attempt permitted."
+  },
+  "regression_red": [
+    "different actual prompts previously shared workload identity",
+    "local terminal evidence missing before marker settlement",
+    "same-outcome retry lost new page",
+    "Attempt borrowed action-level receipt",
+    "cached receipt copied old page into new Attempt",
+    "settlement failure created duplicate Attempt",
+    "frontend missing-text message absent"
+  ],
+  "checks": {
+    "core_three_files": "138 passed in 51.61s",
+    "worker_targeted": "17 passed, 215 deselected in 4.20s",
+    "frontend_two_files": "85 passed in 2.13s; final wording rerun pending",
+    "build": "tsc --noEmit and vite build passed; final wording rebuild pending",
+    "ruff": "passed",
+    "independent_review": "PASS, no blockers; reviewer did not run tests"
+  },
+  "schema_before": {
+    "objects": 463,
+    "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+    "fk": []
+  },
+  "production_readback": "pending standard deployment",
+  "cleanup": "pending readback; only owned temp /private/tmp/ceo-beehiiv-page-evidence.GZkk4O, generated dev assets, and confirmed release backup generation"
+}

@@ -1020,6 +1020,11 @@ def test_email_attempt_carries_its_message_and_unsubscribe_receipt(tmp_path: Pat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
 
+    local = _FakeEmailStore().get_email_unsubscribe_receipt(TRIGGER)
+    local.pop("entry_url")
+    local["journal"] = _FakeEmailStore().list_email_unsubscribe_steps(TRIGGER)
+    store.update_reply_attempt(attempt_id, mail_action_result_json=json.dumps(local))
+
     _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
 
     assert item is not None
@@ -1137,6 +1142,10 @@ def test_email_history_detail_reuses_initialized_store_and_reads_fresh_context(
 
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    local = _FakeEmailStore().get_email_unsubscribe_receipt(TRIGGER)
+    local.pop("entry_url")
+    local["journal"] = _FakeEmailStore().list_email_unsubscribe_steps(TRIGGER)
+    store.update_reply_attempt(attempt_id, mail_action_result_json=json.dumps(local))
     initializations = []
     reads = []
 
@@ -1746,3 +1755,54 @@ def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_pa
     assert item['actions']['rerun_label'] == '重新处理'
     assert item['actions']['can_rerun'] is True
     assert '不重放历史被拒执行' not in item['status']['message']
+
+
+def test_email_attempt_without_local_evidence_never_borrows_the_current_action_receipt(tmp_path):
+    store = AutoReplyStore(tmp_path / "no-local-evidence.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
+    assert item["email"]["unsubscribe"] is None
+
+
+def test_email_attempt_reads_its_exact_local_result_not_a_later_action_result(tmp_path):
+    store = AutoReplyStore(tmp_path / "local-evidence.sqlite3")
+    ids = [_seed_email_attempt(store, with_agent_runs=False) for _ in range(2)]
+    for number, attempt_id in enumerate(ids, start=1):
+        store.update_reply_attempt(attempt_id, mail_action_result_json=json.dumps({
+            "status": "done", "outcome": "skipped_no_reliable_entry", "summary": "skipped_no_reliable_entry",
+            "receipt_id": f"local-receipt:{number}", "evidence": "page-offers-no-control",
+            "result_text": f"Observed page {number}", "started_at": f"start-{number}", "completed_at": f"end-{number}",
+            "journal": [{"operation": "open_entry", "state": "action_required", "reference": f"page-{number}"}],
+        }))
+    for number, attempt_id in enumerate(ids, start=1):
+        _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
+        receipt = item["email"]["unsubscribe"]
+        assert receipt["result_text"] == f"Observed page {number}"
+        assert receipt["receipt_id"] == f"local-receipt:{number}"
+        assert receipt["completed_at"] == f"end-{number}"
+        assert receipt["steps"] == [{"sequence": 1, "operation": "open_entry", "state": "action_required"}]
+
+
+def test_email_send_result_is_not_presented_as_an_unsubscribe_result():
+    from app.web_api.attempts import _email_payload
+
+    attempt = SimpleNamespace(channel="email", mail_action_result_json=json.dumps({"outcome": "sent"}))
+    assert _email_payload(attempt, None, None)["unsubscribe"] is None
+
+
+@pytest.mark.parametrize("result", [
+    {"status": "failed", "outcome": "failed_browser", "error": {"code": "email_unsubscribe_browser_timeout"}, "operation": "submit_form"},
+    {"status": "done", "outcome": "done", "receipt_id": "existing-receipt", "reused_receipt": True},
+])
+def test_email_attempt_keeps_failure_or_cached_receipt_without_inventing_page_evidence(tmp_path, result):
+    store = AutoReplyStore(tmp_path / "local-without-page.sqlite3")
+    attempt_id = _seed_email_attempt(store, with_agent_runs=False)
+    store.update_reply_attempt(attempt_id, mail_action_result_json=json.dumps(result))
+    _, item = build_attempt_detail(store, attempt_id, email_store_factory=_FakeEmailStore)
+    actual = item["email"]["unsubscribe"]
+    assert actual["result_text"] == ""
+    assert actual["completed_at"] == ""
+    assert actual["steps"] == []
+    assert actual["reused_receipt"] is result.get("reused_receipt", False)
+    assert actual["error_code"] == result.get("error", {}).get("code", "")
+    assert actual["operation"] == result.get("operation", "")

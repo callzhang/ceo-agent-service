@@ -1440,3 +1440,116 @@ def test_failed_receipt_persistence_requires_reconciliation_before_cancellation(
             profile=EmailBrowserProfile(tmp_path / "runtime"), apply=True,
         )
     assert operation.task_store.get_reply_task(task.id).status == "failed"
+
+
+def test_terminal_page_evidence_is_saved_before_the_execution_marker_is_settled(tmp_path, monkeypatch):
+    from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+
+    operation, task, _, _ = _operation(tmp_path, [_action_required(_control("confirmation_email", "confirm", "control-manual"), text="Fresh provider page")])
+    settle = operation.task_store.settle_direct_email_unsubscribe_execution
+
+    def check_saved(identity, execution_record):
+        with operation.task_store._connect() as db:
+            row = db.execute(
+                f"select mail_action_result_json from ({REPLY_ATTEMPT_COMMON_SQL}) where trigger_message_id=? order by id desc limit 1",
+                (identity,),
+            ).fetchone()
+        assert row is not None, "execution evidence must precede marker settlement"
+        local = json.loads(row["mail_action_result_json"])
+        assert "Fresh provider page" in local["result_text"]
+        assert local["journal"][0]["operation"] == "open_entry"
+        settle(identity, execution_record)
+
+    monkeypatch.setattr(operation.task_store, "settle_direct_email_unsubscribe_execution", check_saved)
+    result = operation.execute(task.id)
+    assert result["status"] == "done", result
+    assert result["attempt_id"] > 0
+
+
+def test_same_outcome_recovery_preserves_distinct_local_page_results(tmp_path):
+    from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+    from app.email_worker import _finalize_direct_email_unsubscribe_task
+
+    operation, task, email_store, browser = _operation(tmp_path, [_action_required(_control("confirmation_email", "confirm", "control-manual"), text="First observed page")])
+    first = operation.execute(task.id)
+    _finalize_direct_email_unsubscribe_task(operation.task_store, task, first)
+    original_receipt = email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY)
+    restored = operation.task_store.retry_email_unsubscribe_task(
+        task.id, expected_execution_generation=task.execution_generation,
+    )
+    second_task = operation.task_store.claim_reply_task(restored.id)
+    assert second_task is not None
+    browser.observations.append(_action_required(_control("confirmation_email", "confirm", "control-manual"), text="Newly observed page"))
+    second = operation.execute(second_task.id)
+    _finalize_direct_email_unsubscribe_task(operation.task_store, second_task, second)
+
+    with operation.task_store._connect() as db:
+        rows = db.execute(
+            f"select id,send_status,mail_action_result_json from ({REPLY_ATTEMPT_COMMON_SQL}) where trigger_message_id=? order by id",
+            (ACTION_IDENTITY,),
+        ).fetchall()
+    assert len(rows) == 2, "one factual Attempt per completed browser execution"
+    snapshots = [json.loads(row["mail_action_result_json"]) for row in rows]
+    assert all(row["send_status"] == "skipped" for row in rows)
+    assert "First observed page" in snapshots[0]["result_text"]
+    assert "Newly observed page" in snapshots[1]["result_text"]
+    assert snapshots[0]["completed_at"] != snapshots[1]["completed_at"]
+    assert all(len(value["journal"]) == 1 for value in snapshots)
+    assert first["attempt_id"] == rows[0]["id"] and second["attempt_id"] == rows[1]["id"]
+    assert email_store.get_email_unsubscribe_receipt(ACTION_IDENTITY) == original_receipt
+    assert len(browser.calls) == 2
+
+
+def test_failed_attempt_evidence_write_keeps_the_execution_marker(tmp_path, monkeypatch):
+    operation, task, _, _ = _operation(tmp_path, [_terminal(_effect(), UnsubscribePageState.DONE, "Unsubscribed.")])
+
+    def fail_write(**_kwargs):
+        raise sqlite3.OperationalError("attempt write interrupted")
+
+    monkeypatch.setattr(operation.task_store, "record_reply_attempt", fail_write)
+    result = operation.execute(task.id)
+    assert result["status"] == "failed"
+    with operation.task_store._connect() as db:
+        marker = db.execute(
+            f"select value from ({state_projection('service_state')}) where key=?",
+            (f"email_unsubscribe_execution_pending:v1:{ACTION_IDENTITY}",),
+        ).fetchone()
+    assert json.loads(marker["value"])["state"] == "pending"
+
+
+def test_cached_terminal_receipt_is_not_recorded_as_a_new_page_observation(tmp_path):
+    from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+    from app.email_worker import _finalize_direct_email_unsubscribe_task
+
+    operation, task, _, browser = _operation(tmp_path, [_terminal(_effect(), UnsubscribePageState.DONE, "Original confirmation page.")])
+    operation.execute(task.id)
+    cached = operation.execute(task.id)
+    _finalize_direct_email_unsubscribe_task(operation.task_store, task, cached)
+    with operation.task_store._connect() as db:
+        row = db.execute(f"select mail_action_result_json from ({REPLY_ATTEMPT_COMMON_SQL}) where trigger_message_id=? order by id desc limit 1", (ACTION_IDENTITY,)).fetchone()
+    local = json.loads(row["mail_action_result_json"])
+    assert local["reused_receipt"] is True
+    assert "result_text" not in local
+    assert "completed_at" not in local
+    assert len(browser.calls) == 1
+
+
+def test_settlement_failure_keeps_the_recorded_attempt_without_a_duplicate(tmp_path, monkeypatch):
+    from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
+    from app.email_worker import _finalize_direct_email_unsubscribe_task
+
+    operation, task, _, _ = _operation(tmp_path, [_terminal(_effect(), UnsubscribePageState.DONE, "Observed confirmation.")])
+
+    def fail_settle(*_args):
+        raise sqlite3.OperationalError("marker settlement interrupted")
+
+    monkeypatch.setattr(operation.task_store, "settle_direct_email_unsubscribe_execution", fail_settle)
+    result = operation.execute(task.id)
+    assert result["status"] == "failed"
+    _finalize_direct_email_unsubscribe_task(operation.task_store, task, result)
+    with operation.task_store._connect() as db:
+        rows = db.execute(f"select id,send_status,mail_action_result_json from ({REPLY_ATTEMPT_COMMON_SQL}) where trigger_message_id=?", (ACTION_IDENTITY,)).fetchall()
+    assert len(rows) == 1
+    assert result["attempt_id"] == rows[0]["id"]
+    assert rows[0]["send_status"] == "completed"
+    assert "Observed confirmation." in json.loads(rows[0]["mail_action_result_json"])["result_text"]

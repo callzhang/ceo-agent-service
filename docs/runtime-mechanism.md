@@ -684,6 +684,8 @@ Reply Task 的 stale 恢复另由独立 Email watchdog 周期执行，不依赖 
 
 `POST /api/console/history/tasks/{task_id}/retry` 的邮件退订分支统一经 `retry_email_unsubscribe_task` 恢复：既有无效果失败路径保持原限制；有回执时仅允许执行器共享的 `skipped_no_reliable_entry`／`skipped_login_required` 重新判读。恢复在同一事务内核对当前 Task/input/generation、当前 ActionPlan、账号／消息／线程／入口与回执及效果摘要，拒绝已取消、成功或其他不可重试回执、未知围栏、活动 Run/Runtime Attempt、未结束 claim/continuation。CAS 只将同一 Task 放回 pending 并生成新代次，原 Attempt、回执、effect 与 step 不变；与无效果失败共用动作身份级累计重试预算，换代不能返还预算。接口自身不调用 provider，原 worker 仍先读取当前页面再按原授权继续。已精简邮件输入只用保留 provenance 核对身份与原入口，再从原文读取器取得并验证真实邮件；不从历史结果重造原文。启动时的自动 receipt 投影恢复规则不变，不因这个手动入口在每次重启重开跳过任务。
 
+直接退订的页面判读缓存身份覆盖实际 Developer 指令和 User prompt（主机、实际提交的页面文本与控件）。本次浏览器结果只由现有 Attempt 的 `mail_action_result_json` 拥有，含脱敏文本、摘要、本次步骤和真实起止时间；同结果重读仍保存新观察，不依赖是否替换动作级回执。终态 Attempt 在执行标记结算前保存，结算失败保留事实并让任务按实际错误结束，worker 不重复写 Attempt。详情不读取动作当前回执充当历史运行；局部文本缺失时明确不可用。复用不可重试终态回执只记录业务结果、回执引用和 `reused_receipt`，不复制旧页面或时间。未读到页面的失败保留实际错误码及已有操作阶段。不回填旧记录，不复制 CLI trajectory；既有授权、重试预算、取消与围栏政策不变。
+
 退订浏览器的遮挡弹窗处理先核对 DOM 归属：若原已绑定目标位于确认弹窗内部，保留该弹窗并继续点击原目标；仅对弹窗外被遮挡的目标沿用既有关闭处理。
 
 Email task Consumer 串行执行，每轮只领取即将处理的一条任务；后续任务保持 pending，直到轮到它们才创建 processing 锁并开始计时，避免批次内等待被 stale watchdog 误算为执行停滞。领取后的执行、重试和回收阈值沿用现有机制。

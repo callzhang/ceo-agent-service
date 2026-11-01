@@ -165,11 +165,14 @@ def build_page_judge(
         text: str,
         controls: Sequence[str],
     ) -> UnsubscribePageJudgement:
-        page_digest = sha256(text.encode("utf-8")).hexdigest()
+        prompt = build_prompt(host, text, controls)
+        page_digest = sha256(
+            (_DEVELOPER_INSTRUCTIONS + "\n" + prompt).encode("utf-8")
+        ).hexdigest()
         result = routed_execution.execute(
             workload_kind="email_unsubscribe_page",
             workload_key=f"email-unsubscribe-page:{action_identity}:{page_digest}",
-            prompt=build_prompt(host, text, controls),
+            prompt=prompt,
             command_factory=CodexCommandFactory.standard(
                 developer_instructions=_DEVELOPER_INSTRUCTIONS,
                 use_output_schema=False,

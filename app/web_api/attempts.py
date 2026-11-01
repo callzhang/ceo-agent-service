@@ -388,10 +388,8 @@ def _email_payload(
         payload["candidate_source"] = normalize_display_value(
             parameters.get("candidate_source")
         )
-    if email_store_factory is None:
-        return payload
-    email_store = email_store_factory()
-    if classification_id.isdigit():
+    if email_store_factory is not None and classification_id.isdigit():
+        email_store = email_store_factory()
         classification = email_store.get_classification(int(classification_id))
         if classification is not None:
             payload.update(
@@ -407,26 +405,19 @@ def _email_payload(
                     ),
                 }
             )
-    action_identity = str(getattr(attempt, "trigger_message_id", "") or "").strip()
-    receipt = email_store.get_email_unsubscribe_receipt(action_identity)
-    if receipt is not None:
+    local_result = getattr(attempt, "mail_action_result_json", "")
+    if local_result and payload["action_type"] == "unsubscribe":
+        receipt = json.loads(local_result)
         payload["unsubscribe"] = {
-            "outcome": normalize_display_value(receipt.get("outcome")),
-            "evidence": normalize_display_value(receipt.get("evidence")),
-            "result_text": normalize_display_value(receipt.get("result_text")),
-            "receipt_id": normalize_display_value(receipt.get("receipt_id")),
-            "entry_reference": normalize_display_value(receipt.get("entry_reference")),
-            "started_at": normalize_display_value(receipt.get("started_at")),
-            "completed_at": normalize_display_value(receipt.get("completed_at")),
-            "steps": [
-                {
-                    "sequence": int(step.get("sequence") or 0),
-                    "operation": normalize_display_value(step.get("operation")),
-                    "state": normalize_display_value(step.get("state")),
-                }
-                for step in email_store.list_email_unsubscribe_steps(action_identity)
-            ],
+            name: normalize_display_value(receipt.get(name))
+            for name in ("outcome", "evidence", "result_text", "receipt_id", "entry_reference", "started_at", "completed_at", "operation")
         }
+        payload["unsubscribe"]["error_code"] = normalize_display_value(receipt.get("error", {}).get("code"))
+        payload["unsubscribe"]["reused_receipt"] = receipt.get("reused_receipt") is True
+        payload["unsubscribe"]["steps"] = [
+            {"sequence": number, "operation": step["operation"], "state": step["state"]}
+            for number, step in enumerate(receipt.get("journal", []), start=1)
+        ]
     return payload
 
 

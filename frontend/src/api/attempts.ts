@@ -24,6 +24,9 @@ export interface AttemptAgentSession {
 }
 
 export interface AttemptUnsubscribeReceipt {
+  error_code?: string;
+  operation?: string;
+  reused_receipt?: boolean;
   outcome: string;
   evidence: string;
   result_text: string;

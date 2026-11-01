@@ -605,13 +605,35 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByText("已删除邮件")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "打开这封邮件" })).toHaveAttribute("href", "/email?tab=list&selected=6811963115514558557");
     expect(screen.getByTestId("attempt-conversation-actions")).toContainElement(screen.getByRole("link", { name: "打开这封邮件" }));
-    expect(screen.getByRole("heading", { name: "退订回执" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "本次退订运行结果" })).toBeInTheDocument();
     expect(screen.getAllByText("skipped_no_reliable_entry").length).toBeGreaterThan(0);
     expect(screen.getByText("page-not-operable")).toBeInTheDocument();
     expect(screen.getByText("host='r.openai.com' control_count=0")).toBeInTheDocument();
     expect(screen.getByText("open_entry")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "https://r.openai.com/asm/unsubscribe?token=private-token" })).not.toBeInTheDocument();
     expect(screen.queryByText("退订入口（打开会真实执行退订）")).not.toBeInTheDocument();
+  });
+
+  it.each([false, true])("distinguishes missing page evidence from a reused receipt (%s)", async (reused) => {
+    getAttemptDetail.mockResolvedValueOnce({
+      item: { ...detail, email: {
+        classification_id: "email-1", classification_url: "", account_id: "primary",
+        action_type: "unsubscribe", category: "subscription", action_plan_id: "plan-1",
+        stable_message_identity: "message-1", subject: "Email", sender: "sender@example.com",
+        folder: "Inbox", received_at: "", rfc_message_id: "", candidate_source: "header",
+        unsubscribe: { outcome: reused ? "done" : "failed_browser", evidence: "",
+          result_text: "", receipt_id: reused ? "existing-receipt" : "", entry_reference: "",
+          started_at: "", completed_at: "", steps: [], reused_receipt: reused,
+          error_code: reused ? "" : "email_unsubscribe_browser_timeout", operation: reused ? "" : "submit_form" },
+      } }, meta: { snapshot_at: "2026-10-31T00:00:00Z" },
+    });
+    renderPage();
+    await screen.findByRole("heading", { name: "本次退订运行结果" });
+    expect(screen.getByText(reused ? "本次复用既有终态回执，未重新读取页面。" : "本次运行未记录页面文本。")).toBeInTheDocument();
+    if (!reused) {
+      expect(screen.getByText("email_unsubscribe_browser_timeout")).toBeInTheDocument();
+      expect(screen.getByText("submit_form")).toBeInTheDocument();
+    }
   });
 
   it("does not expand an empty counterparty feedback section", async () => {
@@ -653,6 +675,7 @@ describe("AttemptDetailPage", () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "关联邮件" })).toBeInTheDocument();
+    expect(screen.getByText("本次运行未记录页面文本。")).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "Audit context" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "处理历史" })).toBeInTheDocument();
     expect(screen.getByText("重复的审计上下文")).toBeInTheDocument();

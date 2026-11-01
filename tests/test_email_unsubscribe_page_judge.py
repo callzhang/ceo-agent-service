@@ -125,3 +125,16 @@ def test_a_reply_that_is_not_a_judgement_fails_the_turn_instead_of_guessing() ->
 
     with pytest.raises(ValueError):
         judge(ACTION, "example.com", "Some page", [])
+
+
+def test_same_text_with_different_host_or_controls_has_distinct_runtime_identity() -> None:
+    routed = _Routed('{"state": "action_required", "evidence": "Confirm unsubscribe"}')
+    judge = build_page_judge(routed)
+    text = "Confirm unsubscribe"
+    judge(ACTION, "one.example", text, ["button:unsubscribe"])
+    judge(ACTION, "one.example", text, [])
+    judge(ACTION, "two.example", text, [])
+    prompts = [call["prompt"] for call in routed.calls]
+    keys = [call["workload_key"] for call in routed.calls]
+    assert len(set(prompts)) == 3
+    assert len(set(keys)) == 3

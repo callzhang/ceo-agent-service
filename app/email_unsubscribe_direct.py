@@ -17,8 +17,10 @@ the only durable fence, and the page's own redacted text is the evidence.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import replace
+from dataclasses import asdict, replace
 from hashlib import sha256
+from datetime import datetime, timezone
+import json
 
 from app.email_unsubscribe import (
     DEFAULT_UNSUBSCRIBE_BROWSER_TIMEOUT_MS,
@@ -241,6 +243,22 @@ def run_direct_unsubscribe(
     shows, which is the only thing that was ever authoritative.
     """
 
+    started_at = datetime.now(timezone.utc).isoformat()
+    result = _drive_direct_unsubscribe(
+        browser, effect, entry, one_click_verified=one_click_verified,
+        max_controls=max_controls, executed=executed,
+    )
+    return replace(
+        result, started_at=started_at,
+        completed_at=datetime.now(timezone.utc).isoformat(),
+    )
+
+
+def _drive_direct_unsubscribe(
+    browser: object, effect: EmailUnsubscribeEffect, entry: UnsubscribeEntry,
+    *, one_click_verified: bool, max_controls: int,
+    executed: list[UnsubscribeOperation] | None,
+) -> UnsubscribeExecutionResult:
     journal: list[RedactedUnsubscribeStep] = []
     operation = opening_operation(entry, one_click_verified=one_click_verified)
     operated: set[str] = set()
@@ -420,6 +438,41 @@ def _close_session(manager: object, profile: object, action_identity: str) -> No
 _RETRYABLE_SKIP_OUTCOMES = frozenset({"skipped_no_reliable_entry", "skipped_login_required"})
 
 
+def _local_run_result(result: UnsubscribeExecutionResult) -> dict[str, object]:
+    """The actual local browser result, including every operation it performed."""
+    from app.email_unsubscribe_audit import _normalize_result
+
+    payload = _normalize_result(result).model_dump(mode="json")
+    payload["journal"] = [asdict(step) for step in result.journal]
+    payload["result_text_digest"] = result.result_text_digest
+    payload["result_text_truncated"] = result.result_text_truncated
+    if result.receipt is not None:
+        payload["entry_reference"] = result.receipt.entry_reference
+    return payload
+
+
+def record_direct_unsubscribe_attempt(store, task, result: dict[str, object]) -> int:
+    """Keep this local mail-operation result on its own existing Attempt owner."""
+    status = str(result.get("status") or "failed")
+    outcome = str(result.get("outcome") or "")
+    summary = str(result.get("summary") or outcome or "email_unsubscribe_failed")
+    detail = str(result.get("evidence") or "").strip() if status != "done" else ""
+    return store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="direct_unsubscribe",
+        sensitivity_kind="email",
+        codex_reason=summary,
+        audit_summary=f"{summary}: {detail}" if detail else summary,
+        send_status=("completed" if outcome == "done" else "skipped") if status == "done" else "failed",
+        channel="email",
+        mail_action_result_json=json.dumps(result, ensure_ascii=False, sort_keys=True),
+    )
+
+
 class DirectEmailUnsubscribeOperation:
     """Unsubscribe one email task in a single call and record the evidence.
 
@@ -451,7 +504,6 @@ class DirectEmailUnsubscribeOperation:
             _authentication_from_payload,
             _current_action_plan,
             _locator_from_classification,
-            _normalize_result,
             _rejection_detail,
             _resolve_entries_with_authentication,
             _task_payload,
@@ -467,6 +519,7 @@ class DirectEmailUnsubscribeOperation:
         )
         if task is None:
             return _failed_call("unsubscribe_task_missing")
+        recorded_attempt_id: int | None = None
         try:
             payload = _task_payload(task)
             identity = _validate_task_identity(task, payload)
@@ -556,19 +609,25 @@ class DirectEmailUnsubscribeOperation:
                 )
 
             def persist_result(result: UnsubscribeExecutionResult) -> None:
+                nonlocal recorded_attempt_id
                 if result.receipt:
                     if not retrying_unreliable_entry or result.outcome.value != previous_outcome:
                         self._persist(
                             self._performed_effect(effect, executed), result,
                             entry_url=entry.private_url,
                         )
+                    recorded_attempt_id = record_direct_unsubscribe_attempt(
+                        self.task_store, task, _local_run_result(result),
+                    )
                     self.task_store.settle_direct_email_unsubscribe_execution(action_identity, execution_record)
 
             result = self.run_effect(
                 effect, entry, one_click_verified=one_click_verified,
                 executed=executed, persist_result=persist_result, start_execution=start_execution,
             )
-            normalized = _normalize_result(result).model_dump(mode="json")
+            normalized = _local_run_result(result)
+            if recorded_attempt_id is not None:
+                normalized["attempt_id"] = recorded_attempt_id
             error = normalized.get("error")
             if (
                 not result.receipt
@@ -590,10 +649,13 @@ class DirectEmailUnsubscribeOperation:
             )
         except Exception as exc:  # noqa: BLE001 - a public tool fails closed
             detail = _rejection_detail(exc)
-            return _failed_call(
+            failed = _failed_call(
                 f"unsubscribe_operation_rejected:{type(exc).__name__}",
                 detail=detail,
             )
+            if recorded_attempt_id is not None:
+                failed["attempt_id"] = recorded_attempt_id
+            return failed
 
     def _performed_effect(
         self,
@@ -753,11 +815,7 @@ def _persisted_receipt_result(receipt: dict[str, object]) -> dict[str, object]:
         "status": "done",
         "outcome": receipt["outcome"],
         "receipt_id": receipt["receipt_id"],
-        "evidence": receipt["evidence"],
-        "result_text": receipt["result_text"],
-        "observation_digest": receipt["observation_digest"],
-        "started_at": receipt["started_at"],
-        "completed_at": receipt["completed_at"],
+        "reused_receipt": True,
         "summary": str(receipt["outcome"]),
         "error": AgentError().model_dump(mode="json"),
     }

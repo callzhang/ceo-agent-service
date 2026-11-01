@@ -1984,7 +1984,6 @@ def _finalize_direct_email_unsubscribe_task(
 
     status = str(result.get("status") or "failed")
     outcome = str(result.get("outcome") or "")
-    summary = str(result.get("summary") or outcome or "email_unsubscribe_failed")
     error = result.get("error")
     error_code = (
         str(error.get("code") or "")
@@ -1994,10 +1993,8 @@ def _finalize_direct_email_unsubscribe_task(
     retryable = bool(error.get("retryable")) if isinstance(error, Mapping) else False
     failure_detail = ""
     if status == "done":
-        send_status = "completed" if outcome == "done" else "skipped"
         task_error = ""
     else:
-        send_status = "failed"
         task_error = error_code or outcome or "email_unsubscribe_failed"
         # The redacted exception behind a fallback code (class and message),
         # so the attempt and Attention say why, not only which bucket.
@@ -2005,20 +2002,10 @@ def _finalize_direct_email_unsubscribe_task(
         if failure_detail:
             task_error = f"{task_error}: {failure_detail}"
 
-    store.record_reply_attempt(
-        conversation_id=task.conversation_id,
-        conversation_title=task.conversation_title,
-        trigger_message_id=task.trigger_message_id,
-        trigger_sender=task.trigger_sender,
-        trigger_text=task.trigger_text,
-        action="direct_unsubscribe",
-        sensitivity_kind="email",
-        codex_reason=summary,
-        # History reads the attempt's summary; a failure carries its detail.
-        audit_summary=f"{summary}: {failure_detail}" if failure_detail else summary,
-        send_status=send_status,
-        channel="email",
-    )
+    if "attempt_id" not in result:
+        from app.email_unsubscribe_direct import record_direct_unsubscribe_attempt
+
+        record_direct_unsubscribe_attempt(store, task, dict(result))
     if status == "done":
         store.complete_reply_task(
             task.id, expected_execution_generation=task.execution_generation
