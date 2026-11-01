@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-beehiiv-page-evidence-20261031 | app/email_unsubscribe_page_judge.py; app/email_unsubscribe_direct.py; app/email_unsubscribe.py page observation/control discovery only if root cause proven; app/email_store.py::persist_email_unsubscribe_terminal only; app/email_worker.py direct finalize only if needed; relevant unsubscribe tests; tests/test_documentation_contract.py current Email documentation boundary node only; app/web_api/attempts.py email evidence; frontend/src/pages/AttemptDetailPage.tsx and test email receipt block; frontend/src/api/attempts.ts actual local error/cache metadata only; docs architecture/runtime unsubscribe paragraphs; scoped plan/validation; own claim | Explicitly approved page interpretation/run evidence repair with doubles; no real unsubscribe, no retry/auth/audit policy expansion; coordinated standard release | 2026-10-31 active |
 
 
 

@@ -1,6 +1,6 @@
 {
   "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
-  "status": "approved_cache_fix_merged_and_focused_checks_passed; exact_target_gate_and_deployment_pending",
+  "status": "deployed_readback_verified_and_owned_artifacts_cleaned",
   "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
   "root_causes": [
     "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
@@ -42,7 +42,301 @@
     "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
     "fk": []
   },
-  "production_readback": "pending standard deployment",
+  "production_readback": {
+    "at": "2026-11-01T06:08:19.090749+00:00",
+    "installed": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+    "frontend_tree": "9bd72925801d04f51dd18341de38ffafcf8c11e7",
+    "frontend_stamp": "9bd72925801d04f51dd18341de38ffafcf8c11e7",
+    "api_listeners": [
+      "COMMAND     PID  USER   FD   TYPE             DEVICE SIZE/OFF NODE NAME",
+      "python3.1 15884 derek   15u  IPv4 0x955ec8bd0fea1581      0t0  TCP 127.0.0.1:8765 (LISTEN)"
+    ],
+    "reads": [
+      {
+        "path": "/healthz",
+        "http": 200,
+        "seconds": 0.028,
+        "result": {
+          "ok": true,
+          "status": "ok"
+        }
+      },
+      {
+        "path": "/api/workers/status",
+        "http": 200,
+        "seconds": 1.395,
+        "summary": {
+          "queue_count": 11,
+          "pending": 3,
+          "processing": 0,
+          "failed": 24,
+          "retryable": 0,
+          "attention": 0
+        },
+        "system_health": {
+          "state": "healthy",
+          "detail": "No current quality-gate violations. Native delivery results readable: 400; unavailable: 0.",
+          "checked_at": "2026-11-01T06:07:48.810821+00:00",
+          "violations": 0,
+          "native_delivery_coverage": {
+            "checked": 400,
+            "unavailable": 0
+          }
+        }
+      },
+      {
+        "path": "/api/console/attention",
+        "http": 200,
+        "seconds": 0.695,
+        "meta": {
+          "snapshot_at": "2026-11-01T06:08:23.780833Z",
+          "page": null,
+          "page_size": null,
+          "total": 0,
+          "next_cursor": "",
+          "has_more": false
+        },
+        "rows": 0
+      },
+      {
+        "path": "/api/console/history?include_chart=0&page=1&page_size=20",
+        "http": 200,
+        "seconds": 1.014,
+        "meta": {
+          "snapshot_at": "2026-11-01T06:08:24.797219Z",
+          "page": 1,
+          "page_size": 20,
+          "total": 39898,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "rows": 20
+      },
+      {
+        "path": "/api/console/history?include_chart=0&page=2&page_size=20",
+        "http": 200,
+        "seconds": 2.567,
+        "meta": {
+          "snapshot_at": "2026-11-01T06:08:27.357114Z",
+          "page": 2,
+          "page_size": 20,
+          "total": 39898,
+          "next_cursor": "3",
+          "has_more": true
+        },
+        "rows": 20
+      },
+      {
+        "path": "/api/console/history?include_chart=0&q=Beehiiv&page=1&page_size=20",
+        "http": 200,
+        "seconds": 3.624,
+        "meta": {
+          "snapshot_at": "2026-11-01T06:08:30.986970Z",
+          "page": 1,
+          "page_size": 20,
+          "total": 377,
+          "next_cursor": "2",
+          "has_more": true
+        },
+        "rows": 20
+      },
+      {
+        "path": "/api/console/history/16482",
+        "http": 200,
+        "seconds": 0.496,
+        "status": {
+          "raw": "done",
+          "subject": "未记录事项摘要",
+          "message": "当前状态：done。",
+          "requires_decision": false,
+          "attention": {
+            "kind": "",
+            "reason": "",
+            "external_effect": "",
+            "retry_at": ""
+          }
+        },
+        "unsubscribe": null
+      },
+      {
+        "path": "/api/console/history/16483",
+        "http": 200,
+        "seconds": 0.234,
+        "status": {
+          "raw": "done",
+          "subject": "未记录事项摘要",
+          "message": "当前状态：done。",
+          "requires_decision": false,
+          "attention": {
+            "kind": "",
+            "reason": "",
+            "external_effect": "",
+            "retry_at": ""
+          }
+        },
+        "unsubscribe": null
+      },
+      {
+        "path": "/api/console/history/15258",
+        "http": 200,
+        "seconds": 0.202,
+        "status": {
+          "raw": "skipped",
+          "subject": "Immutable ActionPlan authorizes unsubscribe.",
+          "message": "这条事项已判定无需回复，无需你操作。",
+          "requires_decision": false,
+          "attention": {
+            "kind": "",
+            "reason": "",
+            "external_effect": "",
+            "retry_at": ""
+          }
+        },
+        "unsubscribe": {
+          "outcome": "failed_browser",
+          "evidence": "",
+          "result_text": "",
+          "receipt_id": "",
+          "entry_reference": "",
+          "started_at": "",
+          "completed_at": "",
+          "operation": "submit_form",
+          "error_code": "email_unsubscribe_browser_timeout",
+          "reused_receipt": false,
+          "steps": []
+        }
+      },
+      {
+        "path": "/api/console/history/tasks/417954",
+        "http": 200,
+        "seconds": 0.057,
+        "status": "done",
+        "attempts": [
+          {
+            "id": 16440,
+            "status": "failed",
+            "action": "direct_unsubscribe"
+          },
+          {
+            "id": 16443,
+            "status": "failed",
+            "action": "direct_unsubscribe"
+          },
+          {
+            "id": 16471,
+            "status": "skipped",
+            "action": "direct_unsubscribe"
+          },
+          {
+            "id": 16482,
+            "status": "skipped",
+            "action": "direct_unsubscribe"
+          }
+        ]
+      },
+      {
+        "path": "/api/console/history/tasks/417957",
+        "http": 200,
+        "seconds": 0.062,
+        "status": "done",
+        "attempts": [
+          {
+            "id": 16464,
+            "status": "failed",
+            "action": "direct_unsubscribe"
+          },
+          {
+            "id": 16473,
+            "status": "skipped",
+            "action": "direct_unsubscribe"
+          },
+          {
+            "id": 16483,
+            "status": "skipped",
+            "action": "direct_unsubscribe"
+          }
+        ]
+      }
+    ],
+    "schema": {
+      "objects": 463,
+      "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": []
+    },
+    "receipts": [
+      {
+        "receipt_id": "unsubscribe-receipt:d0305b76c6ef78259ecac95b:no_reliable_entry",
+        "outcome": "skipped_no_reliable_entry",
+        "evidence": "page-offers-no-control",
+        "started_at": "2026-10-31T10:14:12+00:00",
+        "completed_at": "2026-10-31T10:14:12+00:00",
+        "result_text_sha256": "7053fe36aec38ad25e87d4a54d9107e2a6fa3cff55a648ae6bfb3e13a3ddaf0e",
+        "result_text_characters": 1093,
+        "action_identity": "email-action:a4cf98774a3bb2301619828beedb98be8cdbb26bec05b4d1ad28e9aea27d1060",
+        "attempt_count": 4,
+        "runtime_count": 2
+      },
+      {
+        "receipt_id": "unsubscribe-receipt:37ca302ff83a3d17b8eced14:no_reliable_entry",
+        "outcome": "skipped_no_reliable_entry",
+        "evidence": "page-offers-no-control",
+        "started_at": "2026-10-31T10:16:35+00:00",
+        "completed_at": "2026-10-31T10:16:35+00:00",
+        "result_text_sha256": "48ef7ff213a628f695880a94ad959e8d4e59dc9b235a9f921adf3cf9153306d4",
+        "result_text_characters": 1119,
+        "action_identity": "email-action:a87ee524a98a83e14d31884f7fdfbfb40547b10b8ffe768107e208cb7477d2ff",
+        "attempt_count": 3,
+        "runtime_count": 2
+      }
+    ],
+    "attempts": [
+      {
+        "id": 15258,
+        "send_status": "failed",
+        "local_result_length": 168
+      },
+      {
+        "id": 16482,
+        "send_status": "skipped",
+        "local_result_length": 0
+      },
+      {
+        "id": 16483,
+        "send_status": "skipped",
+        "local_result_length": 0
+      }
+    ],
+    "served_attempt_asset": {
+      "path": "assets/AttemptDetailPage-BsOEJrVc.js",
+      "sha256": "404e723177440b858127c996e665656b6925209ef280015620b74d832194ed02",
+      "matches_installed_bytes": true,
+      "has_missing_text_message": true,
+      "has_reused_receipt_message": true
+    },
+    "launchd": {
+      "pid": "15879",
+      "state": "running"
+    },
+    "upgrade": {
+      "backup_path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-0f644742-5ac0-4d6f-a305-932a775f10c0.sqlite3",
+      "branch_name": "",
+      "commit_message": "",
+      "error": "",
+      "expected_fingerprint": "8862b61a5ac7beeecf637ece4a8fb701843e43571220843077af045ae64fd41d",
+      "installed_commit": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+      "operation_id": "deploy-0f644742-5ac0-4d6f-a305-932a775f10c0",
+      "original_commit": "ec2bdcc68760cd1570d884da99769a2890bdc199",
+      "status": "succeeded",
+      "target_commit": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+      "updated_at": "2026-11-01T06:07:50.101632+00:00"
+    },
+    "gate": {
+      "commit": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+      "passed_at": "2026-11-01T06:06:40+00:00",
+      "files": 433,
+      "summary": "8647 passed, 2 skipped, 1 deselected in 597.49s (0:09:57)"
+    }
+  },
   "cleanup": {
     "completed_failed_gate_copies": [
       {
@@ -57,9 +351,52 @@
       }
     ],
     "deleted_and_absent": true,
-    "failure_logs": "Byte-matched compact logs retained in active task temp until final readback",
-    "production_backup": "No backup created by either refused deployment; both stopped at gate. Other owner backup untouched.",
-    "active_task_temp": "/private/tmp/ceo-beehiiv-page-evidence.GZkk4O remains for pending deployment/readback; cleanup not marked complete"
+    "failure_logs": "Temporary logs removed after concise failures, exact commits and hashes were recorded. Native gate proof and original trajectories retained.",
+    "production_backup": "Exact verified generation deleted after readback under directory lock and inode/mtime guard, per Derek retention override.",
+    "active_task_temp": "Deleted after acceptance evidence was copied to this record. No open references; task-owned directory only.",
+    "deployment_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-0f644742-5ac0-4d6f-a305-932a775f10c0.sqlite3",
+      "device": 16777231,
+      "inode": 847359397,
+      "mtime_ns": 1793513261697883309,
+      "size": 514969600,
+      "integrity": "ok",
+      "complete_marker": "CEOB",
+      "schema_objects": 463,
+      "schema_sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": [],
+      "directory_lock": true,
+      "generation_guard": true,
+      "no_open_references": true,
+      "deleted_and_absent": true,
+      "retention_authorization": "Derek explicitly requested clearing completed-work backups after verification/readback; overrides default newest-copy retention."
+    },
+    "remaining_owned_paths": [],
+    "owned_temporary_paths_deleted": [
+      "/private/tmp/ceo-beehiiv-page-evidence.GZkk4O",
+      "/Users/derek/.codex/worktrees/business-model-unification-next/ceo-agent-service/app/static/workbench"
+    ],
+    "gate_paths_absent": [
+      "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.bj5k0j0u",
+      "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.aigdj6my",
+      "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.ubmb5pex"
+    ],
+    "preserved": "Production database, production frontend, native trajectories, other active worktrees, unrelated OA workflow directories and native gate-passed proof.",
+    "post_cleanup_health": {
+      "http": 200,
+      "result": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "post_cleanup_production_asset_unchanged": true,
+    "post_cleanup_backup_and_sidecars_absent": true,
+    "remaining_backup_root_files": [],
+    "preserved_other_workflow_directories": [
+      "oa-project-value-20261030",
+      "oa-material-dimensions-20261030"
+    ],
+    "verification_correction": "Initial no-open-file guard caught the verifier's own SQLite handle and prevented deletion. Repeated with explicit connection close; all integrity/generation/open-reference checks passed before unlink."
   },
   "gate_attempts": [
     {
@@ -81,6 +418,19 @@
       "budget_seconds": 600,
       "memory_limit_gib": 2,
       "log_retained_until_readback": true
+    },
+    {
+      "commit": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+      "status": "passed",
+      "proof": {
+        "commit": "97e3cdbb1463e1dce650327abd4b233e3d37b503",
+        "passed_at": "2026-11-01T06:06:40+00:00",
+        "files": 433,
+        "summary": "8647 passed, 2 skipped, 1 deselected in 597.49s (0:09:57)"
+      },
+      "budget_seconds": 600,
+      "memory_limit_gib": 2,
+      "coverage_removed": 0
     }
   ],
   "test_preparation_measurement": {
@@ -120,5 +470,74 @@
     "fixed_budget_seconds": 600,
     "fixed_memory_gib": 2,
     "gate_tests_removed": 0
-  }
+  },
+  "production_before_reference": {
+    "installed": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
+    "schema": {
+      "objects": 463,
+      "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": []
+    },
+    "attempts": [
+      {
+        "id": 15258,
+        "send_status": "failed",
+        "local_result_length": 168
+      },
+      {
+        "id": 16482,
+        "send_status": "skipped",
+        "local_result_length": 0
+      },
+      {
+        "id": 16483,
+        "send_status": "skipped",
+        "local_result_length": 0
+      }
+    ],
+    "receipts": [
+      {
+        "receipt_id": "unsubscribe-receipt:d0305b76c6ef78259ecac95b:no_reliable_entry",
+        "outcome": "skipped_no_reliable_entry",
+        "evidence": "page-offers-no-control",
+        "started_at": "2026-10-31T10:14:12+00:00",
+        "completed_at": "2026-10-31T10:14:12+00:00",
+        "result_text_sha256": "7053fe36aec38ad25e87d4a54d9107e2a6fa3cff55a648ae6bfb3e13a3ddaf0e",
+        "result_text_characters": 1093,
+        "action_identity": "email-action:a4cf98774a3bb2301619828beedb98be8cdbb26bec05b4d1ad28e9aea27d1060",
+        "attempt_count": 4,
+        "runtime_count": 2
+      },
+      {
+        "receipt_id": "unsubscribe-receipt:37ca302ff83a3d17b8eced14:no_reliable_entry",
+        "outcome": "skipped_no_reliable_entry",
+        "evidence": "page-offers-no-control",
+        "started_at": "2026-10-31T10:16:35+00:00",
+        "completed_at": "2026-10-31T10:16:35+00:00",
+        "result_text_sha256": "48ef7ff213a628f695880a94ad959e8d4e59dc9b235a9f921adf3cf9153306d4",
+        "result_text_characters": 1119,
+        "action_identity": "email-action:a87ee524a98a83e14d31884f7fdfbfb40547b10b8ffe768107e208cb7477d2ff",
+        "attempt_count": 3,
+        "runtime_count": 2
+      }
+    ]
+  },
+  "readback_assertions": {
+    "exact_installed_target": true,
+    "launchd_running": true,
+    "api_pid": 15884,
+    "frontend_stamp_and_served_bytes": true,
+    "all_11_gets_http_200": true,
+    "historical_attempts_do_not_borrow_action_receipt": true,
+    "historical_failure_code_and_operation_readable": true,
+    "attempt_counts_4_and_3_unchanged": true,
+    "page_runtime_counts_2_each_unchanged": true,
+    "all_original_receipt_fields_and_hashes_unchanged": true,
+    "schema_and_fk_exactly_unchanged": true,
+    "business_unsubscribe_success_confirmed": false,
+    "real_unsubscribe_or_retry_invoked": false,
+    "manual_browser": "Not run: browser capability disabled. Component regressions plus actual API/asset readback used; no manual click claim."
+  },
+  "remaining_risk": "Full gate passed at 597.49s, only2.51s below fixed limit. This run does not prove a larger future timing margin or optimal overall gate performance. No extra optimization scope added.",
+  "closed_at_local": "2026-10-31T23:13:41.089182-07:00"
 }
