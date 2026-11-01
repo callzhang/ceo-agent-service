@@ -50,6 +50,7 @@ tests/test_email_action_writes.py
 tests/test_email_classification_schema.py
 tests/test_email_classification_retry_api.py
 tests/test_email_cancellation_dependency.py
+tests/test_email_connection_reuse.py
 tests/test_email_classifier_contracts.py
 tests/test_email_dws_move_continuation.py
 tests/test_email_embedding_cache.py

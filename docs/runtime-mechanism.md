@@ -1348,7 +1348,7 @@ service and takes its backup before restoring those docs to the current HEAD;
 the ordinary fast-forward then installs the target. Staged edits, other paths,
 or any content mismatch remain a hard local-change refusal.
 
-The Email worker, Audit web, scheduled Email discovery, and scheduled report readers do not scan every historical email row while the service is starting or serving scheduled Email and report work; explicit and offline EmailStore callers retain full durable-row validation by default. Email detail reads still use fresh connections and do not cache record contents.
+The Email worker, Audit web, scheduled Email discovery, and scheduled report readers do not scan every historical email row while the service is starting or serving scheduled Email and report work; explicit and offline EmailStore callers retain full durable-row validation by default. Email detail reads use a new per-call read/transaction boundary on current records; reusing an idle connection does not cache record contents or retain a read snapshot.
 
 ### Public information and native reply recovery
 
@@ -1550,7 +1550,7 @@ an invalid schema or account configuration does not prevent unrelated Console
 routes from starting and is not treated as healthy email state. The Attempt DTO
 builder queries this initialized store only for
 an existing email-channel Attempt's classification and unsubscribe context.
-Every request reads current records through fresh database connections; detail
+Every request reads current records through an independent transaction boundary on a reusable connection; detail
 results are not cached and requests do not repeat the full durable-state scan.
 
 Direct provider-action claims hold BEGIN IMMEDIATE only over classifications
@@ -1874,8 +1874,7 @@ History 的主题搜索与当前状态筛选取交集：已完成动作不会因
 
 ## SQLite connection lifecycle
 
-`AutoReplyStore._connect` keeps one idle SQLite connection per database file
-and thread, because every new connection re-parses the whole schema. Nested or concurrent use in the same thread still opens its own
+`AutoReplyStore._connect` and `EmailStore._connect` share the existing idle pool, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
 connection, and a connection is discarded rather than kept when the body
 raised, a transaction is still open, `foreign_keys` is no longer on, the
 database file was replaced, or the store's `_open_connection` differs. The
@@ -1884,6 +1883,8 @@ the connection to the idle slot. Code that registers functions, handlers or
 pragmas on a `_connect` connection must undo them, because the next call in
 that thread sees the same connection. A connection going idle releases its
 page cache (`pragma shrink_memory`) and keeps only the parsed schema.
+
+Each Email context retains its own commit/rollback boundary and reads current rows; constructors and schema/durable-row validation still execute normally. The fixed `email_casefold` function, like the Task functions, is initialized once per Email connection and captures no request data. Provider scan membership/account TEMP tables end inside their publication transaction; failed scans roll back and discard the connection, so subsequent generations inherit neither tables nor tombstones. Existing idle cleanup closes Email and ordinary Store slots together; file-descriptor regressions verify a warm read loop stays flat and explicit cleanup returns to its cold count.
 
 > 已移出的历史章节与迁移实施记录（日期化清退日志、Store/Email 各期迁移、Phase4C、Email13/29、Native-source scalar 等）见 [archive/runtime-mechanism-superseded-notes.md](archive/runtime-mechanism-superseded-notes.md)。
 

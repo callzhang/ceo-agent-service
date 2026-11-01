@@ -1126,7 +1126,7 @@ def test_page_lookups_open_one_connection_and_match_the_per_row_answers(
     provider_states = store.get_provider_classification_states(ids)
     assert opened[0] == 1
     unsubscribe_states = store.list_unsubscribe_states(ids)
-    assert opened[0] == 2
+    assert opened[0] == 1
 
     assert provider_states == {
         classification_id: store.get_provider_classification_state(classification_id)
@@ -1823,7 +1823,8 @@ def test_current_schema_initialization_preserves_delete_journal_mode(
         statement
         for statement in normalized
         if not (
-            statement in {"begin", "commit", "pragma 'main'.data_version"}
+            statement in {"begin", "commit", "pragma 'main'.data_version",
+                          "pragma foreign_keys", "pragma shrink_memory"}
             or statement.startswith("select ")
             or statement.startswith(read_pragma_prefixes)
         )
@@ -6591,7 +6592,7 @@ def _fd_regression_account_values() -> dict[str, object]:
     }
 
 
-def test_connect_closes_connection_after_each_call(
+def test_connect_reuses_one_connection_and_cleanup_closes_it(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -6617,7 +6618,9 @@ def test_connect_closes_connection_after_each_call(
     }
     assert store.get_email_unsubscribe_terminal_snapshot("missing-identity") is None
 
-    assert len(opened) >= 5
+    assert len(opened) == 1
+    assert not opened[0].in_transaction
+    _close_idle_connections()
     for db in opened:
         with pytest.raises(sqlite3.ProgrammingError):
             db.execute("select 1")
@@ -6671,6 +6674,8 @@ def test_slow_connection_names_caller_without_logging_body_data(
     assert "elapsed_seconds=5.000" in caplog.text
     assert "test_slow_connection_names_caller" in caplog.text
     assert private_payload not in caplog.text
+    assert not db.in_transaction
+    _close_idle_connections()
     with pytest.raises(sqlite3.ProgrammingError):
         db.execute("select 1")
 
@@ -6710,15 +6715,20 @@ def test_read_loop_does_not_accumulate_file_descriptors(tmp_path: Path) -> None:
     _close_idle_connections()
     gc.disable()
     try:
+        cold = len(os.listdir("/dev/fd"))
+        store.get_account("fd-regression-account")
         before = len(os.listdir("/dev/fd"))
         for _ in range(50):
             store.get_account("fd-regression-account")
             store.list_accounts()
             store.get_email_unsubscribe_state_snapshot("missing-identity")
         after = len(os.listdir("/dev/fd"))
+        _close_idle_connections()
+        closed = len(os.listdir("/dev/fd"))
     finally:
         gc.enable()
     assert after == before
+    assert closed == cold
 
 
 _UNSUBSCRIBE_ENTRY_URL = (

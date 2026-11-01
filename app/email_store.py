@@ -13,6 +13,9 @@ from app.store import (
     NATIVE_AGENT_RUN_SQL,
     NATIVE_REPLY_TASK_CURRENT_SQL,
     AutoReplyStore,
+    _database_file_identity,
+    _return_idle_connection,
+    _take_idle_connection,
 )
 
 from collections.abc import Callable, Iterator, Mapping, Sequence
@@ -1726,11 +1729,23 @@ class EmailStore:
         db.execute("pragma foreign_keys = " + ("on" if foreign_keys else "off"))
         db.row_factory = sqlite3.Row
         register_task8_functions(db)
+        db.create_function("email_casefold", 1, str.casefold, deterministic=True)
         return db
 
     @contextmanager
     def _connect(self, *, foreign_keys: bool = True) -> Iterator[sqlite3.Connection]:
-        db = self._open_connection(foreign_keys=foreign_keys)
+        opener = self._open_connection
+        pool_key = (
+            str(self.path), 30,
+            (getattr(opener, "__func__", opener), foreign_keys),
+        )
+        idle = _take_idle_connection(pool_key, self.path)
+        if idle is None:
+            db = opener(foreign_keys=foreign_keys)
+            identity = _database_file_identity(self.path)
+        else:
+            db, identity, _ = idle
+        completed = False
         started_at = monotonic()
         body_finished_at = started_at
         try:
@@ -1739,9 +1754,13 @@ class EmailStore:
                     yield db
                 finally:
                     body_finished_at = monotonic()
+            completed = True
         finally:
             close_started_at = monotonic()
-            db.close()
+            if completed:
+                _return_idle_connection(pool_key, db, identity)
+            else:
+                db.close()
             closed_at = monotonic()
             elapsed = closed_at - started_at
             if elapsed >= 1.0:
@@ -7791,7 +7810,6 @@ class EmailStore:
                 where = "classifications.status in (" + ",".join("?" for _ in statuses) + ")" + filters
                 params = (*(item.value for item in statuses), *filter_params)
             if preview_query:
-                db.create_function("email_casefold", 1, str.casefold, deterministic=True)
                 where = "(" + where + ") and (" + " or ".join(
                     "instr(email_casefold(coalesce(classifications." + field + ",'')),?)>0"
                     for field in ("sender", "subject", "preview")
@@ -10117,6 +10135,7 @@ class EmailStore:
                 mark_authoritative_missing(db, account_id, folder_id, observed_at)
             if active_accounts is not None:
                 mark_inactive_accounts(db, observed_at)
+                db.execute("drop table temp.current_provider_accounts")
             for account_id, folder_id in parsed_unavailable:
                 mark_unavailable_folder(db, account_id, folder_id, observed_at)
             upsert_folder_generations(
@@ -10126,6 +10145,7 @@ class EmailStore:
                     for account_id, folder_id in folder_generations
                 ],
             )
+            db.execute("drop table temp.current_provider_membership")
 
     def _get_training_snapshot(
         self, db: sqlite3.Connection, snapshot_id: str
