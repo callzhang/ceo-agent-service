@@ -318,7 +318,14 @@
       "complete_marker": "CEOB",
       "unchanged_generation": true,
       "deleted": false,
-      "hold_reason": "Explicit concurrent Email owner request; verification still active. Not owned by this UI task."
+      "hold_reason": "Explicit concurrent Email owner request; verification still active. Not owned by this UI task.",
+      "later_disposition": {
+        "observed_at": "2026-11-01T04:31:42Z",
+        "historical_generation": "846233485 held during the list release acceptance; subsequently retired by the native Email release backup workflow.",
+        "successor_generation": "846390881 complete daily backup from the completed Email release workflow; hold explicitly released by owner, integrity/CEOB/FK and no-open-reference checks passed, exact generation deleted under directory lock on Derek authorization.",
+        "evidence": "docs/validation/2026-10-31-beehiiv-recovery-closeout.json",
+        "scope": "Historical list acceptance values preserved; this is the later backup disposition only."
+      }
     },
     "release_backup": {
       "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-before-upgrade-deploy-be36890c-600d-44ed-afc9-132b2409eb50.sqlite3",
