@@ -1,0 +1,152 @@
+{
+  "checked_at_local": "2026-11-01T01:24:44.463893-08:00",
+  "status": "email_repair_verified_and_owned_cleanup_complete; Zillow_environment_blocked; upstream_incident_open",
+  "scope": "Independent read-only acceptance and docs; no new deploy, task creation, resolve, retry, move, mark, send or real unsubscribe by this chat.",
+  "release": {
+    "installed_commit": "444759475229a8da399649493e4351778a775283",
+    "upgrade_operation_id": "deploy-93bae2f9-4af7-48d7-8d56-28f47517eb5e",
+    "upgrade_status": "succeeded",
+    "gate": {
+      "commit": "444759475229a8da399649493e4351778a775283",
+      "passed_at": "2026-11-01T09:19:30+00:00",
+      "files": 434,
+      "summary": "8662 passed, 2 skipped, 1 deselected in 598.38s (0:09:58)"
+    },
+    "fixed_test_seconds": 600,
+    "fixed_memory_gib": 2,
+    "owner_reported_first_gate": "7dc stopped at fixed600s/95%; its failed copy reowmjd3 is now independently absent. Pure test fixture DDL transaction optimization preserved all original assertions before the successful target."
+  },
+  "production": {
+    "launchd": {
+      "pid": "9333",
+      "state": "running"
+    },
+    "api_pid": 9344,
+    "all_six_gets_http200": true,
+    "transport_health": {
+      "ok": true,
+      "status": "ok"
+    },
+    "frontend_stamp_matches": true,
+    "schema": {
+      "objects": 463,
+      "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": []
+    },
+    "workers_summary": {
+      "queue_count": 11,
+      "pending": 1,
+      "processing": 0,
+      "failed": 24,
+      "retryable": 0,
+      "attention": 3
+    },
+    "business_system_health": {
+      "state": "degraded",
+      "detail": "the promoted email model raised instead of deciding Native delivery results readable: 392; unavailable: 0.",
+      "checked_at": "2026-11-01T09:22:21.169893+00:00",
+      "violations": 1,
+      "native_delivery_coverage": {
+        "checked": 392,
+        "unavailable": 0
+      }
+    },
+    "attention_meta_total": 3,
+    "attention_returned_group_rows": 1
+  },
+  "completed_email_effect": {
+    "action_id": 118427,
+    "classification_id": 3842621260449570,
+    "account_id": "dingtalk_primary",
+    "before_status": "pending",
+    "before_attempts": 0,
+    "after_status": "done",
+    "after_attempts": 1,
+    "receipt_id": 22692,
+    "receipt_status": "done",
+    "operation": "move_to_trash",
+    "provider_result_id": "server-reply:已删除邮件:6:64435",
+    "folder_before": "INBOX",
+    "folder_after": "已删除邮件",
+    "uidvalidity_after": 6,
+    "uid_after": 64435,
+    "rfc_message_id_unchanged": true,
+    "native_dws_original_message_id": "DzzzzzzN7pr",
+    "native_message_get_success": true,
+    "native_deleted_folder_id": "6",
+    "folder_constrained_search_total": 1,
+    "folder_search_cursor": "$",
+    "same_exact_message_id_found": true,
+    "incomplete_first_folder_page": "First100 of51649 did not contain target; no absence inferred. Narrow original-subject + folder6 search then exactly matched original ID."
+  },
+  "canceled_unsubscribe": {
+    "task_id": 386312,
+    "status": "skipped",
+    "error": "email_unsubscribe_cancelled_by_principal",
+    "decision": "retain_subscription",
+    "decision_sha256_unchanged": true,
+    "receipt_effect_step_counts": {
+      "receipts": 0,
+      "effects": 0,
+      "steps": 0
+    },
+    "new_unsubscribe_performed": false
+  },
+  "zillow": {
+    "task_id": 405078,
+    "status": "failed",
+    "error": "email_unsubscribe_outcome_unresolved",
+    "dependent_trash_action": 119039,
+    "dependent_status": "pending",
+    "dependent_attempts": 0,
+    "execution_marker_present": true,
+    "marker_sha256_unchanged": true,
+    "receipt_effect_step_counts": {
+      "receipts": 0,
+      "effects": 0,
+      "steps": 0
+    },
+    "account_subscription_state_independently_read": false,
+    "browser_denial": "Owner rechecked: Local browser use is disabled in Work settings",
+    "setting_change_requested_in_this_chat": true,
+    "setting_change_answer_received": false,
+    "next_step": "Enable Local browser, then owner may verify current account state read-only through a non-executing account page. Do not reopen execution URL, resubmit unsubscribe, clear unknown marker or release trash merely by inference."
+  },
+  "separate_new_incident": {
+    "owner_chat": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
+    "status": "open",
+    "owner_reported_source": "Scheduled task10 email-message-check-once / Gmail classification raised OnlineEmbeddingBatchError. A production-config synthetic probe containing no email body independently returned HTTP502 from upstream embedding service; health endpoints also502. Owner is locating upstream read-only.",
+    "boundary": "This is not a confirmed complete production recovery or a claim of model decision error. This chat did not change upstream, model routing, retry, audit or authorization policies."
+  },
+  "cleanup": {
+    "deployment_uuid_backup": "93bae historical upgrade path was natively retired before this cleanup; absence alone did not mean all backups gone.",
+    "verified_actual_daily_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-11-01.sqlite3",
+      "device": 16777231,
+      "inode": 847704430,
+      "mtime_ns": 1793524857157167212,
+      "size": 514969600,
+      "integrity": "ok",
+      "completion_marker": "CEOB",
+      "schema_objects": 463,
+      "schema_sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": [],
+      "directory_lock": true,
+      "generation_rechecked": true,
+      "no_open_references": true,
+      "owner_recovery_hold_released": true,
+      "deleted_and_absent": true,
+      "retention_policy": "Derek explicitly requests clearing completed-work backups after validation, overriding newest-copy default."
+    },
+    "owner_confirmed_successful_gate_copy_natively_cleaned": true,
+    "failed_gate_reowmjd3_independently_absent": true,
+    "this_chat_created_no_db_copy_or_backup": true,
+    "owned_temp_path": "/private/tmp/ceo-email-zillow-closeout.xHTPYj",
+    "owned_temp_deleted": true,
+    "preserved_active_owner_worktree": "/private/tmp/ceo-startup-recovery-release-20261031",
+    "preserved": "production DB/frontend, native trajectories, cancellation/unknown marker and business receipts, unrelated workflow directories",
+    "raw_mail_bodies_retained_in_committed_evidence": false,
+    "post_cleanup_backup_and_sidecars_absent": true,
+    "closed_at_local": "2026-11-01T01:36:47.777195-08:00"
+  }
+}
