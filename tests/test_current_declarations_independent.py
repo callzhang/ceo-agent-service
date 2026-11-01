@@ -173,3 +173,31 @@ def test_current_schema_reparses_and_action_public_id_update_compiles():
         db.execute("alter table actions rename column td_lease_owner to renamed_lease_owner")
         db.execute("alter table work_summary_inputs rename column body_compacted to renamed_body_compacted")
         db.execute("explain update actions set legacy_key=legacy_key")
+
+
+def test_current_catalog_cache_uses_two_semantic_keys(monkeypatch):
+    from app import current_database_schema
+
+    original = current_database_schema.create_current_database_schema
+    builds = []
+
+    def counted(connection):
+        builds.append(connection)
+        return original(connection)
+
+    monkeypatch.setattr(current_database_schema, "create_current_database_schema", counted)
+    current_schema_manifest.current_objects.cache_clear()
+    try:
+        plain_catalogs = []
+        email_catalogs = []
+        for _ in range(4):
+            plain_catalogs.append(current_schema_manifest.current_objects())
+            plain_catalogs.append(current_schema_manifest.current_objects(email_ledger=False))
+            email_catalogs.append(current_schema_manifest.current_objects(email_ledger=True))
+        assert len(builds) == 2
+        assert all(catalog == plain_catalogs[0] for catalog in plain_catalogs)
+        assert all(catalog == email_catalogs[0] for catalog in email_catalogs)
+        assert len(email_catalogs[0]) == len(plain_catalogs[0]) + 1
+        assert tuple(obj for obj in email_catalogs[0] if obj[1] != "email_schema_migrations") == plain_catalogs[0]
+    finally:
+        current_schema_manifest.current_objects.cache_clear()
