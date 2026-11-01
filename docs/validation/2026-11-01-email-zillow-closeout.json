@@ -1,6 +1,6 @@
 {
   "checked_at_local": "2026-11-01T01:24:44.463893-08:00",
-  "status": "email_repair_verified_and_its_cleanup_complete; Zillow_runtime_browser_blocked; upstream_naturally_recovered_owner_reported; followup_release_and_its_cleanup_pending",
+  "status": "email_dependency_repair_verified; owned_cleanup_complete; upstream_recovery_independently_read_back; Zillow_unverified; exception_chain_fix_not_deployed",
   "scope": "Independent read-only acceptance and docs; no new deploy, task creation, resolve, retry, move, mark, send or real unsubscribe by this chat.",
   "release": {
     "installed_commit": "444759475229a8da399649493e4351778a775283",
@@ -112,7 +112,13 @@
     "setting_change_answer_received": true,
     "next_step": "Verify exact startup disable source; use an already permitted browser session for a non-executing account-state read only. Do not reopen unsubscribe execution URL, resubmit, clear unknown marker or infer release of trash.",
     "user_screenshot_browser_toggle_enabled": true,
-    "user_reported_startup_cause": "Derek says codex exec was disabled at startup; owner asked to verify exact process, launch arguments and effective tool capability source. Do not confuse service exec with desktop chat."
+    "user_reported_startup_cause": "Derek says codex exec was disabled at startup; owner asked to verify exact process, launch arguments and effective tool capability source. Do not confuse service exec with desktop chat.",
+    "startup_scope_verified_by_owner": {
+      "service_exec": "app/wechat/codex_safety.py ROLE_DISABLED_NATIVE_FEATURES and make_role_agent_command explicitly disable native browser/computer-use for Consumer/Audit; generic runner only disables hooks",
+      "observed_disabled_exec": "Offline validation Consumer; not the desktop chat",
+      "desktop_chat": "session originator Codex Desktop/source vscode; current CUA Work-settings refusal cause remains unproven",
+      "boundary": "Do not transfer the established service-exec cause to desktop CUA, or change role safety/global permissions as incidental acceptance work."
+    }
   },
   "separate_new_incident": {
     "owner_chat": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
@@ -150,14 +156,49 @@
     "preserved": "production DB/frontend, native trajectories, cancellation/unknown marker and business receipts, unrelated workflow directories",
     "raw_mail_bodies_retained_in_committed_evidence": false,
     "post_cleanup_backup_and_sidecars_absent": true,
-    "closed_at_local": "2026-11-01T01:36:47.777195-08:00"
+    "closed_at_local": "2026-11-01T01:36:47.777195-08:00",
+    "followup_no_new_backup_created": true,
+    "followup_failed_clones_absence_independently_checked": true,
+    "owner_reported_profiling_output_deleted": true
   },
   "followup_release": {
     "owner": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
     "target": "c356fcc8d",
-    "status": "not yet proven deployed; owner reports second standard gate ongoing after first fixed600s timeout",
-    "new_backup_cleanup": "pending owner final readback, exact generation and recovery-reference release; not covered by earlier verified deletion",
-    "this_chat_did_not_deploy_or_replay": true
+    "status": "NOT DEPLOYED: both c356 standard gates reached fixed600s limit; no assertion failure observed; no quiet/upgrade/restart reached",
+    "new_backup_cleanup": "No new backup or deployment recovery reference created by either refused gate; owner explicitly released hold. Both failed clones and profiling output owner-cleaned.",
+    "this_chat_did_not_deploy_or_replay": true,
+    "second_gate_stop_node": "tests/test_email_unsubscribe_dialog.py::test_confirmation_target_keeps_its_modal_but_separate_overlay_is_closed[own-confirmation]",
+    "second_gate_progress": "98%",
+    "first_gate_progress": "95%",
+    "implementation": "f27c712a8 pushed;118 focused tests passed;independent review no blocker; formal publication unfinished",
+    "no_third_blind_gate_or_budget_change": true,
+    "owner_final_record_commit": "a68d5b265737fdbe239046945f64cfb436d26611"
   },
-  "followup_updated_at_local": "2026-11-01T02:09:04.033041-08:00"
+  "followup_updated_at_local": "2026-11-01T02:09:04.033041-08:00",
+  "final_independent_readback": {
+    "checked_at_local": "2026-11-01T02:19:58.638687-08:00",
+    "installed_commit": "444759475229a8da399649493e4351778a775283",
+    "health_http": 200,
+    "workers_http": 200,
+    "attention_http": 200,
+    "system_health": "healthy",
+    "violations": 0,
+    "native_delivery_checked": 392,
+    "native_delivery_unavailable": 0,
+    "attention_total": 0,
+    "queue_summary": {
+      "queue_count": 11,
+      "pending": 1,
+      "processing": 0,
+      "failed": 24,
+      "retryable": 0,
+      "attention": 0
+    },
+    "backup_sqlite_files": [],
+    "previous_owned_temp_absent": true,
+    "failed_gate_r7beelp9_absent": true,
+    "failed_gate_cf6kchp8_absent": true,
+    "active_owner_worktree_preserved": true,
+    "boundary": "Read-only; natural upstream recovery on old installed444; no new code deployment or business replay by this chat."
+  }
 }
