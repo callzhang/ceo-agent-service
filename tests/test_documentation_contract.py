@@ -208,7 +208,11 @@ def test_current_email_docs_describe_audited_v2_boundary() -> None:
         assert "`unsubscribe_email(task_id)`" in section
         assert "一次调用完成整件事" in section
         assert "ActionPlan" in section
-        assert "幂等性只靠 receipt" in section
+        assert "幂等性使用动作级 receipt" in section
+        assert "reused_receipt" in section
+        assert "mail_action_result_json" in section
+        assert "不再读取页面" in section
+        assert "只会把它原样返回" not in section
         assert "`email_unsubscribe_receipts`" in section
         assert "不会重复退订" in section
         assert "continuation" in section
