@@ -24,6 +24,7 @@ from app.dws_client import is_transient_dependency_error
 from app.external_retry import retry_delay_seconds
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 from app.store import AutoReplyStore, ReplyTask
+from app.manual_rerun import build_manual_rerun_instruction
 from app.notification import send_macos_notification
 
 
@@ -256,6 +257,10 @@ class ScheduledAgentConsumer:
             )
             guard.accept_atomic_source_completion()
             return
+        built = replace(built, context=replace(
+            built.context,
+            manual_rerun=build_manual_rerun_instruction(self._store, task),
+        ))
         result = self._orchestrator_factory(built).process(
             task, built.context, refresh_context=lambda: built.context,
         )

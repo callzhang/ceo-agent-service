@@ -24,7 +24,7 @@ from pathlib import Path
 import stat
 import subprocess
 import sys
-from typing import TypedDict
+from typing import TYPE_CHECKING, TypedDict
 from urllib.parse import parse_qs, quote, urlencode, urlparse
 from zoneinfo import ZoneInfo
 
@@ -39,6 +39,9 @@ from fastapi.responses import (
     StreamingResponse,
 )
 from fastapi.staticfiles import StaticFiles
+
+if TYPE_CHECKING:
+    from app.agent_cron.context import ScheduledAgentContext
 
 from app.external_failures import external_task_error_sql
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
@@ -9094,6 +9097,22 @@ def handle_rerun_attempt_post(
         trigger_create_time = trigger.create_time
         conversation_title = existing_task.conversation_title
         single_chat = existing_task.single_chat
+    elif existing_task is not None and existing_task.input_compacted and channel == "scheduled":
+        try:
+            restored = _restore_compacted_scheduled_context(
+                existing_task, store=store,
+                skill_options=(skill_options_factory() if skill_options_factory else None),
+            )
+        except (TypeError, ValueError, json.JSONDecodeError):
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>Canonical scheduled source could not be restored; rerun was not queued.</p>",
+            )
+        trigger_message_json = restored.to_execution_json()
+        trigger_text = restored.context.trigger_text
+        trigger_create_time = restored.context.trigger_create_time
+        conversation_title = restored.context.conversation_title
+        single_chat = restored.context.single_chat
     elif existing_task is not None and not existing_task.input_compacted and _is_valid_rerun_trigger_json(
         existing_task.trigger_message_json,
         channel=channel,
@@ -9152,18 +9171,19 @@ def handle_rerun_attempt_post(
                 "Rerun unavailable",
                 "<p>Scheduled Skill snapshot could not be refreshed; rerun was not queued.</p>",
             )
-        try:
-            trigger_message_json = refresh_scheduled_rerun_skill_snapshot(
-                trigger_message_json,
-                store=store,
-                skill_options=skill_options_factory(),
-                reply_task_id=existing_task.id,
-            )
-        except (TypeError, ValueError, json.JSONDecodeError):
-            return 409, {}, render_page(
-                "Rerun unavailable",
-                "<p>Scheduled Skill snapshot could not be refreshed; rerun was not queued.</p>",
-            )
+        if not existing_task.input_compacted:
+            try:
+                trigger_message_json = refresh_scheduled_rerun_skill_snapshot(
+                    trigger_message_json,
+                    store=store,
+                    skill_options=skill_options_factory(),
+                    reply_task_id=existing_task.id,
+                )
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return 409, {}, render_page(
+                    "Rerun unavailable",
+                    "<p>Scheduled Skill snapshot could not be refreshed; rerun was not queued.</p>",
+                )
     try:
         force_rotation = False
         if attempt.oa_process_instance_id or channel == "scheduled":
@@ -9194,6 +9214,28 @@ def handle_rerun_attempt_post(
     except ManualRerunConflict as exc:
         return 409, {}, render_page("Rerun unavailable", f"<p>{escape(str(exc))}</p>")
     return 303, {"Location": _safe_action_return_to(return_to, attempt_id)}, ""
+
+
+def _restore_compacted_scheduled_context(
+    task: ReplyTask, *, store: AutoReplyStore, skill_options: object | None,
+) -> "ScheduledAgentContext":
+    """Build a new revision from the occurrence's retained canonical snapshot."""
+    from dataclasses import replace
+    from app.agent_cron.context import ScheduledAgentContextBuilder
+
+    run = store.get_scheduled_task_run_for_reply_execution(task.id)
+    if (skill_options is None or run is None or run.dispatch_status != "dispatched"
+            or run.execution_kind != "reply_task" or run.execution_id != str(task.id)):
+        raise ValueError("scheduled occurrence is not bound to this task")
+    scheduled_task = store.get_scheduled_task(run.snapshot.task_id)
+    if scheduled_task is None:
+        raise ValueError("scheduled task is unavailable")
+    revised_run = replace(run, snapshot=replace(run.snapshot, skill_refs=scheduled_task.skill_refs))
+    built = ScheduledAgentContextBuilder(skill_options).build(revised_run, reply_task_id=task.id)
+    if (built.context.conversation_id != task.conversation_id
+            or built.context.trigger_message_id != task.trigger_message_id):
+        raise ValueError("scheduled occurrence source identity does not match task")
+    return built
 
 
 def _restore_compacted_oa_pending_trigger(
