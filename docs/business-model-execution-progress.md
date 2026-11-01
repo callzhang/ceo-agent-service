@@ -14,9 +14,9 @@
 | Zillow恢复 | **未完成／环境阻塞** | Task405078仍outcome_unresolved、旧marker保留，依赖119039仍pending0；用户截图Browser总开关已on，但重置后CUA仍拒绝；服务角色exec启动禁用已定位，Desktop CUA拒绝原因仍未明，不能混归；用获准会话只读核对，禁止再次退订 |
 | embedding上游故障 | **自然恢复已独立读回** | 02:19:58 PST生产仍444，health／workers／Attention200，healthy／violations0、Attention0、native392/0；恢复不归因于未部署新修复 |
 | 异常链与Email连接生命周期修复发布 | **ddd845f71已标准发布并独立读回** | 8689pass／2skip／1deselect／490.05秒，435旧条目原序保留+1连接回归；600秒/2GiB未变。主PID97071，stamp/schema463/hash/FK[]一致；12GET均200，原主题preview search精确命中原ID；f27c随祖先链上线 |
-| Task417999新OKR报告失败 | **原失败及无副作用已核对；当前KR读取超时根因未定** | 原run的Dingteam auth readiness错误保留。负责人后续源诊断中headers在0.001秒内返回，随后findKrDetail卡于SSL握手／读取，220秒终止无完整结果；不能仍全归为会话过期，也不能据三处采样定网络根因。前9源回执及417999/16492未改，无重跑／发布／发送，诊断目录已清理 |
+| Task417999新OKR报告恢复 | **源机制已修复并生产验证；报告仍采集中** | 请求级证据确认120次串行读取的重复TLS开销；b33+Skill809已发布，05:18 PST最新Run400927/RTA400969运行，原失败成员92.24秒collected，已有多份新源返回；尚无发布／发送回执，不能用Attention0当终态；旧400926失败保留 |
 | 先前两次超时的验收与清理 | **已完成（历史轮次）** | 两次拒绝未创建新备份，恢复hold已释放；失败clone r7beelp9/cf6kchp8及旧我方临时目录独立确认不存在、备份目录无sqlite3文件，负责人后续发布活动worktree保留 |
-| 当前ddd发布后读回及清理 | **已完成** | 04:17 PST独立读回；本轮daily inode848222618／514969600字节经原生锁、代次／integrity／CEOB／schema/FK及无引用复核，04:20 PST删除；失败gate／成功gate／性能诊断目录均确认不存在，活动故障处理worktree与417999源回执保留 |
+| 最新服务／Skill发布后读回及清理 | **b33／809已独立读回，本代备份已清** | 05:18 PST服务b33/PID86688、runtime SHA7de979…匹配发布、schema463/hash/FK[]不变、6GET200；原邮件done1/pending0不变。d0f8代daily inode848342909／514969600字节按原生锁/完整性/同代次/无引用复核后05:19 PST删除；活动worktree与业务源artifact保留 |
 
 本次完整边界、只读生产快照及临时清理状态见[精简验收记录](validation/2026-11-01-workbench-weekly-closeout.json)。19份材料版本与父目录不变、事后底层读源和当轮Agent实际读源是不同证据，不混写。此前时点、旧失败与原回执不改写为当前成功。
 

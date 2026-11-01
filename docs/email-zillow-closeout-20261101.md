@@ -1,6 +1,6 @@
 # 邮件取消退订依赖与 Zillow：验收及阻塞（2026-11-01）
 
-本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；Zillow账号状态与新报告417999恢复仍未完成。
+本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；最新服务b33与Skill809已发布并独立验收，本代备份已清；Zillow账号状态仍未核验，新报告417999已恢复采集但未终态。
 
 ## 已完成：取消决定释放原获授权清理
 
@@ -52,15 +52,17 @@ workers pending1/processing0/failed26/Attention1；唯一Attention仍为安装�
 
 负责人在独立读回通过后明确释放本轮DB恢复引用；旧报告认证故障不要求回滚此DB。UUID备份已被原生daily替代，实际daily为inode848222618／mtime_ns1793535212343900643／514969600字节。04:20:16 PST持原生目录锁、核对本轮succeeded账本、精确代次、integrity ok、CEOB、schema/FK及lsof无打开引用后，由本chat唯一执行删除并确认不存在。不能将这次代次与早先847704430混用。负责人清理的失败gate.zhixab5c、成功gate.haat2zca及诊断ceo-gate-timing-s417m2k0也独立确认不存在；活动worktree、417999源回执、生产库与原生trajectory保留。本chat没有新建临时副本或原文文件。
 
-## 新报告417999：有界只读源核对
+## 新报告417999：当前源修复与恢复结论
 
-实际类型是ceo-weekly-okr-report。原生session01a196c4-7605-7262-b7ca-b3adb2985320的274行与现行DB身份核对：Run400922—400925、RuntimeAttempt400964—400967均failed且first_effect空；Task417999／Attempt16492无effect、执行回执、provider结果或文档结果。轨迹没有文档写入或消息发送调用，本chat没有恢复或重跑。
+早先220秒诊断只证明KR请求阶段阻塞，不能据此断定会话或网络根因。负责人随后取得请求级对照：14O/52KR要求120次串行读取，旧源220秒只完成83次、TLS累计152秒；临时连接复用完成120次／77.041秒／2次TLS，正式source CLI加载隔离修复后同身份14O/66行在72.203秒读完。修复共用Skill HTTP传输池，保留30秒单请求、3attempt、1.5/3秒等待、220秒总时限及不发送provider Cookie的行为。52项Skill测试和24项服务相关测试通过；探针输出不是发布或消息回执。
 
-scheduled run433762有18人roster，前9份有效成员源回执（8 collected、1 goals_missing）保留，第10成员两次读取均返回shared/fetch的okr_authentication_readiness_failed／okr_headless_session_expired。当前DWS唯一isOrgCurrent与源配置同组织，正式auth status authenticated/token_valid为true；独立Dingteam会话不能用DWS有效替代。
+服务b33e57d8e3d92b4391cad1ad2b7f7142116fdf9b已标准安装，operation deploy-d0f8bd5d-491f-4465-a6c7-e71f5865e159 succeeded；native gate receipt为8698pass／2skip／1deselect／420.64秒／437files，passed_at13:08:11Z。共享Skill发布809cc7c80d878fdbc59555e129378f25bcba314d精确五文件patch通过本地安装commit6f580baa70a67374be947a09d1eb7903931755e0落库，未吸收原分叉分支其他提交。实际运行文件dingteam_okr_direct_source.py的SHA256为7de9798e109e55afa5082fd10b81b82b2c70a90eb4e9f6f464bf932fca69c2de，独立比较与发布blob／安装commit相同；service wrapper也与b33完全一致。全局SKILL.md原有未提交浏览器入口文档改动保留，工作区blob与发布不同，不能称整个.agents干净或五份工作文件逐字相同。生产命令仍从Services脚本读取默认全局skills，未改CEO_SKILLS_ROOT。
 
-只读代码核对进一步限定原因：当前capture过滤已过期JWT；但本地SSO helper只在真实DingTalk OAuth URL触发，若SPA始终留在dingokr且capture为空，最后也会抛同一session_expired。因此原错误不足以证明本地SSO曾尝试且失败，实际页面URL/SSO状态未知。Dingteam没有公开只读status leaf，本chat未读取cache/token/profile、未启动浏览器、刷新或登录。正式恢复由负责人经现有源及Consumer/Audit链路核对，保留当前run已成功回执，只继续缺失/失败者；公开login入口存在但不保证适用于这个未证实分支。不换Agoal、不切DWS组织、不重做旧417666或118427。
+05:18 PST独立只读验收：实际b33／launchd86688 running、前端stamp匹配；schema463/hash799027…/FK[]与前代一致。health／workers／Attention／History／16492／417999共6个GET全部200。原邮件Action118427仍done1、receipt22692原值；Zillow依赖119039仍pending0，取消386312与未决405078保持原义。此时workers pending1/processing1/failed24，Attention0、quality0违规只表示恢复处理中，不是报告完成。
 
-负责人随后完成的当前受控源诊断在既有220秒上限结束并回收全部进程，未得到完整源结果。无敏感函数追踪显示_get_headless_headers在0.001秒内返回；55／110秒堆栈位于fetch_with_headers→findKrDetail→urllib→SSL握手，165秒位于同一调用的SSL读取，220秒终止。无凭据DNS探针0.004秒、HTTPS首页200／3.377秒只证明相应基础入口可达，不证明KR详情接口正常。三次堆栈不足以确定网络或请求数量的最终根因；当前阻断不能继续全归因于原run的会话过期。上述为负责人提供的诊断结果，本chat未重跑；原9有效源回执、417999／16492失败状态未改，没有报告重跑、文档写入或发送。负责人已核实诊断目录身份和无打开引用后清除，业务task-artifacts保留。
+原Attempt16492恢复沿同Task417999，execution_generation12721af4206442f39f50bda041c5cc19。新Consumer400926误用旧失败artifact的失败保留，最新Consumer400927／RTA400969实际读取。本chat只读原生工具返回元数据，已独立确认原失败成员在92.2396秒返回309257bytes／collected，另有真实goals_missing及其他已采集返回；未读取成员原文。对应时点6个本Task Run的effect／执行receipt／provider结果仍全0，尚无完整报告、文档发布或消息发送终态。本chat没有重跑报告、登录、读取token/cache/profile或发送；恢复由负责人经原Consumer→Audit→System继续。
+
+负责人明确释放这次新发布DB恢复引用。原UUID已被原生daily替代，05:19:58 PST以d0f8 succeeded账本核对daily新代inode848342909／mtime_ns1793538580291036465／514969600字节，持原生目录锁验证integrity ok／CEOB／schema/FK／lsof空及同代次后删除并确认不存在。不是前一c16b的inode848222618，不沿用旧清理证明；业务task-artifacts、native trajectory和活动worktree保留。其余本轮临时目录归属已向负责人确认，不删除未知或活动目录。Zillow仍只读受阻，禁止再次真实退订。
 
 ## 清理与保留
 
@@ -70,4 +72,4 @@ scheduled run433762有18人roster，前9份有效成员源回执（8 collected�
 
 后续两轮失败gate没有创建新备份或部署恢复引用，负责人明确无需继续hold；r7beelp9／cf6kchp8失败clone及唯一profiling输出由其核对后清理。本chat独立确认两个gate目录与自己旧临时目录均不存在，备份目录无sqlite3文件；本次状态核对没有新增临时产物。以上段落指先前c356轮次；最新ddd代次见前节，不能混用两次清理证据。
 
-证据见[精简验收记录](validation/2026-11-01-email-zillow-closeout.json)，最新总表见[当前进度](business-model-execution-progress.md)。这是“已完成部分验收并准确登记阻塞”，不是Zillow或所有生产问题的完成证明；新版本发布与清理已完成，新报告认证恢复仍由负责人继续。
+证据见[精简验收记录](validation/2026-11-01-email-zillow-closeout.json)，最新总表见[当前进度](business-model-execution-progress.md)。这是“已完成部分验收并准确登记阻塞”，不是Zillow或所有生产问题的完成证明；最新服务／Skill版本验收和本代备份清理已完成，新报告采集／Audit／发布结果仍由负责人继续；Zillow尚未核验。
