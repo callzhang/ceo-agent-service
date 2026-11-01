@@ -1,6 +1,6 @@
 # 邮件取消退订依赖与 Zillow：验收及阻塞（2026-11-01）
 
-本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；最新服务b33与Skill809已发布并独立验收，本代备份已清；Zillow账号状态仍未核验，新报告417999来源已收齐并继续分析、未终态。
+本 chat 只读核对既有执行与真实来源，不创建、恢复、重试、发送、撤回、移动或再次退订。已完成邮件依赖修复及该次清理的验收；Zillow 仍未恢复。上游自然恢复已独立读回，活动验收产物已清理；此前c356两轮门禁超时作为历史保留。后续Email连接开销及异常链修复已随ddd标准发布，独立读回和该代清理已完成；最新服务b33与Skill809已发布并独立验收，本代备份已清；Zillow账号状态仍未核验，原Task417999／Attempt16492已完成，Audit、系统执行及真实群消息已独立只读核验。Zillow仍未核验。
 
 ## 已完成：取消决定释放原获授权清理
 
@@ -60,7 +60,11 @@ workers pending1/processing0/failed26/Attention1；唯一Attention仍为安装�
 
 05:18 PST独立只读验收：实际b33／launchd86688 running、前端stamp匹配；schema463/hash799027…/FK[]与前代一致。health／workers／Attention／History／16492／417999共6个GET全部200。原邮件Action118427仍done1、receipt22692原值；Zillow依赖119039仍pending0，取消386312与未决405078保持原义。此时workers pending1/processing1/failed24，Attention0、quality0违规只表示恢复处理中，不是报告完成。
 
-原Attempt16492恢复沿同Task417999，execution_generation12721af4206442f39f50bda041c5cc19。新Consumer400926误用旧失败artifact的失败保留，最新Consumer400927／RTA400969实际读取。本chat只读原生工具返回元数据，已独立确认原失败成员在92.2396秒返回309257bytes／collected，另有真实goals_missing及其他已采集返回；未读取成员原文。对应时点6个本Task Run的effect／执行receipt／provider结果仍全0。负责人随后确认原系统已完成全部18源（16collected／2goals_missing），当前generation的prepare原生工具exit0、source.json生成，旧9有效源按同occurrence复用，未把根探针写回。Consumer400927仍继续分析，尚无完整报告、文档发布或消息发送终态。本chat没有重跑报告、登录、读取token/cache/profile或发送；恢复由负责人经原Consumer→Audit→System继续。
+原Attempt16492恢复沿同Task417999，execution_generation12721af4206442f39f50bda041c5cc19。新Consumer400926误用旧失败artifact的失败保留，最新Consumer400927／RTA400969实际读取。本chat只读原生工具返回元数据，已独立确认原失败成员在92.2396秒返回309257bytes／collected，另有真实goals_missing及其他已采集返回；未读取成员原文。对应时点6个本Task Run的effect／执行receipt／provider结果仍全0。负责人随后确认原系统已完成全部18源（16collected／2goals_missing），当前generation的prepare原生工具exit0、source.json生成，旧9有效源按同occurrence复用，未把根探针写回。后续原Task417999进入done（updated_at14:40:51Z），原Attempt16492 completed（14:40:50Z），Consumer400927与Audit400934均completed。06:51 PST独立只读确认review2087 approve且candidate_digest精确绑定当前候选，execution400927／approved_audit400934为done，批准／完成／verified均1个动作。Action128021 verified，delivery receipt22723通过provider_receipt_id引用权威22721，后者verified并记录DWS sendStatus SUCCESS；不把引用行的可空status当失败，也不复制权威正文。
+
+DWS原生messages-mget只读返回1requested／1found／0failed／complete true，群cidmrAMSG+6/4bzXWWm1YgAKg==与消息msgR/UoSEKiqasTScPRoGjwZw==精确匹配、未撤回。采用现有DwsClient对im.message-list.v1的messages[0].text解析，公司级正文与批准候选在去空白后完整同序一致（实际584字符／候选581字符；归一SHA256 160a18c133b3b94efbe1ed33b576f5114e9bb426b156915a6eedfa1a0fe55219），不宣称字节相同，不将History显示后缀／反馈链接另造为新的发送要求；未保存正文。原Task／Attempt详情与health均200，生产仍b33／PID86688。本chat没有重跑业务、重新部署或清理任何新备份。
+
+此前未获新确认的JSON草稿共享接口方案未实施；当前Agent已自行修齐分析，不再把该方案列为本次恢复前置条件。本chat没有重跑报告、登录、读取token/cache/profile或发送；恢复由负责人经原Consumer→Audit→System继续。
 
 负责人明确释放这次新发布DB恢复引用。原UUID已被原生daily替代，05:19:58 PST以d0f8 succeeded账本核对daily新代inode848342909／mtime_ns1793538580291036465／514969600字节，持原生目录锁验证integrity ok／CEOB／schema/FK／lsof空及同代次后删除并确认不存在。不是前一c16b的inode848222618，不沿用旧清理证明；业务task-artifacts、native trajectory和活动worktree保留。负责人确认本轮成功gate clone已原生清理，三个源计时／正式CLI诊断目录（含临时完整源）经身份和lsof核对清理，已clean/pushed且无引用的Skill隔离worktree通过git worktree remove移除，安装patch/meta临时根也已清理。负责人补充核对pytest留存：项目成功gate及24项相关测试按failed retention自动清理；额外留存的pytest-5516（7个source-contract RED节点）、pytest-5517（1个redirect RED节点）、pytest-5518（52个Skill测试节点），逐目录按本轮时间、测试方法、uid501、无.lock及lsof无引用核实后删除，精确指向5518的pytest-current链接也删除。未清理更早或未知pytest目录，不宣称全机无临时文件。上述非备份清理由负责人核实，本chat未自行扫描或删除未知路径；生产共享SDK、服务活动worktree及原始／当前generation业务artifact和原生日志保留。Zillow仍只读受阻，禁止再次真实退订。
 
@@ -72,4 +76,4 @@ workers pending1/processing0/failed26/Attention1；唯一Attention仍为安装�
 
 后续两轮失败gate没有创建新备份或部署恢复引用，负责人明确无需继续hold；r7beelp9／cf6kchp8失败clone及唯一profiling输出由其核对后清理。本chat独立确认两个gate目录与自己旧临时目录均不存在，备份目录无sqlite3文件；本次状态核对没有新增临时产物。以上段落指先前c356轮次；最新ddd代次见前节，不能混用两次清理证据。
 
-证据见[精简验收记录](validation/2026-11-01-email-zillow-closeout.json)，最新总表见[当前进度](business-model-execution-progress.md)。这是“已完成部分验收并准确登记阻塞”，不是Zillow或所有生产问题的完成证明；最新服务／Skill版本验收和本代备份清理已完成，新报告采集／Audit／发布结果仍由负责人继续；Zillow尚未核验。
+证据见[精简验收记录](validation/2026-11-01-email-zillow-closeout.json)，最新总表见[当前进度](business-model-execution-progress.md)。这是“已完成部分验收并准确登记阻塞”，不是Zillow或所有生产问题的完成证明；最新服务／Skill版本验收、该代清理及原报告恢复终态已核验完成；仅Zillow只读核验仍受环境阻塞。负责人最新CUA复核仍为Mac locked／Local browser use disabled，未重放或修改未决标记。

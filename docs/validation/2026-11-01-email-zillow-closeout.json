@@ -1,6 +1,6 @@
 {
   "checked_at_local": "2026-11-01T01:24:44.463893-08:00",
-  "status": "current_service_and_skill_verified; current_release_backup_and_owner_confirmed_nonbusiness_temp_cleanup_complete; report417999_sources_complete_analysis_pending; Zillow_unverified",
+  "status": "current_service_skill_and_accepted_release_cleanup_verified; report417999_done_audit_execution_and_real_message_independently_verified; Zillow_readonly_environment_blocked",
   "scope": "Independent read-only acceptance and docs; no new deploy, task creation, resolve, retry, move, mark, send or real unsubscribe by this chat.",
   "release": {
     "installed_commit": "444759475229a8da399649493e4351778a775283",
@@ -118,7 +118,8 @@
       "observed_disabled_exec": "Offline validation Consumer; not the desktop chat",
       "desktop_chat": "session originator Codex Desktop/source vscode; current CUA Work-settings refusal cause remains unproven",
       "boundary": "Do not transfer the established service-exec cause to desktop CUA, or change role safety/global permissions as incidental acceptance work."
-    }
+    },
+    "latest_owner_browser_result": "Owner reports CUA still Mac locked and Local browser use disabled; no replay or marker change."
   },
   "separate_new_incident": {
     "owner_chat": "01a13efe-9537-77e1-9a50-b43f2f2351c5",
@@ -436,7 +437,7 @@
       "no_public_force_sso_for_still_dingokr_page": true
     },
     "latest_source_probe": {
-      "status": "superseded diagnostic now resolved as repeated per-request connection/TLS cost",
+      "status": "source mechanism recovered and original report business terminal independently verified",
       "owner_request_level_root_cause": "14 objectives/52KRs require120 serial reads; old220s source completed83 with152s TLS time. Temporary pooled transport completed120 in77.041s with2TLS connections; unpatched official source CLI using isolated fix completed same identity14O/66rows in72.203s.",
       "production_source_verified_by_root_metadata": true,
       "first_previously_failed_read_seconds": 92.2396,
@@ -447,8 +448,8 @@
       "current_execution_generation": "12721af4206442f39f50bda041c5cc19",
       "consumer_run": 400927,
       "runtime_attempt": 400969,
-      "task_status": "processing",
-      "terminal_report_or_send_receipt": false,
+      "task_status": "done",
+      "terminal_report_or_send_receipt": true,
       "old_failed400926_preserved": true,
       "root_did_not_read_member_bodies_or_run_source": true,
       "system_collection_owner_reported": {
@@ -459,10 +460,72 @@
         "source_json_generated": true,
         "old_nine_valid_receipts_reused_same_occurrence": true,
         "root_probe_not_written_back": true,
-        "consumer400927_still_analyzing": true,
-        "report_publish_send_not_terminal": true
+        "consumer400927_still_analyzing": false,
+        "report_publish_send_not_terminal": false
+      },
+      "terminal_verification": {
+        "checked_at_local": "2026-11-01T06:51:11.836624-08:00",
+        "installed_commit": "b33e57d8e3d92b4391cad1ad2b7f7142116fdf9b",
+        "launchd_pid": "86688",
+        "task_id": 417999,
+        "task_status": "done",
+        "task_updated_at": "2026-11-01 14:40:51",
+        "attempt_id": 16492,
+        "attempt_send_status": "completed",
+        "consumer_run_id": 400927,
+        "consumer_status": "completed",
+        "audit_run_id": 400934,
+        "audit_status": "completed",
+        "review_id": 2087,
+        "review_decision": "approve",
+        "review_bound_to_exact_candidate": true,
+        "execution_status": "done",
+        "execution_outcome": "executed",
+        "approved_actions": 1,
+        "completed_actions": 1,
+        "verified_actions": 1,
+        "execution_updated_at": "2026-11-01 14:40:50",
+        "action_id": 128021,
+        "delivery_receipt_id": 22723,
+        "provider_receipt_owner": 22721,
+        "provider_status": "verified",
+        "send_status": "SUCCESS",
+        "message_id": "msgR/UoSEKiqasTScPRoGjwZw==",
+        "conversation_id": "cidmrAMSG+6/4bzXWWm1YgAKg==",
+        "dws_readback": {
+          "requested": 1,
+          "found": 1,
+          "failed": 0,
+          "complete": true,
+          "messages_complete": true,
+          "exact_target": true,
+          "not_recalled": true,
+          "parser": "existing DwsClient.parse_messages im.message-list.v1",
+          "body_whitespace_normalization_equal": true,
+          "body_byte_exact_claim": false,
+          "actual_characters": 584,
+          "candidate_characters": 581,
+          "normalized_body_sha256": "160a18c133b3b94efbe1ed33b576f5114e9bb426b156915a6eedfa1a0fe55219",
+          "raw_body_not_persisted": true
+        },
+        "get_statuses": [
+          {
+            "path": "/healthz",
+            "http_status": 200
+          },
+          {
+            "path": "/api/console/history/16492",
+            "http_status": 200
+          },
+          {
+            "path": "/api/console/history/tasks/417999",
+            "http_status": 200
+          }
+        ],
+        "root_no_send_deploy_rerun_or_new_backup_cleanup": true
       }
-    }
+    },
+    "unapproved_draft_sharing_interface": "Not implemented; no longer a business-recovery prerequisite after the Agent completed its analyses."
   },
   "current_installed_commit": "b33e57d8e3d92b4391cad1ad2b7f7142116fdf9b",
   "original_release_snapshot_scope": "release/production and original cleanup describe the earlier444 canceled-unsubscribe dependency release; latest current state is final_independent_readback/pooled_release",
@@ -743,7 +806,8 @@
       "execution_receipts": 0,
       "provider_results": 0
     },
-    "boundary": "Original report processing under owner recovery; no member source bodies read by root, no report rerun or send by root, no real unsubscribe. Attention0 while processing is not final business completion."
+    "boundary": "Original report processing under owner recovery; no member source bodies read by root, no report rerun or send by root, no real unsubscribe. Attention0 while processing is not final business completion.",
+    "scope": "Earlier05:18 service/Skill acceptance snapshot; report-processing state here is historical. Current report terminal evidence is report_dependency_readonly.latest_source_probe.terminal_verification at06:51."
   },
   "pooled_release_cleanup": {
     "verified_backup": {
