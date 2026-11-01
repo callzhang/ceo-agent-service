@@ -13,8 +13,10 @@
 | 邮件取消退订依赖 | 444759475已标准发布并实际完成原Action118427一次清理 | [本次验收](email-zillow-closeout-20261101.md)；receipt22692及DWS已删除目录精确原ID读回，retain_subscription决定未变，未重退订 |
 | Zillow恢复 | **未完成／环境阻塞** | Task405078仍outcome_unresolved、旧marker保留，依赖119039仍pending0；用户截图Browser总开关已on，但重置后CUA仍拒绝；服务角色exec启动禁用已定位，Desktop CUA拒绝原因仍未明，不能混归；用获准会话只读核对，禁止再次退订 |
 | embedding上游故障 | **自然恢复已独立读回** | 02:19:58 PST生产仍444，health／workers／Attention200，healthy／violations0、Attention0、native392/0；恢复不归因于未部署新修复 |
-| 异常链修复f27c正式发布 | **未完成，门禁两次超时，未部署** | c356两轮固定600秒停于95%/98%，无断言失败，未进入quiet/upgrade/restart；118focused及review通过不替代正式gate，不第三次盲跑或改限制 |
-| 本轮验收与失败gate清理 | **已完成** | 两次拒绝未创建新备份，恢复hold已释放；失败clone r7beelp9/cf6kchp8及旧我方临时目录独立确认不存在、备份目录无sqlite3文件，负责人后续发布活动worktree保留 |
+| 异常链与Email连接生命周期修复发布 | **ddd845f71已标准发布并独立读回** | 8689pass／2skip／1deselect／490.05秒，435旧条目原序保留+1连接回归；600秒/2GiB未变。主PID97071，stamp/schema463/hash/FK[]一致；12GET均200，原主题preview search精确命中原ID；f27c随祖先链上线 |
+| Task417999新OKR报告失败 | **只读根因核对完成，原流程恢复待负责人** | 在旧444安装前已有。DWS同组织认证有效，独立Dingteam源返回shared auth readiness错误；前9成员有效回执保留、第10失败。4个失败Consumer运行无effect／执行回执／provider结果，未发布或发送，不重跑已完成旧周报 |
+| 先前两次超时的验收与清理 | **已完成（历史轮次）** | 两次拒绝未创建新备份，恢复hold已释放；失败clone r7beelp9/cf6kchp8及旧我方临时目录独立确认不存在、备份目录无sqlite3文件，负责人后续发布活动worktree保留 |
+| 当前ddd发布后读回及清理 | **已完成** | 04:17 PST独立读回；本轮daily inode848222618／514969600字节经原生锁、代次／integrity／CEOB／schema/FK及无引用复核，04:20 PST删除；失败gate／成功gate／性能诊断目录均确认不存在，活动故障处理worktree与417999源回执保留 |
 
 本次完整边界、只读生产快照及临时清理状态见[精简验收记录](validation/2026-11-01-workbench-weekly-closeout.json)。19份材料版本与父目录不变、事后底层读源和当轮Agent实际读源是不同证据，不混写。此前时点、旧失败与原回执不改写为当前成功。
 

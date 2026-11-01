@@ -1,6 +1,6 @@
 {
   "checked_at_local": "2026-11-01T01:24:44.463893-08:00",
-  "status": "email_dependency_repair_verified; owned_cleanup_complete; upstream_recovery_independently_read_back; Zillow_unverified; exception_chain_fix_not_deployed",
+  "status": "pool_and_exception_chain_fix_deployed_and_independently_read_back; owned_release_cleanup_complete; Zillow_unverified; report417999_dependency_recovery_pending_owner",
   "scope": "Independent read-only acceptance and docs; no new deploy, task creation, resolve, retry, move, mark, send or real unsubscribe by this chat.",
   "release": {
     "installed_commit": "444759475229a8da399649493e4351778a775283",
@@ -172,10 +172,217 @@
     "first_gate_progress": "95%",
     "implementation": "f27c712a8 pushed;118 focused tests passed;independent review no blocker; formal publication unfinished",
     "no_third_blind_gate_or_budget_change": true,
-    "owner_final_record_commit": "a68d5b265737fdbe239046945f64cfb436d26611"
+    "owner_final_record_commit": "a68d5b265737fdbe239046945f64cfb436d26611",
+    "historical_superseded_by": "ddd845f71e5a3399725890616783e6df58c05b3c"
   },
   "followup_updated_at_local": "2026-11-01T02:09:04.033041-08:00",
-  "final_independent_readback": {
+  "pooled_release": {
+    "first_pool_target": "e5fe7c974b5a6109f11fc62cb933cabe3b232721",
+    "first_pool_gate": {
+      "duration_seconds": 500.79,
+      "passed": 8688,
+      "failed": 1,
+      "skipped": 2,
+      "deselected": 1,
+      "failed_test": "new idle reuse FD measurement; warm27 fell to15 due to preceding SQLite object GC; not deployed"
+    },
+    "next_target": "ddd845f71e5a3399725890616783e6df58c05b3c",
+    "fixture_fix": "gc.collect + disable auto GC during FD measurements; preserve entering GC enable state and all exact FD assertions",
+    "focused_fixture_tests_passed": 46,
+    "application_change_unchanged": true,
+    "original_gate_entries": 435,
+    "added_gate_file": "tests/test_email_connection_reuse.py",
+    "related_tests_passed": 750,
+    "related_tests_seconds": 229.63,
+    "limits": {
+      "seconds": 600,
+      "memory_gib": 2
+    },
+    "review": "root independent read-only source/history review no blocker; no root tests/gate/deploy",
+    "final_gate": {
+      "target": "ddd845f71e5a3399725890616783e6df58c05b3c",
+      "passed": 8689,
+      "skipped": 2,
+      "deselected": 1,
+      "duration_seconds": 490.05,
+      "limits": {
+        "seconds": 600,
+        "memory_gib": 2
+      },
+      "status": "passed; waiting standard installation, not yet independently verified"
+    },
+    "installation": {
+      "status": "succeeded",
+      "target": "ddd845f71e5a3399725890616783e6df58c05b3c",
+      "operation_id": "deploy-c16b2b12-70fc-4b8c-bd22-51ff2be2502e",
+      "owner_reported_completed_at": "2026-11-01T12:12:36Z",
+      "gate": {
+        "commit": "ddd845f71e5a3399725890616783e6df58c05b3c",
+        "passed_at": "2026-11-01T12:01:36+00:00",
+        "summary": "8689 passed, 2 skipped, 1 deselected in 490.05s (0:08:10)",
+        "files": 436
+      },
+      "quiet": "Normal scheduled7 occurrence433964 ended12:12:15Z:discovered10/synced5/skipped5/failed0. No forced interruption."
+    },
+    "new_backup_cleanup": "complete; exact replacement daily generation independently verified/deleted; see pooled_release_cleanup",
+    "root_review": "Two read-only source/history reviews found no blocking issue in scoped diff; root ran no tests/gate/deploy or real business actions."
+  },
+  "predeploy_baseline": {
+    "checked_at_local": "2026-11-01T03:41:49.483918-08:00",
+    "installed_commit": "444759475229a8da399649493e4351778a775283",
+    "schema": {
+      "objects": 463,
+      "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "method": "sqlite_master type,name,tbl_name,sql excluding sqlite_% ordered type,name; compact JSON UTF8"
+    },
+    "fk": [],
+    "actions": [
+      {
+        "action_id": 118427,
+        "status": "done",
+        "attempt_count": 1,
+        "provider_result_id": "server-reply:已删除邮件:6:64435"
+      },
+      {
+        "action_id": 119039,
+        "status": "pending",
+        "attempt_count": 0,
+        "provider_result_id": ""
+      }
+    ],
+    "tasks": [
+      {
+        "id": 386312,
+        "status": "skipped",
+        "error": "email_unsubscribe_cancelled_by_principal"
+      },
+      {
+        "id": 405078,
+        "status": "failed",
+        "error": "email_unsubscribe_outcome_unresolved"
+      }
+    ],
+    "frontend_stamp_matches": true,
+    "health": {
+      "http_status": 200,
+      "ok": true,
+      "status": "ok"
+    },
+    "workers": {
+      "http_status": 200,
+      "summary": {
+        "queue_count": 11,
+        "pending": 1,
+        "processing": 0,
+        "failed": 26,
+        "retryable": 0,
+        "attention": 1
+      },
+      "system_health": {
+        "state": "healthy",
+        "detail": "No current quality-gate violations. Native delivery results readable: 392; unavailable: 0.",
+        "checked_at": "2026-11-01T10:20:00.285330+00:00",
+        "violations": 0,
+        "native_delivery_coverage": {
+          "checked": 392,
+          "unavailable": 0
+        }
+      }
+    },
+    "attention": {
+      "http_status": 200,
+      "meta": {
+        "snapshot_at": "2026-11-01T11:41:53.037894Z",
+        "page": null,
+        "page_size": null,
+        "total": 1,
+        "next_cursor": "",
+        "has_more": false
+      }
+    },
+    "schema_including_sqlite_internal": {
+      "objects": 493,
+      "sha256": "c9e8cbaa08af3ef1add80b2b75925ad65431127ed8c26700b60bd4e099c2a484",
+      "method": "sqlite_master type,name,tbl_name,sql ordered type,name; compact JSON UTF8"
+    },
+    "attention_identity": {
+      "total": 1,
+      "groups": [
+        {
+          "category": "Reply task",
+          "error_code": "dependency_read_unavailable",
+          "count": 1,
+          "record_keys": [
+            "id",
+            "category",
+            "status",
+            "context",
+            "root_cause",
+            "error_code",
+            "summary",
+            "updated_at",
+            "error",
+            "detail_label",
+            "detail",
+            "detail_url"
+          ],
+          "records": [
+            {
+              "id": "417999",
+              "status": "failed",
+              "error_code": "dependency_read_unavailable",
+              "updated_at": "2026-11-01 11:22:54",
+              "detail_url": "/attempts/16492"
+            }
+          ]
+        }
+      ]
+    }
+  },
+  "report_dependency_readonly": {
+    "task_id": 417999,
+    "attempt_id": 16492,
+    "scheduled_run_id": 433762,
+    "scope": "shared_auth_readiness",
+    "provider": "Dingteam Web; DWS token independently valid in same org",
+    "successful_member_receipts": 9,
+    "collected": 8,
+    "goals_missing": 1,
+    "failed_member_position": 10,
+    "roster_count": 18,
+    "diagnostic": "okr_authentication_readiness_failed/okr_headless_session_expired",
+    "no_business_replay": true,
+    "no_browser_or_login": true,
+    "receipt_counts": {
+      "task_id": 417999,
+      "runs": [
+        400922,
+        400923,
+        400924,
+        400925
+      ],
+      "effect_receipt_counts": {
+        "effects": 0,
+        "execution_receipts": 0,
+        "provider_results": 0
+      },
+      "attempt_run_id": 400925,
+      "attempt_send_status": "failed",
+      "attempt_document_result_empty": true
+    },
+    "current_Dingteam_auth_state": "not independently revalidated; no public read-only status command",
+    "public_login_leaf_verified": true,
+    "capture_branch_review": {
+      "expired_candidate_filtered": true,
+      "service_local_sso_requires_oauth_url": true,
+      "empty_capture_can_raise_same_expired_error": true,
+      "actual_url_and_sso_attempt_unknown": true,
+      "no_public_force_sso_for_still_dingokr_page": true
+    }
+  },
+  "current_installed_commit": "ddd845f71e5a3399725890616783e6df58c05b3c",
+  "original_release_snapshot_scope": "release/production and original cleanup describe the earlier444 canceled-unsubscribe dependency release; latest current state is final_independent_readback/pooled_release",
+  "earlier_444_independent_readback": {
     "checked_at_local": "2026-11-01T02:19:58.638687-08:00",
     "installed_commit": "444759475229a8da399649493e4351778a775283",
     "health_http": 200,
@@ -200,5 +407,316 @@
     "failed_gate_cf6kchp8_absent": true,
     "active_owner_worktree_preserved": true,
     "boundary": "Read-only; natural upstream recovery on old installed444; no new code deployment or business replay by this chat."
+  },
+  "final_independent_readback": {
+    "structure": {
+      "checked_at_local": "2026-11-01T04:17:40.175026-08:00",
+      "installed_commit": "ddd845f71e5a3399725890616783e6df58c05b3c",
+      "launchd": {
+        "pid": "97071",
+        "state": "running"
+      },
+      "frontend_stamp_matches": true,
+      "schema": {
+        "objects": 463,
+        "sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6"
+      },
+      "fk": [],
+      "actions": [
+        {
+          "action_id": 118427,
+          "classification_id": 3842621260449570,
+          "status": "done",
+          "attempt_count": 1,
+          "provider_result_id": "server-reply:已删除邮件:6:64435",
+          "finished_at": "2026-11-01T09:20:47+00:00"
+        },
+        {
+          "action_id": 119039,
+          "classification_id": 3136200412614089700,
+          "status": "pending",
+          "attempt_count": 0,
+          "provider_result_id": "",
+          "finished_at": ""
+        },
+        {
+          "action_id": 127993,
+          "classification_id": 1714964630986362000,
+          "status": "done",
+          "attempt_count": 1,
+          "provider_result_id": "server-reply:通知:635597701:5521",
+          "finished_at": "2026-11-01T12:13:44+00:00"
+        }
+      ],
+      "receipts": [
+        {
+          "id": 22692,
+          "action_id": 118427,
+          "status": "done",
+          "attempt_number": 1,
+          "provider_operation": "move_to_trash",
+          "provider_result_id": "server-reply:已删除邮件:6:64435",
+          "finished_at": "2026-11-01T09:20:47+00:00"
+        },
+        {
+          "id": 22703,
+          "action_id": 127993,
+          "status": "done",
+          "attempt_number": 1,
+          "provider_operation": "MOVE",
+          "provider_result_id": "server-reply:通知:635597701:5521",
+          "finished_at": "2026-11-01T12:13:44+00:00"
+        }
+      ],
+      "tasks": [
+        {
+          "id": 386312,
+          "status": "skipped",
+          "error": "email_unsubscribe_cancelled_by_principal"
+        },
+        {
+          "id": 405078,
+          "status": "failed",
+          "error": "email_unsubscribe_outcome_unresolved"
+        },
+        {
+          "id": 417999,
+          "status": "failed",
+          "error": "dependency_read_unavailable"
+        }
+      ],
+      "report_run_ids": [
+        400922,
+        400923,
+        400924,
+        400925
+      ],
+      "gate": {
+        "commit": "ddd845f71e5a3399725890616783e6df58c05b3c",
+        "passed_at": "2026-11-01T12:01:36+00:00",
+        "summary": "8689 passed, 2 skipped, 1 deselected in 490.05s (0:08:10)",
+        "files": 436
+      }
+    },
+    "api": {
+      "checked_at_local": "2026-11-01T04:17:40.577966-08:00",
+      "gets": [
+        {
+          "label": "health",
+          "http_status": 200,
+          "seconds": 0.019,
+          "ok": true,
+          "item_id": "",
+          "item_status": null
+        },
+        {
+          "label": "workers",
+          "http_status": 200,
+          "seconds": 1.338,
+          "ok": null,
+          "item_id": "",
+          "item_status": null
+        },
+        {
+          "label": "attention",
+          "http_status": 200,
+          "seconds": 0.391,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "items_count": 1,
+          "meta": {
+            "page": null,
+            "page_size": null,
+            "total": 1,
+            "has_more": false
+          }
+        },
+        {
+          "label": "history_page1",
+          "http_status": 200,
+          "seconds": 0.649,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "items_count": 5,
+          "meta": {
+            "page": 1,
+            "page_size": 5,
+            "total": 39937,
+            "has_more": true
+          }
+        },
+        {
+          "label": "history_page2",
+          "http_status": 200,
+          "seconds": 1.098,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "items_count": 5,
+          "meta": {
+            "page": 2,
+            "page_size": 5,
+            "total": 39937,
+            "has_more": true
+          }
+        },
+        {
+          "label": "attempt16492",
+          "http_status": 200,
+          "seconds": 0.126,
+          "ok": null,
+          "item_id": "16492",
+          "item_status": "failed",
+          "meta": {}
+        },
+        {
+          "label": "zillow_task",
+          "http_status": 200,
+          "seconds": 0.02,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "meta": {}
+        },
+        {
+          "label": "report_task",
+          "http_status": 200,
+          "seconds": 0.02,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "meta": {}
+        },
+        {
+          "label": "email_list",
+          "http_status": 200,
+          "seconds": 0.1,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "items_count": 5,
+          "meta": {
+            "page": 1,
+            "page_size": 5,
+            "total": 11668,
+            "has_more": true
+          }
+        },
+        {
+          "label": "original_email_detail",
+          "http_status": 200,
+          "seconds": 4.021,
+          "ok": true,
+          "item_id": "3842621260449570",
+          "item_status": "processed",
+          "meta": {}
+        },
+        {
+          "label": "original_subject_preview_search",
+          "http_status": 200,
+          "seconds": 0.748,
+          "ok": null,
+          "item_id": "",
+          "item_status": null,
+          "items_count": 1,
+          "meta": {
+            "page": 1,
+            "page_size": 100,
+            "total": 1,
+            "has_more": false
+          }
+        },
+        {
+          "label": "zillow_email_detail",
+          "http_status": 200,
+          "seconds": 4.206,
+          "ok": true,
+          "item_id": "3136200412614089600",
+          "item_status": "processed",
+          "meta": {}
+        }
+      ],
+      "health": {
+        "ok": true,
+        "status": "ok"
+      },
+      "workers_summary": {
+        "queue_count": 11,
+        "pending": 1,
+        "processing": 0,
+        "failed": 26,
+        "retryable": 0,
+        "attention": 1
+      },
+      "system_health": {
+        "state": "healthy",
+        "checked_at": "2026-11-01T12:16:45.414710+00:00",
+        "violations": 0,
+        "native_delivery_coverage": {
+          "checked": 392,
+          "unavailable": 0
+        }
+      },
+      "attention_records": [
+        {
+          "id": "417999",
+          "status": "failed",
+          "error_code": "dependency_read_unavailable",
+          "detail_url": "/attempts/16492"
+        }
+      ],
+      "preview_search": {
+        "original_id_found": true,
+        "returned": 1,
+        "total": 1,
+        "has_more": false
+      }
+    },
+    "boundary": "Twelve GETs only, no browser/real unsubscribe/task replay. Natural worker action127993 and receipt22703 were read after newPID; root did not trigger them. Attention417999 is the same failure present before install."
+  },
+  "pooled_release_cleanup": {
+    "verified_backup": {
+      "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-11-01.sqlite3",
+      "device": 16777231,
+      "inode": 848222618,
+      "mtime_ns": 1793535212343900700,
+      "size": 514969600,
+      "workflow": "deploy-c16b2b12-70fc-4b8c-bd22-51ff2be2502e",
+      "operation_status": "succeeded",
+      "uuid_natively_replaced_by_daily": true,
+      "integrity": "ok",
+      "completion_marker": "CEOB",
+      "schema_objects": 463,
+      "schema_sha256": "79902793a135114ccd140c3125d8d468177c3004245273a890d9e4c559e55fa6",
+      "fk": [],
+      "native_directory_lock": true,
+      "exact_generation_rechecked": true,
+      "no_open_references": true,
+      "owner_conditional_hold_released_after_independent_readback": true,
+      "deleted_and_absent": true,
+      "checked_at_local": "2026-11-01T04:20:16.870767-08:00"
+    },
+    "backup_observed_before_cleanup": [
+      {
+        "path": "/Users/derek/Library/Application Support/ceo-agent-service/backups/auto-reply-2026-11-01.sqlite3",
+        "device": 16777231,
+        "inode": 848222618,
+        "size": 514969600,
+        "mtime_ns": 1793535212343900700
+      }
+    ],
+    "failed_e5_gate_zhixab5c_absent": true,
+    "successful_gate_haat2zca_absent": true,
+    "diagnostic_root_s417m2k0_absent": true,
+    "owner_performed_other_temp_cleanup": true,
+    "root_created_no_temporary_file_or_database": true,
+    "active_owner_worktree_preserved": "/private/tmp/ceo-startup-recovery-release-20261031",
+    "active_report_source_artifacts_preserved": "Task417999/scheduled-run433762",
+    "cleanup_does_not_claim_Zillow_or_report_recovered": true,
+    "post_cleanup_checked_at_local": "2026-11-01T04:22:15.070476-08:00",
+    "post_cleanup_backup_sqlite_files": [],
+    "post_cleanup_specific_temp_paths_absent": true
   }
 }
