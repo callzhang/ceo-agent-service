@@ -64,6 +64,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-okr-source-connection-reuse-20261101 | /Users/derek/.agents/skills/dingtang-okr-review/scripts/dingteam_okr_direct_source.py; new source transport regression and behavior reference in isolated Skill worktree; scripts/dingteam_okr_headless_source.py; tests/test_dingteam_okr_source_contract.py; tests/gate_files.txt; docs/architecture.md; docs/runtime-mechanism.md | Task417999 source performance: 14O/52KR requires120 serial reads; baseline220s/83complete vs temporary pooled77.041s/120complete; preserve evidence, auth,30s request/220s process deadlines and retry budget; no report resend or DB terminal edits | 2026-11-01 |
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |

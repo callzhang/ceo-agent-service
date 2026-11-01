@@ -66,6 +66,8 @@ Consumer 与 Audit 的实际只读工具目录提供 `read_dingtalk_group_member
 userId；身份关联必须由同一账号返回的稳定 ID 证明，空资料或 partial 仍是证据缺口。
 这些读取不新增审核、发送门禁或业务来源绑定，也不改变既有外部动作权限。
 
+OKR 实时源读取由共用 `dingtang-okr-review` source 执行，源模块的原生 HTTPX 客户端复用连接，每次请求独立绑定原 headers/body，不新增 Cookie 会话。所有周期、目标、评论、KR 明细与进度仍完整串行读取；没有成员或运行路线特例。30 秒传输阶段、三次尝试和 220 秒 worker 边界保持原值，服务包装器使用同一 HTTPX 异常合同保留现有 scope/code；源读取成功不代表报告发布或消息发送，业务恢复仍经 Consumer → Audit → System 和真实回执核验。
+
 本节描述实际进入 AgentOrchestrator 的运行契约。进入 AgentOrchestrator 的业务任务遵循“执行 Agent → 审核 Agent → 反馈/修正 → 再审核”的生命周期；领域任务替换输入和工具能力。WeChat task 3 走同一 Consumer → Audit → SystemExecutor 流程并经现有 Sender 发送，Email 退订和确定性技术命令沿用独立系统直接路径。Consumer 可按业务 Skill 读取事实、准备材料并执行普通工具工作；系统注册的受控外部动作由 System Executor 根据持久化且审核通过的精确方案执行和回读。服务保存候选、审核、选择、执行及回执事实。
 
 Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general 或 OA）；Codex Audit 使用从现有 Audit wire contract 生成的同一原生 Schema，不再按 OAuth/API 认证方式区分 schema、解码器或恢复指纹。两者的动态 JSON 对象通过键值条目表示，并在原有严格 Pydantic 校验前无损还原。Audit Schema 保留 outcome 与 feedback 的现有条件关系；候选 revision/digest 仍由服务从本轮 AuditTurnContext 绑定，候选字段断言仍执行原校验。字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；候选绑定、断言校验和审核决定不变。该传输层不改变结果字段、业务判断、SystemExecutor 外部动作流程或 Consumer 直发消息/邮件禁令；Claude 与 Friday 输出路径保持原样。

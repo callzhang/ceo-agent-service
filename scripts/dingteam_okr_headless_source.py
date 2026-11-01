@@ -15,9 +15,9 @@ import time
 from contextlib import contextmanager
 from datetime import UTC, datetime
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 
+import httpx
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
@@ -359,12 +359,13 @@ def _fetch_user_okr(*, user_id: str, period_label: str) -> int:
             },
             "periods": [{"name": period["name"], "okrId": period["okrId"]} for period in absence.periods],
         }
-    except (RuntimeError, ValueError, TimeoutError, URLError) as error:
-        cause = error if isinstance(error, HTTPError) else error.__cause__
-        if isinstance(cause, HTTPError):
-            scope = "shared" if cause.code == 401 else "member"
-            code = f"okr_source_http_{cause.code}"
-        elif isinstance(error, (TimeoutError, URLError)) or isinstance(cause, (TimeoutError, URLError)):
+    except (RuntimeError, ValueError, TimeoutError, httpx.HTTPError) as error:
+        cause = error if isinstance(error, httpx.HTTPError) else error.__cause__
+        if isinstance(cause, httpx.HTTPStatusError):
+            status = cause.response.status_code
+            scope = "shared" if status == 401 else "member"
+            code = f"okr_source_http_{status}"
+        elif isinstance(error, (TimeoutError, httpx.TransportError)) or isinstance(cause, (TimeoutError, httpx.TransportError)):
             scope, code = "member", "okr_source_transport_failed"
         elif isinstance(error, ValueError):
             scope, code = "member", "okr_source_invalid_response"
