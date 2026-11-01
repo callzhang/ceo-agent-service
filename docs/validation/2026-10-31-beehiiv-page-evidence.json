@@ -1,6 +1,6 @@
 {
   "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
-  "status": "focused_validation_passed; deployment_blocked_on_fixed-budget_gate_preparation_cost",
+  "status": "focused_validation_passed; deployment_pending_separately_scoped_gate_cache_fix",
   "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
   "root_causes": [
     "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
@@ -43,7 +43,24 @@
     "fk": []
   },
   "production_readback": "pending standard deployment",
-  "cleanup": "pending readback; only owned temp /private/tmp/ceo-beehiiv-page-evidence.GZkk4O, generated dev assets, and confirmed release backup generation",
+  "cleanup": {
+    "completed_failed_gate_copies": [
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.bj5k0j0u",
+        "commit": "81a9148ee8f38fa973fc2a7c59bb2f0adbc397c8",
+        "log_sha256": "36988f01b14a740ce9c09f7d52db5a56a6fe7b6697254f00280a4f9b03eed9c9"
+      },
+      {
+        "path": "/private/var/folders/74/yj2lxqs162q7rqzm0mj8nv1c0000gn/T/deploy-test-gate.aigdj6my",
+        "commit": "8f049908dcd660073347a59e62bdb63361dc2483",
+        "log_sha256": "dbd049ade36acc4e48e7a851bc60f6a08055196bd58658636666bfac153c0425"
+      }
+    ],
+    "deleted_and_absent": true,
+    "failure_logs": "Byte-matched compact logs retained in active task temp until final readback",
+    "production_backup": "No backup created by either refused deployment; both stopped at gate. Other owner backup untouched.",
+    "active_task_temp": "/private/tmp/ceo-beehiiv-page-evidence.GZkk4O remains for pending deployment/readback; cleanup not marked complete"
+  },
   "gate_attempts": [
     {
       "commit": "81a9148ee8f38fa973fc2a7c59bb2f0adbc397c8",
@@ -69,6 +86,26 @@
   "test_preparation_measurement": {
     "new_direct_nodes": "5 passed in 4.42s; call durations 0.65-1.14s",
     "new_api_nodes": "4 passed in 3.28s; call durations 0.23-0.58s",
-    "decision": "Keep all assertions and test nodes. General fixture preparation diagnosis/optimization separately owned by release owner; no unchanged third gate retry."
+    "decision": "Keep all assertions and test nodes. General fixture preparation diagnosis/optimization separately owned by release owner; no unchanged third gate retry.",
+    "nested_parent_candidate": "Withdrawn: branch mismatch reproduced but no measured native Store/Email construction speedup.",
+    "interpreter": "python and python3 resolve to the same python3.12 inode; Python3.12.11 and SQLite3.53.4.",
+    "separate_schema_cache_candidate": {
+      "owner": "release owner",
+      "mechanism": "Three call signatures for two semantic current_objects catalogs thrash maxsize=2 LRU. Default false and explicit false are separate keys.",
+      "owner_measurement": "12 alternating calls: 12 rebuilds/0 hits, 0.93-1.14s; normalized keys: 2 rebuilds, 0.145-0.149s; catalogs equal.",
+      "boundary": "Not measured as whole gate gain. Separate approval and implementation pending; no schema validation change by this branch."
+    }
+  },
+  "production_while_blocked": {
+    "installed": "ec2bdcc68760cd1570d884da99769a2890bdc199",
+    "health": {
+      "http": 200,
+      "body": {
+        "ok": true,
+        "status": "ok"
+      }
+    },
+    "beehiiv_fix_installed": false,
+    "new_real_unsubscribe": false
   }
 }
