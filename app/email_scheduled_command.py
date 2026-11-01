@@ -11,6 +11,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
+import httpx
+
 from app.agent_cron.commands import ServiceCommandResult
 from app.email_classifier_scan import (
     advance_scan_progress,
@@ -51,17 +53,23 @@ class TransientEmailDiscoveryError(TimeoutError):
 
 def _is_transient_discovery_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
-    if isinstance(exc, ConnectionError):
-        # The readonly adapter also uses ConnectionError for login/configuration
-        # failures, which cannot be repaired by retrying the same credentials.
-        detail = str(exc).casefold()
-        if detail.startswith("imap login failed:") or detail in {
-            "email imap credential is unavailable",
-            "email imap tls is required",
-        }:
-            return False
-        return True
-    return isinstance(exc, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort))
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, httpx.HTTPStatusError):
+            return cause.response.status_code in {500, 502, 503, 504}
+        if isinstance(cause, ConnectionError):
+            # The readonly adapter also uses ConnectionError for login/configuration
+            # failures, which cannot be repaired by retrying the same credentials.
+            detail = str(cause).casefold()
+            return not (detail.startswith("imap login failed:") or detail in {
+                "email imap credential is unavailable",
+                "email imap tls is required",
+            })
+        if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
+                              httpx.TimeoutException)):
+            return True
+        cause = cause.__cause__
+    return False
 
 
 @dataclass(frozen=True)

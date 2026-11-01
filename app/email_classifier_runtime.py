@@ -294,12 +294,14 @@ class OnlineEmbeddingMicrobatcher:
             )
         except BaseException as exc:  # preserve remote failure per waiter
             for request in batch:
+                error = OnlineEmbeddingBatchError(
+                    f"online embedding request failed: {type(exc).__name__}",
+                    self._failure_timing(request, http_started=dispatched_at),
+                )
+                error.__cause__ = exc
                 self._complete(
                     request,
-                    error=OnlineEmbeddingBatchError(
-                        f"online embedding request failed: {type(exc).__name__}",
-                        self._failure_timing(request, http_started=dispatched_at),
-                    ),
+                    error=error,
                 )
             return
         if type(result) is not EmbeddingResult or len(result.vectors) != len(batch):
