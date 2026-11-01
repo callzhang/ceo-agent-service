@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-embedding-discovery-error-chain-20261101 | app/email_classifier_runtime.py microbatch exception wrapping only; app/email_scheduled_command.py transient classifier only; tests/test_email_embedding_retry.py; own gate entry; scoped architecture/runtime discovery contract; own claim | Current Scheduled10 discovery failures: real configured synthetic endpoint probe gives HTTP502, but the microbatch wrapper loses its cause so existing bounded scan retry cannot classify it. Preserve typed cause and recognize temporary server errors through it; retain current retry counts, escalation, model choice and all business/effect gates. Root owns regression, release and actual recovery verification; upstream service separately unreachable by ordinary/official Tailscale SSH. | RED6 expected failures observed before source change; GREEN118 focused tests pass including real client/batcher/discovery chain, temporary recovery/exhaustion and permanent auth/TLS/protocol controls. Documentation updated; formal release and live readback pending. |
 
 
 
