@@ -640,7 +640,7 @@ durable 状态读取 ActionPlan 已授权的 entry，一次调用完成整件事
 兼容调用语义仍称为 `unsubscribe_email(task_id)`，但它由 worker 直接执行；没有 proposal 要抄写、没有
 acceptance 要绑定、没有 Audit turn，也没有 continuation 要续。
 
-幂等性使用动作级 receipt：`email_unsubscribe_receipts` 里每个动作身份一条。除下述既有可重新判读的跳过结果外，已有终态 receipt 时只返回其业务结果与引用，不再读取页面；本次 Attempt 明确记录 `reused_receipt=true`，不复制原页面和原时间作为新观察。首次外部调用前会持久化执行标记。只有执行返回明确的瞬时浏览器错误码时，标记才转成带错误码和
+幂等性使用动作级 receipt：`email_unsubscribe_receipts` 里每个动作身份一条。除下述既有可重新判读的跳过结果外，已有终态 receipt 时只返回其业务结果与引用，不再读取页面，不会重复退订；本次 Attempt 明确记录 `reused_receipt=true`，不复制原页面和原时间作为新观察。首次外部调用前会持久化执行标记。只有执行返回明确的瞬时浏览器错误码时，标记才转成带错误码和
 重试次数的 retryable 状态；任务按现有指数退避及四次预算恢复同一 ActionPlan、entry 和输入摘要。
 正式重试可产生新的 Task generation/input version；只有任务 ID、稳定 Action identity、完整输入摘要
 相同且标记含已识别的瞬时外部错误时，才把这个 retryable 标记接续到新 generation，并保留原重试计数。
