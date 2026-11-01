@@ -16,7 +16,7 @@
 | 异常链与Email连接生命周期修复发布 | **ddd845f71已标准发布并独立读回** | 8689pass／2skip／1deselect／490.05秒，435旧条目原序保留+1连接回归；600秒/2GiB未变。主PID97071，stamp/schema463/hash/FK[]一致；12GET均200，原主题preview search精确命中原ID；f27c随祖先链上线 |
 | Task417999新OKR报告恢复 | **来源已收齐，报告分析中，未终态** | 请求级证据确认120次串行读取的重复TLS开销；b33+Skill809已发布，05:18 PST最新Run400927/RTA400969继续分析；负责人确认原系统18源已齐（16collected/2goals_missing）、prepare exit0，旧9有效源按同occurrence复用；尚无发布／发送回执，不能用Attention0当终态；旧400926失败保留 |
 | 先前两次超时的验收与清理 | **已完成（历史轮次）** | 两次拒绝未创建新备份，恢复hold已释放；失败clone r7beelp9/cf6kchp8及旧我方临时目录独立确认不存在、备份目录无sqlite3文件，负责人后续发布活动worktree保留 |
-| 最新服务／Skill发布后读回及清理 | **b33／809已独立读回，本代备份已清** | 05:18 PST服务b33/PID86688、runtime SHA7de979…匹配发布、schema463/hash/FK[]不变、6GET200；原邮件done1/pending0不变。d0f8代daily inode848342909／514969600字节按原生锁/完整性/同代次/无引用复核后05:19 PST删除；负责人确认成功gate、源诊断临时目录、已完成Skill隔离worktree及安装临时根均清；活动worktree与业务源artifact保留 |
+| 最新服务／Skill发布后读回及清理 | **b33／809已独立读回，本代备份已清** | 05:18 PST服务b33/PID86688、runtime SHA7de979…匹配发布、schema463/hash/FK[]不变、6GET200；原邮件done1/pending0不变。d0f8代daily inode848342909／514969600字节按原生锁/完整性/同代次/无引用复核后05:19 PST删除；负责人确认成功gate、源诊断临时目录、已完成Skill隔离worktree及安装临时根均清；pytest-5516/5517/5518及精确对应链接也由负责人核实清理；仅指本轮已识别产物，非全机清空；活动worktree与业务源artifact保留 |
 
 本次完整边界、只读生产快照及临时清理状态见[精简验收记录](validation/2026-11-01-workbench-weekly-closeout.json)。19份材料版本与父目录不变、事后底层读源和当轮Agent实际读源是不同证据，不混写。此前时点、旧失败与原回执不改写为当前成功。
 
