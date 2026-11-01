@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-gate-timeout-profile-20261101 | app/email_store.py::_connect, _open_connection/classification_source_candidates fixed UDF initialization, record_current_provider_observations temp-table lifetime only; new tests/test_email_connection_reuse.py and its gate row; tests/test_email_store.py connection-lifecycle/count/read-only-trace/FD contract tests only; scoped architecture/runtime connection behavior; own claim; owned timing artifacts | Derek requests proven gate-timeout root-cause repair, unchanged435+tests/600s/2GiB, then normal deploy/readback. EmailStore reparses huge schema on every open/close while AutoReplyStore already pools; reuse that exact existing thread-local pool with separate opener/FK keys, preserve every constructor/schema check and transaction, close failures/FK-off, explicitly end own scan temp tables. No Audit/effect/routing changes or separate cache. | Diagnostic6830 cases identifies email_worker73s/unsubscribe37s/direct23s. Targeted cProfile confirms repeated execute/close costs;80 identical reads ABBA1.98/1.80s vs existing pool0.016/0.015s, same rows/FK. RED3 reuse failures observed; pool-only TEMP regression failed before cleanup and fixed-UDF initialization RED observed. GREEN750 full relevant Email tests; original187 Store test functions retained, FD/journal/rollback guarantees preserved. Fixed gate and formal deployment/readback pending. |
 
 
 
