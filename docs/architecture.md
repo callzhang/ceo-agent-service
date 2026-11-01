@@ -575,6 +575,8 @@ registry，不与主 worker 进程共享——同一账号在两个不同进程�
 不创建 CEO Agent task，也不创建 Consumer/Audit run。`trash` 只允许可恢复的 move-to-Trash；
 永久删除、IMAP `EXPUNGE` 和清空 Trash 在所有配置与执行入口都不可达。
 
+同一计划包含 `unsubscribe` 和 `trash` 时，清理须等待退订终态回执，或精确绑定当前账号、邮件、分类、计划及版本的正式“保留订阅”决定。后者必须仍对应同一 Task、execution generation 和 input version，Task 为取消退订的 `skipped`，且没有未决执行标记或退订 claim；它只表示退订步骤已处理，不生成或伪装服务商退订回执。满足依赖后，由原 Email worker 执行原计划已授权的可恢复清理并读回。普通失败、普通 skipped、缺失/身份不符的决定及未决执行继续阻止；其他显式动作依赖不变。
+
 标准 IMAP 账号使用 `UID MOVE`。若 provider 未声明 MOVE capability，但其官方协议明确规定
 `UID COPY` 本身就是移动语义，账号可显式配置 `imap_move_mode=copy_as_move`；服务不会按主机名
 猜测，也不会把普通 IMAP 的 COPY 当作移动。两种模式都以服务器回的 `COPYUID` 得到新位置；

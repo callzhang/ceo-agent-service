@@ -12041,7 +12041,7 @@ class EmailStore:
         db: sqlite3.Connection,
         row: sqlite3.Row,
     ) -> bool:
-        """Require audited terminal evidence before a dependent junk Trash."""
+        """Require a terminal result or exact principal retention decision."""
 
         if row["action_type"] != EmailAction.TRASH.value:
             return True
@@ -12063,7 +12063,41 @@ class EmailStore:
             """,
             (action_identity, row["action_plan_id"], row["classification_id"]),
         ).fetchone()
-        return receipt is not None and receipt["outcome"] in _EMAIL_UNSUBSCRIBE_OUTCOMES
+        if receipt is not None and receipt["outcome"] in _EMAIL_UNSUBSCRIBE_OUTCOMES:
+            return True
+        cancellation = db.execute(
+            f"""
+            select 1 from ({EMAIL_UNSUBSCRIBE_CANCELLATION_SQL}) as cancellation
+            join ({REPLY_TASK_CURRENT_SQL}) as task
+              on task.id=json_extract(cancellation.decision_json,'$.task_id')
+            where cancellation.action_identity=?
+              and json_extract(cancellation.decision_json,'$.decision')='retain_subscription'
+              and json_extract(cancellation.decision_json,'$.action_identity')=task.trigger_message_id
+              and task.trigger_message_id=cancellation.action_identity
+              and task.channel='email' and task.status='skipped'
+              and task.error='email_unsubscribe_cancelled_by_principal'
+              and task.execution_generation=json_extract(cancellation.decision_json,'$.execution_generation')
+              and task.input_version=json_extract(cancellation.decision_json,'$.input_version')
+              and json_extract(task.trigger_message_json,'$.action_identity')=task.trigger_message_id
+              and json_extract(task.trigger_message_json,'$.action_type')='unsubscribe'
+              and json_extract(task.trigger_message_json,'$.account_id')=?
+              and json_extract(task.trigger_message_json,'$.stable_message_identity')=?
+              and json_extract(task.trigger_message_json,'$.classification_id')=?
+              and json_extract(task.trigger_message_json,'$.action_plan_id')=?
+              and json_extract(task.trigger_message_json,'$.action_plan_version')=?
+              and not exists (
+                  select 1 from ({state_projection('service_state')}) as marker
+                  where marker.key='email_unsubscribe_execution_pending:v1:'||cancellation.action_identity
+              )
+              and not exists (
+                  select 1 from ({EMAIL_UNSUBSCRIBE_CLAIM_SQL}) as claim
+                  where claim.action_identity=cancellation.action_identity
+              )
+            """,
+            (action_identity, row["account_id"], row["stable_message_identity"],
+             row["classification_id"], row["action_plan_id"], row["action_plan_version"]),
+        ).fetchone()
+        return cancellation is not None
 
     @staticmethod
     def _claimed_direct_action(

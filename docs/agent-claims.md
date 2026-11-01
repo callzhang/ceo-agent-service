@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-unsubscribe-cancellation-dependency-20261101 | app/email_store.py::_direct_action_dependency_satisfied; tests/test_email_cancellation_dependency.py; own gate entry; scoped architecture/runtime paragraphs; own claim | Derek explicitly approved generic current-task/current-plan retention decisions satisfying the unsubscribe prerequisite for already-authorized Trash. Preserve cancellation, provider receipts, other dependencies, unresolved effects and all other task identities; no unsubscribe replay. Root owns focused regression, standard deployment and actual provider readback. | Implemented: positive RED then focused73 passed, current-data read-only candidate releases118427 while119039 stays blocked; formal gate/deployment/provider verification pending. |
+
 
 
 
