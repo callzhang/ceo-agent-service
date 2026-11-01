@@ -54,8 +54,13 @@ def schema_objects(db):
     return objects
 
 
-@lru_cache(maxsize=2)
 def current_objects(*, email_ledger=False):
+    """Use one canonical cache entry per ledger role, regardless of call syntax."""
+    return _current_objects_for_ledger(bool(email_ledger))
+
+
+@lru_cache(maxsize=2)
+def _current_objects_for_ledger(email_ledger):
     from app.current_database_schema import create_current_database_schema
     from app.task8_storage import register_task8_functions
     with closing(sqlite3.connect(":memory:")) as db:
@@ -64,6 +69,11 @@ def current_objects(*, email_ledger=False):
         if email_ledger:
             create_current_email_migration_ledger(db)
         return schema_objects(db)
+
+
+current_objects.cache_clear = _current_objects_for_ledger.cache_clear
+current_objects.cache_info = _current_objects_for_ledger.cache_info
+current_objects.cache_parameters = _current_objects_for_ledger.cache_parameters
 
 
 def schema_is_current(db, *, email_ledger=None):
