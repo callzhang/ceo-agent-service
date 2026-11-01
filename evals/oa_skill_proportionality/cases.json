@@ -120,6 +120,21 @@
         "return",
         "revert_task"
       ]
+    },
+    {
+      "id": "project_zero_margin_after_three_identical_returns",
+      "trigger": "Review this pending project initiation approval at Derek's current node and act according to the Skills.",
+      "facts": "OA process P-P1, Derek's pending task T-P1 (RUNNING, assigned to Derek, revert node sid-startevent available, REVERT_FOR_RESUBMIT). Project initiation for a small data-collection project for customer C. Form: quote 25 person-days x 950 CNY per person-day = 23,750 CNY revenue; total cost 23,750 CNY (950 per person-day); comprehensive margin 0%; margin option 'below 25%'; stated reason: strategic seeding project to build a deeper relationship with C and win more later projects. No pre-contract investment, no travel cost, no cloud cost, no Rosetta platform. The form does not say whether the project is first-curve. Linked approved opportunity record (a different, earlier form): order amount 20,000 CNY, customer budget 25,000 CNY, demand 25 people x 6 hours each. Operation records: Derek's node returned this task three times; each remark asked the applicant to reconcile the opportunity record's amount, quantity and hours with the project form, with nearly identical wording; after each return the applicant resubmitted without changing the form. Latest applicant comment: the 20,000 CNY order amount is only an estimate, the actual contract amount is 23,750 CNY (the quote); the 0% margin is because this is a strategic seeding project, please approve it as a special approval. The ask-for-reconciliation remarks never explained how a different unit label or hours figure would change revenue, cost or margin.",
+      "expect_not": [
+        "reject"
+      ],
+      "expect_any": [
+        "approve",
+        "append_task",
+        "comment",
+        "revert_task",
+        "needs_human"
+      ]
     }
   ]
 }
