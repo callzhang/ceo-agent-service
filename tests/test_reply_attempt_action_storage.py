@@ -19,6 +19,13 @@ REQUIRED = {"conversation_id": "c", "conversation_title": "t", "trigger_message_
             "sensitivity_kind": "ordinary", "send_status": "pending"}
 
 
+def _create_target_schema(db):
+    """Prepare the complete fixture once per database, before tested operations."""
+    db.execute("begin")
+    create_current_database_schema(db)
+    db.execute("commit")
+
+
 @pytest.fixture(params=[("actual", "actual_no_memory_fk")])
 def pair(request):
     with closing(sqlite3.connect(":memory:")) as source, closing(sqlite3.connect(":memory:")) as target:
@@ -30,8 +37,34 @@ def pair(request):
             for index in definition["indexes"]:
                 if index["sql"]:
                     source.execute(index["sql"])
-        create_current_database_schema(target)
+        _create_target_schema(target)
         yield source, target, request.param[0]
+
+
+def test_target_fixture_batches_ddl_before_business_transactions(monkeypatch):
+    from types import SimpleNamespace
+    import sys
+
+    observed = []
+    original = create_current_database_schema
+
+    def observe(db):
+        observed.append(db.in_transaction)
+        original(db)
+
+    monkeypatch.setattr(sys.modules[__name__], "create_current_database_schema", observe)
+    prepared = pair.__wrapped__(SimpleNamespace(param=("actual", "actual_no_memory_fk")))
+    try:
+        _, target, _ = next(prepared)
+        assert target.in_transaction is False
+        assert target.execute("pragma foreign_keys").fetchone() == (1,)
+        assert observed == [True]
+        with closing(sqlite3.connect(":memory:")) as expected:
+            original(expected)
+            catalog = "select type,name,tbl_name,sql from sqlite_schema order by type,name"
+            assert target.execute(catalog).fetchall() == expected.execute(catalog).fetchall()
+    finally:
+        prepared.close()
 
 
 def insert_source(db, table, values, ignore=False):
@@ -167,7 +200,7 @@ def test_full_rolls_back_the_same_native_scope(kind, mode):
         with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
             db.execute("pragma foreign_keys=on")
             if target:
-                create_current_database_schema(db)
+                _create_target_schema(db)
             else:
                 for table in ("reply_attempts", "memory_write_events"):
                     db.execute(CAPTURE["actual"]["tables"][table]["sql"])
@@ -324,7 +357,7 @@ def test_bad_update_binding_opens_native_deferred_transaction(bad_argument, conn
     for target in (False, True):
         with closing(sqlite3.connect(":memory:", **connection_options)) as db:
             if target:
-                create_current_database_schema(db)
+                _create_target_schema(db)
             else:
                 db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
             db.commit()
@@ -349,7 +382,7 @@ def test_autocommit_update_holds_writer_lock_through_predicate_scan(connection_o
         with closing(sqlite3.connect(path, **connection_options)) as db, closing(
             sqlite3.connect(path, isolation_level=None, timeout=0)
         ) as other:
-            create_current_database_schema(db)
+            _create_target_schema(db)
             identity = storage.insert_action(db, "reply_attempts", REQUIRED).lastrowid
             observed = []
 
@@ -379,7 +412,7 @@ def test_failed_update_preserves_caller_transaction(scope):
     for target in (False, True):
         with closing(sqlite3.connect(":memory:", isolation_level=None)) as db:
             if target:
-                create_current_database_schema(db)
+                _create_target_schema(db)
             else:
                 db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
             db.execute("create table pending(value text)")
@@ -408,7 +441,7 @@ def test_bad_update_binding_does_not_take_writer_lock(scope, bad_argument):
             path = Path(temporary) / ("target.db" if target else "source.db")
             with closing(sqlite3.connect(path)) as db, closing(sqlite3.connect(path, isolation_level=None, timeout=0)) as other:
                 if target:
-                    create_current_database_schema(db)
+                    _create_target_schema(db)
                 else:
                     db.execute(CAPTURE["actual"]["tables"]["reply_attempts"]["sql"])
                 db.commit()
@@ -454,7 +487,7 @@ def test_bad_reply_insert_binding_matches_native_transaction_and_lock(kind, vari
             ) as other:
                 db.execute("pragma foreign_keys=on")
                 if target:
-                    create_current_database_schema(db)
+                    _create_target_schema(db)
                 else:
                     for table in ("reply_attempts", "memory_write_events"):
                         db.execute(CAPTURE[variant]["tables"][table]["sql"])
@@ -490,7 +523,7 @@ def test_fresh_explicit_insert_parent_failure_transaction_matches_source(mode):
         with closing(sqlite3.connect(":memory:", isolation_level=None if mode == "autocommit" else "")) as db:
             db.execute("pragma foreign_keys=on")
             if target:
-                create_current_database_schema(db)
+                _create_target_schema(db)
             else:
                 for table in ("reply_attempts", "memory_write_events"):
                     db.execute(CAPTURE["fresh_candidate17"]["tables"][table]["sql"])
@@ -584,7 +617,7 @@ def test_current_attempt_run_reference_and_compare_and_set():
     with closing(sqlite3.connect(":memory:")) as db:
         db.row_factory = sqlite3.Row
         db.execute("pragma foreign_keys=on")
-        create_current_database_schema(db)
+        _create_target_schema(db)
         task = create_task(db, values={"kind": "reply", "status": "processing", "created_at": "now", "updated_at": "now"})
         run = create_run(db, values={"task_id": task["id"], "role": "consumer",
                                      "status": "completed", "session_id": "session",
