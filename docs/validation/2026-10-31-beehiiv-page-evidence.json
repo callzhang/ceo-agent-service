@@ -1,6 +1,6 @@
 {
   "scope": "Beehiiv page-judgement cache identity and exact per-Attempt local evidence. No DDL, real unsubscribe, retry, or recovery replay.",
-  "status": "focused_validation_passed; deployment_pending_separately_scoped_gate_cache_fix",
+  "status": "cache_key_fix_approved; independent_validation_and_standard_release_pending",
   "base": "618fa68c1a392f7b1b4ec1cfe05f92460f197917",
   "root_causes": [
     "Judge workload identity hashed text only despite host and controls in actual prompt; routed runtime reuses completed identity.",
@@ -93,7 +93,7 @@
       "owner": "release owner",
       "mechanism": "Three call signatures for two semantic current_objects catalogs thrash maxsize=2 LRU. Default false and explicit false are separate keys.",
       "owner_measurement": "12 alternating calls: 12 rebuilds/0 hits, 0.93-1.14s; normalized keys: 2 rebuilds, 0.145-0.149s; catalogs equal.",
-      "boundary": "Not measured as whole gate gain. Separate approval and implementation pending; no schema validation change by this branch."
+      "boundary": "Derek explicitly approved cache-key normalization with unchanged real database checks, capacity, 600s/2GiB and all tests; separate implementation and validation owned by release owner."
     }
   },
   "production_while_blocked": {
