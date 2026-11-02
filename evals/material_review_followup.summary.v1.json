@@ -1,0 +1,80 @@
+{
+  "version": "material-review-followup.v1",
+  "manifest_sha256": "9b846b1fce15cf721ae37ad5fc75f30f89a90c545219ec35448739558c2a1336",
+  "settings": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 180,
+    "tools": "none",
+    "repeats": 1
+  },
+  "review_method": "Primary-agent semantic review against each frozen case rubric; no independent grader.",
+  "results": [
+    {
+      "arm": "baseline",
+      "case": "wrong-quarter-correction",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "349cccaad79e5c33f5234e4e572d704daa426e443c622c6e5a7e9c226b993f28",
+      "semantic_pass": true
+    },
+    {
+      "arm": "baseline",
+      "case": "unavailable-original",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "349cccaad79e5c33f5234e4e572d704daa426e443c622c6e5a7e9c226b993f28",
+      "semantic_pass": true
+    },
+    {
+      "arm": "baseline",
+      "case": "verified-successor",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "349cccaad79e5c33f5234e4e572d704daa426e443c622c6e5a7e9c226b993f28",
+      "semantic_pass": true
+    },
+    {
+      "arm": "baseline",
+      "case": "rounded-values",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "349cccaad79e5c33f5234e4e572d704daa426e443c622c6e5a7e9c226b993f28",
+      "semantic_pass": true
+    },
+    {
+      "arm": "candidate",
+      "case": "wrong-quarter-correction",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "493e6a42a7cc882b28f5c8c48db4e308acbde948721eabd3d5c82a18e83fd3c9",
+      "semantic_pass": true
+    },
+    {
+      "arm": "candidate",
+      "case": "unavailable-original",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "493e6a42a7cc882b28f5c8c48db4e308acbde948721eabd3d5c82a18e83fd3c9",
+      "semantic_pass": true
+    },
+    {
+      "arm": "candidate",
+      "case": "verified-successor",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "493e6a42a7cc882b28f5c8c48db4e308acbde948721eabd3d5c82a18e83fd3c9",
+      "semantic_pass": true
+    },
+    {
+      "arm": "candidate",
+      "case": "rounded-values",
+      "native_valid": true,
+      "tools_used": [],
+      "instruction_sha256": "493e6a42a7cc882b28f5c8c48db4e308acbde948721eabd3d5c82a18e83fd3c9",
+      "semantic_pass": true
+    }
+  ],
+  "boundary": "Baseline 4/4 and candidate 4/4. Synthetic inline evidence with tools disabled does not reproduce production retrieval, show an improvement, or prove live behavior."
+}

@@ -51,7 +51,13 @@ For a DingTalk or Lark interactive mail review:
    loaded mail Skill.
 2. Confirm sender, recipients, subject, current thread state, and the exact
    request. Do not ask the sender to paste content that the loaded mail Skill can
-   read.
+   read. For a follow-up to a prior review, recover the original message/thread
+   identity and its exact linked material from the quoted reply, conversation,
+   or available prior run before searching again. Confirm the reporting period,
+   sender, subject, and document identity against that original request. A search
+   match about a different period or document is a different source; it cannot
+   confirm or overturn the original finding. If the original cannot be recovered,
+   state that precise gap rather than substituting another search result.
 3. Inspect every linked material needed for the requested judgment with its
    matching operation Skill. A link title or mail summary is not its content.
    Load `ceo-document-review` when the requested outcome requires substantive
