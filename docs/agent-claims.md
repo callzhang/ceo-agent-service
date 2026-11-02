@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-zhangjing-reply-20261101 | app/agent_cli.py drive material result path; tests/test_drive_material_bounds.py; ci/shared-skills/ceo-mail-review/SKILL.md; ci/shared-skills/ceo-document-review/SKILL.md; ci/consumer-system-contract-release.json; scoped eval and evidence docs | Repair proven Drive XLSX KeyError and preserve original source identity in review follow-ups; no business replay or audit policy change. | 2026-11-01 |
 
 
 

@@ -26,3 +26,7 @@ python scripts/eval_material_review_followup.py --baseline-ref a8051eaf8 --candi
 ```
 
 The native command uses installed Codex authentication and sends synthetic facts only. Do not replay original business tasks or send correction messages as a test. Release status and remaining gates are reported separately; local tests and a read-only live-source probe are not deployment evidence.
+
+## Publication status
+
+The candidate is committed and published on a repair branch. It is not merged or deployed, and the installed managed Skill revisions have not been changed. The required local deployment gate was not started while the host was fully occupied (load about 27, CPU idle about 0.2%). Deployment still requires the established low-load gate, exact source publication, controlled drain/restart, and live version/queue/Skill readback.
