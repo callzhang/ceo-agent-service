@@ -575,3 +575,5 @@ reverts committed work they did not author.
 
 
 
+
+| codex-reaction-principal-16525-20261101 | `app/system_action_handlers.py` MessageEmotionHandler only; new `tests/test_message_emotion_readback.py`; `tests/test_system_executor.py` native participant fake; gate manifest; scoped architecture/runtime/system-action contract reaction lines | Fix attempt16525 reaction native replyUsers display-name identity resolution; focused regression, standard deploy and exact-task recovery. No Audit/policy changes or new retry behavior. Isolated `/private/tmp/ceo-reaction-principal-16525`. | active 2026-11-01 |

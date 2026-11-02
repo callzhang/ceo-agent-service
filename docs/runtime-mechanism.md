@@ -40,6 +40,8 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 
 ## 运行角色
 
+钉钉 reaction 读回的 `replyUsers[]` 是显示名/昵称，不是组织 userId。执行器通过当前目录搜索，按完整姓名或昵称唯一解析到稳定 userId 后与当前账号比较；原消息 ID 和 emoji 仍须精确匹配。无法解析或同名歧义时保持未确认。核对已有 reaction 仅调用读取，不重复添加。
+
 两角色都可通过 `read_dingtalk_group_members` 读取精确群 ID 的 DWS 真人/机器人
 成员桶和原生有界自动分页结果；调用方检查 complete、hasMore、buckets 和 failures。
 `read_dingtalk_user_profiles` 按已验证的组织 userId 批量读取原始资料，不进行姓名搜索

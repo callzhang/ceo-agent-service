@@ -1139,6 +1139,11 @@ def test_emoji_and_text_emotion_only_complete_with_provider_reaction_identity():
         def get_current_user_id(self):
             return "derek"
 
+        def search_user_profiles(self, query):
+            from app.dws_client import DwsUserProfile
+
+            return [DwsUserProfile(user_id=query, name=query)]
+
     dws = Dws()
     emoji = _candidate(actions=[{
         "description": "React", "action_identity": "emoji", "capability": "dingtalk-chat",

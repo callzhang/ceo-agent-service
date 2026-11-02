@@ -27,6 +27,8 @@ Attempt 的最终业务摘要由现有 `audit_summary` 字段持有，它不是 
 
 ## 当前任务运行机制
 
+钉钉 reaction 读回的 `replyUsers[]` 是显示名/昵称，不是组织 userId。执行器通过当前目录搜索，按完整姓名或昵称唯一解析到稳定 userId 后与当前账号比较；原消息 ID 和 emoji 仍须精确匹配。无法解析或同名歧义时保持未确认。核对已有 reaction 仅调用读取，不重复添加。
+
 钉钉发送核验只从发送结果的 `result` 读取新消息/发送任务身份，不递归扫描引用消息、
 历史消息或 nextActions。存在 `result.openTaskId` 时必须查询该任务，即使同时返回了消息 ID；
 只有原生查询的 `result.sendStatus=SUCCESS` 才算该异步任务投递成功。没有可查询任务时，

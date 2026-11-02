@@ -895,9 +895,21 @@ class MessageEmotionHandler:
                 break
             for reply in replies:
                 if (isinstance(reply, dict) and reply.get("emoji") == action.payload.get("emoji")
-                        and isinstance(reply.get("replyUsers"), list)
-                        and current_user in reply["replyUsers"]):
-                    return ActionOutcome("verified", {"readback": reply, "message_id": action.target["message_id"]})
+                        and isinstance(reply.get("replyUsers"), list)):
+                    # The native API returns participant names/nicks, not user IDs.
+                    for name in reply["replyUsers"]:
+                        if not isinstance(name, str) or not name.strip():
+                            continue
+                        profiles = self.dws.search_user_profiles(name)
+                        identities = {
+                            profile.user_id for profile in profiles
+                            if name in (profile.name, profile.nick)
+                        }
+                        if current_user and identities == {current_user}:
+                            return ActionOutcome("verified", {
+                                "readback": reply, "message_id": action.target["message_id"],
+                                "user_id": current_user,
+                            })
         return ActionOutcome("uncertain", {"reason": "reaction_not_in_readback"})
 
     def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:

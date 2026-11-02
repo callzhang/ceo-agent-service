@@ -354,6 +354,7 @@ tests/test_error_actions_native_parity.py
 tests/test_email_current_schema.py
 tests/test_current_action_schema.py
 tests/test_system_executor.py
+tests/test_message_emotion_readback.py
 tests/test_skill_runtime_evals.py
 tests/test_action_delivery_bootstrap.py
 tests/test_consumer_audit_business_eval.py

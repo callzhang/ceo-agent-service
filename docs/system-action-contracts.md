@@ -66,8 +66,11 @@ Consumer action must carry that same body. The service does not compose a new
 body after Audit approval. A selected option has its own prepared delivery key.
 
 The native reaction list exposes `result.messages[].openMessageId` and
-`emotionReplyList[].emoji` with `replyUsers[]`, so an emoji can be read back
-for the exact message and principal. The native OA records readback exposes
+`emotionReplyList[].emoji` with `replyUsers[]` containing display names/nicks.
+The executor resolves each participant by an exact name/nick directory match to
+one stable user ID, then compares it with the current principal. Missing,
+ambiguous or different identities remain unconfirmed. The original native
+readback and resolved current user ID are stored as completion evidence. The native OA records readback exposes
 `operationType`, `operationResult`, `operationTime`, and `userId`, but no comment
 body or comment ID. The document comment and text-emotion reads have no
 confirmed unique correlation shape in the current native CLI schema. A generic
