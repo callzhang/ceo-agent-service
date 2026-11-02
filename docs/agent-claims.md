@@ -66,6 +66,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-meeting-creator-roster-20261102 | app/meeting_alignment_source.py::_verify_calendar_evidence only; tests/test_meeting_alignment_source.py; scoped architecture/runtime sentences; this claim row | Derek explicitly approved matching the Minutes creator against the full verified transcript attendee roster, including the current principal. Preserve unique stable identity/name checks, conflict rejection, source reconstruction, Audit and delivery gates. RED/GREEN regression then formal deploy and original Meeting 418050 recovery/readback; no direct sends or status writes. | 2026-11-02 |
 | codex-json-artifact-input-20261101 | app/agent_cli.py (consumer_artifact_write only); tests/test_agent_cli_artifacts.py; docs/architecture.md; docs/runtime-mechanism.md | Investigate generic JSON artifact encoding: native input strings already lack closing delimiters and were saved unchanged; prepare failing regressions and align input contract before implementation; do not edit live business artifacts or interrupt Run400927 | 2026-11-01 |
 
 | Owner | Files | What | Since |

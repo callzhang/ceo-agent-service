@@ -631,14 +631,10 @@ def _verify_calendar_evidence(
         }
         minutes_creator = None
         speakers = counterparts
-        if (
-            creator is not None
-            and creator.name.strip()
-            and creator.user_id.strip() != current_user_id.strip()
-        ):
+        if creator is not None and creator.name.strip():
             creator_matches = [
                 participant
-                for participant in counterparts
+                for participant in evidence.participants
                 if (
                     participant.user_id.strip() == creator.user_id.strip()
                     if creator.user_id.strip()

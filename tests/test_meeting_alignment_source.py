@@ -535,6 +535,72 @@ def test_read_meeting_source_validates_minutes_creator_as_attendee_not_speaker()
     ]
 
 
+@pytest.mark.parametrize("creator_id", ["", "u-derek"])
+def test_read_meeting_source_accepts_current_user_as_minutes_creator(creator_id):
+    dws = FakeDws()
+    participant = meeting_alignment_source.MeetingParticipant
+    evidence = build_transcript_roster_evidence(
+        live_minutes_info(),
+        dws.get_all_minutes_transcription("minutes-1"),
+        current_user=participant(name="Derek", user_id="u-derek"),
+        speakers=[
+            participant(name="A", user_id="union-a"),
+            participant(name="B", user_id="u-b"),
+        ],
+    )
+
+    source = read_meeting_source(
+        dws,
+        "minutes-1",
+        calendar_evidence=evidence,
+        creator=participant(name="Derek", user_id=creator_id),
+    )
+
+    assert source.attendee_evidence == "transcript"
+    assert [(p.name, p.user_id) for p in source.participants] == [
+        ("Derek", "u-derek"), ("A", "union-a"), ("B", "u-b")
+    ]
+
+
+@pytest.mark.parametrize(
+    ("creator_name", "creator_id", "duplicate_name"),
+    [
+        ("Derek", "u-other", False),
+        ("Unknown", "", False),
+        ("Derek", "", True),
+        ("Wrong name", "union-a", False),
+        ("Wrong name", "u-derek", False),
+    ],
+)
+def test_read_meeting_source_rejects_unmatched_or_ambiguous_minutes_creator(
+    creator_name, creator_id, duplicate_name
+):
+    dws = FakeDws()
+    participant = meeting_alignment_source.MeetingParticipant
+    evidence = build_transcript_roster_evidence(
+        live_minutes_info(),
+        dws.get_all_minutes_transcription("minutes-1"),
+        current_user=participant(name="Derek", user_id="u-derek"),
+        speakers=[
+            participant(name="A", user_id="union-a"),
+            participant(name="B", user_id="u-b"),
+        ],
+    )
+    if duplicate_name:
+        evidence = evidence.model_copy(update={
+            "participants": [*evidence.participants,
+                             participant(name="Derek", user_id="u-other")]
+        })
+
+    with pytest.raises(MeetingSourceIncomplete, match="stable Minutes creator"):
+        read_meeting_source(
+            dws,
+            "minutes-1",
+            calendar_evidence=evidence,
+            creator=participant(name=creator_name, user_id=creator_id),
+        )
+
+
 def test_read_meeting_source_merges_producer_discovery_metadata():
     dws = FakeDws()
 
