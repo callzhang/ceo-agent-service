@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-consumer-native-browser-20261101 | app/wechat/codex_safety.py; tests/test_agent_role_tool_boundary.py; tests/gate_files.txt; docs/architecture.md Consumer CLI paragraph; docs/runtime-mechanism.md Consumer tool surface paragraph | Honor native Consumer browser configuration and explicit CLI overrides as Derek requested; retain Audit and computer-control boundaries; do not replay Zillow or alter task/receipt state | 2026-11-01 |
 
 
 
