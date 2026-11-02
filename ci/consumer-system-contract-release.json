@@ -32,14 +32,14 @@
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
       "target": "skills/ceo-document-review/SKILL.md",
       "old_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
-      "new_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
+      "new_sha256": "3dc86c9a0d57cca37980ef6dcbd059849bc2d81539139ab9e8537f67b4c76d01",
       "old_managed_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77"
     },
     {
       "source": "ci/shared-skills/ceo-mail-review/SKILL.md",
       "target": "skills/ceo-mail-review/SKILL.md",
       "old_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
-      "new_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d",
+      "new_sha256": "34cade498cc8c0108efe5a2e9687956c60d1f7bbf756e463a906fcb911de1436",
       "old_managed_sha256": "108e258426ec8f66a0907722d4a1034fba48c8628544eccc69aa5e0162163b9d"
     },
     {

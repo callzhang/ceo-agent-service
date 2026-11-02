@@ -167,3 +167,39 @@ def test_download_does_not_follow_link_swapped_at_open(tmp_path, monkeypatch):
     with pytest.raises((OSError, DwsError)):
         DwsClient().download_drive_file("node-1", file_name="material")
     assert outside.read_bytes() == b"private fixture"
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+@pytest.mark.parametrize("format", ["xlsx", "pptx"])
+def test_role_drive_reader_returns_package_body_and_material_path(tmp_path, monkeypatch, role, format):
+    """The real package parsers omit path; the download receipt owns it."""
+    output = BytesIO()
+    with zipfile.ZipFile(output, "w") as package:
+        if format == "xlsx":
+            package.writestr("[Content_Types].xml", "<Types/>")
+            package.writestr("xl/workbook.xml", '<workbook xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"><sheets><sheet name="Scores" r:id="rId1"/></sheets></workbook>')
+            package.writestr("xl/_rels/workbook.xml.rels", '<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Id="rId1" Target="worksheets/sheet1.xml"/></Relationships>')
+            package.writestr("xl/worksheets/sheet1.xml", '<worksheet xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main"><sheetData><row r="24"><c r="K24" t="e"><v>#VALUE!</v></c></row></sheetData></worksheet>')
+        else:
+            package.writestr("ppt/presentation.xml", "<presentation/>")
+            package.writestr("ppt/slides/slide1.xml", '<slide xmlns:a="urn:drawing"><a:t>Verified material</a:t></slide>')
+    content = output.getvalue()
+    monkeypatch.setattr(DwsClient, "download_drive_file", lambda *args, **kwargs: content)
+    tool = agent_cli.build_role_server(role)._tool_manager.get_tool("read_dingtalk_drive_file")
+    result = asyncio.run(tool.run({"node_id": "node-1", "space_id": "space-1", "file_name": "evidence." + format}, convert_result=False))
+    assert result["format"] == format
+    assert Path(result["path"]).read_bytes() == content
+    assert result["sha256"] == hashlib.sha256(content).hexdigest()
+    assert (result["node_id"], result["space_id"], result["file_name"]) == ("node-1", "space-1", "evidence." + format)
+    if format == "xlsx":
+        assert result["sheets"][0]["rows"][0] == {"row": 24, "cells": {"K": "#VALUE!"}}
+    else:
+        assert result["slides"][0]["text"] == "Verified material"
+
+
+def test_spreadsheet_tool_declares_existing_preview_limits():
+    tools = asyncio.run(agent_cli.build_role_server("consumer").list_tools())
+    schema = next(tool for tool in tools if tool.name == "read_spreadsheet").inputSchema
+    for name, maximum in [("max_rows", agent_cli.MAX_SPREADSHEET_ROWS), ("max_columns", agent_cli.MAX_SPREADSHEET_COLUMNS)]:
+        assert schema["properties"][name]["minimum"] == 1
+        assert schema["properties"][name]["maximum"] == maximum

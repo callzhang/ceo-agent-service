@@ -735,6 +735,7 @@ def _download_dingtalk_drive_file(
             "space_id": space_id,
             "file_name": file_name,
             **extracted,
+            "path": str(material_path),
             "sha256": hashlib.sha256(contents).hexdigest(),
         }
         if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
@@ -1533,8 +1534,8 @@ def read_text_file_tool(path: str) -> dict[str, object]:
 )
 def read_spreadsheet_tool(
     path: str,
-    max_rows: int = MAX_SPREADSHEET_ROWS,
-    max_columns: int = MAX_SPREADSHEET_COLUMNS,
+    max_rows: Annotated[int, Field(ge=1, le=MAX_SPREADSHEET_ROWS)] = MAX_SPREADSHEET_ROWS,
+    max_columns: Annotated[int, Field(ge=1, le=MAX_SPREADSHEET_COLUMNS)] = MAX_SPREADSHEET_COLUMNS,
 ) -> dict[str, object]:
     """Read a bounded preview of a downloaded xlsx workbook without shell access."""
     return read_spreadsheet(path, max_rows=max_rows, max_columns=max_columns)

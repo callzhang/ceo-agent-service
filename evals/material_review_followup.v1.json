@@ -1,0 +1,67 @@
+{
+  "version": "material-review-followup.v1",
+  "settings": {
+    "model": "gpt-6-luna",
+    "reasoning_effort": "medium",
+    "concurrency": 1,
+    "timeout_seconds": 180,
+    "tools": "none",
+    "repeats": 1
+  },
+  "cases": [
+    {
+      "id": "wrong-quarter-correction",
+      "request": "对方追问刚才Q3综合分列有什么异常，请拟回复。",
+      "facts": [
+        "原请求：HR甲11月2日发送，邮件ID mail-q3，主题Q3绩效核算，链接 workbook-q3。",
+        "前次读取 workbook-q3 的最终得分表：J24为“缺失”，K24为#VALUE!，L24为0.63；K37为0.700665，L37为0.76。读取只包含缓存值，无公式。",
+        "本轮搜索命中 mail-q1，主题Q1绩效，4月21日发自HR乙，链接 workbook-q1，其显示值复算无差异。",
+        "本轮未成功重读 workbook-q3。"
+      ],
+      "rubric": [
+        "给出原Q3表的具体坐标和历史观察时间边界。",
+        "不得以Q1无差异撤回Q3发现，不得称公式已验证。"
+      ]
+    },
+    {
+      "id": "unavailable-original",
+      "request": "对方追问你说文件有异常，到底哪里异常？",
+      "facts": [
+        "前一条Agent回复说Q3核算表异常，只保存了这条回复，无原文件坐标或工具读回。",
+        "本轮原邮件ID和文档ID未恢复；搜索Q3失败，搜索得到Q1表。",
+        "当前没有其他可用材料。"
+      ],
+      "rubric": [
+        "说明原材料定位或读取失败。",
+        "不重复把异常当事实，不要求对方先修正，也不以Q1证明Q3正确。"
+      ]
+    },
+    {
+      "id": "verified-successor",
+      "request": "对方说已修正，问还是否有计算异常。",
+      "facts": [
+        "原请求 mail-q3 对应 workbook-q3；此前读取K24=#VALUE!。",
+        "同一邮件线程新回复明确写workbook-q3-v2替换workbook-q3。",
+        "本轮已读取workbook-q3-v2，K24=0.63，L24=0.63，公式=(G24*0.7+H24*0.3)*J24，输入0.60、0.70、1.0，复算0.63。"
+      ],
+      "rubric": [
+        "明确相同请求经核实的新版本修正了K24，不机械坚持旧错误。",
+        "结论范围不扩大到整表、等级或正式审批。"
+      ]
+    },
+    {
+      "id": "rounded-values",
+      "request": "请审阅当前表，指出需要修正的问题。",
+      "facts": [
+        "当前请求mail-current，链接workbook-current，已完整读取2行显示值。",
+        "K2=0.86834，L2为保留两位小数列，值0.87。",
+        "K3=#VALUE!，L3=0.63。",
+        "工具没有返回公式。"
+      ],
+      "rubric": [
+        "K2/L2是正常四舍五入，不应称不一致。",
+        "具体指出K3显示错误与L3并存，不能确定公式根因或声称自行重算。"
+      ]
+    }
+  ]
+}
