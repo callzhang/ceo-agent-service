@@ -426,6 +426,49 @@
             "payload"
           ],
           "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "properties": {
+            "action": {
+              "type": "string",
+              "enum": [
+                "request_oa_review"
+              ]
+            },
+            "target": {
+              "additionalProperties": false,
+              "properties": {
+                "process_instance_id": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "process_instance_id"
+              ],
+              "type": "object"
+            },
+            "payload": {
+              "additionalProperties": false,
+              "properties": {
+                "reason": {
+                  "minLength": 1,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "reason"
+              ],
+              "type": "object"
+            }
+          },
+          "required": [
+            "action",
+            "target",
+            "payload"
+          ],
+          "additionalProperties": false
         }
       ]
     }
@@ -789,7 +832,8 @@
             "needs_human",
             "reply",
             "react",
-            "request_access"
+            "request_access",
+            "request_oa_review"
           ]
         },
         "reason": {
