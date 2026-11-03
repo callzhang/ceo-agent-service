@@ -52,7 +52,7 @@ def test_source_credentials_and_download_capabilities_still_fail(value):
 
 def test_source_decoded_depth_limit_still_fails():
     nested = {"content": "ordinary"}
-    for _ in range(13):
+    for _ in range(14):
         nested = {"section": nested}
     value = {"encoded": json.dumps(nested)}
     with pytest.raises(RuntimeResultValidationError, match="runtime_result_source_invalid"):
@@ -77,6 +77,22 @@ def test_nested_oa_serialized_fields_do_not_consume_structure_depth_budget():
 
     assert not _contains_sensitive_value(value)
     assert not _contains_local_runtime_value(value)
+    _validate_runtime_reference_domain_result(
+        _result(value),
+        allow_configured_feedback_links=True,
+    )
+
+
+def test_normal_oa_table_class_metadata_one_level_deeper_remains_readable():
+    row = [{} for _ in range(6)] + [{"extendValue": {
+        "detailList": [{"classInfo": {"sections": [{"endAcross": "ordinary source evidence"}]}}],
+    }}]
+    value = {
+        "processInstanceId": "process",
+        "formValueVOS": [{} for _ in range(9)] + [{"value": json.dumps([{"rowValue": row}])}],
+    }
+
+    assert not _contains_sensitive_value(value)
     _validate_runtime_reference_domain_result(
         _result(value),
         allow_configured_feedback_links=True,

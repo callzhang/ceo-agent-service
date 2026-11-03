@@ -2126,7 +2126,7 @@ def _json_digest(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-_MAX_SENSITIVE_VALUE_STRUCTURE_DEPTH = 12
+_MAX_SENSITIVE_VALUE_STRUCTURE_DEPTH = 13
 _MAX_SENSITIVE_VALUE_JSON_TEXT_DEPTH = 12
 
 

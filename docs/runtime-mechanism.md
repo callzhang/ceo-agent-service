@@ -1654,8 +1654,8 @@ The general anchor registration conflict checks remain unchanged.
 服务捕获的 source_bindings.value 是原始来源数据，不是 Agent 自己写的短引用字段。
 日历卡片等来源可能把完整 JSON 放在 reference 中，不套用候选 reference 的
 512 字符上限；来源仍接受严格反馈链接、凭据、实际对象/列表嵌套深度、JSON 字符串解码层数
-与整个结果编码大小检查。对象结构深度和 JSON 文本编码层数分别有界，解码一个结构化来源字段
-不会挤占对象结构深度预算；超出任一边界仍按敏感来源处理。
+与整个结果编码大小检查。对象结构最多允许 13 层，JSON 文本编码最多允许 12 层，二者分别计数；解码一个结构化来源字段
+不会挤占对象结构深度预算。超过任一边界仍按敏感来源处理。13 层对象上限覆盖 OA 表格的普通 classInfo.sections 元数据；凭据名、凭据值和签名 URL 检查不变。
 绑定元数据与候选字段仍执行原短字段限制。检查仅使用投影副本，不截断或修改
 原来源、candidate digest 或派发前同对象回读比较。
 
