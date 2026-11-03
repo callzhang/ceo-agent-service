@@ -294,7 +294,8 @@
                   "revert_task",
                   "redirect_task",
                   "append_task",
-                  "comment"
+                  "comment",
+                  "request_review"
                 ]
               }
             },

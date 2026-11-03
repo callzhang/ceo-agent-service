@@ -160,6 +160,7 @@ _OA_ACTION_TARGET_FIELDS = {
     "redirect_task": ("process_instance_id", "task_id", "to_actioner_id"),
     "append_task": ("process_instance_id", "task_id", "appender_user_id"),
     "comment": ("process_instance_id",),
+    "request_review": ("process_instance_id",),
 }
 
 DINGTALK_MESSAGE_IDENTIFIER_FIELDS = (
@@ -260,6 +261,11 @@ class ProposedAction(BaseModel):
                     raise ValueError(f"dingtalk-oa {self.operation} requires target.{field} as a nonempty string")
             if self.operation == "append_task" and self.payload.get("type") not in ("before", "parallel"):
                 raise ValueError("dingtalk-oa append_task requires payload.type of before or parallel")
+            reason = self.payload.get("reason")
+            if self.operation == "request_review" and (
+                set(self.payload) != {"reason"} or not isinstance(reason, str) or not reason.strip()
+            ):
+                raise ValueError("dingtalk-oa request_review requires exactly payload.reason as a nonempty string")
         if self.capability == "wechat" and self.operation == "send_message":
             for field in ("account_id", "target_type", "target_id", "conversation_id"):
                 value = self.target.get(field)

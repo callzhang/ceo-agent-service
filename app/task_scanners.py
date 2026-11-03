@@ -12,6 +12,10 @@ from app.agent_cron.commands import (
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import OA_PENDING_PAGE_SIZE_MAX
 from app.minutes_todo_context import minutes_full_summary, todo_transcript_excerpts
+from app.oa_review_request import (
+    mark_oa_review_request_queued,
+    pending_oa_review_request,
+)
 from app.store import AutoReplyStore
 from app.task_models import WorkItem
 from app.skill_features import FeatureRegistry
@@ -754,11 +758,15 @@ def scan_pending_oa_approvals(
                 process_revisions[process_instance_id] = revision
                 process_skill_digests[process_instance_id] = skill_digest
             continue
+        # A conversation Agent asked for another look (`request_review`): the
+        # reason it carries is new evidence the OA records do not show.
+        review_request = pending_oa_review_request(store, process_instance_id)
         failed_task = failed_review_tasks.get(
             f"oa_pending_scan:{process_instance_id}"
         )
         if (
-            failed_task is not None
+            review_request is None
+            and failed_task is not None
             and failed_task.trigger_message_id.startswith(
                 f"oa-pending:{process_instance_id}:{revision}:"
             )
@@ -784,7 +792,7 @@ def scan_pending_oa_approvals(
         # revision already excludes the principal's own records, so it moves
         # only when somebody else comments or acts -- which is exactly the
         # wake-up signal.
-        if previous_revisions.get(process_instance_id) == revision and (
+        if review_request is None and previous_revisions.get(process_instance_id) == revision and (
             _oa_principal_has_commented(
                 records_payload, current_user_id=current_user_id
             )
@@ -809,7 +817,14 @@ def scan_pending_oa_approvals(
             # The day is part of the trigger identity so a daily revisit is a
             # new input for the same business object: without it the id repeats
             # and the enqueue is deduplicated away.
-            open_message_id=f"oa-pending:{process_instance_id}:{revision}:{scan_date}",
+            open_message_id=f"oa-pending:{process_instance_id}:{revision}:{scan_date}"
+            + (
+                ":r" + hashlib.sha256(
+                    str(review_request["request_key"]).encode("utf-8")
+                ).hexdigest()[:12]
+                if review_request is not None
+                else ""
+            ),
             conversation_title="审批待办",
             single_chat=True,
             sender_name="Derek OA",
@@ -854,6 +869,13 @@ def scan_pending_oa_approvals(
                 "其他审批类型没有规则卡不是规则缺口。所选 Skill 明确引用的规则卡、登记表等规范材料必须读取；"
                 "未被适用 Skill 引用的背景材料可以跳过。"
                 "在此前提下审阅完整审批材料、历史处理记录和当前节点。"
+                + (
+                    "\n会话 Agent 请求重新审阅本审批（来源会话 "
+                    f"{review_request.get('source_conversation_id', '')}，消息 "
+                    f"{review_request.get('source_message_id', '')}）：{review_request['reason']}"
+                    if review_request is not None
+                    else ""
+                )
             ),
             raw_payload={
                 "source": "oa_pending_scan",
@@ -895,6 +917,10 @@ def scan_pending_oa_approvals(
             oa_url=oa_url,
             channel="dingtalk",
         )
+        if review_request is not None:
+            mark_oa_review_request_queued(
+                store, process_instance_id, review_request, trigger.open_message_id
+            )
         if inserted:
             # Each scan is an independent look at the approval's external
             # state, so the turn must not resume the previous turn's session.

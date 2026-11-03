@@ -438,3 +438,5 @@ tests/test_feedback_workbench_resolution.py
 tests/test_workbench_result_codec.py
 tests/test_scheduled_manual_instruction.py
 tests/test_dingteam_okr_source_contract.py
+tests/test_drive_preview_browser.py
+tests/test_oa_review_request.py

@@ -59,6 +59,7 @@ def test_catalog_is_generated_from_every_canonical_capability_and_operation() ->
         ("dingtalk-oa", "append_task"),
         ("wechat", "send_message"),
         ("dingtalk-oa", "comment"),
+        ("dingtalk-oa", "request_review"),
         ("dingtalk-doc", "create_document"),
         ("dingtalk-doc", "create_doc_comment"),
         ("dingtang-okr", "score_kr"),

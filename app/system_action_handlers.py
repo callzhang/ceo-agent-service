@@ -1202,6 +1202,7 @@ def _wechat_account(store: object, wechat_service: object):
 
 def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], object]:
     from app.dingtang_okr_action import DingtangOkrScoreHandler
+    from app.oa_review_request import OaReviewRequestHandler
 
     handlers: dict[tuple[str, str], object] = native_dingtalk_message_handlers(store, dws)
     handlers[("dingtang-okr", "score_kr")] = DingtangOkrScoreHandler()
@@ -1214,6 +1215,7 @@ def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], obj
     handlers[("dingtalk-oa", "append_task")] = OaAppendApproverHandler(dws)
     handlers[("wechat", "send_message")] = WechatSendMessageHandler(store)
     handlers[("dingtalk-oa", "comment")] = OaCommentHandler(dws)
+    handlers[("dingtalk-oa", "request_review")] = OaReviewRequestHandler(store)
     handlers[("dingtalk-chat", "add_message_emoji")] = MessageEmotionHandler(dws)
     handlers[("dingtalk-chat", "add_message_text_emotion")] = MessageEmotionHandler(dws)
     handlers[("dingtalk-chat", "create_message_text_emotion")] = TextEmotionCreateHandler(dws)

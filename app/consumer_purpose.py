@@ -53,6 +53,10 @@ class Content(_Strict):
     content: str = Field(min_length=1)
 
 
+class ReviewReason(_Strict):
+    reason: str = Field(min_length=1)
+
+
 class MessageTarget(_Strict):
     conversation_id: str = Field(min_length=1)
     message_id: str = Field(min_length=1)
@@ -87,6 +91,7 @@ def action_contracts(purpose: str):
             'reply': (MessageTarget, Content, 'dingtalk-chat', 'reply_to_message'),
             'react': (MessageTarget, Emoji, 'dingtalk-chat', 'add_message_emoji'),
             'request_access': (MessageTarget, Content, 'dingtalk-chat', 'reply_to_message'),
+            'request_oa_review': (OAProcess, ReviewReason, 'dingtalk-oa', 'request_review'),
         }
     raise ValueError(f'unknown Consumer purpose: {purpose}')
 
