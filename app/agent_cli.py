@@ -647,6 +647,31 @@ def _ocr_input_for_agent(material_file, material_path: Path, *, file_format: str
     }
 
 
+def _image_page_ocr_input(image_bytes: bytes, *, page_number: int) -> dict[str, object]:
+    """Encode one captured page image as a bounded JPEG for the OCR MCP."""
+    from PIL import Image
+
+    image = Image.open(BytesIO(image_bytes)).convert("RGB")
+    for scale in (1.0, 0.85, 0.7, 0.55):
+        current = image.copy()
+        if scale < 1.0:
+            current.thumbnail((int(image.width * scale), int(image.height * scale)))
+        for quality in (85, 75, 65):
+            encoded = BytesIO()
+            current.save(encoded, format="JPEG", quality=quality, optimize=True)
+            payload = encoded.getvalue()
+            if len(payload) <= MAX_OCR_AGENT_INPUT_BYTES:
+                return {
+                    "format": "image",
+                    "ocr_required": True,
+                    "ocr_input_base64": base64.b64encode(payload).decode("ascii"),
+                    "ocr_mime_type": "image/jpeg",
+                    "ocr_original_page_number": page_number,
+                    "ocr_source_sha256": hashlib.sha256(image_bytes).hexdigest(),
+                }
+    raise AgentReadOnlyViolationError("drive_preview_page_image_too_large")
+
+
 def _pdf_page_ocr_input(
     material_path: Path, *, page_number: int, source_sha256: str,
 ) -> dict[str, object]:
@@ -2195,6 +2220,46 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_drive_file,
         name="read_dingtalk_drive_file",
+        annotations=read,
+    )
+    drive_previews: dict[str, object] = {}
+
+    def preview_dingtalk_drive_file(
+        node_id: str, page_number: int | None = None,
+    ) -> dict[str, object]:
+        """Read a view-only DingTalk Drive file through its web preview page.
+
+        Use when the file is shared as view-only (仅可查看 / READER) and
+        read_dingtalk_drive_file or a download is refused. node_id is the
+        Drive node (dentryUuid) from the link. Opens the preview in the
+        service's signed-in headless browser and captures each page as an
+        image. The first call returns the title and ocr_page_numbers; pass
+        each page_number to receive a bounded JPEG for
+        ai_services.ocr_document. Pages are kept for this MCP process lifetime.
+        """
+        from app.drive_preview_browser import capture_drive_preview
+
+        preview = drive_previews.get(node_id)
+        if preview is None:
+            preview = capture_drive_preview(node_id)
+            drive_previews[node_id] = preview
+        if page_number is None:
+            return {
+                "node_id": node_id,
+                "title": preview.title,
+                "page_count": preview.page_count,
+                "ocr_page_numbers": list(range(1, len(preview.pages) + 1)),
+                "truncated": preview.truncated,
+            }
+        if type(page_number) is not int or not 1 <= page_number <= len(preview.pages):
+            raise AgentReadOnlyViolationError("drive_preview_page_number_invalid")
+        return _image_page_ocr_input(
+            preview.pages[page_number - 1], page_number=page_number,
+        )
+
+    bound.add_tool(
+        preview_dingtalk_drive_file,
+        name="preview_dingtalk_drive_file",
         annotations=read,
     )
 
