@@ -33,9 +33,9 @@ def test_valid_source_depth_is_not_charged_for_candidate_packaging():
     original = result.model_dump_json()
     assert not _contains_sensitive_value(value)
     assert not _contains_local_runtime_value(value)
-    # The source itself fits the budget; only candidate packaging adds depth.
-    assert _contains_sensitive_value(_project_runtime_domain_result(result))
-    assert _contains_local_runtime_value(_project_runtime_domain_result(result))
+    # Packaging depth must not consume the source object's structural budget.
+    assert not _contains_sensitive_value(_project_runtime_domain_result(result))
+    assert not _contains_local_runtime_value(_project_runtime_domain_result(result))
     _validate_runtime_reference_domain_result(result, allow_configured_feedback_links=True)
     assert result.model_dump_json() == original
 
@@ -55,6 +55,49 @@ def test_source_decoded_depth_limit_still_fails():
     for _ in range(13):
         nested = {"section": nested}
     value = {"encoded": json.dumps(nested)}
+    with pytest.raises(RuntimeResultValidationError, match="runtime_result_source_invalid"):
+        _validate_runtime_reference_domain_result(_result(value), allow_configured_feedback_links=True)
+
+
+def _nested_oa_table_source(*, include_credential=False):
+    stat = [{"access_token": "opaque"}] if include_credential else [{"value": "ordinary source evidence"}]
+    return {
+        "processInstanceId": "process",
+        "formValueVOS": [
+            {},
+            {"extValue": json.dumps({"list": [{"rowValue": [
+                {}, {}, {"extendValue": json.dumps({"statValue": stat})},
+            ]}]})},
+        ],
+    }
+
+
+def test_nested_oa_serialized_fields_do_not_consume_structure_depth_budget():
+    value = _nested_oa_table_source()
+
+    assert not _contains_sensitive_value(value)
+    assert not _contains_local_runtime_value(value)
+    _validate_runtime_reference_domain_result(
+        _result(value),
+        allow_configured_feedback_links=True,
+    )
+
+
+def test_nested_oa_serialized_fields_still_reject_credentials():
+    value = _nested_oa_table_source(include_credential=True)
+
+    assert _contains_sensitive_value(value)
+    with pytest.raises(RuntimeResultValidationError, match="runtime_result_source_invalid"):
+        _validate_runtime_reference_domain_result(_result(value), allow_configured_feedback_links=True)
+
+
+def test_nested_json_text_depth_limit_still_fails():
+    nested = {"content": "ordinary"}
+    for _ in range(13):
+        nested = json.dumps(nested)
+    value = {"encoded": nested}
+
+    assert _contains_sensitive_value(value)
     with pytest.raises(RuntimeResultValidationError, match="runtime_result_source_invalid"):
         _validate_runtime_reference_domain_result(_result(value), allow_configured_feedback_links=True)
 

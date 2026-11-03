@@ -2126,58 +2126,90 @@ def _json_digest(value: object) -> str:
     return hashlib.sha256(encoded).hexdigest()
 
 
-def _contains_sensitive_value(value: object, *, depth: int = 0) -> bool:
-    if depth > 12:
+_MAX_SENSITIVE_VALUE_STRUCTURE_DEPTH = 12
+_MAX_SENSITIVE_VALUE_JSON_TEXT_DEPTH = 12
+
+
+def _contains_sensitive_value(
+    value: object, *, depth: int = 0, json_text_depth: int = 0,
+) -> bool:
+    if depth > _MAX_SENSITIVE_VALUE_STRUCTURE_DEPTH:
         return True
     if isinstance(value, dict):
         if _contains_sensitive_argv(value):
             return True
         return any(
             is_sensitive_credential_name(str(key))
-            or _contains_sensitive_value(item, depth=depth + 1)
+            or _contains_sensitive_value(
+                item, depth=depth + 1, json_text_depth=json_text_depth,
+            )
             for key, item in value.items()
         )
     if isinstance(value, list | tuple):
-        return any(_contains_sensitive_value(item, depth=depth + 1) for item in value)
+        return any(
+            _contains_sensitive_value(
+                item, depth=depth + 1, json_text_depth=json_text_depth,
+            )
+            for item in value
+        )
     if not isinstance(value, str):
         return False
     if _is_signed_url(value) or contains_credential(value):
         return True
     stripped = value.lstrip()
-    if not stripped.startswith(("{", "[")) or len(value) > 64 * 1024:
+    if not stripped.startswith(("{", "[", '"')) or len(value) > 64 * 1024:
         return False
+    if json_text_depth >= _MAX_SENSITIVE_VALUE_JSON_TEXT_DEPTH:
+        return True
     try:
         decoded = json.loads(value)
     except json.JSONDecodeError:
         return False
-    return _contains_sensitive_value(decoded, depth=depth + 1)
+    # JSON embedded in provider fields (for example OA extValue) is another
+    # encoding layer, not another level of the underlying object graph.
+    # Bound those layers separately so serialized fields do not consume the
+    # structure-depth budget, while nested strings remain fail-closed.
+    return _contains_sensitive_value(
+        decoded, depth=depth, json_text_depth=json_text_depth + 1,
+    )
 
 
-def _contains_local_runtime_value(value: object, *, depth: int = 0) -> bool:
-    if depth > 12:
+def _contains_local_runtime_value(
+    value: object, *, depth: int = 0, json_text_depth: int = 0,
+) -> bool:
+    if depth > _MAX_SENSITIVE_VALUE_STRUCTURE_DEPTH:
         return True
     if isinstance(value, dict):
         return any(
             contains_local_runtime_leak(str(key))
-            or _contains_local_runtime_value(item, depth=depth + 1)
+            or _contains_local_runtime_value(
+                item, depth=depth + 1, json_text_depth=json_text_depth,
+            )
             for key, item in value.items()
         )
     if isinstance(value, list | tuple):
         return any(
-            _contains_local_runtime_value(item, depth=depth + 1) for item in value
+            _contains_local_runtime_value(
+                item, depth=depth + 1, json_text_depth=json_text_depth,
+            )
+            for item in value
         )
     if not isinstance(value, str):
         return False
     if contains_local_runtime_leak(value):
         return True
     stripped = value.lstrip()
-    if not stripped.startswith(("{", "[")) or len(value) > 64 * 1024:
+    if not stripped.startswith(("{", "[", '"')) or len(value) > 64 * 1024:
         return False
+    if json_text_depth >= _MAX_SENSITIVE_VALUE_JSON_TEXT_DEPTH:
+        return True
     try:
         decoded = json.loads(value)
     except json.JSONDecodeError:
         return False
-    return _contains_local_runtime_value(decoded, depth=depth + 1)
+    return _contains_local_runtime_value(
+        decoded, depth=depth, json_text_depth=json_text_depth + 1,
+    )
 
 
 _RUNTIME_REFERENCE_TEXT_LIMITS = {
