@@ -66,6 +66,7 @@ reverts committed work they did not author.
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| claude-drive-preview-oa-review-20261102 | new `app/drive_preview_browser.py`; `app/agent_cli.py` (new `preview_dingtalk_drive_file` tool only); `app/wechat/codex_safety.py` read-tool list; `app/agent_contracts.py` OA target fields; `app/schemas/consumer_agent_result.schema.json`; `app/consumer_purpose.py` general purpose; `app/system_action_handlers.py` (new `OaReviewRequestHandler`); `app/task_scanners.py` OA review-request intake only; `docs/system-action-contracts.md`; scoped `docs/architecture.md`/`docs/runtime-mechanism.md`; focused tests | Derek 2026-11-02 "Build both": read view-only Drive files through the preview page; reply Agent can ask the OA agent to re-review an approval (`dingtalk-oa` `request_review`). | 2026-11-02 |
 | codex-json-artifact-input-20261101 | app/agent_cli.py (consumer_artifact_write only); tests/test_agent_cli_artifacts.py; docs/architecture.md; docs/runtime-mechanism.md | Investigate generic JSON artifact encoding: native input strings already lack closing delimiters and were saved unchanged; prepare failing regressions and align input contract before implementation; do not edit live business artifacts or interrupt Run400927 | 2026-11-01 |
 
 | Owner | Files | What | Since |
