@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-calendar-wechat-repairs-20261103 | app/consumer_agent.py, app/dingtalk_models.py, app/dws_client.py calendar response values; app/wechat/accessibility.py AX window traversal; focused native consumer and WeChat tests; action contracts and scoped behavior docs | Fix invalid calendar response syntax at new Consumer output and incomplete WeChat AX window discovery. Approved calendar event-level dispatch reservation in reviewed candidate store, executor, handlers, focused tests and action contracts. | 2026-11-03 |
 
 
 
