@@ -1156,6 +1156,7 @@ def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revi
         )
     except ValueError as exc:
         raise ResultParseError(str(exc)) from exc
+    _validate_dingtalk_recipient_id_types(parsed, context)
     prepared = _prepare_outgoing_dingtalk_messages(parsed, store=store, task=task,
         context=context, proposal_revision=proposal_revision)
     prepared = _prepare_outgoing_wechat_messages(prepared, store=store, task=task,
@@ -1164,6 +1165,35 @@ def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revi
     if prepared.outcome is ConsumerOutcome.FAILED:
         return prepared
     return capture_candidate_sources(prepared, context, source_client)
+
+
+def _validate_dingtalk_recipient_id_types(
+    result: ConsumerAgentResult, context: AgentTaskContext,
+) -> None:
+    """Correct a known sender ID type mismatch before the candidate reaches Audit."""
+    user_id = context.trigger_sender_user_id
+    open_id = context.trigger_sender_open_dingtalk_id
+    if user_id == open_id:
+        return
+    for plan in (result.proposal, *(option.plan for option in result.decision_options)):
+        if plan is None:
+            continue
+        for action in plan.actions:
+            if action.capability != "dingtalk-chat" or not (
+                action.operation == "send_direct_message"
+                or (action.operation == "send_message" and not action.target.get("conversation_id"))
+            ):
+                continue
+            if open_id and action.target.get("user_id") == open_id:
+                raise ResultParseError(
+                    "This recipient value is the trigger sender's DingTalk open ID. "
+                    "Remove target.user_id and use target.open_dingtalk_id."
+                )
+            if user_id and action.target.get("open_dingtalk_id") == user_id:
+                raise ResultParseError(
+                    "This recipient value is the trigger sender's DingTalk user ID. "
+                    "Remove target.open_dingtalk_id and use target.user_id."
+                )
 
 
 def _align_plan_purpose_output(parsed: ConsumerAgentResult, prepared: ConsumerAgentResult) -> ConsumerAgentResult:

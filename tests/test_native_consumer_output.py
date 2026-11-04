@@ -64,6 +64,60 @@ def test_new_calendar_action_checks_provider_response_status():
     assert result.proposal.actions[0].payload["response_status"] == "accepted"
 
 
+@pytest.mark.parametrize(
+    "target, sender_user_id, error_field",
+    [
+        ({"user_id": "sender-open-id"}, "", "open_dingtalk_id"),
+        ({"open_dingtalk_id": "sender-user-id"}, "sender-user-id", "user_id"),
+        ({"open_dingtalk_id": "sender-open-id"}, "", None),
+        ({"user_id": "sender-user-id"}, "sender-user-id", None),
+        ({"user_id": "other-verified-recipient"}, "sender-user-id", None),
+    ],
+)
+def test_consumer_checks_dingtalk_recipient_id_type_before_audit(
+    tmp_path, target, sender_user_id, error_field,
+):
+    from dataclasses import replace
+
+    from app.consumer_agent import _prepare_reviewable_candidate
+    from tests.test_reviewed_orchestration import setup
+
+    store, task, context = setup(tmp_path)
+    context = replace(
+        context, trigger_sender_user_id=sender_user_id,
+        trigger_sender_open_dingtalk_id="sender-open-id",
+    )
+    wire = _consumer("plan", payload={
+        "objective": "Respond to the invitation and notify its sender",
+        "actions": [
+            {
+                "description": "Decline", "action_identity": "rsvp",
+                "capability": "dingtalk-calendar", "operation": "respond_calendar_event",
+                "target": {"event_id": "event-1"}, "payload": {"response_status": "declined"},
+            },
+            {
+                "description": "Notify the sender", "action_identity": "notice",
+                "capability": "dingtalk-chat", "operation": "send_direct_message",
+                "target": {"conversation_id": context.conversation_id, **target},
+                "payload": {"content": "I cannot attend."},
+            },
+        ],
+        "sourced_facts": [], "authored_judgment": "Calendar conflict confirmed",
+    })
+    wire.update(wire.pop("decision"))
+    candidate = _parse_consumer_result(_event(wire))
+    prepare = dict(store=store, task=task, context=context, proposal_revision=0, source_client=None)
+    if error_field:
+        with pytest.raises(ResultParseError, match=f"use target.{error_field}"):
+            _prepare_reviewable_candidate(candidate, **prepare)
+        return
+
+    prepared = _prepare_reviewable_candidate(candidate, **prepare)
+    assert prepared.proposal.actions[0] == candidate.proposal.actions[0]
+    assert prepared.proposal.actions[1].target == candidate.proposal.actions[1].target
+    assert prepared.proposal.actions[1].payload["content"].startswith("I cannot attend.")
+
+
 def test_native_consumer_schema_tracks_both_current_purposes():
     general = native_output_schema(purpose="general")
     oa = native_output_schema(purpose="oa")

@@ -65,6 +65,10 @@ review.
 For message sends, the service first stores the composed final body. The
 Consumer action must carry that same body. The service does not compose a new
 body after Audit approval. A selected option has its own prepared delivery key.
+For a DingTalk direct recipient, put the provider's user ID in `user_id` and its
+open DingTalk ID in `open_dingtalk_id`. An open ID from the trigger sender
+belongs in the latter field. Consumer checks a known mismatch before it prepares
+the message for Audit and corrects the candidate through the normal result retry.
 
 The native reaction list exposes `result.messages[].openMessageId` and
 `emotionReplyList[].emoji` with `replyUsers[]` containing display names/nicks.
