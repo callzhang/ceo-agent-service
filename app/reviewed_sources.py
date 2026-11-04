@@ -101,18 +101,39 @@ def read_provider_source(dws, provider, object_ref):
     raise ValueError("unsupported reviewed source provider")
 
 
+def _dingtalk_context_comparison(source, trigger_id):
+    # Keep the full reviewed snapshot, but historical card rendering is not a source change.
+    return {
+        **source,
+        "messages": [
+            {"message_id": row["message_id"]}
+            if row.get("message_id") and row["message_id"] != trigger_id
+            and row.get("sender") != "quoted_message"
+            else row
+            for row in source["messages"]
+        ],
+    }
+
+
 def changed_candidate_sources(candidate, context, dws, *, check_provider=True):
     changes = []
     for binding in candidate.source_bindings:
+        reviewed = binding.value
         if binding.provider == "task_context":
             if context is None or context.trigger_message_id != binding.object_ref:
                 raise ValueError("reviewed source context unavailable")
             actual = context_source(context)
+            if (
+                getattr(context, "channel", "") == "dingtalk"
+                and _dingtalk_context_comparison(actual, binding.object_ref)
+                == _dingtalk_context_comparison(reviewed, binding.object_ref)
+            ):
+                continue
         elif check_provider:
             actual = read_provider_source(dws, binding.provider, binding.object_ref)
         else:
             continue
-        if actual != binding.value:
+        if actual != reviewed:
             changes.append({"provider": binding.provider, "object_ref": binding.object_ref,
                             "reviewed_value": binding.value, "current_value": actual})
     return changes

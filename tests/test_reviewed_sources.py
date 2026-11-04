@@ -3,6 +3,7 @@ from dataclasses import replace
 
 import pytest
 
+from app.agent_context import AgentContextMessage
 from app.reviewed_sources import capture_candidate_sources, changed_candidate_sources
 from tests.test_reviewed_orchestration import candidate, setup
 
@@ -13,6 +14,44 @@ def test_context_binding_excludes_clock_receipts_and_human_selection(tmp_path):
     assert not changed_candidate_sources(prepared, context, None)
     assert changed_candidate_sources(prepared, replace(context, trigger_text='New applicant fact'), None)
     assert not changed_candidate_sources(prepared, replace(context, prior_human_decisions=({'kind':'selection'},)), None)
+
+
+@pytest.mark.parametrize(("channel", "changed_message", "expected_change"), [
+    ("dingtalk", AgentContextMessage("old", "Sender", "Expanded card", ""), False),
+    ("dingtalk", AgentContextMessage("other", "Sender", "Card", ""), True),
+    ("dingtalk", None, True),
+    ("wechat", AgentContextMessage("old", "Sender", "Changed text", ""), True),
+])
+def test_reviewed_history_uses_message_identity_for_dingtalk(
+    tmp_path, channel, changed_message, expected_change,
+):
+    _, _, context = setup(tmp_path)
+    original = AgentContextMessage("old", "Sender", "Card", "")
+    context = replace(context, channel=channel, messages=(original,))
+    prepared = capture_candidate_sources(candidate(), context, None)
+    assert prepared.source_bindings[0].value["messages"][0]["text"] == "Card"
+
+    refreshed = replace(context, messages=(changed_message,) if changed_message else ())
+    assert bool(changed_candidate_sources(prepared, refreshed, None)) is expected_change
+    assert changed_candidate_sources(
+        prepared,
+        replace(context, messages=(original, AgentContextMessage("new", "Sender", "New", ""))),
+        None,
+    )
+
+
+@pytest.mark.parametrize(("message_id", "sender"), [
+    ("message", "Sender"),
+    ("quoted", "quoted_message"),
+])
+def test_reviewed_dingtalk_trigger_and_quote_still_bind_text(tmp_path, message_id, sender):
+    _, _, context = setup(tmp_path)
+    message = AgentContextMessage(message_id, sender, "Original text", "")
+    context = replace(context, messages=(message,))
+    prepared = capture_candidate_sources(candidate(), context, None)
+
+    refreshed = replace(context, messages=(replace(message, text="Changed text"),))
+    assert changed_candidate_sources(prepared, refreshed, None)
 
 
 def test_oa_binding_uses_verified_native_form_fields_without_own_task_transitions(tmp_path):

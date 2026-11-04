@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-dingtalk-history-id-20261104 | app/reviewed_sources.py; tests/test_reviewed_sources.py; scoped docs/runtime-mechanism.md paragraph | Approved comparison of DingTalk history by message ID; preserve trigger and quoted source checks, candidate binding, and dispatch receipts. | 2026-11-04 |
-
 
 
 
