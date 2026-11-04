@@ -250,10 +250,11 @@ def test_native_audit_completion_race_rechecks_outside_writer(tmp_path, monkeypa
                                      owner="contract", transcript_end_line=1)
 
 
-def _reviewed(store: AutoReplyStore, *, options=True, decision_options=None):
+def _reviewed(store: AutoReplyStore, *, options=True, decision_options=None,
+              trigger_id="candidate-1", result=None):
     store.enqueue_reply_task(
         channel="dingtalk", conversation_id="candidate-test", conversation_title="Test",
-        single_chat=True, trigger_message_id="candidate-1", trigger_sender="Derek",
+        single_chat=True, trigger_message_id=trigger_id, trigger_sender="Derek",
         trigger_create_time="2026-10-04 00:00:00", trigger_text="test",
     )
     task = store.claim_reply_tasks(1)[0]
@@ -269,6 +270,8 @@ def _reviewed(store: AutoReplyStore, *, options=True, decision_options=None):
                 {"key": "stop", "terminal_outcome": "skipped", "reason": "not needed"},
             ] if options else []),
             "proposal": (None if options else {"actions": [{"action_identity": "a", "operation": "send", "target": {"user_id": "x"}}]})}
+    if result is not None:
+        body = result
     if decision_options is not None:
         body["decision_options"] = decision_options
     store.complete_agent_run(consumer.id, body, owner="consumer")
@@ -504,6 +507,85 @@ def test_unknown_dispatch_requires_reconciliation_after_restart(tmp_path: Path):
     assert retried["id"] == first["id"]
     assert retried["external_action_key"] == first["external_action_key"] == "action-key"
     assert reopened.list_candidate_action_attempts(claim["id"])[0]["status"] == "uncertain"
+
+
+@pytest.mark.parametrize("provider_reply_lost", [False, True])
+def test_calendar_dispatch_serializes_event_across_message_candidates(tmp_path, provider_reply_lost):
+    from threading import Event, Thread
+    from types import SimpleNamespace
+
+    from app.system_action_handlers import native_dws_handlers
+    from app.system_executor import SystemExecutor
+    from tests.test_system_executor import _candidate
+
+    entered, release = Event(), Event()
+    calls = []
+    statuses = {"self": "needsAction", "other": "needsAction"}
+
+    class Dws:
+        def __init__(self, principal):
+            self.principal = principal
+
+        def get_current_user_id(self):
+            return self.principal
+
+        def get_calendar_event(self, event_id):
+            return SimpleNamespace(event_id=event_id, self_response_status=statuses[self.principal])
+
+        def respond_calendar_event(self, event_id, response):
+            calls.append((self.principal, event_id, response))
+            if self.principal == "self" and response == "accepted":
+                entered.set()
+                assert release.wait(10)
+            statuses[self.principal] = response
+            if provider_reply_lost and self.principal == "self" and response == "accepted":
+                raise TimeoutError("response lost after provider write")
+            return {"success": True}
+
+    path = tmp_path / "calendar.sqlite3"
+    store = AutoReplyStore(path)
+    other_store = AutoReplyStore(path)
+
+    def prepare(trigger, response="accepted"):
+        result = _candidate(actions=[{
+            "description": "Respond to the invitation", "action_identity": "calendar",
+            "capability": "dingtalk-calendar", "operation": "respond_calendar_event",
+            "target": {"event_id": "event-1"}, "payload": {"response_status": response},
+        }]).model_dump(mode="json")
+        return _reviewed(store, options=False, trigger_id=trigger, result=result)[:3]
+
+    def run(target, worker_store, principal, owner):
+        task, candidate, review = target
+        handler = native_dws_handlers(worker_store, Dws(principal))[("dingtalk-calendar", "respond_calendar_event")]
+        executor = SystemExecutor(
+            worker_store, {("dingtalk-calendar", "respond_calendar_event"): handler}, owner=owner,
+        )
+        return executor.execute(task, candidate["id"], review["id"])
+
+    invitation, followup = prepare("invite"), prepare("followup")
+    other_account = prepare("other-account")
+    result = []
+    thread = Thread(target=lambda: result.append(run(invitation, store, "self", "invite")))
+    thread.start()
+    try:
+        assert entered.wait(5), result
+        busy = run(followup, other_store, "self", "followup")
+        assert busy.error.code == "external_action_no_effect"
+        assert calls == [("self", "event-1", "accepted")]
+        assert run(other_account, other_store, "other", "other").outcome == "executed"
+    finally:
+        release.set()
+        thread.join(timeout=10)
+    if provider_reply_lost:
+        assert result[0].error.code == "external_action_uncertain"
+        assert run(followup, other_store, "self", "followup").error.code == "external_action_no_effect"
+        assert run(invitation, other_store, "self", "invite").outcome == "executed"
+    else:
+        assert result[0].outcome == "executed"
+    assert run(followup, other_store, "self", "followup").outcome == "executed"
+    assert calls == [("self", "event-1", "accepted"), ("other", "event-1", "accepted")]
+    assert run(prepare("decline", "declined"), store, "self", "decline").outcome == "executed"
+    assert calls[-1] == ("self", "event-1", "declined")
 
 
 def test_repeated_current_schema_initialization_preserves_existing_history(tmp_path: Path):

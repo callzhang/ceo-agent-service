@@ -854,12 +854,15 @@ def test_reply_reconciliation_recovers_only_exact_compacted_trigger_readback():
 
 
 def test_calendar_response_requires_matching_provider_readback():
-    from app.system_action_handlers import CalendarResponseHandler
+    from app.system_action_handlers import native_dws_handlers
 
     class Dws:
         def __init__(self):
             self.calls = []
-            self.status = "needs_action"
+            self.status = "needsAction"
+
+        def get_current_user_id(self):
+            return "account"
 
         def respond_calendar_event(self, event_id, response_status):
             self.calls.append((event_id, response_status))
@@ -869,16 +872,23 @@ def test_calendar_response_requires_matching_provider_readback():
             return type("Event", (), {"event_id": event_id, "self_response_status": self.status})()
 
     dws = Dws()
-    handler = CalendarResponseHandler(dws)
+    from types import SimpleNamespace
+
+    store = SimpleNamespace(reserve_calendar_response=lambda *args: True)
+    handler = native_dws_handlers(store, dws)[("dingtalk-calendar", "respond_calendar_event")]
+    context = {"action_attempt": {"execution_id": 1, "action_index": 0}, "execution_owner": "worker"}
     action = _candidate(actions=[{
         "description": "Accept", "action_identity": "calendar", "capability": "dingtalk-calendar",
         "operation": "respond_calendar_event", "target": {"event_id": "e1"},
         "payload": {"response_status": "accepted"},
     }]).proposal.actions[0]
-    assert handler.dispatch(action, action_key="key", candidate={}).status == "uncertain"
+    assert handler.dispatch(action, action_key="key", candidate=context).status == "uncertain"
     assert dws.calls == [("e1", "accepted")]
     dws.status = "accepted"
-    assert handler.reconcile(action, action_key="key", candidate={}).status == "verified"
+    result = handler.dispatch(action, action_key="key", candidate=context)
+    assert result.status == "verified"
+    assert result.provider_result["verification_method"] == "already_in_effect"
+    assert handler.reconcile(action, action_key="key", candidate=context).status == "verified"
     assert dws.calls == [("e1", "accepted")]
 
 

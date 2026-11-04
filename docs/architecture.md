@@ -1996,6 +1996,8 @@ Workbench 的实时文字和工具正文仅在运行时 RAM 中使用；SQLite �
 Task2D6 的 Email 分类运行时拥有原生 `tasks(kind='email_classification')` 行，状态使用 `pending/running/done/failed`；不可变输入只在 `email_classification_inputs`，分类运行结果只在 `task_results(result_kind='email_classification')`。Task `parameters_json` 不复制输入、结果或生命周期字段；路由运行键为规范 Task ID。完成仍在 owner/generation CAS 事务内精简输入，保存精确来源摘要、provider locator、配置版本和脱敏退订候选引用。稳定邮件身份只由输入表独立列拥有；完成态 JSON 不重复该列，原输入 hash、字节数及 identity hash 不变。固定 Email channel 由该领域合同提供，不再存储成输入列。稳定身份去重、输入不可变性、重试预算、claim 次序和退避保持来源语义；Email 业务分类、ActionPlan 与动作回执仍由 Email 业务表拥有。已完成输入不长期保留正文，历史维护仍显式执行。
 
 精简后的邮件来源记录同时保留业务分类 `category` 和候选来源 `action_parameters.candidate_source`，确保已完成 Attempt 详情的业务显示不变；其他参数正文不复制。日历卡片修订仍只比较呈现正文（精简后使用原文摘要），定时扫描运行 ID 的变化不会重新打开已完成任务。
+钉钉日历响应按当前认证账号和精确日程 ID 串行执行。消息任务各自保留；本人响应已匹配时只读完成，
+已派发但待确认时仅复检，另行审核的改选在前次状态确定后可继续执行。
 
 ## Email provider identity lookup storage
 

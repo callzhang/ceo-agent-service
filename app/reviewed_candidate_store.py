@@ -653,6 +653,44 @@ class ReviewedCandidateStoreMixin:
                 (prior["id"],),
             ).fetchone())
 
+    def reserve_calendar_response(
+        self, execution_id: int, owner: str, action_index: int, principal_id: str, event_id: str,
+    ) -> bool:
+        """Reserve this event for one authenticated account in the existing action ledger."""
+        if not principal_id or not event_id:
+            raise ValueError("calendar response reservation requires account and event")
+        with self._immediate_write_transaction() as db:
+            execution = self._owned_execution(db, execution_id, owner)
+            attempt = candidate_action_attempt_row(db.execute(
+                f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) "
+                "where execution_id=? and action_index=?",
+                (execution_id, action_index),
+            ).fetchone())
+            if attempt is None or attempt["status"] != "dispatched":
+                raise ValueError("calendar response action was not dispatched")
+            action = db.execute("select action_operation from actions where id=?",
+                                (attempt["action_owner_id"],)).fetchone()
+            if action["action_operation"] != "respond_calendar_event" or json.loads(attempt["target"]).get("event_id") != event_id:
+                raise ValueError("calendar response reservation does not match approved action")
+            active = db.execute("""
+                select 1 from action_receipts r join actions a on a.id=r.action_id
+                where a.action_operation='respond_calendar_event'
+                  and r.execution_run_id is not null and r.action_index is not null
+                  and r.status in ('dispatched','uncertain')
+                  and json_extract(r.target,'$.event_id')=?
+                  and json_extract(r.outcome_json,'$.calendar_response_principal')=?
+                limit 1
+            """, (event_id, principal_id)).fetchone()
+            if active is not None:
+                return False
+            shared_action_lifecycle.record_reviewed_action_outcome(
+                db, attempt=attempt, status="dispatched",
+                result_json=_json({"calendar_response_principal": principal_id}),
+                provider_receipt_id=None, agent_run_id=execution["id"],
+                updated_at=_db_timestamp(db),
+            )
+            return True
+
     def record_candidate_action_outcome(self, execution_id: int, owner: str, action_index: int, status: str, result: Any) -> dict[str, Any]:
         if status not in ("verified","confirmed_no_effect","uncertain","failed"):
             raise ValueError("invalid action outcome")
@@ -667,6 +705,10 @@ class ReviewedCandidateStoreMixin:
             attempt = candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone())
             if attempt is None:
                 raise ValueError("action was not dispatched")
+            if status == "uncertain":
+                principal_id = json.loads(attempt["result_json"]).get("calendar_response_principal")
+                if principal_id:
+                    body = _json({**_plain(result), "calendar_response_principal": principal_id})
             if status == "verified":
                 receipt = db.execute(f"select provider_result_json,provider_receipt_id from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (attempt["external_action_key"],)).fetchone()
                 if receipt is None:

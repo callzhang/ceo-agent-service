@@ -6,8 +6,8 @@ from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 
 from app.agent_contracts import ProposedAction
-from app.dingtalk_models import DingTalkConversation, DingTalkMessage
-from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE
+from app.dingtalk_models import DINGTALK_CALENDAR_RESPONSE_STATUSES, DingTalkConversation, DingTalkMessage
+from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE, DwsError
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.system_executor import ActionOutcome
 
@@ -221,33 +221,67 @@ def native_dingtalk_message_handlers(store: object, dws: object) -> dict[tuple[s
 
 
 class CalendarResponseHandler:
-    """A calendar response is complete only after the event reflects it."""
+    """Serialize provider writes per account and event, then verify live state."""
 
-    def __init__(self, dws: object) -> None:
+    def __init__(self, dws: object, store: object) -> None:
         self.dws = dws
+        self.store = store
 
-    def _readback(self, action: ProposedAction) -> ActionOutcome:
-        event_id = action.target.get("event_id")
-        response = action.payload.get("response_status")
-        if not isinstance(event_id, str) or not event_id or not isinstance(response, str) or not response:
-            return ActionOutcome("failed", {"reason": "calendar_response_identity_missing"})
+    def _current_response(self, event_id: str) -> str | None:
         event = self.dws.get_calendar_event(event_id)
-        if event is not None and event.event_id == event_id and event.self_response_status == response:
-            return ActionOutcome("verified", {"event_id": event_id, "self_response_status": response})
-        return ActionOutcome("uncertain", {"event_id": event_id, "expected_response": response})
+        if event is None or event.event_id != event_id:
+            return None
+        return event.self_response_status
+
+    @staticmethod
+    def _verified(event_id: str, principal_id: str, response: str, method: str) -> ActionOutcome:
+        return ActionOutcome("verified", {
+            "event_id": event_id, "calendar_response_principal": principal_id,
+            "self_response_status": response, "verification_method": method,
+        })
 
     def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
         event_id = action.target.get("event_id")
         response = action.payload.get("response_status")
-        if not isinstance(event_id, str) or not event_id or not isinstance(response, str) or not response:
-            return ActionOutcome("failed", {"reason": "calendar_response_identity_missing"})
+        if not isinstance(event_id, str) or not event_id or response not in DINGTALK_CALENDAR_RESPONSE_STATUSES:
+            return ActionOutcome("failed", {"reason": "calendar_response_identity_missing_or_invalid"})
+        attempt = candidate["action_attempt"]
+        try:
+            principal_id = self.dws.get_current_user_id()
+            if not principal_id:
+                return ActionOutcome("confirmed_no_effect", {"reason": "calendar_account_unavailable"})
+            if not self.store.reserve_calendar_response(
+                attempt["execution_id"], candidate["execution_owner"], attempt["action_index"], principal_id, event_id,
+            ):
+                return ActionOutcome("confirmed_no_effect", {"reason": "calendar_response_in_progress"})
+            current = self._current_response(event_id)
+        except DwsError as exc:
+            return ActionOutcome("confirmed_no_effect", {
+                "reason": "calendar_preflight_unavailable", "source_code": exc.code, "source": exc.server_key,
+            })
+        if current not in DINGTALK_CALENDAR_RESPONSE_STATUSES:
+            return ActionOutcome("confirmed_no_effect", {"reason": "calendar_response_state_unavailable"})
+        if current == response:
+            return self._verified(event_id, principal_id, response, "already_in_effect")
         receipt = self.dws.respond_calendar_event(event_id, response)
-        if not isinstance(receipt, dict) or receipt.get("success") is False:
+        if isinstance(receipt, dict) and receipt.get("success") is False:
             return ActionOutcome("failed", {"reason": "calendar_response_provider_rejected"})
-        return self._readback(action)
+        if self._current_response(event_id) == response:
+            return self._verified(event_id, principal_id, response, "post_response_readback")
+        return ActionOutcome("uncertain", {"event_id": event_id, "expected_response": response})
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
-        return self._readback(action)
+        event_id = action.target.get("event_id")
+        response = action.payload.get("response_status")
+        if not isinstance(event_id, str) or not event_id or response not in DINGTALK_CALENDAR_RESPONSE_STATUSES:
+            return ActionOutcome("failed", {"reason": "calendar_response_identity_missing_or_invalid"})
+        principal_id = self.dws.get_current_user_id()
+        attempt = candidate.get("action_attempt", {})
+        expected_principal = json.loads(attempt.get("result_json", "{}")).get("calendar_response_principal")
+        if principal_id and (expected_principal is None or principal_id == expected_principal):
+            if self._current_response(event_id) == response:
+                return self._verified(event_id, principal_id, response, "reconciled_readback")
+        return ActionOutcome("uncertain", {"event_id": event_id, "expected_response": response})
 
 
 class OaDecisionHandler:
@@ -1206,7 +1240,7 @@ def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], obj
 
     handlers: dict[tuple[str, str], object] = native_dingtalk_message_handlers(store, dws)
     handlers[("dingtang-okr", "score_kr")] = DingtangOkrScoreHandler()
-    handlers[("dingtalk-calendar", "respond_calendar_event")] = CalendarResponseHandler(dws)
+    handlers[("dingtalk-calendar", "respond_calendar_event")] = CalendarResponseHandler(dws, store)
     oa = OaDecisionHandler(dws)
     handlers[("dingtalk-oa", "approve")] = oa
     handlers[("dingtalk-oa", "reject")] = oa

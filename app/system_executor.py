@@ -468,7 +468,7 @@ class SystemExecutor:
                         source_result = self._check_reviewed_sources(candidate, context, plan, execution_id, candidate_id)
                         if source_result is not None:
                             return source_result
-                    dispatch_candidate = {**row, "action_attempt": attempt}
+                    dispatch_candidate = {**row, "action_attempt": attempt, "execution_owner": self.owner}
                     if action.capability == "wechat" and action.operation == "send_message":
                         outcome = self._dispatch_wechat_with_lease_renewal(
                             handler, action, action_key=action_key,
