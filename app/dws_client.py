@@ -21,7 +21,11 @@ from pydantic import BaseModel, Field
 from robust_json import extract_all
 
 from app.config import chat_bot_names, read_env_file
-from app.dingtalk_models import DingTalkConversation, DingTalkMessage
+from app.dingtalk_models import (
+    DINGTALK_CALENDAR_RESPONSE_STATUSES,
+    DingTalkConversation,
+    DingTalkMessage,
+)
 from app.external_retry import MAX_AUTOMATIC_RETRIES, retry_delay_seconds
 from app.message_split import split_dingtalk_text
 
@@ -856,12 +860,7 @@ class DwsClient:
         event_id: str,
         response_status: str,
     ) -> list[str]:
-        if response_status not in {
-            "needsAction",
-            "accepted",
-            "declined",
-            "tentative",
-        }:
+        if response_status not in DINGTALK_CALENDAR_RESPONSE_STATUSES:
             raise ValueError(f"unsupported calendar response status: {response_status}")
         return [
             self.dws_bin,

@@ -5,6 +5,9 @@ from pydantic import BaseModel, Field
 from app.config import agent_mention_aliases, broadcast_mention_aliases, mention_aliases
 
 
+DINGTALK_CALENDAR_RESPONSE_STATUSES = ("needsAction", "accepted", "declined", "tentative")
+
+
 class DingTalkConversation(BaseModel):
     open_conversation_id: str
     title: str

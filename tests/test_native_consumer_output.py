@@ -5,6 +5,7 @@ from jsonschema import Draft202012Validator
 
 from app.agent_result import ResultParseError
 from app.agent_wire_contracts import consumer_wire_model, parse_consumer_agent_wire_result
+from app.consumer_agent import _parse_consumer_result
 from app.native_agent_output import (
     _decode,
     native_output_schema,
@@ -39,6 +40,28 @@ def _encode_dynamic(value):
     if isinstance(value, list):
         return [_encode_dynamic(item) for item in value]
     return value
+
+
+def test_new_calendar_action_checks_provider_response_status():
+    native = _consumer("plan", payload={
+        "objective": "Respond to the invitation",
+        "actions": [{
+            "description": "Accept the invitation", "action_identity": "rsvp",
+            "capability": "dingtalk-calendar", "operation": "respond_calendar_event",
+            "target": {"event_id": "event-1"}, "payload": {"response_status": "accept"},
+        }],
+        "sourced_facts": [], "authored_judgment": "Attendance is useful",
+    })
+    native.update(native.pop("decision"))
+    with pytest.raises(ResultParseError, match=r"response_status.*accepted"):
+        _parse_consumer_result(_event(native))
+
+    historical = parse_consumer_agent_wire_result(_event(native))
+    assert historical.proposal.actions[0].payload["response_status"] == "accept"
+
+    native["payload"]["actions"][0]["payload"]["response_status"] = "accepted"
+    result = _parse_consumer_result(_event(native))
+    assert result.proposal.actions[0].payload["response_status"] == "accepted"
 
 
 def test_native_consumer_schema_tracks_both_current_purposes():

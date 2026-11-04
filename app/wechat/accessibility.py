@@ -220,6 +220,17 @@ def _walk_accessibility_tree(root, children, *, max_depth: int = 12):
     yield from visit(root, 0)
 
 
+def _walk_wechat_application(root, attribute):
+    """Include windows exposed separately from the application's AX children."""
+    def children(element):
+        child_elements = attribute(element, "AXChildren") or []
+        if element is root:
+            return (*child_elements, *(attribute(root, "AXWindows") or []))
+        return child_elements
+
+    yield from _walk_accessibility_tree(root, children)
+
+
 def _screen_is_locked(session_state) -> bool:
     if not session_state:
         return False
@@ -735,10 +746,7 @@ class MacWechatAccessibility:
                     )
                     return value if error == 0 else None
 
-                def children(element):
-                    return attribute(element, "AXChildren")
-
-                for element in _walk_accessibility_tree(app, children):
+                for element in _walk_wechat_application(app, attribute):
                     role = attribute(element, "AXRole")
                     identifier = attribute(element, "AXIdentifier") or ""
                     title = attribute(element, "AXTitle") or ""
@@ -811,7 +819,7 @@ class MacWechatAccessibility:
             )
 
         def first(role=None, id_eq=None, title_contains=None):
-            for el in walk(mk_app(pid)):
+            for el in _walk_wechat_application(mk_app(pid), g):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
@@ -823,7 +831,7 @@ class MacWechatAccessibility:
 
         def find_all(role=None, id_eq=None, title_contains=None):
             matches = []
-            for el in walk(mk_app(pid)):
+            for el in _walk_wechat_application(mk_app(pid), g):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
@@ -1053,7 +1061,7 @@ class MacWechatAccessibility:
             )
 
         def first(role=None, id_eq=None, title_contains=None):
-            for el in walk(mk_app(pid)):
+            for el in _walk_wechat_application(mk_app(pid), g):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:
@@ -1065,7 +1073,7 @@ class MacWechatAccessibility:
 
         def find_all(role=None, id_eq=None, title_contains=None):
             matches = []
-            for el in walk(mk_app(pid)):
+            for el in _walk_wechat_application(mk_app(pid), g):
                 if role and g(el, "AXRole") != role:
                     continue
                 if id_eq is not None and (g(el, "AXIdentifier") or "") != id_eq:

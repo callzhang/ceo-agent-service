@@ -41,7 +41,7 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-chat` | `add_message_emoji` | `conversation_id`, `message_id` | `emoji` | Native reaction list for the exact message contains the exact emoji and current principal |
 | `dingtalk-chat` | `add_message_text_emotion` | `conversation_id`, `message_id` | `text`, `emotion_id`, `emotion_name`, `background_id` | Provider reaction ID; otherwise uncertain |
 | `dingtalk-chat` | `create_message_text_emotion` | `resource: "text_emotion_template"` | `text`, `emotion_name`, optional `background_id` | Provider emotion ID; otherwise uncertain |
-| `dingtalk-calendar` | `respond_calendar_event` | `event_id` | `response_status` | Exact event's `self_response_status` after native response |
+| `dingtalk-calendar` | `respond_calendar_event` | `event_id` | `response_status` is `accepted`, `declined`, `tentative`, or `needsAction` | Exact event's `self_response_status` after native response |
 | `dingtalk-oa` | `approve`, `reject` | `process_instance_id`, `task_id` | `remark` | Exact owned task completed with `AGREE` or `REFUSE` |
 | `dingtalk-oa` | `revert_task` | `process_instance_id`, `task_id`, `target_activity_id` | `revert_action`, `remark` | Exact owned task completed with `REDIRECT_PROCESS` |
 | `dingtalk-oa` | `redirect_task` | `process_instance_id`, `task_id`, `to_actioner_id` | Optional `remark` | Source task redirected and a distinct running task owned by the named recipient |

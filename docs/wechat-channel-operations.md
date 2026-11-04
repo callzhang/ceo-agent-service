@@ -207,7 +207,8 @@ the executor renews the reviewed action claim. Sends the user starts explicitly
 from the console skip the quiet wait and the pause.
 
 Preflight is ready only when both a visible WeChat process window and a usable
-Accessibility `AXWindows` tree are present. A composited but inaccessible
+Accessibility tree are present. Readiness and send navigation traverse the
+application's `AXChildren` and its separately exposed `AXWindows`. A composited but inaccessible
 window is reported as `wechat_window_unavailable`; delivery is paused before a
 retry is spent, rather than repeatedly attempting an impossible UI action.
 

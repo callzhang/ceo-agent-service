@@ -677,7 +677,8 @@ def test_open_target_retries_same_verified_row_when_first_click_is_ignored():
     assert clicked == [(expected_row, 1), (expected_row, 1)]
 
 
-def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
+@pytest.mark.parametrize("window_attribute", ["AXChildren", "AXWindows"])
+def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch, window_attribute):
     stale_root = object()
     fresh_root = object()
     row = object()
@@ -688,7 +689,7 @@ def test_open_and_identify_refreshes_ax_root_after_activation(monkeypatch):
     def get_attr(element, attribute, _default):
         values = {
             (stale_root, "AXChildren"): [],
-            (fresh_root, "AXChildren"): [row],
+            (fresh_root, window_attribute): [row],
             (row, "AXChildren"): [],
             (row, "AXIdentifier"): "session_item_Morgan",
             (composer, "AXTitle"): "Morgan",
@@ -952,12 +953,13 @@ def test_reactivate_switches_wechat_to_current_space(monkeypatch):
     ]
 
 
-def test_passive_readiness_reports_ready_when_chat_controls_are_present(monkeypatch):
+@pytest.mark.parametrize("window_in_children", [True, False])
+def test_passive_readiness_reports_ready_when_chat_controls_are_present(monkeypatch, window_in_children):
     app = object()
     window = object()
     search = object()
     attributes = {
-        (app, "AXChildren"): [window],
+        (app, "AXChildren"): [window] if window_in_children else [],
         (app, "AXWindows"): [window],
         (window, "AXChildren"): [search],
         (search, "AXRole"): "AXTextArea",

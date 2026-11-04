@@ -26,6 +26,7 @@ from app.agent_effects import LEASE_SECONDS
 from app.agent_runtime_config import AgentRuntimeConfig
 from app.agent_runtime_contracts import RuntimeKind
 from app.decision_quality import require_needs_human_context_eligible
+from app.dingtalk_models import DINGTALK_CALENDAR_RESPONSE_STATUSES
 from app.agent_runtime_router import AgentRuntimeRouter
 from app.agent_turn_runner import (
     AgentTurnProcess,
@@ -1539,6 +1540,19 @@ def _parse_consumer_result(
         stage_index=stage_index,
         predecessor_review_id=predecessor_review_id,
     )
+    plans = (result.proposal, *(option.plan for option in result.decision_options))
+    for plan in plans:
+        if plan is None:
+            continue
+        for action in plan.actions:
+            if (
+                (action.capability, action.operation) == ("dingtalk-calendar", "respond_calendar_event")
+                and action.payload.get("response_status") not in DINGTALK_CALENDAR_RESPONSE_STATUSES
+            ):
+                allowed = ", ".join(DINGTALK_CALENDAR_RESPONSE_STATUSES)
+                raise ResultParseError(
+                    f"respond_calendar_event payload.response_status must be one of: {allowed}"
+                )
     if result.outcome is not ConsumerOutcome.FAILED:
         return result
     code = str(getattr(result.error, "code", "") or "")
