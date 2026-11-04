@@ -474,6 +474,14 @@ def read_text_file(path: str) -> dict[str, object]:
                         )
                     if "ppt/presentation.xml" in workbook.namelist():
                         return _read_presentation_workbook(workbook)
+                    if {"[Content_Types].xml", "word/document.xml"}.issubset(workbook.namelist()):
+                        result = _read_word_document(workbook)
+                        material_file.seek(0)
+                        return {
+                            **result,
+                            "path": str(material_path),
+                            "sha256": hashlib.file_digest(material_file, "sha256").hexdigest(),
+                        }
             except zipfile.BadZipFile as exc:
                 raise AgentReadOnlyViolationError("spreadsheet_file_invalid") from exc
             except ElementTree.ParseError as exc:
@@ -493,6 +501,44 @@ def read_text_file(path: str) -> dict[str, object]:
         "content": content,
         "path": str(material_path),
         "sha256": hashlib.sha256(content_bytes).hexdigest(),
+    }
+
+
+def _read_word_document(package: _MaterialZipFile) -> dict[str, object]:
+    """Read the main Word body without following external package relationships."""
+    root = ElementTree.fromstring(package.read("word/document.xml"))
+    namespace = root.tag.rpartition("}")[0] + "}"
+    body = root.find(namespace + "body")
+    if body is None:
+        raise AgentReadOnlyViolationError("word_document_body_missing")
+
+    line_breaks = {namespace + "tab": "\t", namespace + "br": "\n", namespace + "cr": "\n"}
+    text_tag = namespace + "t"
+    paragraphs = []
+    remaining = MAX_SPREADSHEET_PREVIEW_CHARS
+    truncated = False
+    for paragraph in body.iter(namespace + "p"):
+        content = "".join(
+            (node.text or "") if node.tag == text_tag else line_breaks.get(node.tag, "")
+            for node in paragraph.iter()
+        ).strip()
+        if not content:
+            continue
+        if paragraphs:
+            remaining -= 1
+        if len(content) > remaining:
+            truncated = True
+            if remaining > 0:
+                paragraphs.append(content[:remaining])
+            break
+        paragraphs.append(content)
+        remaining -= len(content)
+
+    return {
+        "format": "docx",
+        "content": "\n".join(paragraphs),
+        "truncated": truncated,
+        "contains_embedded_media": any(name.startswith("word/media/") for name in package.namelist()),
     }
 
 

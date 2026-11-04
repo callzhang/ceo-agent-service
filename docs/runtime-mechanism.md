@@ -589,6 +589,7 @@ Codex 角色使用原生 code_mode_only 和 V8 host。Consumer 的内建 functio
 OA 表单附件和评论附件的 `page_number` 请求不要求同一 MCP 进程先读元数据。当前进程没有该准确流程／文件／文件名的本地原件时，先复用原有的流程限定下载与材料化路径取得原件，再执行原有分页渲染；重试后的新 MCP 进程和展示文件名变化都不再被误报为页面来源不可用。原件仅缓存到本进程退出，来源 ID、大小／解压限制、文件类型、页码范围、SHA-256 和真实 provider 错误保持原样。
 
 `read_dingtalk_oa_process_attachment` 下载后的临时文件路径由材料层显式返回，不依赖 PDF/图片/表格抽取器是否自行附带 `path`。因此表格正文已成功抽取时，两角色都能缓存该准确来源；实例 ID、文件 ID、原字节摘要、大小上限、OCR 分页和 provider 失败语义保持原样。PPTX 使用独立的压缩/解压上限，并为嵌入图片提供按阅读顺序编号的逐页读取；`page_number` 返回来源幻灯片号、原文件摘要及有界 JPEG，由原生 OCR MCP 逐页识别，不把整份大演示文稿塞入一次工具响应。
+材料读取器按 OOXML 包内结构识别 DOCX，复用解压与输出上限，按正文顺序提取段落和表格内文字并保留原文件摘要。输出注明是否截断及是否含嵌入媒体，媒体内容需要另行核对。
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。普通 Consumer 和非 OA Audit 将任务 MCP 声明为 direct-only；OA Consumer/Audit 的任务读取与 OCR 由同一个 CodeMode JS 调用衔接。角色工具选择、Audit functions 排除、沙箱和路线不变。超长直接调用结果可能被原生运行时截断，因而不能要求模型复制其中的 base64。
 

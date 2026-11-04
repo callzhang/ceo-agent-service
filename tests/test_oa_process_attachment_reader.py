@@ -83,6 +83,39 @@ def test_oa_pptx_attachment_uses_presentation_size_bound(tmp_path, monkeypatch):
     assert result["ocr_page_numbers"] == [1]
 
 
+@pytest.mark.parametrize("file_name", ["contract.docx", "downloaded-material"])
+def test_oa_attachment_extracts_word_paragraphs_and_table_in_order(tmp_path, monkeypatch, file_name):
+    package = BytesIO()
+    with ZipFile(package, "w") as archive:
+        archive.writestr("[Content_Types].xml", "<Types/>")
+        archive.writestr(
+            "word/document.xml",
+            '<w:document xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            '<w:body><w:p><w:r><w:t>授权范围</w:t></w:r></w:p>'
+            '<w:tbl><w:tr><w:tc><w:p><w:r><w:t>期限</w:t></w:r></w:p></w:tc>'
+            '<w:tc><w:p><w:r><w:t>一年</w:t></w:r></w:p></w:tc></w:tr></w:tbl>'
+            '<w:p><w:r><w:t>签章</w:t></w:r></w:p></w:body></w:document>',
+        )
+    contents = package.getvalue()
+
+    class Dws:
+        def download_oa_process_attachment_via_cli(self, process, file, *, max_bytes):
+            assert (process, file) == ("process", "file")
+            assert len(contents) < max_bytes
+            return contents
+
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    result = agent_cli._download_dingtalk_oa_process_attachment(
+        dws=Dws(), process_instance_id="process", file_id="file",
+        file_name=file_name, material_root=tmp_path,
+    )
+
+    assert result["format"] == "docx"
+    assert result["content"] == "授权范围\n期限\n一年\n签章"
+    assert result["sha256"] == hashlib.sha256(contents).hexdigest()
+    assert result["truncated"] is False
+
+
 def test_pptx_text_and_ocr_pages_follow_numeric_slide_order():
     package = BytesIO()
     with ZipFile(package, "w") as archive:
