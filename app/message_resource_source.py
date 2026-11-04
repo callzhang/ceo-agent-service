@@ -34,6 +34,7 @@ def message_source_facts(context):
     references = []
     if getattr(context, "channel", "") != "dingtalk" or not isinstance(raw, dict):
         return raw, references
+    provider_conversation_id = context.trigger_provider_conversation_id or context.conversation_id
     messages = [raw]
     if isinstance(raw.get("quotedMessage"), dict):
         messages.append(raw["quotedMessage"])
@@ -43,7 +44,7 @@ def message_source_facts(context):
         resources = message["resources"]
         if not isinstance(resources, list):
             raise ValueError("native message resources must be a list")
-        if resources and (message.get("openConversationId") != context.conversation_id
+        if resources and (message.get("openConversationId") != provider_conversation_id
                           or not isinstance(message.get("openMessageId"), str)
                           or not message["openMessageId"]):
             raise ValueError("message resource identity unavailable")

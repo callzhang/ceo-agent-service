@@ -96,6 +96,7 @@ class AgentTaskContext:
     trigger_sender_open_dingtalk_id: str = ""
     trigger_mentioned_user_ids: tuple[str, ...] = ()
     trigger_raw_payload: dict[str, object] = field(default_factory=dict)
+    trigger_provider_conversation_id: str = ""
     required_proposal_action: dict[str, object] = field(default_factory=dict)
     image_paths: tuple[str, ...] = ()
     image_sha256s: tuple[str, ...] = ()

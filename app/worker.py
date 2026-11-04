@@ -2949,6 +2949,11 @@ class DingTalkAutoReplyWorker:
             ),
             manual_rerun=manual_rerun,
             trigger_raw_payload=trigger_raw_payload,
+            trigger_provider_conversation_id=(
+                trigger.open_conversation_id
+                if task.single_chat and trigger.single_chat and trigger.open_message_id == task.trigger_message_id
+                else ""
+            ),
             image_paths=tuple(str(path.resolve()) for path in image_paths),
             image_sha256s=tuple(
                 hashlib.sha256(path.read_bytes()).hexdigest() for path in image_paths

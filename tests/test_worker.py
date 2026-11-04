@@ -1885,6 +1885,45 @@ def test_worker_restores_finance_oa_scheduled_consumer_snapshot(
     assert "scheduled_consumer" not in context.trigger_raw_payload
 
 
+@pytest.mark.parametrize("quote_conversation", ["cid-1", "different-conversation", "direct-alias"])
+def test_dingtalk_direct_attachment_keeps_native_conversation_identity(
+    tmp_path, monkeypatch, quote_conversation,
+):
+    from app.message_resource_source import message_source_facts
+
+    worker = make_worker(tmp_path, FakeDws([], {}), FakeCodex([]), monkeypatch)
+    trigger = message("Review the quoted attachment", single_chat=True, quoted_content="Attachment")
+    trigger.raw_payload.update({
+        "openConversationId": trigger.open_conversation_id,
+        "openMessageId": trigger.open_message_id,
+        "quotedMessage": {
+            "openConversationId": quote_conversation,
+            "openMessageId": trigger.quoted_message_id,
+            "resources": [{"resourceId": "attachment", "resourceIdType": "fileId", "resourceType": "file"}],
+        },
+    })
+    assert worker.store.enqueue_reply_task(
+        conversation_id="direct-alias", conversation_title=trigger.conversation_title,
+        single_chat=True, trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time, trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content, trigger_message_json=trigger.model_dump_json(),
+        channel="dingtalk",
+    )
+    [task] = worker.store.peek_reply_tasks(limit=1, channel="dingtalk")
+    direct = conversation(single_chat=True).model_copy(update={"open_conversation_id": "direct-alias"})
+    context = worker._build_agent_task_context(
+        conversation=direct, task=task, trigger=trigger, context_messages=[trigger],
+    )
+    assert context.conversation_id == "direct-alias"
+    if quote_conversation != trigger.open_conversation_id:
+        with pytest.raises(ValueError, match="message resource identity unavailable"):
+            message_source_facts(context)
+        return
+    _, [attachment] = message_source_facts(context)
+    assert attachment.conversation_id == trigger.open_conversation_id
+    assert attachment.message_id == trigger.quoted_message_id
+
+
 def test_worker_marks_quote_of_verified_agent_message_as_recovery_context(
     tmp_path, monkeypatch,
 ):
