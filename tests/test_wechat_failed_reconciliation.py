@@ -1,3 +1,5 @@
+import pytest
+
 from types import SimpleNamespace
 
 from app import wechat_reconciliation
@@ -236,3 +238,45 @@ def test_retry_api_path_settles_current_sent_task_without_constructing_sender(mo
     assert result["outcome"] == "done"
     assert store.settlement[1]["task_status"] == "done"
     assert store.settlement[1]["delivery_id"] == 146
+
+
+@pytest.mark.parametrize("readback_matches", [True, False])
+def test_sender_recovery_settles_sent_failed_task_only_after_exact_readback(
+    tmp_path, readback_matches,
+):
+    from datetime import datetime, timedelta, timezone
+
+    from app import task_entity_storage
+    from app.wechat import service
+    from tests.wechat.test_send_message_handler import _account, _setup
+
+    store, task, row, action, _handler, runner, prepared = _setup(tmp_path)
+    delivery_id = store.create_standard_wechat_delivery(
+        candidate_id=row["candidate_id"], review_id=row["review_id"],
+        action_identity=action.action_identity,
+    )
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(delivery_id, "sent")
+    with store._connect() as db:
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"status": task.status},
+            changes={"status": "failed", "error": "external_action_failed"},
+        )
+    message = _message(
+        body=prepared.final_body if readback_matches else "unrelated",
+        conversation_id="u9", account_id="acct-1",
+        sent_at=(datetime.now(timezone.utc) + timedelta(seconds=1)).isoformat(),
+    )
+    reader = _Reader([message])
+
+    service.recover_before_sender(store, reader, account=_account())
+
+    assert runner.calls == []
+    assert store.get_reply_task(task.id).status == ("done" if readback_matches else "failed")
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "sent"
+    evidence = store.get_wechat_reply_task_reconciliation("u9", task.trigger_message_id)
+    assert bool(evidence) is readback_matches
+    if readback_matches:
+        assert 'out-1' in evidence.detail
+        service.recover_before_sender(store, reader, account=_account())
+        assert len(reader.calls) == 1

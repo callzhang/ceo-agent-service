@@ -43,6 +43,38 @@ def _current_wechat_action(store: Any, task_id: int):
     return task, review, action, delivery
 
 
+def _settle_sent_delivery(store, handler, task, review, action, delivery):
+    result = handler.reconcile(action, action_key="", candidate=review)
+    if result is None or result.status != "verified":
+        return {
+            "outcome": "failed", "task_id": task.id,
+            "reason": result.provider_result.get("reason") if result else "wechat_readback_missing",
+        }
+    settled = store.settle_failed_wechat_task_from_delivery(
+        task.id, expected_execution_generation=task.execution_generation,
+        delivery_id=delivery.id, task_status="done", evidence=result.provider_result,
+    )
+    return {
+        "outcome": "done" if settled else "failed", "task_id": task.id,
+        "delivery_id": delivery.id, "evidence": result.provider_result,
+    }
+
+
+def reconcile_sent_wechat_tasks(store, reader, account) -> None:
+    """Use native readback to close sent deliveries that outlived a failed task."""
+    handler = WechatSendMessageHandler(
+        store, reader_factory=lambda: reader, account_factory=lambda: account,
+    )
+    for task_id in store.list_failed_wechat_tasks_with_sent_delivery(account.account_id):
+        try:
+            task, review, action, delivery = _current_wechat_action(store, task_id)
+            if delivery.status == "sent" and delivery.account_id == account.account_id:
+                _settle_sent_delivery(store, handler, task, review, action, delivery)
+        except ValueError:
+            # A stale review or invalid readback cannot settle this task.
+            continue
+
+
 def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, object]:
     """Verify exact current WeChat effects and settle only their failed Task projection.
 
@@ -66,17 +98,7 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
     handler = WechatSendMessageHandler(store)
 
     if delivery.status == "sent":
-        result = handler.reconcile(action, action_key="", candidate=review)
-        if result is None or result.status != "verified":
-            return {"outcome": "failed", "task_id": task.id,
-                    "reason": (result.provider_result.get("reason") if result else "wechat_readback_missing")}
-        settled = store.settle_failed_wechat_task_from_delivery(
-            task.id, expected_execution_generation=task.execution_generation,
-            delivery_id=delivery.id, task_status="done",
-            evidence=result.provider_result,
-        )
-        return {"outcome": "done" if settled else "failed", "task_id": task.id,
-                "delivery_id": delivery.id, "evidence": result.provider_result}
+        return _settle_sent_delivery(store, handler, current, review, action, delivery)
 
     if delivery.status != "superseded":
         return {"outcome": "failed", "task_id": task.id, "delivery_id": delivery.id,

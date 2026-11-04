@@ -16344,6 +16344,25 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 self._compact_settled_reply_task_input(db, task_id)
             return cursor.rowcount == 1
 
+    def list_failed_wechat_tasks_with_sent_delivery(self, account_id: str) -> list[int]:
+        """Find current failed tasks that already have a sent delivery to verify."""
+        with self._connect() as db:
+            rows = db.execute(
+                f"""
+                select distinct tasks.id
+                from tasks
+                join ({WECHAT_DELIVERY_SQL}) as delivery
+                  on delivery.reply_task_id=tasks.id
+                 and delivery.execution_generation=tasks.execution_generation
+                where tasks.kind='reply' and tasks.status='failed'
+                  and tasks.error='external_action_failed'
+                  and delivery.account_id=? and delivery.status='sent'
+                order by tasks.id
+                """,
+                (account_id,),
+            ).fetchall()
+        return [int(row["id"]) for row in rows]
+
     def settle_failed_wechat_task_from_delivery(
         self,
         task_id: int,

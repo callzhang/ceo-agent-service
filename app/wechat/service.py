@@ -95,6 +95,7 @@ def run_produce_once(store, reader, account, *, self_user_id: str) -> int:
 def recover_before_sender(store, reader, account=None, sender=None) -> list:
     """Recover safe pre-action failures and reconcile uncertain sends."""
     from app.wechat.accessibility import reconcile_incomplete_deliveries
+    from app.wechat_reconciliation import reconcile_sent_wechat_tasks
 
     store.supersede_failed_wechat_deliveries_with_newer_sent()
     # Waiting for the user to stop working is not a send attempt: requeue it
@@ -116,7 +117,10 @@ def recover_before_sender(store, reader, account=None, sender=None) -> list:
             readiness = "unknown"
         if readiness != "accessibility_not_trusted":
             store.requeue_wechat_deliveries_after_accessibility_recovery()
-    return reconcile_incomplete_deliveries(store, reader, account=account)
+    updated = reconcile_incomplete_deliveries(store, reader, account=account)
+    if reader is not None and account is not None:
+        reconcile_sent_wechat_tasks(store, reader, account)
+    return updated
 
 
 # ---- confirm-mode delivery gating (CEO_WECHAT_SEND_MODE) ----
