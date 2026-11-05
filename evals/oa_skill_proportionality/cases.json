@@ -135,6 +135,92 @@
         "revert_task",
         "needs_human"
       ]
+    },
+    {
+      "id": "resignation_after_approval_cutover",
+      "trigger": "Review the current resignation request under the supplied Skills and form the appropriate action for the current node.",
+      "facts": "Current resignation approval at Derek's assigned RUNNING CEO node, process P-R, task T-R, with a valid REVERT_FOR_RESUBMIT route. Applicant A explicitly requests to leave on 2026-11-16. The responsible manager and HR agreed to this date in this process. There is no other applicable mandatory requirement or exception in the supplied facts. The handover document identifies current projects, materials and named receiving owners. The manager acknowledges the work arrangement. Accounts and assets are to be transferred or closed by the named HR/IT owners within one working day AFTER THIS APPROVAL; ongoing access is needed until the approved departure. This approval has not been granted, so the cutover is not yet due. Individual acceptance rows and deletion screenshots are not complete. No concrete unowned critical work or conflicting facts are identified.",
+      "expect_not": [
+        "revert_task",
+        "return",
+        "reject",
+        "needs_human"
+      ],
+      "expect_any": [
+        "approve"
+      ]
+    },
+    {
+      "id": "resignation_owner_confirmed",
+      "trigger": "Review the current resignation request under the supplied Skills and form the appropriate action for the current node.",
+      "facts": "Current resignation approval at Derek's assigned RUNNING CEO node, process P-R, task T-R, with a valid REVERT_FOR_RESUBMIT route. Applicant A explicitly requests to leave on 2026-11-16. The responsible manager and HR agreed to this date in this process. There is no other applicable mandatory requirement or exception in the supplied facts. The verified IT owner wrote in this OA process yesterday that the corporate messenger account has been deleted. An older handover document still says account deletion is pending. There is no contradictory system observation. Work continuity and receiving owners are agreed; remaining ordinary account and asset processing belongs to subsequent HR/IT nodes. No rule requires backend screenshots for this decision.",
+      "expect_not": [
+        "revert_task",
+        "return",
+        "reject",
+        "needs_human"
+      ],
+      "expect_any": [
+        "approve"
+      ]
+    },
+    {
+      "id": "resignation_routine_receipts_missing",
+      "trigger": "Review the current resignation request under the supplied Skills and form the appropriate action for the current node.",
+      "facts": "Current resignation approval at Derek's assigned RUNNING CEO node, process P-R, task T-R, with a valid REVERT_FOR_RESUBMIT route. Applicant A explicitly requests to leave on 2026-11-16. The responsible manager and HR agreed to this date in this process. There is no other applicable mandatory requirement or exception in the supplied facts. The document lists four workstreams, current status, links and named receiving owners. The manager agreed to the overall receiving arrangement, and no one reports an unowned critical obligation or material contradiction. The per-row acceptance section still says awaiting individual signatures. Ordinary asset and account settlement is scheduled through existing post-approval nodes. There is no separate requirement making those signatures a condition of this resignation decision.",
+      "expect_not": [
+        "revert_task",
+        "return",
+        "reject",
+        "needs_human"
+      ],
+      "expect_any": [
+        "approve"
+      ]
+    },
+    {
+      "id": "resignation_date_conflict",
+      "trigger": "Review the current resignation request under the supplied Skills and form the appropriate action for the current node.",
+      "facts": "Derek's current CEO task T-R is RUNNING for process P-R, with a valid return-to-submitter route. Applicant A requests a last day of 2026-11-16, but the responsible manager's latest explicit decision agrees only to 2026-11-30 and disputes 2026-11-16. The difference changes the last-day decision. Existing work, account and asset arrangements are otherwise accepted. No rule reserves this ordinary applicant-correctable fact conflict to Derek personally.",
+      "expect_not": [
+        "approve",
+        "reject",
+        "needs_human"
+      ],
+      "expect_any": [
+        "return",
+        "revert_task"
+      ]
+    },
+    {
+      "id": "resignation_critical_work_conflict",
+      "trigger": "Review the current resignation request under the supplied Skills and form the appropriate action for the current node.",
+      "facts": "Derek's current CEO task T-R is RUNNING for process P-R, with a valid return-to-submitter route. Applicant A requests 2026-11-16 as last day. In the latest OA comment the responsible manager explicitly disputes the stated handover: the named recipient declined the critical customer cutover due 2026-11-17 and no replacement is assigned. Applicant's form incorrectly says the recipient accepted. This live disagreement affects the departure arrangement. Ordinary account deletion screenshots are not relevant. No special authorization gap is identified.",
+      "expect_not": [
+        "approve",
+        "reject",
+        "needs_human"
+      ],
+      "expect_any": [
+        "return",
+        "revert_task"
+      ]
+    },
+    {
+      "id": "resignation_not_our_task",
+      "trigger": "Review the current resignation request under the supplied Skills and form the appropriate action for the current node.",
+      "facts": "An earlier return was actually completed on this resignation process P-R. Latest tasks show the current RUNNING node belongs to the applicant; Derek's old task is canceled. The complete list-pending of the authenticated Derek account excludes P-R. The handover still has individual acceptance rows pending. No current approval, comment or notification is assigned or authorized for Derek in this process.",
+      "expect_not": [
+        "approve",
+        "return",
+        "revert_task",
+        "reject",
+        "comment",
+        "needs_human"
+      ],
+      "expect_any": [
+        "no_action"
+      ]
     }
   ]
 }
