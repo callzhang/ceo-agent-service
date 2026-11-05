@@ -115,7 +115,9 @@ def native_output_schema(role: str = "consumer", *, purpose: str = "general") ->
     branches = []
     for branch in _consumer_action_branches(root):
         shape = _project({
-            "type": "object", "properties": branch["properties"],
+            "type": "object", "properties": {
+                name: branch["properties"][name] for name in ("action", "target", "payload")
+            },
             "required": ["action", "target", "payload"],
             "additionalProperties": False,
         })

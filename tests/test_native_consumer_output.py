@@ -138,6 +138,33 @@ def test_committed_native_schema_matches_current_wire_contract(purpose):
     )
 
 
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_retry_schema_and_parser_agree(purpose):
+    native = _consumer("retry", purpose=purpose)
+    assert set(native["decision"]) == {"action", "target", "payload"}
+    Draft202012Validator(native_output_schema(purpose=purpose)).validate(native)
+
+    restored = json.loads(parse_native_output(_event(native), purpose=purpose))
+    assert restored["action"] == "retry"
+    assert restored["evidence_refs"] == ["source:1"]
+
+
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_retry_requires_root_evidence(purpose):
+    native = _consumer("retry", purpose=purpose)
+    native["evidence_refs"] = []
+    with pytest.raises(ResultParseError):
+        parse_native_output(_event(native), purpose=purpose)
+
+
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_retry_rejects_nested_evidence(purpose):
+    native = _consumer("retry", purpose=purpose)
+    native["decision"]["evidence_refs"] = ["source:1"]
+    with pytest.raises(ResultParseError):
+        parse_native_output(_event(native), purpose=purpose)
+
+
 def test_native_consumer_schema_rejects_flat_result_that_can_lose_root_fields():
     malformed = _consumer()
     malformed.pop("decision")
