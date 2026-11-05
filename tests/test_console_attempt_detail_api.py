@@ -1886,6 +1886,7 @@ def test_oa_needs_human_rerun_uses_current_task_scan_trigger(monkeypatch):
 
     assert status == 303
     assert captured["trigger_message_id"] == current_trigger
+    assert captured["source_attempt_trigger_message_id"] == attempt.trigger_message_id
     assert captured["attempt_id"] == attempt.id
 
 

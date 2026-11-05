@@ -89,6 +89,7 @@ tests/test_meeting_audience_eval.py
 tests/test_memory_limit.py
 tests/test_memory_setup.py
 tests/test_message_audience_eval.py
+tests/test_manual_rerun_attempt_identity.py
 tests/test_message_split.py
 tests/test_minutes_console_browser.py
 tests/test_minutes_login_handoff.py

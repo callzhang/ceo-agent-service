@@ -6747,6 +6747,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         conversation_title: str,
         single_chat: bool,
         trigger_message_id: str,
+        source_attempt_trigger_message_id: str | None = None,
         trigger_create_time: str,
         trigger_sender: str,
         trigger_text: str,
@@ -6760,6 +6761,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         explicit_resend_message_id: str = "",
     ) -> ReplyTask:
         with self._immediate_write_transaction() as db:
+            source_attempt_trigger = (
+                trigger_message_id
+                if source_attempt_trigger_message_id is None
+                else source_attempt_trigger_message_id
+            )
             if channel == "wechat" and attempt_id > 0:
                 prior = db.execute(
                     "select send_status from (" + REPLY_ATTEMPT_COMMON_SQL + ") "
@@ -6829,7 +6835,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     "oa_action_result_json "
                     f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=? and channel=? "
                     "and conversation_id=? and trigger_message_id=?",
-                    (attempt_id, channel, conversation_id, trigger_message_id),
+                    (attempt_id, channel, conversation_id, source_attempt_trigger),
                 ).fetchone()
                 if attempt is None:
                     raise ManualRerunConflict("manual rerun attempt identity changed")
