@@ -10,7 +10,10 @@ from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_projection import terminal_oa_source_closure_is_skipped
 from app.attempt_what_happened import build_what_happened, deciding_scores, stopped_because
-from app.history_actions import can_reopen_skipped_oa_review
+from app.history_actions import (
+    can_reassess_current_oa_needs_human,
+    can_reopen_skipped_oa_review,
+)
 from app.web_api.common import json_safe, normalize_display_value
 from app.agent_contracts import parse_persisted_consumer_result
 
@@ -486,6 +489,7 @@ def _action_links(
     rerun: RerunPresentation,
     *,
     rerun_block_reason: str = "",
+    reassess_current_oa: bool = False,
     source_send_status: str = "",
     source_is_latest: bool = False,
 ) -> dict[str, Any]:
@@ -534,6 +538,14 @@ def _action_links(
             delivery_action_label = "重试发送"
             delivery_action_url = f"/api/console/wechat/deliveries/{delivery_id}/retry"
     terminal = terminal and not delivery_action_url
+    rerun_label = rerun.label
+    rerun_confirmation = rerun.confirmation
+    if reassess_current_oa:
+        rerun_label = "重新评估当前审批"
+        rerun_confirmation = (
+            "确认按当前 OA 规则重新评估这条审批？这会创建新的执行修订；"
+            "不会直接同意、拒绝或退回，新的方案仍须经过原有审核和执行门槛。"
+        )
     can_resend_wechat = (
         source_send_status == "sent"
         and source_is_latest
@@ -548,9 +560,10 @@ def _action_links(
             (status == "failed" and not failed_unsubscribe and not rerun_block_reason)
             or (status == "blocked" and attempt.send_error == "consumer_purpose_retry_exhausted" and not rerun_block_reason)
             or can_reopen_skipped_oa_review(attempt, reply_task)
+            or reassess_current_oa
         ),
-        "rerun_label": rerun.label,
-        "rerun_confirmation": rerun.confirmation,
+        "rerun_label": rerun_label,
+        "rerun_confirmation": rerun_confirmation,
         "rerun_block_reason": rerun_block_reason,
         "can_recall": _sent_reply_has_recall_target(sent_reply),
         "can_submit_feedback": True,
@@ -1107,7 +1120,7 @@ def build_attempt_detail(
              if attempt.send_status == "failed" else RerunPresentation())
     latest_attempt = store.get_latest_reply_attempt_for_trigger(
         historical_attempt.conversation_id, historical_attempt.trigger_message_id,
-    ) if historical_attempt.channel == "wechat" else None
+    )
     status_message, requires_decision = _status_message(attempt, attention, rerun_block_reason=rerun_block_reason)
     failed_unsubscribe = (
         attempt.send_status.strip().lower() == "failed"
@@ -1151,6 +1164,12 @@ def build_attempt_detail(
         and reply_task is not None and reply_task.status == "needs_human"
         and current_reviewed is not None and current_reviewed["selection_id"] is None
         and current_needs_human_decision is not None
+    )
+    reassess_current_oa = (
+        decision_actionable
+        and latest_attempt is not None
+        and latest_attempt.id == historical_attempt.id
+        and can_reassess_current_oa_needs_human(attempt, reply_task)
     )
     if attempt.send_status == "needs_human":
         requires_decision = bool(decision_actionable)
@@ -1420,10 +1439,10 @@ def build_attempt_detail(
         "actions": _action_links(
             attempt, agent_sessions, reply_task, sent_reply, wechat_delivery, rerun,
             rerun_block_reason=rerun_block_reason,
+            reassess_current_oa=reassess_current_oa,
             source_send_status=historical_attempt.send_status,
             source_is_latest=(
                 latest_attempt is not None
-                and latest_attempt.channel == "wechat"
                 and latest_attempt.id == historical_attempt.id
             ),
         ),

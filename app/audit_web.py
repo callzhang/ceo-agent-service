@@ -102,6 +102,7 @@ from app.embedding import EmbeddingClient
 from app.history import safe_observability_error
 from app.history_actions import (
     HistoryAttention,
+    can_reassess_current_oa_needs_human,
     can_reopen_skipped_oa_review,
     follow_up_history_attention,
     meeting_history_attention,
@@ -9045,6 +9046,28 @@ def handle_rerun_attempt_post(
         attempt.trigger_message_id,
         channel=channel,
     )
+    if attempt.send_status.strip().lower() == "needs_human":
+        latest_attempt = store.get_latest_reply_attempt_for_trigger(
+            attempt.conversation_id, attempt.trigger_message_id,
+        )
+        current_reviewed = (
+            store.current_reviewed_candidate(
+                existing_task.id, existing_task.execution_generation,
+            )
+            if existing_task is not None else None
+        )
+        if not (
+            latest_attempt is not None
+            and latest_attempt.id == attempt.id
+            and can_reassess_current_oa_needs_human(attempt, existing_task)
+            and current_reviewed is not None
+            and current_reviewed.get("selection_id") is None
+            and int(current_reviewed.get("audit_run_id") or 0) == int(attempt.agent_run_id or 0)
+        ):
+            return 409, {}, render_page(
+                "Rerun unavailable",
+                "<p>只有仍未解决、且对应当前 OA 审批候选的事项可以重新评估。</p>",
+            )
     if (
         channel == "wechat" and explicit_resend_message_id
         and existing_task is not None

@@ -145,6 +145,38 @@ def can_reopen_skipped_oa_review(attempt, task) -> bool:
     )
 
 
+def can_reassess_current_oa_needs_human(attempt, task) -> bool:
+    """Allow a fresh reviewed generation only for the exact open OA review.
+
+    This is a re-evaluation of the current candidate, never a replay of a
+    previous approval action. The existing rerun handler refreshes the
+    selected OA Skills and still sends the new result through Consumer, Audit,
+    and the normal System action gates.
+    """
+    if attempt is None or task is None:
+        return False
+    process_id = str(getattr(attempt, "oa_process_instance_id", "") or "").strip()
+    oa_task_id = str(getattr(attempt, "oa_task_id", "") or "").strip()
+    return bool(
+        str(getattr(attempt, "send_status", "") or "").strip().lower() == "needs_human"
+        and not str(getattr(attempt, "resolved_at", "") or "").strip()
+        and not str(getattr(attempt, "resolution", "") or "").strip()
+        and str(getattr(attempt, "action", "") or "").strip() == "agent_run"
+        and str(getattr(attempt, "oa_action", "") or "").strip() == "review"
+        and str(getattr(attempt, "oa_action_result_json", "") or "").strip() in {"", "{}", "null"}
+        and process_id and oa_task_id
+        and str(getattr(task, "channel", "") or "").strip() == "dingtalk"
+        and str(getattr(task, "conversation_id", "") or "").strip()
+        == f"oa_pending_scan:{process_id}"
+        and str(getattr(task, "trigger_message_id", "") or "").strip()
+        == str(getattr(attempt, "trigger_message_id", "") or "").strip()
+        and str(getattr(task, "business_object_key", "") or "").strip()
+        == f"oa:{process_id}:{oa_task_id}"
+        and str(getattr(task, "status", "") or "").strip().lower() == "needs_human"
+        and int(getattr(task, "manual_rerun_attempt_id", 0) or 0) != int(attempt.id)
+    )
+
+
 def _management_tail(
     *,
     include_retry: bool,

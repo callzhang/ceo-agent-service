@@ -8,8 +8,10 @@ from urllib.parse import quote
 import pytest
 from fastapi.testclient import TestClient
 
+from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.action_storage import insert_action, update_action
 from app.audit_web import create_audit_app, handle_rerun_attempt_post
+from app.reviewed_candidates import candidate_digest
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
     _consumer_result_payload as build_consumer_result_payload,
@@ -1648,6 +1650,157 @@ def test_resolved_terminal_oa_attempt_has_no_history_rerun_action(tmp_path: Path
     response_status, _, response_body = handle_rerun_attempt_post(store, attempt_id)
     assert response_status == 409
     assert "The source OA task was verified terminal." in response_body
+
+
+@pytest.mark.parametrize("resolved,matching_task", [(False, True), (True, True), (False, False)])
+def test_current_unresolved_oa_needs_human_exposes_manual_reassessment_only_when_bound(
+    tmp_path: Path, resolved: bool, matching_task: bool,
+):
+    store = AutoReplyStore(tmp_path / "oa-needs-human-rerun.sqlite3")
+    process_id = "policy-review-process"
+    oa_task_id = "policy-review-task"
+    conversation_id = f"oa_pending_scan:{process_id}"
+    trigger_id = f"oa-pending:{process_id}:revision-1:2026-11-05"
+    business_key = (
+        f"oa:{process_id}:{oa_task_id}"
+        if matching_task else f"oa:{process_id}:another-task"
+    )
+    trigger = {
+        "open_conversation_id": conversation_id,
+        "open_message_id": trigger_id,
+        "conversation_title": "审批待办",
+        "single_chat": True,
+        "sender_name": "Derek OA",
+        "create_time": "2026-11-05T10:00:00Z",
+        "content": "Review this pending OA task.",
+    }
+    store.enqueue_reply_task(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_message_id=trigger_id,
+        trigger_create_time="2026-11-05T10:00:00Z",
+        trigger_sender="Derek OA",
+        trigger_text="Review this pending OA task.",
+        trigger_message_json=json.dumps(trigger),
+        oa_url=f"https://aflow.dingtalk.com/detail?procInstId={process_id}&taskId={oa_task_id}",
+        business_object_key=business_key,
+        execution_generation="oa-needs-human-generation",
+    )
+    task = store.claim_reply_task(1)
+    assert task is not None
+    consumer_result = ConsumerAgentResult.model_validate({
+        "outcome": "needs_human",
+        "summary": "Choose the reusable OA review rule.",
+        "proposal": None,
+        "decision_options": [
+            {"key": "ask_applicant", "label": "请申请人补充", "instruction": "先补齐依据。",
+             "consequence": "不执行审批动作。", "applies_to": "task_class",
+             "terminal_outcome": "skipped", "reason": "事实缺口"},
+            {"key": "stop", "label": "停止处理", "instruction": "停止本事项。",
+             "consequence": "不执行审批动作。", "applies_to": "task_class",
+             "terminal_outcome": "skipped", "reason": "规则选择"},
+        ],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "medium", "confidence": 0.8, "rule_coverage": 0.4,
+        "information_completeness": 1.0,
+        "needs_human_reason": "需要选择以后如何处理这一类 OA 事实缺口。",
+        "decision_basis": {
+            "verified_facts": [{"assertion": "当前 OA 事项尚未执行", "references": ["provider:none"]}],
+            "rule_evidence": [{"assertion": "当前没有可复用规则", "references": ["skill:missing"]}],
+            "quality_explanation": "需要形成可复用处理规则。",
+            "no_external_action_evidence": [{"assertion": "未执行审批动作", "references": ["provider:none"]}],
+            "conclusion": "等待规则选择。",
+        },
+        "requested_input": None, "stage_index": 0, "predecessor_review_id": None,
+        "continue_after_execution": False,
+    })
+    consumer_run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(
+        consumer_run.id, consumer_result.model_dump(mode="json"), owner="consumer",
+    )
+    candidate = store.persist_review_candidate(task, consumer_run, consumer_result)
+    audit_run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.AUDIT,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=consumer_run.id,
+        operation_id="audit-current-oa", owner="audit",
+    ).run
+    audit_result = AuditAgentResult(
+        outcome="approve", summary="Candidate reviewed", proposal_revision=0,
+        candidate_digest=candidate_digest(consumer_result), evidence_refs=(),
+        feedback=None, error={"code": "", "retryable": False}, risk="low",
+        confidence=1.0, rule_coverage=1.0, information_completeness=1.0,
+    )
+    store.complete_agent_run(audit_run.id, audit_result.model_dump(mode="json"), owner="audit")
+    store.record_candidate_review(
+        candidate["id"], audit_run.id, audit_result.model_dump(mode="json"),
+    )
+    with store._connect() as db:
+        db.execute("update tasks set status='needs_human' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=conversation_id,
+        conversation_title="审批待办",
+        trigger_message_id=trigger_id,
+        trigger_sender="Derek OA",
+        trigger_text="Review this pending OA task.",
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+        channel="dingtalk",
+        oa_process_instance_id=process_id,
+        oa_task_id=oa_task_id,
+        oa_url=f"https://aflow.dingtalk.com/detail?procInstId={process_id}&taskId={oa_task_id}",
+        oa_action="review",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit_run.id})
+    if resolved:
+        with store._connect() as db:
+            update_action(db, "reply_attempts", attempt_id, {
+                "resolved_at": "2026-11-05 10:30:00",
+                "resolution": "This review was explicitly resolved.",
+            })
+
+    status, item = build_attempt_detail(store, attempt_id)
+
+    assert status == 200
+    assert item is not None
+    assert item["actions"]["can_rerun"] is (not resolved and matching_task)
+    if not resolved and matching_task:
+        assert item["actions"]["rerun_label"] == "重新评估当前审批"
+        assert "新的执行修订" in item["actions"]["rerun_confirmation"]
+        assert "不会直接同意、拒绝或退回" in item["actions"]["rerun_confirmation"]
+
+
+def test_rerun_endpoint_rejects_non_oa_needs_human(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "non-oa-needs-human-rerun.sqlite3")
+    task = _consumer_result_task(store)
+    with store._connect() as db:
+        db.execute("update tasks set status='needs_human' where id=?", (task.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="agent_run",
+        sensitivity_kind="general",
+        send_status="needs_human",
+        channel="dingtalk",
+        oa_process_instance_id="not-an-oa-process",
+        oa_task_id="not-an-oa-task",
+        oa_action="review",
+    )
+
+    status, _, body = handle_rerun_attempt_post(store, attempt_id)
+
+    assert status == 409
+    assert "只有仍未解决、且对应当前 OA 审批候选的事项可以重新评估" in body
+    assert store.get_reply_task(task.id).status == "needs_human"
 
 
 @pytest.mark.parametrize("execution_status", ["done", "uncertain"])
