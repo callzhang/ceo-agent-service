@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-oa-approved-repairs-20261105 | app/native_agent_output.py; general/OA native schema JSON; tests/test_native_consumer_output.py; evals/oa_skill_proportionality/cases.json; scoped docs/runtime-mechanism.md; approved plan/spec files | Approved retry projection fix and resignation Skill/eval repair. Root implements, final independent review; runtime Skills staged separately, current OA identity checked before recovery. | 2026-11-05 |
 
 
 
