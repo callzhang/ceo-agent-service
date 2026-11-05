@@ -377,7 +377,7 @@ def test_needs_human_oa_rerun_submits_against_task_linked_from_agent_run(monkeyp
     assert status == 303
     assert captured["attempt_id"] == attempt.id
     assert captured["expected_execution_generation"] == task.execution_generation
-    assert captured["trigger_message_id"] == attempt.trigger_message_id
+    assert captured["trigger_message_id"] == task.trigger_message_id
     assert refreshed_context is not None
     assert refreshed_context.skill_materials[0].content.endswith("People rules revision 12")
 
