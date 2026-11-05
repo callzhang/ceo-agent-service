@@ -90,8 +90,8 @@ Spec A 的阶段、责任人确认、具体矛盾、人工例外和历史节点�
 - 七个匿名场景，各两轮，旧版/新版 Consumer 与独立 Audit 共 28 组；候选 14/14 功能通过。每条动作同时通过现有 target/payload 模型校验。最初评估中一条使用错误 action 参数的结果保留为失败，未当作通过；修正工具关闭的测试输入后才重新验收。快照及相关回归共 109 passed。
 - 独立终审发现两处 Important：通用段落漏写明确必需原始文件的例外、评估仅比动作名称可能误报通过。前者补文字及第七个负例，后者给两侧同样提供现有工具动作合同并用现有参数模型验收；无 Critical 或延后 Minor。
 - 运行 Skill：OA revision318，SHA `b5b5f6a9eb14bf658999415df622b6978bc07dc7133731b509f40dec9fa3bc84`；People revision319，SHA `cc0df812bdb7a2906067d3d814a877a79c9c43bea3ecce2090e11a520346358b`。两份均使用既有 revision/export 方法发布，配置420已 active，load receipt5393（PID27962）记录相同 SHA，无加载错误。
-- 正式扫描 run451802 已派发，结果 `scan-oa-approvals queued=3`。真实 task_inputs418410、418411、418412 的 operation-Skill 包装内含上述完整精确文件及 SHA，原 Consumer/Audit 流程继续使用冻结材料。包装本身的散列不同于文件散列，已逐字核对其完整正文。
+- 正式扫描 run451802 已派发，结果 `scan-oa-approvals queued=3`。真实 task_inputs418410、418411、418412 的 operation-Skill 包装内含上述完整精确文件及 SHA。原流程本轮结果：Task418420 done、418386 done；418164因国内差旅限额/例外授权规则未核实形成独立审核通过的人工决策Attempt16838。包装本身的散列不同于文件散列，已逐字核对其完整正文。
 - 实时源端：思睿仍在申请人节点104690667352，ET 在申请人节点104740115031；均不是 Derek 的当前待办，未重开旧审批。李芳菲流程 COMPLETED，原任务正式 skipped；未重放审批、退回或评论。本次三个原离职对象当前均无可执行的 Derek 节点，后续正常再提交时按新 Skill 审阅。
-- 生产代码 `8cf5d807c` 已通过正式固定 gate 并部署；新 PID、healthz、Status/Workers、Attention、History 均读回。Attention 当前保留无关会议418307，未隐藏。
+- 生产代码 `8cf5d807c` 已通过正式固定 gate 并部署；新 PID、healthz、Status/Workers、Attention、History 均读回。最终 Attention=2：原有会议418307，以及上述国内出差人工决策16838；均保留真实状态，未隐藏。
 
 执行裁定：旧规则先做单例失败探针再跑全量对照；评估以最多三路受限并发执行，事实、模型、超时、两轮设置相同。工具关闭的比较向旧新两侧加入生产既有动作合同，防止测试缺少工具而误判；未新增业务规则。运行 `.agents` 已有其他未提交编辑，故隔离提交只含批准 hunk，精确发布文件保留原编辑；仅版本化并切换两份 Skill，未全局捕获其他 Skill。归档工具拒绝删除本聊天 primary checkout，保留该干净隔离树及已推送分支，不绕过宿主保护。

@@ -76,6 +76,6 @@ Spec B 的字段位置、完整合同和原等待预算均有任务覆盖。无�
 - RED：general/OA 两个新 retry 用例均因错误的 decision.evidence_refs 要求失败。修复后相关验证 109 passed；正式部署目标 `8cf5d807c` 的固定 gate 为 8810 passed、2 skipped、1 deselected，用时 573.66 秒，未修改测试预算或清单。
 - 修复提交 `da3421eb4` 已推送 main，随 `8cf5d807c` 正式部署，随后通过正式 restart 加载新 Skill。生产 healthz=ok、quality violations=0；新 supervisor PID 27959、8765 listener PID 27963。
 - 当前源端复查：李芳菲流程 COMPLETED，本人审批节点已有 AGREE。原 Task 418317 与 Attempt 16781 已被正式源状态对账为 skipped，旧失败仍可追溯。不再对已完成流程调用 retry，不重置 closed/count=3 的权限预算。
-- Attention 仍有会议任务 418307，与本次 OA 修复无关；未通过改展示或旧终态宣称全部故障清零。
+- 最终 Attention=2：原有会议任务418307，以及本轮扫描产生的国内出差人工决策Attempt16838（适用限额/例外授权规则缺口）。两者不属于本次离职及 retry 修复；未通过改展示或旧终态宣称全部故障清零。
 
 执行裁定：复用已确认干净、与 origin/main 对齐的隔离树；本次批准覆盖草案限制；重叠文档的 claim 保留到两个修复均验收；最终审查与合成评估并行，但部署仍以全部验证通过为前提。
