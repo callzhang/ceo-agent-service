@@ -9230,7 +9230,10 @@ def handle_rerun_attempt_post(
             conversation_id=attempt.conversation_id,
             conversation_title=conversation_title,
             single_chat=single_chat,
-            trigger_message_id=attempt.trigger_message_id,
+            trigger_message_id=(
+                existing_task.trigger_message_id
+                if existing_task is not None else attempt.trigger_message_id
+            ),
             trigger_create_time=trigger_create_time,
             trigger_sender=attempt.trigger_sender,
             trigger_text=trigger_text,

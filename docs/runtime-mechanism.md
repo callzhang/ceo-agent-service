@@ -614,7 +614,7 @@ Audit 不得仅因 OCR/转写来源字节由已配置 AI Services 处理而额�
 
 需要重新执行内部失败的 Attempt 时，调用 `POST /api/console/history/{attempt_id}/rerun`，由原任务流程重新读取并审核当前输入；调用该 API 不要求 Agent 让 Derek 回复聊天确认卡。它与 `/retry` 的外部动作只读对账分开：存在投递或回执时不通过 rerun 重发。
 
-当前未解决的 OA `needs_human` 审批也可从 Attempt 详情发起“重新评估当前审批”。该入口只对最新 Attempt、仍为 `needs_human` 的任务、完全匹配的流程实例/审批节点/业务对象，且当前候选尚无已选方案、无 OA 动作回执的情况开放；已解决事项、身份不匹配事项和普通非 OA `needs_human` 均不可重跑。提交后使用现有手动 OA rerun 流程刷新当前选中的 OA Skills，并创建新执行修订；旧候选和审核记录保留，新候选仍经 Consumer、Audit 及既有 System 执行门槛，入口本身不会同意、拒绝或退回审批。
+当前未解决的 OA `needs_human` 审批也可从 Attempt 详情发起“重新评估当前审批”。该入口只对最新 Attempt、仍为 `needs_human` 的任务、完全匹配的流程实例/审批节点/业务对象，且当前候选尚无已选方案、无 OA 动作回执的情况开放；已解决事项、身份不匹配事项和普通非 OA `needs_human` 均不可重跑。提交后使用现有手动 OA rerun 流程刷新当前选中的 OA Skills，并创建新执行修订；旧候选和审核记录保留，新候选仍经 Consumer、Audit 及既有 System 执行门槛，入口本身不会同意、拒绝或退回审批。若 Attempt 引用较早一次 OA 扫描，重新评估仍复用同一业务任务当前扫描输入编号，避免旧扫描编号被当成另一条任务。
 
 ## 用户反馈处理轮次
 

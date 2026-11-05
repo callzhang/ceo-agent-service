@@ -11,6 +11,7 @@ from fastapi.testclient import TestClient
 from app.agent_contracts import AuditAgentResult, ConsumerAgentResult
 from app.action_storage import insert_action, update_action
 from app.audit_web import create_audit_app, handle_rerun_attempt_post
+from app.dws_client import DingTalkMessage
 from app.reviewed_candidates import candidate_digest
 from app.store import AgentRole, AutoReplyStore
 from app.web_api.attempts import (
@@ -1806,6 +1807,86 @@ def test_rerun_endpoint_rejects_non_oa_needs_human(tmp_path: Path):
     assert status == 409
     assert "只有仍未解决、且对应当前 OA 审批候选的事项可以重新评估" in body
     assert store.get_reply_task(task.id).status == "needs_human"
+
+
+def test_oa_needs_human_rerun_uses_current_task_scan_trigger(monkeypatch):
+    from app import audit_web
+
+    process_id = "same-oa-process"
+    oa_task_id = "same-oa-task"
+    old_trigger = f"oa-pending:{process_id}:old-scan"
+    current_trigger = f"oa-pending:{process_id}:current-scan"
+    trigger = DingTalkMessage(
+        open_conversation_id=f"oa_pending_scan:{process_id}",
+        open_message_id=current_trigger,
+        conversation_title="审批待办",
+        single_chat=True,
+        sender_name="Derek OA",
+        create_time="2026-11-05T10:00:00Z",
+        content="Review this pending OA task.",
+    )
+    attempt = SimpleNamespace(
+        id=16838,
+        agent_run_id=402113,
+        conversation_id=f"oa_pending_scan:{process_id}",
+        conversation_title="审批待办",
+        trigger_message_id=old_trigger,
+        trigger_sender="Derek OA",
+        trigger_text="Review this pending OA task.",
+        channel="dingtalk",
+        send_status="needs_human",
+        resolved_at="",
+        resolution="",
+        action="agent_run",
+        oa_action="review",
+        oa_action_result_json="{}",
+        oa_process_instance_id=process_id,
+        oa_task_id=oa_task_id,
+        oa_url=(
+            f"https://aflow.dingtalk.com/detail?procInstId={process_id}"
+            f"&taskId={oa_task_id}"
+        ),
+    )
+    current_task = SimpleNamespace(
+        id=418164,
+        execution_generation="generation-current",
+        trigger_message_id=current_trigger,
+        trigger_message_json=trigger.model_dump_json(),
+        trigger_text=trigger.content,
+        trigger_create_time=trigger.create_time,
+        trigger_sender=trigger.sender_name,
+        conversation_id=trigger.open_conversation_id,
+        conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat,
+        channel="dingtalk",
+        business_object_key=f"oa:{process_id}:{oa_task_id}",
+        status="needs_human",
+        manual_rerun_attempt_id=0,
+        input_compacted=False,
+    )
+    terminal_run = SimpleNamespace(reply_task_id=current_task.id)
+    captured = {}
+    store = SimpleNamespace(
+        get_reply_attempt=lambda _attempt_id: attempt,
+        get_agent_run=lambda _run_id, **_kwargs: terminal_run,
+        get_reply_task=lambda _task_id: current_task,
+        get_latest_reply_attempt_for_trigger=lambda *_args: attempt,
+        current_reviewed_candidate=lambda *_args: {
+            "selection_id": None,
+            "audit_run_id": attempt.agent_run_id,
+        },
+        get_conversation=lambda _conversation_id: SimpleNamespace(),
+        enqueue_manual_rerun_reply_task=lambda **kwargs: captured.update(kwargs),
+    )
+    monkeypatch.setattr(audit_web, "refresh_oa_rerun_skill_snapshot", lambda payload, **_kwargs: payload)
+
+    status, _headers, _body = handle_rerun_attempt_post(
+        store, attempt.id, skill_options_factory=lambda: object(),
+    )
+
+    assert status == 303
+    assert captured["trigger_message_id"] == current_trigger
+    assert captured["attempt_id"] == attempt.id
 
 
 @pytest.mark.parametrize("execution_status", ["done", "uncertain"])
