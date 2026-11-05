@@ -5,8 +5,6 @@
 
 # Concurrent agent file claims
 
-| codex-submit-supplement-refresh-20261105 | `frontend/src/pages/AttemptDetailPage.tsx`, `frontend/src/pages/AttemptDetailPage.test.tsx`, `CHANGELOG.md`, this claim row | On stale supplemental decision `409`, reload the current Attempt and state plainly that the submission was rejected; distinguish a successful submission from a later refresh failure. Preserve the backend stale-decision guard. | In progress in isolated worktree; 49 focused tests and frontend build pass. |
-
 
 
 ## Current assessment implementation coordination
