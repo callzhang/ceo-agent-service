@@ -10,9 +10,15 @@ vi.mock("../api/attempts", () => ({ getAttemptDetail }));
 vi.mock("../api/console", () => ({
   command,
   displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value),
+  ConsoleApiError: class ConsoleApiError extends Error {
+    constructor(readonly status: number, readonly code: string, message: string) {
+      super(message);
+    }
+  },
 }));
 
 import { AttemptDetailPage } from "./AttemptDetailPage";
+import { ConsoleApiError } from "../api/console";
 
 const detail = {
   id: 8448,
@@ -214,6 +220,33 @@ describe("AttemptDetailPage", () => {
 
     expect(await screen.findByRole("heading", { name: "Attempt #8448" })).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "这次要你决定什么" })).toBeInTheDocument();
+  });
+
+  it("refreshes the Attempt after a stale supplemental decision is rejected", async () => {
+    const activeDecision = {
+      ...detail,
+      status: { ...detail.status, raw: "needs_human", requires_decision: true },
+      human_decision: {
+        candidate_id: 31, candidate_digest: "reviewed-digest", review_id: 41,
+        reason: "当前审核候选需要补充信息。", requested_input: "补充本案的新事实",
+        basis: { verified_facts: [], rule_evidence: [], quality_explanation: "", no_external_action_evidence: [], conclusion: "" },
+        authorization_plan: null, selection: null,
+      },
+    };
+    getAttemptDetail
+      .mockResolvedValueOnce({ item: activeDecision, meta: { snapshot_at: "2026-10-01T10:00:00Z" } })
+      .mockResolvedValueOnce({ item: detail, meta: { snapshot_at: "2026-10-01T10:00:01Z" } });
+    command.mockRejectedValueOnce(new ConsoleApiError(409, "decision_failed", "无法提交人工决策"));
+    const user = userEvent.setup();
+    renderPage();
+
+    await user.type(await screen.findByLabelText("补充本案的新事实"), "申请人已补齐资料");
+    await user.click(screen.getByRole("button", { name: "提交补充信息" }));
+
+    expect(await screen.findByText("这次提交未被接受，页面已刷新；请查看当前状态后再继续。"))
+      .toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "本次处理方式" })).not.toBeInTheDocument();
+    expect(getAttemptDetail).toHaveBeenCalledTimes(2);
   });
 
   it("hides an unresolved historical decision candidate when the current Attempt no longer needs a decision", async () => {

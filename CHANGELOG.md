@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-05 — 补充信息提交冲突后刷新 Attempt
+
+- 「提交补充信息」遇到服务端 `409`（提交版本已失效或当前状态不再允许）时，现在会重新读取 Attempt 并显示明确提示；不再把失败看成按钮无反应，也避免继续停留在过期的决策表单。提交成功但随后刷新失败时，会明确提示“已提交、但未能刷新”，不误报为提交失败。
+
 ## 2026-10-24 — 微信统一路径阶段 2：登记 `wechat / send_message` 与处理器
 
 - 登记 `wechat / send_message`（目标 `account_id`、`target_type`、`target_id`、`conversation_id`，参数 `text`）；新增 `WechatSendMessageHandler`，同步驱动现有 Sender，并把投递状态映射为动作结果；`WechatSender.send` 可接收预备消息；`create_standard_wechat_delivery` 对发送前失败的投递可重新置为待发送。

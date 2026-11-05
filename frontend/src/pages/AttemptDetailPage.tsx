@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
-import { command, displayValue } from "../api/console";
+import { command, ConsoleApiError, displayValue } from "../api/console";
 import { getAttemptDetail, type AttemptConsumerResult, type AttemptDetail, type AttemptEmail, type AttemptMetadata, type AttemptRuntimeEntry, type AttemptToolUse } from "../api/attempts";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
@@ -546,15 +546,37 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
   const runDecision = async (url: string, payload: Record<string, unknown>) => {
     setDecisionSubmitting(true);
     setMessage("正在提交人工决策…");
+    let result: Awaited<ReturnType<typeof command>>;
     try {
-      const result = await command(url, payload);
+      result = await command(url, payload);
+    } catch (error) {
+      if (error instanceof ConsoleApiError && error.status === 409) {
+        try {
+          const refreshed = await getAttemptDetail(attemptId);
+          setDetail(refreshed.item);
+          setSnapshot(refreshed.meta.snapshot_at);
+          setCustomDecision("");
+          setMessage("这次提交未被接受，页面已刷新；请查看当前状态后再继续。");
+        } catch {
+          setMessage("这次提交未被接受；刷新页面后查看当前状态。");
+        }
+      } else {
+        setMessage(error instanceof Error ? error.message : "人工决策提交失败");
+      }
+      setDecisionSubmitting(false);
+      return;
+    }
+
+    try {
       const refreshed = await getAttemptDetail(attemptId);
       setDetail(refreshed.item);
       setSnapshot(refreshed.meta.snapshot_at);
       setCustomDecision("");
       setMessage(result.message || "人工决策已提交");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "人工决策提交失败");
+      setMessage(error instanceof Error
+        ? `${result.message || "人工决策已提交"}，但页面刷新失败，请手动刷新确认当前状态。`
+        : "人工决策已提交，但页面刷新失败，请手动刷新确认当前状态。");
     } finally {
       setDecisionSubmitting(false);
     }
