@@ -9045,9 +9045,10 @@ def handle_rerun_attempt_post(
     # its Agent run remains linked to the current task for the same OA object.
     # Match the detail page's task resolution so a changed scan trigger does
     # not make an otherwise valid reassessment fail at submission time.
+    linked_task_id = getattr(terminal_run, "reply_task_id", None)
     existing_task = (
-        store.get_reply_task(terminal_run.reply_task_id)
-        if terminal_run is not None and terminal_run.reply_task_id is not None
+        store.get_reply_task(linked_task_id)
+        if linked_task_id is not None and hasattr(store, "get_reply_task")
         else store.get_reply_task_for_message(
             attempt.conversation_id,
             attempt.trigger_message_id,
