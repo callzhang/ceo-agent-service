@@ -168,8 +168,6 @@ def can_reassess_current_oa_needs_human(attempt, task) -> bool:
         and str(getattr(task, "channel", "") or "").strip() == "dingtalk"
         and str(getattr(task, "conversation_id", "") or "").strip()
         == f"oa_pending_scan:{process_id}"
-        and str(getattr(task, "trigger_message_id", "") or "").strip()
-        == str(getattr(attempt, "trigger_message_id", "") or "").strip()
         and str(getattr(task, "business_object_key", "") or "").strip()
         == f"oa:{process_id}:{oa_task_id}"
         and str(getattr(task, "status", "") or "").strip().lower() == "needs_human"

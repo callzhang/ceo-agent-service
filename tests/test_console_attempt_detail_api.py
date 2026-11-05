@@ -1740,6 +1740,11 @@ def test_current_unresolved_oa_needs_human_exposes_manual_reassessment_only_when
         candidate["id"], audit_run.id, audit_result.model_dump(mode="json"),
     )
     with store._connect() as db:
+        db.execute(
+            "update task_inputs set trigger_message_id=? where id=?",
+            (f"{trigger_id}:new-scan", task.current_input_id),
+        )
+    with store._connect() as db:
         db.execute("update tasks set status='needs_human' where id=?", (task.id,))
     attempt_id = store.record_reply_attempt(
         conversation_id=conversation_id,
