@@ -9041,10 +9041,18 @@ def handle_rerun_attempt_post(
             return 409, {}, render_page(
                 "Resend unavailable", "<p>只有已发送的微信回复可以再次发送。</p>",
             )
-    existing_task = store.get_reply_task_for_message(
-        attempt.conversation_id,
-        attempt.trigger_message_id,
-        channel=channel,
+    # The Attempt's original trigger can be an older OA scan revision while
+    # its Agent run remains linked to the current task for the same OA object.
+    # Match the detail page's task resolution so a changed scan trigger does
+    # not make an otherwise valid reassessment fail at submission time.
+    existing_task = (
+        store.get_reply_task(terminal_run.reply_task_id)
+        if terminal_run is not None and terminal_run.reply_task_id is not None
+        else store.get_reply_task_for_message(
+            attempt.conversation_id,
+            attempt.trigger_message_id,
+            channel=channel,
+        )
     )
     if attempt.send_status.strip().lower() == "needs_human":
         latest_attempt = store.get_latest_reply_attempt_for_trigger(
