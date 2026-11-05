@@ -56,6 +56,7 @@
   | resignation_date_conflict | 申请 last day 与负责人明确确认的 last day 不同，差异影响当前决定 | return/revert_task；意见仅要求澄清日期 |
   | resignation_critical_work_conflict | 负责人明确反对当前交接安排，关键客户承诺仍无人承接，属于当前决定的实质矛盾 | return/revert_task；说明具体事项及需澄清的责任安排 |
   | resignation_not_our_task | 历史退回已生效，当前 task 属于发起人，Derek list-pending 中没有该实例 | no_action；无外部动作 |
+  | resignation_required_record_missing | 本案明确适用规则要求原始文件，当前只有未签署草稿，申请人可以补正 | return/revert_task；只要求这份必需文件 |
 
 - [ ] **Step 2. 建临时 Skill-only Git 仓库。** 在 `mktemp -d /tmp/oa-resignation-eval.XXXXXX` 中只复制两份当前 Skill，保存为 `skills/<name>/SKILL.md` 并提交 baseline。生产 Skill 此时保持原版本，临时仓库路径记为 `skill_eval_root`。
 - [ ] **Step 3. 运行旧版，确认有实际失败。** 从 CEO 实现工作树执行 `python scripts/eval_oa_skill_replay.py --skills-root "$skill_eval_root" --skill-path skills/dingtalk-oa-approval/SKILL.md --skill-path skills/stardust-oa-people-review/SKILL.md --cases evals/oa_skill_proportionality/cases.json --baseline-ref HEAD --case resignation_after_approval_cutover --case resignation_owner_confirmed --case resignation_routine_receipts_missing --case resignation_date_conflict --case resignation_critical_work_conflict --case resignation_not_our_task --with-audit --model gpt-6-luna --repeats 2`。该模型来自调查时当前 OA Consumer 实际运行记录；比较两侧使用完全相同设置。

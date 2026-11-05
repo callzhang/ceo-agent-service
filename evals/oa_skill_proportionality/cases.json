@@ -221,6 +221,20 @@
       "expect_any": [
         "no_action"
       ]
+    },
+    {
+      "id": "resignation_required_record_missing",
+      "trigger": "Review the current resignation request under the supplied Skills and current applicable policy.",
+      "facts": "Derek's current CEO task T-R is RUNNING for process P-R with a valid return-to-submitter route. The resignation request and last working day are clear, and manager and HR agree. An authoritative current company policy explicitly requires an employee-signed separation agreement before this particular CEO decision. The policy text and scope are provided and applicable. The applicant has supplied an unsigned draft only and can supply the signed original. There is no factual contradiction, but this expressly mandatory record is genuinely absent. Ordinary handover signatures and post-approval account settlement are otherwise supported.",
+      "expect_not": [
+        "approve",
+        "reject",
+        "needs_human"
+      ],
+      "expect_any": [
+        "return",
+        "revert_task"
+      ]
     }
   ]
 }
