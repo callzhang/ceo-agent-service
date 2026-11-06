@@ -2151,3 +2151,6 @@ Store29.2→30.1，运行时只接受当前 Store30.1 声明；不重新连接�
 冻结迁移来源的测试夹具将建表、索引／触发器与来源标记写入置于同一原有事务中，避免逐条 DDL 自动提交及失败时遗留部分 schema。冻结 SQL、行值和迁移／回退断言保持不变；正式 gate 继续完整覆盖，600 秒／2 GB 上限不变。
 
 钉钉文件交付复用已审核候选和 SystemExecutor 动作账本：Consumer 提出当前任务文件名、SHA-256 和唯一收件目标，Audit 只读审核文件与受众；System 复制并核对文件摘要后用原生 DWS `send_file` 发送。原生发送任务先持久化，再查询到成功及消息/会话 ID 才算交付。上传超时不自动重发，恢复只核对已保存的原发送任务；缺少发送身份时保留未确认事实。文件交付不增加公开链接，不更改文件内容或账户信息；正文消息仍使用原有署名与反馈处理。
+
+
+Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_skill(name, offset=0, max_chars=4000)` returns at most 8,000 characters with offset, total_chars and next_offset. Follow next_offset until null; sha256 continues to identify the full immutable task-frozen body. Each native MCP response has one content block and no duplicate structuredContent. This avoids requiring a long rule body and other tool results to fit in one orchestration output; it changes no task ownership, business policy or approval action. Installed Skill discovery remains unchanged.

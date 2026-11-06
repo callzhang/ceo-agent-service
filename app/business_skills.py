@@ -527,7 +527,8 @@ def render_task_skill_discovery(
         instructions: list[str] = []
         if frozen:
             instructions.append(
-                "Task-frozen reads: `agent_cli.read_task_skill(name)`."
+                "Task-frozen reads: `agent_cli.read_task_skill(name)`. "
+                "Follow next_offset until null to read the complete frozen Skill."
             )
         instructions.append(
             "Other Skill reads: `agent_cli.read_skill(name=...)`. "

@@ -1926,7 +1926,7 @@ Consumer 的代码生成「Capability Instructions」只说明当前角色的工
 
 后台 Consumer/Audit 使用原生 skills.config 禁用专项 Skill 的自动正文注入，避免原生加载、Developer inline 与工具读取三份重复。原生 `project_doc_max_bytes=0` 关闭 CLI 自动加载项目目录 `AGENTS.md`；共享及项目指令只由 Audit 的服务 Developer 段按固定路径预载，Consumer 不接收这两段。全局 `~/.codex/AGENTS.md` 仍由 CLI 加载，服务不修改原生 home 或全局规则文件。此设置仅适用于后台角色命令。
 
-Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。`read_task_skill` 的 MCP 回执只提交一份含 name、完整 content 和 sha256 的 JSON 文本，不再同时附上内容相同的 structuredContent；冻结来源、角色权限和业务结果不变。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/archive/records/task-skill-native-output-validation.md`。
+Codex Consumer/Audit 对 `read_task_skill` 与 `read_skill` 均使用原生单工具 `output_token_limit=30000`，让冻结与已安装 Skill 的正文在 MCP 完整返回后完整进入模型历史。`read_task_skill` 的 MCP 回执只提交一份含 name、分页 content、完整来源 sha256 和分页游标的 JSON 文本，不再同时附上内容相同的 structuredContent；冻结来源、角色权限和业务结果不变。其他工具输出预算、角色、sandbox、审批方式和 session 绑定保持现有行为。该设置保障来源交付，不替代 Skill 精简或证明业务判断正确；验证及发布记录见 `docs/archive/records/task-skill-native-output-validation.md`。
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；目录以 provider-neutral 的 `read_system_action_contract` 工具名指向 Runtime Context 中声明的原生入口（Codex 为 `mcp__agent_cli__read_system_action_contract`，Claude 为 `agent_cli.read_system_action_contract`）。该工具保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。
 
@@ -2399,3 +2399,6 @@ NULL authorization snapshot 和历史 category 仍是原有事实，计划 ID、
 直接邮件 Action 以 Plan ID 和 operation 定位不可变 Plan；classification、account 和对应 operation 参数从该 Plan 投影，Action 本身只保存执行状态等自身事实。账号变更和分类计划切换的 processing 阻挡经相同 Plan 关联检查。Store29.2 到 Store30.1 发布对全部源值及类型作精确核对，逆迁按同一 Plan 还原；其他 Action、回执和 Attempt payload 保留。
 
 钉钉文件交付复用已审核候选和 SystemExecutor 动作账本：Consumer 提出当前任务文件名、SHA-256 和唯一收件目标，Audit 只读审核文件与受众；System 复制并核对文件摘要后用原生 DWS `send_file` 发送。原生发送任务先持久化，再查询到成功及消息/会话 ID 才算交付。上传超时不自动重发，恢复只核对已保存的原发送任务；缺少发送身份时保留未确认事实。文件交付不增加公开链接，不更改文件内容或账户信息；正文消息仍使用原有署名与反馈处理。
+
+
+Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_skill(name, offset=0, max_chars=4000)` returns at most 8,000 characters with offset, total_chars and next_offset. Follow next_offset until null; sha256 continues to identify the full immutable task-frozen body. Each native MCP response has one content block and no duplicate structuredContent. This avoids requiring a long rule body and other tool results to fit in one orchestration output; it changes no task ownership, business policy or approval action. Installed Skill discovery remains unchanged.

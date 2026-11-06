@@ -2521,14 +2521,31 @@ def build_role_server(
         annotations=read,
     )
 
-    def read_task_skill(name: str) -> dict[str, str]:
-        """Read an exact selected Skill frozen in this task's input.
+    def read_task_skill(
+        name: str, offset: int = 0, max_chars: int = 4000,
+    ) -> dict[str, object]:
+        """Read one bounded page of a selected Skill frozen in this task input.
 
-        Pass a Skill name from the scheduled prompt catalog. The returned content
-        is the immutable managed revision or operation snapshot saved for this
-        review input; this lookup never rereads an installed Skill file.
+        Start at offset 0 and follow next_offset until null to read the entire
+        Skill. Read pages individually rather than batching long Skill bodies.
+        sha256 identifies the complete immutable body, not the page. This lookup
+        never rereads an installed Skill file. max_chars must be 1 through 8000.
         """
-        return _read_bound_task_skill(db_path, task_id, artifact_generation, name)
+        if (
+            type(offset) is not int or offset < 0
+            or type(max_chars) is not int or not 1 <= max_chars <= 8000
+        ):
+            raise ValueError("invalid task Skill read interval")
+        item = _read_bound_task_skill(db_path, task_id, artifact_generation, name)
+        content = item["content"]
+        return {
+            "name": item["name"],
+            "offset": offset,
+            "total_chars": len(content),
+            "next_offset": offset + max_chars if offset + max_chars < len(content) else None,
+            "sha256": item["sha256"],
+            "content": content[offset:offset + max_chars],
+        }
 
     bound.add_tool(
         read_task_skill, name="read_task_skill", annotations=read,

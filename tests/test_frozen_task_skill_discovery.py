@@ -114,6 +114,9 @@ def test_read_task_skill_returns_only_the_frozen_task_material(role, tmp_path):
         "name": "dingtalk-calendar",
         "content": original,
         "sha256": hashlib.sha256(original.encode("utf-8")).hexdigest(),
+        "offset": 0,
+        "total_chars": len(original),
+        "next_offset": None,
     }
     descriptor = {
         item.name: item for item in asyncio.run(build_role_server(role).list_tools())
@@ -123,34 +126,48 @@ def test_read_task_skill_returns_only_the_frozen_task_material(role, tmp_path):
 
 
 @pytest.mark.parametrize("role", ["consumer", "audit"])
-def test_read_task_skill_native_response_keeps_one_complete_copy(role, tmp_path, monkeypatch):
-    content = "FROZEN SKILL BODY\n" * 3000
+def test_read_task_skill_native_pages_reconstruct_full_unicode_body(role, tmp_path, monkeypatch):
+    content = "示例说明\n" * 3000 + "FINAL REQUIRED SECTION"
     expected = {
-        "name": "frozen-skill",
-        "content": content,
+        "name": "frozen-skill", "content": content,
         "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
     }
     monkeypatch.setattr("app.agent_cli._current_task_generation", lambda *_: "first")
     monkeypatch.setattr("app.agent_cli._read_bound_task_skill", lambda *_: expected)
-    server = build_role_server(
-        role,
-        task_id=1,
-        db_path=tmp_path / "unused.sqlite3",
-        execution_generation="first",
-    )
-
+    server = build_role_server(role, task_id=1, db_path=tmp_path / "unused.sqlite3", execution_generation="first")
     descriptor = {tool.name: tool for tool in asyncio.run(server.list_tools())}["read_task_skill"]
-    async def call_over_mcp():
-        async with create_connected_server_and_client_session(server) as session:
-            return await session.call_tool("read_task_skill", {"name": "frozen-skill"})
 
-    response = asyncio.run(call_over_mcp())
+    async def read_pages():
+        pages = []
+        async with create_connected_server_and_client_session(server) as session:
+            offset = 0
+            while offset is not None:
+                response = await session.call_tool("read_task_skill", {"name": "frozen-skill", "offset": offset})
+                assert response.structuredContent is None
+                assert len(response.content) == 1
+                page = json.loads(response.content[0].text)
+                assert page["offset"] == offset
+                assert page["total_chars"] == len(content)
+                assert page["sha256"] == expected["sha256"]
+                assert 0 < len(page["content"]) <= 4000
+                pages.append(page["content"])
+                offset = page["next_offset"]
+        return pages
 
     assert descriptor.outputSchema is None
-    assert response.structuredContent is None
-    assert len(response.content) == 1
-    assert response.content[0].type == "text"
-    assert json.loads(response.content[0].text) == expected
+    pages = asyncio.run(read_pages())
+    assert len(pages) > 1
+    assert "".join(pages) == content
+    assert pages[-1].endswith("FINAL REQUIRED SECTION")
+
+
+@pytest.mark.parametrize("offset,max_chars", [(-1, 100), (True, 100), (0, 0), (0, 8001), (0, True)])
+def test_read_task_skill_rejects_invalid_page_intervals(tmp_path, monkeypatch, offset, max_chars):
+    monkeypatch.setattr("app.agent_cli._current_task_generation", lambda *_: "first")
+    server = build_role_server("consumer", task_id=1, db_path=tmp_path / "unused.sqlite3", execution_generation="first")
+    read = server._tool_manager.get_tool("read_task_skill").fn
+    with pytest.raises(ValueError, match="invalid task Skill read interval"):
+        read("selected", offset=offset, max_chars=max_chars)
 
 
 def test_read_task_skill_fails_for_missing_unknown_ambiguous_or_stale_material(

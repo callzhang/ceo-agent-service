@@ -581,3 +581,5 @@ reverts committed work they did not author.
 
 
 
+
+| codex-frozen-skill-pages-20261106 | app/agent_cli.py read_task_skill only; app/business_skills.py task read hint; frozen-Skill tests; architecture/runtime docs | Bounded immutable Skill pages after real functions.exec output truncation in 16948. No audit/authorization behavior or real OA replay. | Active |
