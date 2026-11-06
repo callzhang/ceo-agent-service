@@ -38,6 +38,7 @@ an example or a previous instance. An unsupported operation fails explicitly.
 | `dingtalk-chat` | `send_message` | Exactly one of `conversation_id`, `user_id`, `open_dingtalk_id` | `content` (exact prepared final body) | Native send receipt for the prepared delivery key |
 | `dingtalk-chat` | `send_group_message` | `conversation_id` | `content` (exact prepared final body) | Native send receipt |
 | `dingtalk-chat` | `send_direct_message` | `user_id` or `open_dingtalk_id`; `conversation_id` may identify the source but is not a destination | `content` (exact prepared final body) | Native send receipt to the named person |
+| `dingtalk-chat` | `send_file` | Exactly one of `conversation_id`, `user_id`, `open_dingtalk_id` | `name` (one filename in the current task-generation artifact directory), `sha256` (lowercase SHA-256 of the exact file bytes) | Native send task queried to success with outgoing message/conversation IDs; group conversation must match the reviewed destination |
 | `dingtalk-chat` | `add_message_emoji` | `conversation_id`, `message_id` | `emoji` | Native reaction list for the exact message contains the exact emoji and current principal |
 | `dingtalk-chat` | `add_message_text_emotion` | `conversation_id`, `message_id` | `text`, `emotion_id`, `emotion_name`, `background_id` | Provider reaction ID; otherwise uncertain |
 | `dingtalk-chat` | `create_message_text_emotion` | `resource: "text_emotion_template"` | `text`, `emotion_name`, optional `background_id` | Provider emotion ID; otherwise uncertain |
@@ -61,6 +62,20 @@ an OA process ID, and a numeric task ID must be represented as the provider's
 exact string before Audit reviews the action. Audit checks that source binding,
 while the action model and wire schema reject malformed identifier types before
 review.
+
+For file delivery, Consumer saves the actual original file as a current-generation
+task artifact and proposes `send_file` with its filename, exact SHA-256 and one
+recipient. Audit reviews the file evidence and intended recipient against the
+request; it does not send or alter the file. System resolves only that task's
+current artifact, snapshots and rehashes the bytes immediately before upload,
+and sends that snapshot through the configured native user account. Missing,
+linked, changed or empty files are not sent. A changed destination or file is
+a changed reviewed candidate, not permission to reuse a prior receipt.
+The native send task is persisted before delivery verification. Upload has no
+automatic retry, including on timeout. A pending or unavailable result resumes
+only read-only verification of the original native send task; without a native
+send identity it remains unconfirmed and is never automatically sent again.
+File delivery does not append a text signature or create a public share link.
 
 For message sends, the service first stores the composed final body. The
 Consumer action must carry that same body. The service does not compose a new

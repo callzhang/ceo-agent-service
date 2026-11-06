@@ -1,5 +1,6 @@
 from enum import StrEnum
 from math import isfinite
+from pathlib import Path
 from typing import Literal
 
 from pydantic import (
@@ -282,6 +283,19 @@ class ProposedAction(BaseModel):
                 raise ValueError("dingtalk-doc create_document requires payload.content")
         if self.capability != "dingtalk-chat":
             return self
+        if self.operation == "send_file":
+            if (len(self.target) != 1
+                    or not set(self.target) <= {"conversation_id", "user_id", "open_dingtalk_id"}
+                    or any(not isinstance(value, str) or not value.strip() for value in self.target.values())):
+                raise ValueError("DingTalk file requires exactly one stable destination")
+            name, digest = self.payload.get("name"), self.payload.get("sha256")
+            if (set(self.payload) != {"name", "sha256"} or self.effect != "external"
+                    or not isinstance(name, str) or not name or name in {".", ".."}
+                    or Path(name).name != name or "\\" in name or "\x00" in name
+                    or name.startswith(".task-artifact-") or len(name) > 255
+                    or not isinstance(digest, str) or len(digest) != 64
+                    or any(char not in "0123456789abcdef" for char in digest)):
+                raise ValueError("DingTalk file requires task artifact name and exact SHA-256")
         if {"open_conversation_id", "reply_to_message_id"}.intersection(self.target):
             raise ValueError(
                 "DingTalk proposal targets use conversation_id and message_id"

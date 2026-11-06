@@ -1238,7 +1238,10 @@ def native_dws_handlers(store: object, dws: object) -> dict[tuple[str, str], obj
     from app.dingtang_okr_action import DingtangOkrScoreHandler
     from app.oa_review_request import OaReviewRequestHandler
 
+    from app.dingtalk_file_delivery import DingTalkFileHandler
+
     handlers: dict[tuple[str, str], object] = native_dingtalk_message_handlers(store, dws)
+    handlers[("dingtalk-chat", "send_file")] = DingTalkFileHandler(store, dws)
     handlers[("dingtang-okr", "score_kr")] = DingtangOkrScoreHandler()
     handlers[("dingtalk-calendar", "respond_calendar_event")] = CalendarResponseHandler(dws, store)
     oa = OaDecisionHandler(dws)

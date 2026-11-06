@@ -3431,6 +3431,24 @@ class DwsClient:
             raise DwsError("invalid robot message file download response")
         return payload
 
+    def send_file(
+        self, path: Path, *, conversation_id: str | None = None,
+        user_id: str | None = None, open_dingtalk_id: str | None = None,
+        idempotency_uuid: str,
+    ) -> dict[str, Any]:
+        if sum(value is not None for value in (conversation_id, user_id, open_dingtalk_id)) != 1:
+            raise ValueError("exactly one DingTalk file target is required")
+        command = [self.dws_bin, "chat", "+messages-send", "--as", "user"]
+        if conversation_id is not None:
+            command.extend(["--group", conversation_id])
+        elif user_id is not None:
+            command.extend(["--user", user_id])
+        else:
+            command.extend(["--open-dingtalk-id", open_dingtalk_id])
+        command.extend(["--file", path.name, "--msg-type", "file", "--uuid", idempotency_uuid,
+                        "--format", "json", "--yes"])
+        return self.run_json(command, cwd=path.parent)
+
     def send_message(
         self,
         conversation_id: str | None,
@@ -4692,6 +4710,8 @@ class DwsClient:
             arguments = command[3:]
         else:
             return True
+        if "--file" in arguments:
+            return False
         return any(
             argument in {"--idempotency-key", "--uuid"}
             or argument.startswith(("--idempotency-key=", "--uuid="))

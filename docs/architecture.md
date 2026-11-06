@@ -2397,3 +2397,5 @@ NULL authorization snapshot 和历史 category 仍是原有事实，计划 ID、
 ### 直接邮件 Action 的字段归属
 
 直接邮件 Action 以 Plan ID 和 operation 定位不可变 Plan；classification、account 和对应 operation 参数从该 Plan 投影，Action 本身只保存执行状态等自身事实。账号变更和分类计划切换的 processing 阻挡经相同 Plan 关联检查。Store29.2 到 Store30.1 发布对全部源值及类型作精确核对，逆迁按同一 Plan 还原；其他 Action、回执和 Attempt payload 保留。
+
+钉钉文件交付复用已审核候选和 SystemExecutor 动作账本：Consumer 提出当前任务文件名、SHA-256 和唯一收件目标，Audit 只读审核文件与受众；System 复制并核对文件摘要后用原生 DWS `send_file` 发送。原生发送任务先持久化，再查询到成功及消息/会话 ID 才算交付。上传超时不自动重发，恢复只核对已保存的原发送任务；缺少发送身份时保留未确认事实。文件交付不增加公开链接，不更改文件内容或账户信息；正文消息仍使用原有署名与反馈处理。
