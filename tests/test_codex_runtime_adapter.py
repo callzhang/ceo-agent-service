@@ -271,8 +271,40 @@ def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_pa
     assert str(tmp_path / "result.schema.json") in command
     assert "Follow the contract." in " ".join(command)
     assert 'features.multi_agent=false' in command
-    assert 'features.apps=false' in command
+    assert not any(option.startswith('features.apps=') for option in command)
     assert "--dangerously-bypass-approvals-and-sandbox" in command
+
+
+@pytest.mark.parametrize("session_id", [None, "session-1"])
+@pytest.mark.parametrize("role_name", ["consumer", "audit"])
+def test_role_command_keeps_native_apps_and_existing_approval_boundary(
+    adapter, config, tmp_path, monkeypatch, session_id, role_name,
+):
+    from app.wechat.codex_safety import make_role_agent_command
+
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = adapter.build_command(
+        route(config, "codex_oauth"), prompt="read the requested document",
+        session_id=session_id, image_paths=None, output_schema_path=None,
+        use_output_schema=False, approval_policy="on-failure",
+        developer_instructions="Return the candidate.", use_approval_bypass=True,
+    )
+    make_role_agent_command(
+        command, role=role_name,
+        task_workspace=str(tmp_path) if role_name == "consumer" else None,
+    )
+
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    if role_name == "consumer":
+        assert not any(option.startswith("features.apps=") for option in command)
+        assert 'approvals_reviewer="auto_review"' in command
+        assert 'approval_policy="on-failure"' in command
+        assert 'sandbox_mode="workspace-write"' in command
+    else:
+        assert "features.apps=false" in command
+        assert "features.browser_use=false" in command
+        assert 'approval_policy="never"' in command
+        assert 'sandbox_mode="read-only"' in command
 
 
 def test_oauth_route_keeps_the_existing_provider_selection(adapter, config, monkeypatch):
