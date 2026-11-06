@@ -395,6 +395,11 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 下切换查看多个底层 `agent_runs`。因此“当前结果可以被修正”与“执行历史不可抹除”
 可以同时成立：列表显示最新结论，详情按引用读取每一次 run 的真实原生轨迹；来源缺失时保留运行状态并明确过程不可用。
 
+OA 手动重评可在同一 `reply_task` 内轮换执行代并保留原 Attempt ID。若新一代任务已结束，
+且当前 Consumer 候选被 Audit 按摘要和 digest 明确批准为 `no_action`，任务结束时及启动恢复时
+都会将该来源 Attempt 的旧 `needs_human` 投影收口为 `skipped`，并链接当前 Audit run 与结论；只看见
+`reply_task=done` 不足以收口。此修复只更新本地结果投影，不更改 OA 待办，也不执行审批、退回或留言。
+
 #### 为什么这是系统级边界
 
 所有业务类型共同遵守以下约束：

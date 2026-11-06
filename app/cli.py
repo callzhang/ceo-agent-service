@@ -4283,6 +4283,9 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
     reconciled_terminal_attempts = (
         store.reconcile_unresolved_reply_tasks_with_terminal_attempts()
     )
+    reconciled_manual_oa_no_action_attempts = (
+        store.reconcile_manual_oa_rerun_no_action_attempts()
+    )
     reconciled_settled_tasks = (
         store.reconcile_unresolved_reply_tasks_with_settlement_evidence()
     )
@@ -4310,6 +4313,7 @@ def _recover_orphaned_reply_tasks_on_service_start(settings: WorkerSettings) -> 
         + reconciled_confirmation_boundaries
         + skipped_superseded_tasks
         + reconciled_terminal_attempts
+        + reconciled_manual_oa_no_action_attempts
         + reconciled_settled_tasks
         + skipped_terminal_no_action_tasks
         + reconciled_valid_human_projections

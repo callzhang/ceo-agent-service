@@ -341,6 +341,7 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
             "superseded"
         ),
         reconcile_unresolved_reply_tasks_with_terminal_attempts=method("attempts"),
+        reconcile_manual_oa_rerun_no_action_attempts=method("manual-oa-no-action"),
         reconcile_unresolved_reply_tasks_with_settlement_evidence=method("settled"),
         skip_failed_reply_tasks_with_terminal_no_action_run=method("no-action"),
         reconcile_valid_needs_human_projections=method("valid-human", 1),
@@ -362,6 +363,7 @@ def test_service_start_reconciles_invalid_human_projections(monkeypatch):
 
     assert "valid-human" in calls
     assert "invalid-human" in calls
+    assert "manual-oa-no-action" in calls
     assert recovered == 2
 
 

@@ -20230,6 +20230,109 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 + trigger_attempt_count
             )
 
+    def reconcile_manual_oa_rerun_no_action_attempts(
+        self, *, task_id: int | None = None,
+    ) -> int:
+        """Close the source Attempt projection after an audited OA no-action rerun.
+
+        A manual OA reassessment reuses the source Attempt while rotating the
+        same native task to a new execution generation and current scan input.
+        The source Attempt therefore keeps its older trigger and run id.  Once
+        the current generation has a completed, Audit-approved ``no_action``
+        candidate and the task is terminal, reconcile that exact bound Attempt
+        to ``skipped``.  A terminal task status alone is deliberately
+        insufficient; the current candidate, digest-matched Audit approval,
+        current generation and no-action outcome must all be present.
+
+        This only repairs the local Attempt projection.  It does not change the
+        OA task or invoke any provider action.
+        """
+        with self._immediate_write_transaction() as db:
+            rows = db.execute(
+                f"""
+                select tasks.id as task_id, tasks.execution_generation,
+                       tasks.manual_rerun_attempt_id as attempt_id,
+                       audit.id as audit_run_id, review.result_json,
+                       candidate.candidate_json, candidate.candidate_digest
+                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
+                join ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                  on attempts.id=tasks.manual_rerun_attempt_id
+                join runs as audit on audit.id=(
+                    select latest_audit.id from runs as latest_audit
+                    where latest_audit.task_id=tasks.id
+                      and latest_audit.execution_generation=tasks.execution_generation
+                      and latest_audit.role='audit'
+                    order by latest_audit.id desc limit 1
+                )
+                join run_adopted_reviews as review
+                  on review.audit_run_id=audit.id and review.decision='approve'
+                join run_adopted_results as candidate
+                  on candidate.consumer_run_id=review.consumer_run_id
+                 and candidate.candidate_digest=review.candidate_digest
+                join runs as consumer on consumer.id=candidate.consumer_run_id
+                where tasks.status='done'
+                  and tasks.business_object_key like 'oa:%'
+                  and trim(coalesce(tasks.oa_url,''))<>''
+                  and attempts.oa_url=tasks.oa_url
+                  and attempts.send_status='needs_human'
+                  and trim(coalesce(attempts.resolved_at,''))=''
+                  and coalesce(tasks.manual_rerun_attempt_id,0)>0
+                  and consumer.task_id=tasks.id
+                  and consumer.execution_generation=tasks.execution_generation
+                  and consumer.role='consumer' and consumer.status='completed'
+                  and audit.task_id=tasks.id
+                  and audit.execution_generation=tasks.execution_generation
+                  and audit.role='audit' and audit.status='completed'
+                  and audit.parent_id=consumer.id
+                  and candidate.invalidated_at=''
+                  and json_extract(candidate.candidate_json,'$.outcome')='no_action'
+                  and json_type(candidate.candidate_json,'$.proposal')='null'
+                  and (? is null or tasks.id=?)
+                  and exists (
+                      select 1 from runs as previous_run
+                      where previous_run.id=attempts.agent_run_id
+                        and previous_run.task_id=tasks.id
+                        and previous_run.execution_generation<>tasks.execution_generation
+                  )
+                order by tasks.id, attempts.id
+                """,
+                (task_id, task_id),
+            ).fetchall()
+            reconciled = 0
+            now = db.execute("select current_timestamp").fetchone()[0]
+            for row in rows:
+                try:
+                    candidate = json.loads(str(row["candidate_json"] or "{}"))
+                    review = json.loads(str(row["result_json"] or "{}"))
+                except (TypeError, json.JSONDecodeError):
+                    continue
+                summary = str(review.get("summary") or "").strip()
+                if (
+                    candidate.get("outcome") != "no_action"
+                    or candidate.get("proposal") is not None
+                    or review.get("outcome") != "approve"
+                    or review.get("candidate_digest") != row["candidate_digest"]
+                    or not summary
+                ):
+                    continue
+                audit_run_id = int(row["audit_run_id"])
+                prior_resolution = (
+                    f"当前 OA 事项已完成重新评估；Audit run #{audit_run_id} "
+                    "批准暂不执行操作。未批准、退回或留言；原 needs_human 判断已由本轮审核结论取代。"
+                )
+                updated = update_action(db, "reply_attempts", row["attempt_id"], {
+                    "send_status": "skipped",
+                    "send_error": "",
+                    "agent_run_id": audit_run_id,
+                    "audit_summary": summary,
+                    "human_decision_options_json": "[]",
+                    "resolved_at": now,
+                    "resolution": prior_resolution,
+                    "updated_at": now,
+                }, where_sql="send_status='needs_human' and resolved_at='' ")
+                reconciled += updated.rowcount
+            return reconciled
+
     def reconcile_unresolved_reply_tasks_with_terminal_attempts(self) -> int:
         """Project the latest terminal trigger attempt onto a stale task.
 

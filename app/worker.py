@@ -2719,6 +2719,11 @@ class DingTalkAutoReplyWorker:
             and task_status == "pending",
             **self._orchestration_oa_metadata(task, result),
         )
+        # A manual OA reassessment reuses its source Attempt across task
+        # generations. Reconcile the old projection only after the final
+        # candidate has been persisted and the task reached its terminal state;
+        # the Store routine requires the digest-matched Audit approval.
+        self.store.reconcile_manual_oa_rerun_no_action_attempts(task_id=task.id)
         self._deliver_oa_reminder_results(
             task=task,
             attempt_id=attempt_id,

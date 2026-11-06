@@ -37,6 +37,7 @@ from app.action_storage import insert_email_action, update_email_action, error_s
 from app.store import AGENT_RUN_SQL, TASK_LOGICAL_RUN_SQL
 
 from app.store import ERROR_SQL, WORK_SUMMARY_INPUT_SQL
+from tests.support.candidate_review import complete_synthetic_approval
 from app.state_storage import update_state_rows, insert_state
 from app import task_lifecycle_storage as task_claims
 from app.state_definitions import state_projection
@@ -3118,6 +3119,126 @@ def test_skip_obsolete_needs_human_attempt_with_later_terminal_trigger_attempt(
     assert updated_attempt is not None
     expected_status = "skipped" if expected_reconciled else "needs_human"
     assert updated_attempt.send_status == expected_status
+
+
+@pytest.mark.parametrize("audit_approved", [True, False])
+def test_manual_oa_rerun_reconciles_only_audited_no_action_projection(
+    tmp_path: Path, audit_approved: bool,
+) -> None:
+    store = AutoReplyStore(tmp_path / "manual-oa-rerun-projection.sqlite3")
+    process_id = "proc-manual-rerun"
+    oa_url = (
+        "https://aflow.dingtalk.com/detail?"
+        f"procInstId={process_id}&taskId=task-1"
+    )
+    source_trigger = "oa-pending:source-scan"
+    current_trigger = "oa-pending:current-scan"
+    store.enqueue_reply_task(
+        conversation_id=f"oa_pending_scan:{process_id}",
+        conversation_title="审批待办", single_chat=True,
+        trigger_message_id=source_trigger,
+        trigger_create_time="2026-11-05 10:00:00",
+        trigger_sender="Derek OA", trigger_text="原审批扫描",
+        trigger_message_json=json.dumps({"message_id": source_trigger}),
+        oa_url=oa_url,
+    )
+    original_task = store.claim_reply_tasks(limit=1)[0]
+    previous_run = store.claim_agent_run(
+        original_task.id, original_task.execution_generation,
+        role=AgentRole.CONSUMER, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=None, operation_id="",
+        owner="old-consumer",
+    ).run
+    store.complete_agent_run(
+        previous_run.id,
+        {"outcome": "needs_human", "summary": "旧扫描来源不完整。"},
+        owner="old-consumer",
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=original_task.conversation_id,
+        conversation_title=original_task.conversation_title,
+        trigger_message_id=source_trigger, trigger_sender="Derek OA",
+        trigger_text="原审批扫描", action="oa_approval",
+        sensitivity_kind="general", send_status="needs_human",
+        oa_url=oa_url, oa_process_instance_id=process_id,
+        oa_task_id="task-1", oa_action="review",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": previous_run.id,
+        })
+    store.fail_reply_task(
+        original_task.id, "old needs human",
+        expected_execution_generation=original_task.execution_generation,
+    )
+    current_input_task = store.ensure_reply_task(
+        conversation_id=original_task.conversation_id,
+        conversation_title=original_task.conversation_title,
+        single_chat=True, trigger_message_id=current_trigger,
+        trigger_create_time="2026-11-05 10:05:00",
+        trigger_sender="Derek OA", trigger_text="重新读取当前审批",
+        trigger_message_json=json.dumps({"message_id": current_trigger}),
+        channel="dingtalk", oa_url=oa_url,
+        business_object_key=f"oa:{process_id}:task-1",
+    )
+    assert current_input_task.id == original_task.id
+
+    rerun = store.enqueue_manual_rerun_reply_task(
+        conversation_id=original_task.conversation_id,
+        conversation_title=original_task.conversation_title,
+        single_chat=True, trigger_message_id=current_trigger,
+        source_attempt_trigger_message_id=source_trigger,
+        trigger_create_time="2026-11-05 10:05:00",
+        trigger_sender="Derek OA", trigger_text="重新读取当前审批",
+        trigger_message_json=json.dumps({"message_id": current_trigger}),
+        oa_url=oa_url, attempt_id=attempt_id, channel="dingtalk",
+        expected_execution_generation=current_input_task.execution_generation,
+    )
+    current_task = store.claim_reply_tasks(limit=1)[0]
+    assert current_task.id == rerun.id
+    consumer = store.claim_agent_run(
+        current_task.id, current_task.execution_generation,
+        role=AgentRole.CONSUMER, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=None, operation_id="",
+        owner="new-consumer",
+    ).run
+    store.complete_agent_run(consumer.id, {
+        "outcome": "no_action", "summary": "制度已找到；不执行审批操作。",
+        "proposal": None, "decision_options": [],
+        "error": {"code": "", "retryable": False, "authorization_required": False},
+        "risk": "medium", "confidence": 0.9,
+        "rule_coverage": 1.0, "information_completeness": 0.58,
+    }, owner="new-consumer")
+    if audit_approved:
+        audit = store.claim_agent_run(
+            current_task.id, current_task.execution_generation,
+            role=AgentRole.AUDIT, proposal_revision=0, turn_attempt=0,
+            parent_agent_run_id=consumer.id, operation_id="manual-no-action-audit",
+            owner="new-audit",
+        ).run
+        complete_synthetic_approval(store, audit, owner="new-audit")
+    store.complete_reply_task(
+        current_task.id,
+        expected_execution_generation=current_task.execution_generation,
+    )
+
+    reconciled = store.reconcile_manual_oa_rerun_no_action_attempts()
+    updated_attempt = store.get_reply_attempt(attempt_id)
+    assert updated_attempt is not None
+    if audit_approved:
+        assert reconciled == 1
+        assert updated_attempt.send_status == "skipped"
+        assert updated_attempt.agent_run_id == audit.id
+        assert updated_attempt.human_decision_options_json == "[]"
+        assert updated_attempt.resolved_at
+        assert updated_attempt.audit_summary == "Synthetic unit review approves the bound candidate."
+        assert f"Audit run #{audit.id}" in updated_attempt.resolution
+        assert store.reconcile_manual_oa_rerun_no_action_attempts() == 0
+    else:
+        assert reconciled == 0
+        assert updated_attempt.send_status == "needs_human"
+        assert updated_attempt.resolved_at == ""
+        assert updated_attempt.resolution == ""
 
 
 def test_history_hides_legacy_duplicate_attempt_projections_for_one_reply_task(
