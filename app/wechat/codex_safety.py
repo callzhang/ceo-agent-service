@@ -386,6 +386,12 @@ def make_role_agent_command(
             options.extend((
                 "-c", f'mcp_servers.{name}.default_tools_approval_mode="approve"',
             ))
+        if "node_repl" in (inherited | configured_names) - manifest_disabled:
+            # Browser control executes inside this native tool. It must use
+            # the CLI reviewer instead of the general MCP working-tool approval.
+            options.extend((
+                "-c", 'mcp_servers.node_repl.tools.js.approval_mode="prompt"',
+            ))
     else:
         for name in sorted((set(inherited_native_server_names()) | configured_names)
                            - ({"agent_cli"} | (configured_names & ROLE_MCP_READ_TOOLS.keys()))):

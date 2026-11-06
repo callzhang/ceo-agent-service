@@ -77,6 +77,58 @@ def test_consumer_leaves_unset_native_browser_configuration_to_cli_home(tmp_path
     assert not any(option.startswith(f"features.{feature}=") for option in command)
 
 
+@pytest.mark.parametrize("transport", [False, True])
+@pytest.mark.parametrize("automatic_review", [False, True])
+def test_native_browser_node_execution_requires_original_cli_approval(
+    tmp_path, monkeypatch, transport, automatic_review,
+):
+    from app.wechat.codex_safety import disable_automatic_review
+
+    monkeypatch.setattr(
+        "app.wechat.codex_safety.inherited_native_server_names",
+        lambda: () if transport else ("node_repl",),
+    )
+    command = _codex_command()
+    command[-1:-1] = [
+        "-c", 'approval_policy="on-failure"',
+        "-c", 'approvals_reviewer="auto_review"',
+    ]
+    if transport:
+        command[-1:-1] = ["-c", 'mcp_servers.node_repl.command="/usr/bin/node"']
+
+    make_consumer_agent_command(command, task_workspace=str(tmp_path))
+    if not automatic_review:
+        disable_automatic_review(command)
+
+    assert command.count('mcp_servers.node_repl.tools.js.approval_mode="prompt"') == 1
+    assert "--dangerously-bypass-approvals-and-sandbox" not in command
+    if automatic_review:
+        assert 'approvals_reviewer="auto_review"' in command
+        assert 'approval_policy="on-failure"' in command
+    else:
+        assert 'approval_policy="never"' in command
+        assert not any(option.startswith("approvals_reviewer=") for option in command)
+
+
+@pytest.mark.parametrize("present", [False, True])
+def test_native_browser_approval_does_not_enable_an_absent_or_disabled_server(
+    tmp_path, monkeypatch, present,
+):
+    monkeypatch.setattr(
+        "app.wechat.codex_safety.inherited_native_server_names",
+        lambda: ("node_repl",) if present else (),
+    )
+    command = _codex_command()
+    if present:
+        command[-1:-1] = [
+            "-c", 'mcp_servers.node_repl={"enabled" = false, "command" = "/usr/bin/false"}',
+        ]
+
+    make_consumer_agent_command(command, task_workspace=str(tmp_path))
+
+    assert not any(option.startswith("mcp_servers.node_repl.tools.") for option in command)
+
+
 def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, monkeypatch) -> None:
     home = tmp_path / "codex-home"
     home.mkdir()

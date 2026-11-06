@@ -1381,6 +1381,7 @@ Derek 的设计决定：Consumer 运行在各 CLI 的原生 auto 模式里（Cod
 - Claude Consumer 的 shell 沙箱把 `allowUnsandboxedCommands` 设为 `true`，权限模式本来就是 `auto`；沙箱内失败的命令可由 Agent 以 `dangerouslyDisableSandbox` 重试，由 auto 模式的分类器逐次决定。
 - Agent 不会自己发现要提权：两个 CLI 都只在提示里明说「失败就提权重试」才这样做，所以需要钥匙串的工具必须由对应 Skill 写明运行方式。
 - 路由设置 `automatic_review` 声明该路由的 provider 是否提供 `codex-auto-review` 模型；未设置时按凭据模式取默认（本机登录路由为是，`service_api` 路由为否），自己加的 `codex_api` 路由可用 `CEO_RUNTIME_<NAME>_AUTOMATIC_REVIEW=true|false` 改。为否的路由由 `disable_automatic_review` 把 `approval_policy` 设为 `never`：该路由上的 Consumer 仍全自动运行，不申请提权，沙箱限制照旧。需要沙箱外权限的任务不应路由到该路由，这是该路由已声明的能力差距，不在本次变更里绕过。
+- Consumer 原生浏览器经 Node REPL `js` 工作工具使用时，工具审批显式为 `prompt`，由原生 auto reviewer 决定，不继承通用 MCP 的默认 approve；没有 reviewer 的路线保持 never，不据此开放工具。不存在或由 manifest 禁用的 server 不被创建或启用，Audit 仍无 Node/浏览器。
 - 不变：终态外发动作仍走 proposal → Audit → SystemExecutor，Audit 只读，Consumer 禁用工具清单有效；`dws` 仍用沙箱内的 `~/.dws` 和网络设置。
 
 ### 微信发送放行：只认标准审核（Derek 2026-10-24 方案 G2；原微信审核于 2026-10-25 退休）
