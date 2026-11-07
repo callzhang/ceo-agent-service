@@ -207,8 +207,12 @@ class AgentTaskContext:
         if source_reference:
             trigger["text"] = {"source_ref": source_reference + ".trigger_text"}
             trigger["raw_payload"] = {"source_ref": source_reference + ".trigger_raw_payload"}
+            from app.reviewed_sources import context_source
+
+            source_messages = context_source(self)["messages"]
             for index, message in enumerate(messages):
-                message["text"] = {"source_ref": f"{source_reference}.messages[{index}].text"}
+                if "text" in source_messages[index]:
+                    message["text"] = {"source_ref": f"{source_reference}.messages[{index}].text"}
             for index, material in enumerate(materials):
                 material["reference"] = {"source_ref": f"{source_reference}.materials[{index}].reference"}
         effective_current_time = current_time or _current_local_time()

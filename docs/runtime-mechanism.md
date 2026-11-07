@@ -1678,7 +1678,7 @@ The general anchor registration conflict checks remain unchanged.
 来源快照中的反馈链接在检查副本中按 Markdown 链接和真实 JSON 容器读取；不要求其他参与者使用本人的外发签名、标签或段落格式。仍严格核对当前配置 host/path/query、生成 token、上下链接同一身份与唯一完整配对，额外未配对 URL 或凭据仍拒绝。只移除已核验 URL 的检查副本，不把来源链接当授权或外部动作回执。当前待发送正文仍要求原始严格格式；原 source_bindings、候选 digest、持久化结果与发送前来源回读比较不变，其他来源字段继续接受原有敏感值、深度和大小检查。确定性的来源结果验证失败记录 runtime_result_source_invalid、stage=result、source=service、retryable=false、session_continuable=false；不归为 CLI/provider 失败并反复恢复同一会话。
 
 钉钉派发前复核历史上下文时，以原会话中的历史消息 ID 序列为准；同一 ID 的卡片展示文字变化不会使候选重跑。
-完整上下文仍保存在候选快照中供审核和追溯。本次触发消息、明确引用的消息、附件来源与其他业务来源继续按原规则核对。
+钉钉候选的 task_context 来源快照与派发前比较使用同一表示：非触发、非明确引用且有消息 ID 的历史消息只保存 message_id；当前触发、明确引用、缺少消息 ID 的记录、附件和其他业务来源保留完整内容，其他渠道不变。Audit 继续读取原任务的完整历史上下文；只有快照实际保存的全文才改为 source_ref，ID-only 历史不生成不存在的正文引用。敏感值、非法链接、深度和大小校验保持原样；触发、引用材料和模型输出中的违规内容仍被拒绝。
 
 Attempt 详情的 system_execution 按 candidate、review、selection 绑定显示当前及历史阶段、声明顺序、未开始动作、失败/不确定状态和 provider 回执。只有 canonical action ledger 中核验成功的动作计为 verified；Audit approve 和用户选择都不能显示为已经执行。
 
@@ -1863,7 +1863,7 @@ Codex 原生工具只有开始、没有对应完成记录时，历史详情保�
 格式的完成结果也不会被开始投影覆盖。这是过程可见性，不证明外部动作发生，
 不改变运行终态、审批或重试资格。
 
-服务捕获的 source_bindings 含凭据或未通过签名链接安全边界时，同样按 `runtime_result_source_invalid` 记录（规则见上）。模型自行生成的敏感值仍由原有结果边界拒绝；不删除来源字段、放宽凭据检查或把该失败改成 needs_human。
+服务捕获的 source_bindings 含凭据或未通过签名链接安全边界时，同样按 `runtime_result_source_invalid` 记录（规则见上）。模型自行生成的敏感值仍由原有结果边界拒绝；不通过删除触发、引用材料或模型输出字段来规避凭据检查，也不把该失败改成 needs_human；普通钉钉历史仅保存 ID 的范围见上文来源快照合同。
 
 Task 验收读回在 SQLite 快照内取得准确的原生引用，关闭快照后读取该范围
 内运行时实际选择的最后一个 schema 合法候选。验收保留所选候选的原始

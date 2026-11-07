@@ -2968,10 +2968,31 @@ def test_consumer_prepares_structured_dingtalk_message_postfix_before_audit(
     assert prepared.final_body == text
 
 
+def test_consumer_does_not_adopt_unreferenced_history_text(store, task, context):
+    from app.agent_turn_runner import _contains_sensitive_value
+
+    synthetic = "sk-" + "Ab9xK2mQ7rV4zP1tL8cH5nJ0dF3sW6yU" * 2
+    assert _contains_sensitive_value(synthetic)
+    original = AgentContextMessage("old", "Participant", synthetic, "")
+    context = replace(context, messages=(original,))
+    executor = CapturingExecutor(_result_jsonl())
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"), executor=executor,
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome == "no_action"
+    [binding] = result.result.source_bindings
+    assert binding.value["messages"] == [{"message_id": "old"}]
+    assert context.messages[0] == original  # Audit keeps the original task context.
+    adopted = store.get_agent_run(result.run_id).adopted_result_json
+    assert synthetic not in adopted
+
+
 @pytest.mark.parametrize("serialized", [False, True])
 @pytest.mark.parametrize("prefix", ["", "[事项] ", "{讨论} "])
+@pytest.mark.parametrize("quoted", [False, True])
 def test_consumer_preserves_provider_rendered_historical_feedback_sources(
-    store, task, context, monkeypatch, serialized, prefix,
+    store, task, context, monkeypatch, serialized, prefix, quoted,
 ):
     from app.feedback_spike import prepare_outgoing_reply_text
 
@@ -2983,14 +3004,17 @@ def test_consumer_preserves_provider_rendered_historical_feedback_sources(
     ).text.replace("\n\n", "  \n")
     source = json.dumps({"text": historical}) if serialized else historical
     context = replace(context, messages=(AgentContextMessage(
-        message_id="historical-synthetic", sender="Synthetic", text=source, create_time="2026-10-04T00:00:00Z",
+        message_id="historical-synthetic", sender="quoted_message" if quoted else "Synthetic", text=source, create_time="2026-10-04T00:00:00Z",
     ),), trigger_raw_payload=json.dumps({"text": historical}))
     result = ConsumerAgentRunner(
         store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     assert result.result.outcome == "no_action"
     [binding] = result.result.source_bindings
-    assert binding.value["messages"][0]["text"] == source
+    assert binding.value["messages"][0] == (
+        {"message_id": context.messages[0].message_id, "sender": "quoted_message", "text": source}
+        if quoted else {"message_id": context.messages[0].message_id}
+    )
     assert binding.value["trigger_raw_payload"] == context.trigger_raw_payload
     saved = store.get_agent_run(result.run_id)
     assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"] == binding.value
@@ -3048,8 +3072,9 @@ def test_consumer_preserves_full_calendar_material_source(store, task, context):
 
 
 @pytest.mark.parametrize("serialized", [False, True])
+@pytest.mark.parametrize("quoted", [False, True])
 def test_consumer_source_callbacks_do_not_require_principal_signature_or_labels(
-    store, task, context, monkeypatch, serialized,
+    store, task, context, monkeypatch, serialized, quoted,
 ):
     from app.feedback_spike import build_callback_url
 
@@ -3060,7 +3085,7 @@ def test_consumer_source_callbacks_do_not_require_principal_signature_or_labels(
     historical = f"A different participant's notice.\n[Positive]({up}) | [Negative]({down})"
     source = json.dumps({"text": historical}) if serialized else historical
     context = replace(context, trigger_text=historical, messages=(AgentContextMessage(
-        message_id="other-participant", sender="Other participant", text=source,
+        message_id="other-participant", sender="quoted_message" if quoted else "Other participant", text=source,
         create_time="2026-10-06T00:00:00Z",
     ),))
     result = ConsumerAgentRunner(
@@ -3069,7 +3094,10 @@ def test_consumer_source_callbacks_do_not_require_principal_signature_or_labels(
     assert result.result.outcome == "no_action"
     [binding] = result.result.source_bindings
     assert binding.value["trigger_text"] == historical
-    assert binding.value["messages"][0]["text"] == source
+    assert binding.value["messages"][0] == (
+        {"message_id": context.messages[0].message_id, "sender": "quoted_message", "text": source}
+        if quoted else {"message_id": context.messages[0].message_id}
+    )
     from app.feedback_spike import sanitize_configured_feedback_links
 
     with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
@@ -3078,8 +3106,9 @@ def test_consumer_source_callbacks_do_not_require_principal_signature_or_labels(
 
 @pytest.mark.parametrize("preview_field", ["original_text", "reply_text"])
 @pytest.mark.parametrize("rendered_preview", ["Rendered+preview", "%E5%场景+preview"])
+@pytest.mark.parametrize("quoted", [False, True])
 def test_consumer_source_callback_pair_uses_identity_not_preview_text(
-    store, task, context, monkeypatch, preview_field, rendered_preview,
+    store, task, context, monkeypatch, preview_field, rendered_preview, quoted,
 ):
     from app.feedback_spike import build_callback_url, sanitize_configured_feedback_links
 
@@ -3091,14 +3120,17 @@ def test_consumer_source_callback_pair_uses_identity_not_preview_text(
                               rating="down", attempt_id=1) + f"&{preview_field}={rendered_preview}"
     source = f"Historical notice.\n[Positive]({up}) | [Negative]({down})"
     context = replace(context, messages=(AgentContextMessage(
-        message_id="historical-preview", sender="Participant", text=source,
+        message_id="historical-preview", sender="quoted_message" if quoted else "Participant", text=source,
         create_time="2026-10-06T00:00:00Z",
     ),))
     result = ConsumerAgentRunner(
         store=store, workspace=Path("/workspace"), executor=CapturingExecutor(_result_jsonl()),
     ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
     assert result.result.outcome == "no_action"
-    assert result.result.source_bindings[0].value["messages"][0]["text"] == source
+    assert result.result.source_bindings[0].value["messages"][0] == (
+        {"message_id": "historical-preview", "sender": "quoted_message", "text": source}
+        if quoted else {"message_id": "historical-preview"}
+    )
     # Current outgoing text retains its exact-pair requirement.
     with pytest.raises(ValueError, match="feedback_callback_pair_invalid"):
         sanitize_configured_feedback_links(source, vercel_base_url=base)
@@ -3190,7 +3222,7 @@ def test_authored_reference_still_has_short_field_bound(store, task, context):
 
 
 @pytest.mark.parametrize("change", ["foreign", "token", "query", "unpaired", "source-secret"])
-def test_historical_feedback_does_not_exempt_invalid_urls_or_source_credentials(
+def test_quoted_feedback_does_not_exempt_invalid_urls_or_source_credentials(
     store, task, context, monkeypatch, change,
 ):
     from app.feedback_spike import prepare_outgoing_reply_text
@@ -3212,7 +3244,7 @@ def test_historical_feedback_does_not_exempt_invalid_urls_or_source_credentials(
     else:
         source += "\nAuthorization: Bearer abcdef1234567890"
     context = replace(context, messages=(AgentContextMessage(
-        message_id="historical-synthetic", sender="Synthetic", text=source, create_time="2026-10-04T00:00:00Z",
+        message_id="historical-synthetic", sender="quoted_message", text=source, create_time="2026-10-04T00:00:00Z",
     ),))
     with pytest.raises(ValueError):
         ConsumerAgentRunner(

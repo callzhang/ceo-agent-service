@@ -8,6 +8,59 @@ from app.reviewed_sources import capture_candidate_sources, changed_candidate_so
 from tests.test_reviewed_orchestration import candidate, setup
 
 
+@pytest.mark.parametrize("placement", ["history", "quoted", "trigger", "authored", "other_channel", "unidentified"])
+def test_unused_history_text_does_not_become_candidate_source(tmp_path, placement):
+    from app.agent_turn_runner import (
+        RuntimeResultValidationError, _contains_sensitive_value,
+        _validate_runtime_reference_domain_result,
+    )
+    # Deliberately invalid, generated test data; never a real credential.
+    synthetic = "sk-" + "Ab9xK2mQ7rV4zP1tL8cH5nJ0dF3sW6yU" * 2
+    assert _contains_sensitive_value(synthetic)
+    _, _, context = setup(tmp_path)
+    message = AgentContextMessage("old", "Sender", synthetic, "")
+    if placement == "other_channel":
+        context = replace(context, channel="wechat")
+    if placement == "unidentified":
+        message = replace(message, message_id="")
+    if placement == "quoted":
+        message = replace(message, sender="quoted_message")
+    if placement == "trigger":
+        context = replace(context, trigger_text=synthetic)
+        message = replace(message, message_id=context.trigger_message_id)
+    context = replace(context, messages=(message,))
+    prepared = capture_candidate_sources(candidate(synthetic if placement == "authored" else "Safe reply"), context, None)
+    if placement == "history":
+        _validate_runtime_reference_domain_result(prepared)
+        assert synthetic not in prepared.model_dump_json()
+        assert prepared.source_bindings[0].value["messages"] == [{"message_id": "old"}]
+        assert prepared.source_bindings[0].value["trigger_text"] == context.trigger_text
+    else:
+        with pytest.raises((RuntimeResultValidationError, ValueError)):
+            _validate_runtime_reference_domain_result(prepared)
+
+
+@pytest.mark.parametrize("channel", ["dingtalk", "wechat"])
+def test_audit_keeps_history_text_when_candidate_binds_only_identity(tmp_path, channel):
+    from app.agent_context import AuditTurnContext
+
+    _, _, context = setup(tmp_path)
+    context = replace(context, channel=channel, messages=(
+        AgentContextMessage("old", "Sender", "Historical context only", ""),
+        AgentContextMessage("quote", "quoted_message", "Explicitly quoted text", ""),
+    ))
+    prepared = capture_candidate_sources(candidate(), context, None)
+    rendered = AuditTurnContext(
+        task=context, proposal_revision=0, operation_id="op", candidate=prepared,
+        candidate_digest="a" * 64, audit_rules="Review the original context.",
+    ).render()
+    assert "Historical context only" in rendered
+    assert "Explicitly quoted text" in rendered
+    reference = "Candidate revision.candidate.source_bindings[0].value.messages[0].text"
+    assert (reference in rendered) is (channel != "dingtalk")
+    assert "Candidate revision.candidate.source_bindings[0].value.messages[1].text" in rendered
+
+
 def test_context_binding_excludes_clock_receipts_and_human_selection(tmp_path):
     _, _, context = setup(tmp_path)
     prepared = capture_candidate_sources(candidate(), context, None)
@@ -29,7 +82,10 @@ def test_reviewed_history_uses_message_identity_for_dingtalk(
     original = AgentContextMessage("old", "Sender", "Card", "")
     context = replace(context, channel=channel, messages=(original,))
     prepared = capture_candidate_sources(candidate(), context, None)
-    assert prepared.source_bindings[0].value["messages"][0]["text"] == "Card"
+    expected = {"message_id": "old"} if channel == "dingtalk" else {
+        "message_id": "old", "sender": "Sender", "text": "Card",
+    }
+    assert prepared.source_bindings[0].value["messages"][0] == expected
 
     refreshed = replace(context, messages=(changed_message,) if changed_message else ())
     assert bool(changed_candidate_sources(prepared, refreshed, None)) is expected_change

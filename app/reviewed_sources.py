@@ -24,12 +24,16 @@ class ReviewedSourceReadError(ValueError):
 
 def context_source(context):
     raw, _ = message_source_facts(context)
-    return {
+    source = {
         "trigger_text": context.trigger_text,
         "trigger_raw_payload": raw,
         "messages": [{"message_id": m.message_id, "sender": m.sender, "text": m.text} for m in context.messages],
         "materials": [{"kind": m.kind, "reference": m.reference, "source_message_id": m.source_message_id} for m in context.materials],
     }
+
+    if getattr(context, "channel", "") == "dingtalk":
+        return _dingtalk_context_comparison(source, context.trigger_message_id)
+    return source
 
 
 def capture_candidate_sources(candidate: ConsumerAgentResult, context, dws):
@@ -102,7 +106,7 @@ def read_provider_source(dws, provider, object_ref):
 
 
 def _dingtalk_context_comparison(source, trigger_id):
-    # Keep the full reviewed snapshot, but historical card rendering is not a source change.
+    # Historical messages bind identity; triggers and quotes retain their full text.
     return {
         **source,
         "messages": [
