@@ -203,7 +203,10 @@ def _target_matching_doc_changes(
 #: never in the production checkout, with a clean environment so it cannot reach
 #: the service database or credentials.
 TEST_GATE_MANIFEST = "tests/gate_files.txt"
-TEST_GATE_ARGS = ("-m", "pytest", "-q", "-p", "no:cacheprovider", "--tb=short")
+TEST_GATE_ARGS = (
+    "-m", "pytest", "-q", "-p", "no:cacheprovider",
+    "-p", "tests.support.gate_collection", "--tb=short",
+)
 #: Derek, 2026-10-25: on. It was off from 2026-10-25 until tests/gate_files.txt
 #: was live. A source constant on purpose: no option or environment variable.
 TEST_GATE_ENABLED = True
