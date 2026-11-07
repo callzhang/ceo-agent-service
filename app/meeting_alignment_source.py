@@ -642,9 +642,25 @@ def _verify_calendar_evidence(
                     == _normalized_title(creator.name)
                 )
             ]
+            creator_name = _normalized_title(creator.name)
+            lines = _transcript_lines(transcription)
+            creator_union_ids = {
+                line.speaker_union_id.strip()
+                for line in lines
+                if _normalized_title(line.speaker_name) == creator_name
+                and line.speaker_union_id.strip()
+            }
+            unique_recording_identity = (
+                len(creator_union_ids) == 1
+                and all(
+                    _normalized_title(line.speaker_name) == creator_name
+                    for line in lines
+                    if line.speaker_union_id.strip() in creator_union_ids
+                )
+            )
             if (
                 len(creator_matches) != 1
-                or not creator_matches[0].user_id.strip()
+                or not (creator_matches[0].user_id.strip() or unique_recording_identity)
                 or _normalized_title(creator_matches[0].name)
                 != _normalized_title(creator.name)
             ):
@@ -1028,9 +1044,9 @@ def _transcript_lines(
                     paragraph,
                     "speakerUserId",
                     "userId",
-                    "unionId",
                     "speaker_user_id",
                 ),
+                speaker_union_id=_text(paragraph, "unionId", "speaker_union_id"),
                 timestamp=_text(
                     paragraph,
                     "timestamp",

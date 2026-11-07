@@ -1798,6 +1798,8 @@ Meeting planner RuntimeAttempt 使用 `workload_kind='meeting'` 和准确 Meetin
 
 Meeting Task 在有界 Audit 反馈轮用完后仍未获批准时终止为 `needs_human`（`meeting_audit_unapproved`，未发送任何消息）。History 对它与 `failed`/`quarantined` 一样给出 `needs_manager` 注意项（人工处理、技术详情），不再显示为没有待办。`needs_human` 的 Meeting 属于 `rerun_meeting_alignment_jobs` 的可重跑状态（与 `failed`/`no_action` 同一入口，Derek 2026-10-27 批准）：只有控制台“重跑”按钮会调用，原 Run 全部保留，重跑从 `retry` 重新经 Consumer→独立 Audit，所有未发送/无外发/无占用的前置检查不变。转录参会名单验证在完整已核实名单中唯一核对 Minutes 创建者，创建者为当前账号时同样参与核验；保留稳定身份与姓名一致、重名歧义拒绝，并将已核实创建者作为参会人单独保留。仅逐字稿实际列出的其余发言人参与逐字稿名单匹配，避免把未发言的创建者误判为缺失发言人。
 
+逐字稿的 `unionId` 独立于企业 `user_id` 和 `open_dingtalk_id` 保存。创建者没有企业身份时，可用同一录音内与其姓名唯一对应的 `unionId` 核验说话人；身份冲突不通过核验。该身份不作为消息收件地址，直接投递仍使用独立解析的企业 `user_id`。
+
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。检查使用 Phase 2 TaskBusinessKey 中保存的原生公开投递键，并同时检查主键、`:sensitive` 键和 `:target:` 派生键；准备好的 Action 即使没有 provider 回执也阻止重放。不得从 native Task ID 重建 source key。prepared outbound 仍由原有投递恢复路径处理；重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。
 
 ## Meeting Audience Recovery

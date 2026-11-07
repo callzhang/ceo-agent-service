@@ -343,13 +343,15 @@ def test_read_meeting_source_combines_metadata_summary_transcript_and_current_us
         "transcript": [
             {
                 "speaker_name": "A",
-                "speaker_user_id": "union-a",
+                "speaker_user_id": "",
+                "speaker_union_id": "union-a",
                 "timestamp": "1200",
                 "text": "先全量",
             },
             {
                 "speaker_name": "B",
                 "speaker_user_id": "u-b",
+                "speaker_union_id": "",
                 "timestamp": "00:02",
                 "text": "先灰度",
             },
@@ -494,6 +496,54 @@ def test_read_meeting_source_marks_transcript_roster_incomplete():
 
     assert source.attendee_evidence == "transcript"
     assert source.attendee_roster_complete is False
+
+
+def test_transcript_creator_uses_unique_recording_identity_without_directory_id():
+    dws = FakeDws()
+    participant = meeting_alignment_source.MeetingParticipant
+    evidence = build_transcript_roster_evidence(
+        live_minutes_info(),
+        dws.get_all_minutes_transcription("minutes-1"),
+        current_user=participant(name="Derek", user_id="u-derek"),
+        speakers=[participant(name="A", user_id=""), participant(name="B", user_id="u-b")],
+    )
+
+    source = read_meeting_source(
+        dws, "minutes-1", calendar_evidence=evidence,
+        creator=participant(name="A", user_id=""),
+    )
+
+    assert source.creator.user_id == ""
+    assert source.creator.open_dingtalk_id == ""
+    assert source.transcript[0].speaker_union_id == "union-a"
+    assert source.transcript[0].speaker_user_id == ""
+    assert source.transcript[1].speaker_user_id == "u-b"
+    assert source.transcript[1].speaker_union_id == ""
+
+
+def test_transcript_creator_rejects_multiple_recording_identities_for_same_name():
+    class AmbiguousDws(FakeDws):
+        def get_all_minutes_transcription(self, meeting_id: str) -> dict:
+            data = super().get_all_minutes_transcription(meeting_id)
+            data["paragraphs"].append(
+                {"nickName": "A", "unionId": "union-other", "paragraph": "另一位。"}
+            )
+            return data
+
+    dws = AmbiguousDws()
+    participant = meeting_alignment_source.MeetingParticipant
+    evidence = build_transcript_roster_evidence(
+        live_minutes_info(),
+        dws.get_all_minutes_transcription("minutes-1"),
+        current_user=participant(name="Derek", user_id="u-derek"),
+        speakers=[participant(name="A", user_id=""), participant(name="B", user_id="u-b")],
+    )
+
+    with pytest.raises(MeetingSourceIncomplete):
+        read_meeting_source(
+            dws, "minutes-1", calendar_evidence=evidence,
+            creator=participant(name="A", user_id=""),
+        )
 
 
 def test_read_meeting_source_validates_minutes_creator_as_attendee_not_speaker():

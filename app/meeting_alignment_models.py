@@ -177,6 +177,7 @@ class MeetingParticipant(StrictModel):
 class TranscriptLine(StrictModel):
     speaker_name: str
     speaker_user_id: str = ""
+    speaker_union_id: str = ""
     timestamp: str = ""
     text: str
 

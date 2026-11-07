@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-ceo-attention-five-20261107 | Isolated /tmp/ceo-attention-five.xxdkMu/repo: minutes sync; DWS send preflight, executor, orchestrator and atomic candidate storage; meeting source/model; regressions and scoped docs | Approved root-cause repairs for the five current CEO Attention items only. Preserve history/effects; no Friday changes or blind replay. | 2026-11-07 |
+
 
 
 
