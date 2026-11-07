@@ -33,12 +33,16 @@ def delivery(tmp_path, monkeypatch):
         def __init__(self):
             super().__init__(dws_bin='dws')
             self.sends = []
+            self.preflights = []
             self.queries = []
             self.status = 'success'
             self.receipt = {'result': {'openTaskId': 'send-task'}}
         def run_json(self, command, **kwargs):
             if '+messages-send' in command:
                 path = Path(kwargs['cwd']) / command[command.index('--file') + 1]
+                if '--dry-run' in command:
+                    self.preflights.append((command, path.read_bytes()))
+                    return {'dry_run': True, 'executed': False}
                 self.sends.append((command, path.read_bytes()))
                 return self.receipt
             self.queries.append(command)
@@ -80,6 +84,9 @@ def test_file_delivery_uses_reviewed_bytes_target_and_provider_receipt(delivery)
     store, task, root, data, _, dws = delivery
     executor, candidate, review, result = execute(delivery)
     assert result.outcome == 'executed'
+    assert len(dws.preflights) == 1
+    assert dws.preflights[0][0] == [*dws.sends[0][0], '--dry-run']
+    assert dws.preflights[0][1] == data
     assert len(dws.sends) == 1
     command, sent = dws.sends[0]
     assert sent == data
