@@ -444,3 +444,8 @@ tests/test_dingtalk_file_delivery.py
 tests/test_frozen_task_skill_discovery.py
 tests/test_gate_collection.py
 tests/test_schema_validation_connection_reuse.py
+tests/test_agent_orchestrator.py
+tests/test_reviewed_candidate_store.py
+tests/test_native_reviewed_candidate_store.py
+tests/test_service_message_sender.py
+tests/test_scheduled_service_attention.py
