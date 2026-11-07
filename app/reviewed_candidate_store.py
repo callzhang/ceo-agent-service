@@ -499,6 +499,7 @@ class ReviewedCandidateStoreMixin:
     def finish_candidate_execution(
         self, execution_id: int, owner: str, status: str, result: Any,
         *, invalidate_reason: str = "",
+        action_outcome: tuple[int, str, Any] | None = None,
     ) -> dict[str, Any]:
         if status not in ("done","skipped","failed","retry","uncertain"):
             raise ValueError("invalid execution status")
@@ -524,6 +525,9 @@ class ReviewedCandidateStoreMixin:
                 attempts = db.execute("select action_index,status from action_receipts where execution_run_id=? and action_index is not null order by action_index", (execution_id,)).fetchall()
                 if not actions or len(attempts) != len(actions) or any(row["action_index"] != index or row["status"] != "verified" for index,row in enumerate(attempts)):
                     raise ValueError("execution actions are not verified")
+            if action_outcome is not None:
+                action_index, action_status, action_result = action_outcome
+                self._record_candidate_action_outcome(db, execution, action_index, action_status, action_result)
             update_native_execution(db, execution_id, {
                 "status": status, "result_json": body, "lease_owner": "", "lease_expires_at": "",
                 "updated_at": _db_timestamp(db),
@@ -692,39 +696,43 @@ class ReviewedCandidateStoreMixin:
             return True
 
     def record_candidate_action_outcome(self, execution_id: int, owner: str, action_index: int, status: str, result: Any) -> dict[str, Any]:
-        if status not in ("verified","confirmed_no_effect","uncertain","failed"):
-            raise ValueError("invalid action outcome")
-        body = _json(result)
         with self._immediate_write_transaction() as db:
             execution = self._leased_execution(db, execution_id, owner)
-            # The action was already dispatched: its outcome is recorded even after the Task's
-            # execution generation moved on (same rule as the provider receipt).
-            candidate = self._adopted_candidate_row(db, execution["candidate_id"])
-            if candidate is None:
-                raise ValueError("candidate does not exist")
-            attempt = candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone())
-            if attempt is None:
-                raise ValueError("action was not dispatched")
-            if status == "uncertain":
-                principal_id = json.loads(attempt["result_json"]).get("calendar_response_principal")
-                if principal_id:
-                    body = _json({**_plain(result), "calendar_response_principal": principal_id})
-            if status == "verified":
-                receipt = db.execute(f"select provider_result_json,provider_receipt_id from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (attempt["external_action_key"],)).fetchone()
-                if receipt is None:
-                    raise ValueError("verified action lacks successful ledger receipt")
-                if body == receipt["provider_result_json"]:
-                    body = None
-                provider_receipt_id = receipt["provider_receipt_id"]
-            else:
-                provider_receipt_id = None
-            shared_action_lifecycle.record_reviewed_action_outcome(
-                db, attempt=attempt, status=status, result_json=body,
-                provider_receipt_id=provider_receipt_id,
-                agent_run_id=candidate["consumer_run_id"],
-                updated_at=_db_timestamp(db),
-            )
-            return candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (attempt["id"],)).fetchone())
+            return self._record_candidate_action_outcome(db, execution, action_index, status, result)
+
+    def _record_candidate_action_outcome(self, db, execution, action_index, status, result):
+        if status not in ("verified", "confirmed_no_effect", "uncertain", "failed"):
+            raise ValueError("invalid action outcome")
+        execution_id = execution["id"]
+        body = _json(result)
+        # The action was already dispatched: its outcome is recorded even after the Task's
+        # execution generation moved on (same rule as the provider receipt).
+        candidate = self._adopted_candidate_row(db, execution["candidate_id"])
+        if candidate is None:
+            raise ValueError("candidate does not exist")
+        attempt = candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=? and action_index=?", (execution_id,action_index)).fetchone())
+        if attempt is None:
+            raise ValueError("action was not dispatched")
+        if status == "uncertain":
+            principal_id = json.loads(attempt["result_json"]).get("calendar_response_principal")
+            if principal_id:
+                body = _json({**_plain(result), "calendar_response_principal": principal_id})
+        if status == "verified":
+            receipt = db.execute(f"select provider_result_json,provider_receipt_id from ({NATIVE_EXTERNAL_ACTION_RESULT_SQL}) where external_action_key=?", (attempt["external_action_key"],)).fetchone()
+            if receipt is None:
+                raise ValueError("verified action lacks successful ledger receipt")
+            if body == receipt["provider_result_json"]:
+                body = None
+            provider_receipt_id = receipt["provider_receipt_id"]
+        else:
+            provider_receipt_id = None
+        shared_action_lifecycle.record_reviewed_action_outcome(
+            db, attempt=attempt, status=status, result_json=body,
+            provider_receipt_id=provider_receipt_id,
+            agent_run_id=candidate["consumer_run_id"],
+            updated_at=_db_timestamp(db),
+        )
+        return candidate_action_attempt_row(db.execute(f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?", (attempt["id"],)).fetchone())
 
     def list_candidate_action_attempts(self, execution_id: int) -> list[dict[str, Any]]:
         with self._connect() as db:

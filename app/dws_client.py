@@ -163,6 +163,7 @@ class DwsError(RuntimeError):
         self.business_message = business_message
         self.server_key = server_key
         self.provider_error = provider_error or {}
+        self.pre_action_failure = False
         self.required_scopes = tuple(
             scope.strip()
             for scope in required_scopes
@@ -3431,6 +3432,19 @@ class DwsClient:
             raise DwsError("invalid robot message file download response")
         return payload
 
+    def _run_message_write(self, command: list[str], **options) -> dict[str, Any]:
+        """Keep a local send validation rejection distinct from delivery readback."""
+        try:
+            self.run_json([*command, "--dry-run"], **options)
+        except DwsError as exc:
+            exc.pre_action_failure = (
+                exc.provider_error.get("category") == "validation"
+                and not exc.server_key
+                and not exc.provider_error.get("server_error_code")
+            )
+            raise
+        return self.run_json(command, **options)
+
     def send_file(
         self, path: Path, *, conversation_id: str | None = None,
         user_id: str | None = None, open_dingtalk_id: str | None = None,
@@ -3447,7 +3461,7 @@ class DwsClient:
             command.extend(["--open-dingtalk-id", open_dingtalk_id])
         command.extend(["--file", path.name, "--msg-type", "file", "--uuid", idempotency_uuid,
                         "--format", "json", "--yes"])
-        return self.run_json(command, cwd=path.parent)
+        return self._run_message_write(command, cwd=path.parent)
 
     def send_message(
         self,
@@ -3462,7 +3476,7 @@ class DwsClient:
         idempotency_uuid: str | None = None,
     ) -> dict[str, Any]:
         try:
-            return self.run_json(
+            return self._run_message_write(
                 self.build_send_message_command(
                     conversation_id,
                     text,
@@ -3496,7 +3510,7 @@ class DwsClient:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
     ) -> dict[str, Any]:
-        return self.run_json(
+        return self._run_message_write(
             self.build_reply_message_command(
                 conversation_id,
                 ref_message_id,

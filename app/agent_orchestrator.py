@@ -350,6 +350,10 @@ class AgentOrchestrator:
                 )
                 if executed.error.code == "business_state_changed":
                     state = self._business_revision(state)
+                elif executed.error.code == "external_action_input_invalid":
+                    # Derive the correction from persisted execution evidence,
+                    # including after a process restart.
+                    continue
                 elif (
                     executed.outcome == "failed"
                     and executed.error.code == "external_action_uncertain"
@@ -600,6 +604,12 @@ class AgentOrchestrator:
                 else None
             )
             if feedback is None and parent and parent.status == "completed":
+                execution = self.store.get_candidate_execution(parent.parent_agent_run_id)
+                if execution:
+                    feedback = _action_validation_feedback(
+                        SystemExecutionResult.model_validate_json(execution["result_json"])
+                    )
+            if feedback is None and parent and parent.status == "completed":
                 uncertain_delivery = self._uncertain_message_delivery(parent)
                 feedback = (
                     uncertain_delivery["feedback"]
@@ -844,6 +854,23 @@ class AgentOrchestrator:
             executed = SystemExecutionResult.model_validate_json(
                 execution["result_json"]
             )
+            if executed.error.code == "external_action_input_invalid":
+                invalid_attempts = 0
+                for run in runs:
+                    if run.role is not AgentRole.CONSUMER:
+                        continue
+                    prior = self.store.get_candidate_execution(run.id)
+                    if prior and SystemExecutionResult.model_validate_json(prior["result_json"]).error.code == "external_action_input_invalid":
+                        invalid_attempts += 1
+                if invalid_attempts >= MAX_AUTOMATIC_ATTEMPTS:
+                    return self._candidate_terminal(state, "failed_terminal", executed.error, executed)
+                return _NextConsumer(
+                    consumer.proposal_revision + 1,
+                    audit.id,
+                    _action_validation_feedback(executed),
+                    stage_index=result.stage_index,
+                    predecessor_review_id=result.predecessor_review_id,
+                )
             if executed.outcome == "executed" and (result.purpose_output or {}).get("action") == "request_access":
                 return self._purpose_retry_state(task, state, request_completed=True)
             if executed.outcome == "executed" and result.continue_after_execution:
@@ -1565,6 +1592,17 @@ def _context_refresh_failure_detail(exc: Exception) -> str:
 
 def _operation_id(task: ReplyTask, revision: int) -> str:
     return f"agent-task:{task.id}:{task.execution_generation}:proposal:{revision}"
+
+
+def _action_validation_feedback(execution: SystemExecutionResult) -> AuditFeedback | None:
+    if execution.error.code != "external_action_input_invalid":
+        return None
+    evidence = execution.external_result.live_result_reference if execution.external_result else {}
+    return AuditFeedback(
+        rule="Local send validation failed before dispatch; the message was not sent.",
+        observation=json.dumps(evidence, ensure_ascii=False),
+        requested_revision="Correct the action parameters from verified source identities and submit a new candidate for Audit. Do not repeat the rejected parameters or repeat already verified actions.",
+    )
 
 
 def _message_receipt_feedback(result: ConsumerAgentResult) -> AuditFeedback | None:

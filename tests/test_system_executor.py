@@ -113,7 +113,10 @@ class FakeStore:
         return [{"action_index": index, **attempt}
                 for index, attempt in sorted(self.attempts.items())]
 
-    def finish_candidate_execution(self, execution_id, owner, status, result, *, invalidate_reason=""):
+    def finish_candidate_execution(self, execution_id, owner, status, result, *, invalidate_reason="", action_outcome=None):
+        if action_outcome is not None:
+            index, action_status, action_result = action_outcome
+            self.record_candidate_action_outcome(execution_id, owner, index, action_status, action_result)
         self.events.append(f"finish:{status}")
         if invalidate_reason:
             self.events.append(f"invalidate:1:{invalidate_reason}")
@@ -594,6 +597,29 @@ def test_provider_exception_preserves_machine_code_without_replay():
     assert result.error.source_code == "NATIVE_RATE_LIMIT"
     assert result.error.source == "provider-node"
     assert "private provider detail" not in result.model_dump_json()
+
+
+def test_send_validation_rejection_preserves_error_and_requests_consumer_correction(monkeypatch):
+    from app.dws_client import DwsClient, DwsError
+
+    provider_error = {"category": "validation", "code": 3, "message": "Recipient ID not found"}
+    def reject(*args, **kwargs):
+        raise DwsError("validation rejected", code="3", provider_error=provider_error)
+    client = DwsClient()
+    monkeypatch.setattr(client, "run_json", reject)
+
+    class RaisingHandler:
+        def dispatch(self, action, **kwargs):
+            return client.send_message(None, "body", user_id="invalid")
+
+    store = FakeStore(_candidate())
+    result = SystemExecutor(store, {("test", "act"): RaisingHandler()}, owner="worker").execute(
+        store.get_reply_task(1), 1, 2,
+    )
+    assert result.error.code == "external_action_input_invalid"
+    assert store.attempts[0]["status"] == "confirmed_no_effect"
+    assert json.loads(store.attempts[0]["result_json"])["provider_error"] == provider_error
+    assert store.ledger is None
 
 
 def test_prior_alternative_with_same_identity_different_body_cannot_be_reused():

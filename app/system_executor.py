@@ -16,6 +16,7 @@ from app.agent_contracts import (
     parse_persisted_consumer_result,
 )
 from app.external_action_identity import expected_external_action
+from app.dws_client import DwsError
 from app.reviewed_candidates import candidate_digest
 from app.model_action_schema import candidate_option
 
@@ -485,8 +486,12 @@ class SystemExecutor:
                 source_code = getattr(exc, "code", "")
                 source = getattr(exc, "server_key", "")
                 prior_result = json.loads(attempt.get("result_json", "{}"))
-                outcome = ActionOutcome("uncertain", {**prior_result,
-                    "reason": "provider_exception", "exception_type": type(exc).__name__,
+                pre_action_failure = isinstance(exc, DwsError) and exc.pre_action_failure
+                outcome = ActionOutcome("confirmed_no_effect" if pre_action_failure else "uncertain", {**prior_result,
+                    "reason": "provider_validation_rejected" if pre_action_failure else "provider_exception",
+                    "exception_type": type(exc).__name__,
+                    "pre_action_failure": pre_action_failure,
+                    "provider_error": exc.provider_error if isinstance(exc, DwsError) else {},
                     "source_code": str(source_code) if source_code else "",
                     "source": str(source) if source else "",
                 })
@@ -523,8 +528,12 @@ class SystemExecutor:
                     invalidate_reason="business_state_changed",
                 )
                 return result
-            self.store.record_candidate_action_outcome(execution_id, self.owner, index, outcome.status, outcome.provider_result)
-            if outcome.status == "confirmed_no_effect":
+            input_invalid = outcome.status == "confirmed_no_effect" and outcome.provider_result.get("pre_action_failure") is True
+            if not input_invalid:
+                self.store.record_candidate_action_outcome(execution_id, self.owner, index, outcome.status, outcome.provider_result)
+            if outcome.status == "confirmed_no_effect" and outcome.provider_result.get("pre_action_failure") is True:
+                code, status = "external_action_input_invalid", "failed"
+            elif outcome.status == "confirmed_no_effect":
                 code, status = "external_action_no_effect", "retry"
             elif outcome.status == "uncertain":
                 code, status = "external_action_uncertain", "uncertain"
@@ -537,7 +546,19 @@ class SystemExecutor:
                 source_code=str(outcome.provider_result.get("source_code") or ""),
                 source=str(outcome.provider_result.get("source") or ""),
             )
-            self.store.finish_candidate_execution(execution_id, self.owner, status, result)
+            if code == "external_action_input_invalid":
+                result = result.model_copy(update={"external_result": AuditExternalResult(
+                    operation_id=action_key,
+                    live_result_reference={
+                        "failed_action": outcome.provider_result,
+                        "completed_actions": receipt_refs,
+                    },
+                )})
+            if input_invalid:
+                self.store.finish_candidate_execution(execution_id, self.owner, status, result,
+                    action_outcome=(index, outcome.status, outcome.provider_result))
+            else:
+                self.store.finish_candidate_execution(execution_id, self.owner, status, result)
             return result
         result = SystemExecutionResult(
             outcome="executed", summary="All approved actions verified",

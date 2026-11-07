@@ -31,6 +31,40 @@ from app.external_retry import is_external_dependency_error
 TEST_LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 
 
+@pytest.mark.parametrize("operation", ["send", "reply", "read"])
+def test_local_message_validation_failure_is_bound_to_send_phase(monkeypatch, operation):
+    error = {"category": "validation", "code": 3, "message": "Recipient ID not found"}
+    monkeypatch.setattr(DwsClient, "_run_cli_process", staticmethod(
+        lambda command, **kwargs: subprocess.CompletedProcess(command, 3, json.dumps({"error": error}), "")
+    ))
+    client = DwsClient(dws_bin="dws")
+    with pytest.raises(DwsError) as raised:
+        if operation == "send":
+            client.send_message(None, "body", user_id="departed-user")
+        elif operation == "reply":
+            client.reply_message("conversation", "trigger", "sender-open-id", "body")
+        else:
+            client.run_json(["dws", "chat", "+chat-messages", "--user", "departed-user"])
+    assert raised.value.provider_error == error
+    assert getattr(raised.value, "pre_action_failure", False) is (operation != "read")
+
+
+def test_validation_after_actual_send_started_is_not_pre_action_failure(monkeypatch):
+    commands = []
+    def process(command, **kwargs):
+        commands.append(command)
+        if "--dry-run" in command:
+            return subprocess.CompletedProcess(command, 0, '{"dry_run":true,"executed":false}', "")
+        return subprocess.CompletedProcess(command, 3, json.dumps({"error": {
+            "category": "validation", "code": 3, "message": "response validation failed",
+        }}), "")
+    monkeypatch.setattr(DwsClient, "_run_cli_process", staticmethod(process))
+    with pytest.raises(DwsError) as raised:
+        DwsClient().send_message(None, "body", user_id="user")
+    assert len(commands) == 2
+    assert raised.value.pre_action_failure is False
+
+
 @pytest.fixture(autouse=True)
 def disable_dws_process_pacing(monkeypatch):
     monkeypatch.setenv(dws_client.DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV, "0")
@@ -56,6 +90,8 @@ class SequenceRecordingDwsClient(DwsClient):
 
     def run_json(self, command: list[str]):
         self.commands.append(command)
+        if "--dry-run" in command:
+            return {"dry_run": True, "executed": False}
         payload = self.payloads.pop(0)
         if isinstance(payload, Exception):
             raise payload
@@ -2386,7 +2422,7 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
         at_open_dingtalk_names=["ET"],
     )
 
-    assert client.commands == [
+    expected = [
         [
             "dws",
             "chat",
@@ -2404,6 +2440,8 @@ def test_send_reply_to_trigger_prefers_native_reply_over_group_at_send():
             "--yes",
         ]
     ]
+
+    assert client.commands == [[*expected[0], "--dry-run"], expected[0]]
 
 
 def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key():
@@ -2440,11 +2478,14 @@ def test_send_reply_to_trigger_chunks_splits_long_text_and_extracts_recall_key()
     assert len(result["chunks"]) == 2
     assert result["chunks"][0]["text"].startswith("【1/2】")
     assert DwsClient.extract_recall_key(result) == "recall-1"
-    first_text = client.commands[0][client.commands[0].index("--content") + 1]
-    second_text = client.commands[1][client.commands[1].index("--content") + 1]
+    assert len(client.commands) == 4
+    assert client.commands[0] == [*client.commands[1], "--dry-run"]
+    assert client.commands[2] == [*client.commands[3], "--dry-run"]
+    first_text = client.commands[1][client.commands[1].index("--content") + 1]
+    second_text = client.commands[3][client.commands[3].index("--content") + 1]
     assert first_text.startswith("【1/2】")
     assert second_text.startswith("【2/2】")
-    assert "--at-user-ids" not in client.commands[1]
+    assert "--at-user-ids" not in client.commands[3]
 
 
 def test_a_quote_reply_carries_markdown_as_is():
@@ -5062,7 +5103,7 @@ def test_send_message_high_level_method_uses_command():
         at_open_dingtalk_ids=["open-1"],
     )
 
-    assert client.commands == [
+    expected = [
         [
             "dws",
             "chat",
@@ -5082,6 +5123,8 @@ def test_send_message_high_level_method_uses_command():
             "--yes",
         ]
     ]
+
+    assert client.commands == [[*expected[0], "--dry-run"], expected[0]]
 
 
 def test_build_ding_self_command_shape():

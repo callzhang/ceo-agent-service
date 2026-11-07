@@ -129,6 +129,145 @@ def orchestrator(store, consumer, audit, handler=None):
     ), handler
 
 
+@pytest.mark.parametrize("always_invalid", [False, True])
+def test_local_send_validation_returns_to_consumer_and_reaudits(tmp_path, monkeypatch, always_invalid):
+    from app.dws_client import DwsClient
+    from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
+
+    store, task, context = task_and_context(tmp_path)
+    client = DwsClient()
+    error = {"category": "validation", "code": 3, "message": "Recipient ID not found"}
+    def reject(*args, **kwargs):
+        raise DwsError("validation rejected", code="3", provider_error=error)
+    monkeypatch.setattr(client, "run_json", reject)
+
+    class Handler(VerifiedHandler):
+        def dispatch(self, action, **kwargs):
+            self.calls.append((action.action_identity, action.payload))
+            if always_invalid or len(self.calls) == 1:
+                client.send_message(None, "body", user_id="invalid")
+            return ActionOutcome("verified", {"provider_receipt_id": "real-receipt"})
+
+    count = MAX_AUTOMATIC_ATTEMPTS if always_invalid else 2
+    consumer = ScriptedConsumer(store, *(candidate(str(i)) for i in range(count)))
+    audit = ScriptedAudit(store, *("approve" for _ in range(count)))
+    runtime, handler = orchestrator(store, consumer, audit, Handler())
+    result = runtime.process(task, context, refresh_context=lambda: context)
+    assert len(consumer.calls) == count
+    assert len(audit.calls) == count
+    assert len(handler.calls) == count
+    assert consumer.calls[1][3] is not None
+    assert "Recipient ID not found" in consumer.calls[1][3].model_dump_json()
+    assert result.status == ("failed_terminal" if always_invalid else "executed")
+    if always_invalid:
+        assert result.error.code == "external_action_input_invalid"
+
+
+def test_send_validation_feedback_survives_consumer_technical_retry(tmp_path, monkeypatch):
+    from app.dws_client import DwsClient
+    store, task, context = task_and_context(tmp_path)
+    client = DwsClient()
+    def reject(*args, **kwargs):
+        raise DwsError("invalid", provider_error={"category": "validation", "message": "Original parameter error"})
+    monkeypatch.setattr(client, "run_json", reject)
+    class Handler(VerifiedHandler):
+        def dispatch(self, action, **kwargs):
+            self.calls.append(action)
+            if len(self.calls) == 1:
+                client.send_message(None, "body", user_id="invalid")
+            return ActionOutcome("verified", {"receipt": "real"})
+    consumer = ScriptedConsumer(store, candidate(),
+        AgentError(code="temporarily_unavailable", retryable=True),
+        AgentError(code="temporarily_unavailable", retryable=True), candidate("corrected"))
+    audit = ScriptedAudit(store, "approve", "approve")
+    runtime, handler = orchestrator(store, consumer, audit, Handler())
+    runtime.process(task, context, refresh_context=lambda: context)
+    final = runtime.process(task, context, refresh_context=lambda: context)
+    assert final.status == "executed"
+    assert "Original parameter error" in consumer.calls[-1][3].model_dump_json()
+    assert len(handler.calls) == 2
+
+
+def test_send_validation_and_execution_failure_are_not_saved_in_separate_transactions(tmp_path, monkeypatch):
+    from app.dws_client import DwsClient
+    store, task, context = task_and_context(tmp_path)
+    client = DwsClient()
+    def reject(*args, **kwargs):
+        raise DwsError("invalid", provider_error={"category": "validation", "message": "Invalid ID"})
+    monkeypatch.setattr(client, "run_json", reject)
+    original = store.record_candidate_action_outcome
+    def interrupt_after_split_write(*args):
+        result = original(*args)
+        if args[-1].get("pre_action_failure") is True:
+            raise RuntimeError("process stopped between two outcome transactions")
+        return result
+    monkeypatch.setattr(store, "record_candidate_action_outcome", interrupt_after_split_write)
+    class Handler(VerifiedHandler):
+        def dispatch(self, action, **kwargs):
+            client.send_message(None, "body", user_id="invalid")
+    consumer = ScriptedConsumer(store, candidate(), candidate(outcome="no_action"))
+    audit = ScriptedAudit(store, "approve", "approve")
+    runtime, _ = orchestrator(store, consumer, audit, Handler())
+    assert runtime.process(task, context, refresh_context=lambda: context).status == "no_action"
+
+
+def test_send_validation_atomic_outcome_rolls_back_with_execution(tmp_path, monkeypatch):
+    from app import reviewed_candidate_store
+    from app.dws_client import DwsClient
+    store, task, context = task_and_context(tmp_path)
+    client = DwsClient()
+    def reject(*args, **kwargs):
+        raise DwsError("invalid", provider_error={"category": "validation", "message": "Invalid ID"})
+    monkeypatch.setattr(client, "run_json", reject)
+    original = reviewed_candidate_store.update_native_execution
+    def stop_before_commit(db, execution_id, values):
+        if values.get("status") == "failed":
+            raise RuntimeError("process interrupted before commit")
+        return original(db, execution_id, values)
+    monkeypatch.setattr(reviewed_candidate_store, "update_native_execution", stop_before_commit)
+    class Handler(VerifiedHandler):
+        def dispatch(self, action, **kwargs):
+            client.send_message(None, "body", user_id="invalid")
+    consumer = ScriptedConsumer(store, candidate())
+    audit = ScriptedAudit(store, "approve")
+    runtime, _ = orchestrator(store, consumer, audit, Handler())
+    with pytest.raises(RuntimeError, match="before commit"):
+        runtime.process(task, context, refresh_context=lambda: context)
+    execution = store.get_candidate_execution(consumer.calls[0][0])
+    assert execution["status"] == "running"
+    assert store.list_candidate_action_attempts(execution["id"])[0]["status"] == "dispatched"
+
+
+def test_send_validation_correction_keeps_prior_verified_actions(tmp_path, monkeypatch):
+    from app.dws_client import DwsClient
+    store, task, context = task_and_context(tmp_path)
+    client = DwsClient()
+    def reject(*args, **kwargs):
+        raise DwsError("invalid", provider_error={"category": "validation", "message": "Invalid ID"})
+    monkeypatch.setattr(client, "run_json", reject)
+    base = candidate().model_dump(mode="json")
+    first = base["proposal"]["actions"][0]
+    second = {**first, "action_identity": "second", "target": {"id": "invalid"}}
+    base["proposal"]["actions"] = [first, second]
+    initial = ConsumerAgentResult.model_validate(base)
+    base["proposal"]["actions"][1] = {**second, "target": {"id": "corrected"}}
+    corrected = ConsumerAgentResult.model_validate(base)
+    effects = []
+    class Handler(VerifiedHandler):
+        def dispatch(self, action, **kwargs):
+            if action.target["id"] == "invalid":
+                client.send_message(None, "body", user_id="invalid")
+            effects.append(action.action_identity)
+            return ActionOutcome("verified", {"receipt": action.action_identity})
+    consumer = ScriptedConsumer(store, initial, corrected)
+    audit = ScriptedAudit(store, "approve", "approve")
+    runtime, _ = orchestrator(store, consumer, audit, Handler())
+    assert runtime.process(task, context, refresh_context=lambda: context).status == "executed"
+    assert effects == ["notice", "second"]
+    assert '"completed_actions"' in consumer.calls[1][3].observation
+    assert '"notice"' in consumer.calls[1][3].observation
+
+
 @pytest.mark.parametrize("outcome", ["no_action", "proposal"])
 def test_persisted_terminal_read_needs_no_context_or_new_effect(tmp_path, outcome):
     store, task, context = task_and_context(tmp_path)
