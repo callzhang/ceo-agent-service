@@ -1911,7 +1911,7 @@ History 的主题搜索与当前状态筛选取交集：已完成动作不会因
 
 ## SQLite connection lifecycle
 
-`AutoReplyStore._connect` and `EmailStore._connect` share the existing idle pool, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
+`AutoReplyStore._connect`, `EmailStore._connect`, and mandatory pre-construction schema validation share the idle pool in `app.sqlite_connections`, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
 connection, and a connection is discarded rather than kept when the body
 raised, a transaction is still open, `foreign_keys` is no longer on, the
 database file was replaced, or the store's `_open_connection` differs. The
@@ -1920,6 +1920,8 @@ the connection to the idle slot. Code that registers functions, handlers or
 pragmas on a `_connect` connection must undo them, because the next call in
 that thread sees the same connection. A connection going idle releases its
 page cache (`pragma shrink_memory`) and keeps only the parsed schema.
+
+Mandatory schema validation has a distinct `mode=ro` opener, never a writer connection. Every call begins and finishes a fresh read transaction, compares the complete actual schema and reads actual Store/Email version markers. Only the connection and parsed SQLite schema are reused, never a validation outcome or version result. DDL, backup restoration into the same file, replacement, nested reads, failures and thread isolation retain their existing behavior. Explicit idle cleanup closes these read-only slots too.
 
 Each Email context retains its own commit/rollback boundary and reads current rows; constructors and schema/durable-row validation still execute normally. The fixed `email_casefold` function, like the Task functions, is initialized once per Email connection and captures no request data. Provider scan membership/account TEMP tables end inside their publication transaction; failed scans roll back and discard the connection, so subsequent generations inherit neither tables nor tombstones. Existing idle cleanup closes Email and ordinary Store slots together; file-descriptor regressions verify a warm read loop stays flat and explicit cleanup returns to its cold count.
 

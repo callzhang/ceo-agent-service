@@ -5,6 +5,8 @@ import os
 from pathlib import Path
 import sqlite3
 
+from app.sqlite_connections import readonly_connection
+
 STORE_VERSION = "2026-10-30.1"
 EMAIL_VERSION = 54
 EMAIL_LEDGER_SQL = """CREATE TABLE email_schema_migrations (
@@ -90,7 +92,7 @@ def require_current_pair(path):
     path = Path(path).resolve()
     if not path.exists():
         return
-    with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as db:
+    with readonly_connection(path) as db:
         db.execute("begin")
         objects = schema_objects(db)
         if not objects:

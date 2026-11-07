@@ -35,6 +35,10 @@ from app.reviewed_candidate_store import (
     ReviewedCandidateStoreMixin,
 )
 from app.sqlite_schema_lock import schema_initialize_lock
+from app.sqlite_connections import (
+    _IDLE_CONNECTIONS, _database_file_identity, _take_idle_connection,
+    _close_idle_connections, _return_idle_connection,
+)
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, MAX_AUTOMATIC_RETRIES
 from app.email_canonical_storage import (
     email_classification_projection, email_message_projection,
@@ -1332,73 +1336,6 @@ def _is_sqlite_missing_schema_error(exc: sqlite3.Error) -> bool:
     return message.startswith("no such table:") or message.startswith(
         "no such column:"
     )
-
-
-# Opening a SQLite connection re-parses the whole schema (hundreds of objects
-# with JSON generated columns), which dominated service CPU when every store
-# call opened its own.  Each thread keeps one idle connection per database
-# file; nested or concurrent use in the same thread opens its own, as before.
-_IDLE_CONNECTIONS = threading.local()
-
-
-def _database_file_identity(path: Path) -> tuple[int, int] | None:
-    try:
-        stat = os.stat(path)
-    except OSError:
-        return None
-    return (stat.st_dev, stat.st_ino)
-
-
-def _take_idle_connection(
-    key: tuple[str, int | None, object], path: Path
-) -> tuple[sqlite3.Connection, tuple[int, int], int] | None:
-    pool = getattr(_IDLE_CONNECTIONS, "pool", None)
-    entry = pool.pop(key, None) if pool else None
-    if entry is None:
-        return None
-    connection, identity, _changes = entry
-    if identity != _database_file_identity(path):
-        with suppress(sqlite3.Error):
-            connection.close()
-        return None
-    return entry
-
-
-def _close_idle_connections() -> None:
-    """Close this thread's idle connections (tests, and callers that must be
-    the only connection to a database file)."""
-    pool = getattr(_IDLE_CONNECTIONS, "pool", None) or {}
-    for connection, _identity, _changes in pool.values():
-        with suppress(sqlite3.Error):
-            connection.close()
-    pool.clear()
-
-
-def _return_idle_connection(
-    key: tuple[str, int | None, object],
-    connection: sqlite3.Connection,
-    identity: tuple[int, int] | None,
-) -> None:
-    pool = _IDLE_CONNECTIONS.__dict__.setdefault("pool", {})
-    try:
-        reusable = (
-            identity is not None
-            and key not in pool
-            and not connection.in_transaction
-            and connection.execute("pragma foreign_keys").fetchone()[0] == 1
-        )
-    except sqlite3.Error:
-        reusable = False
-    if reusable:
-        # What is worth keeping is the parsed schema; the page cache (up to
-        # SQLITE_READ_CACHE_SIZE per connection) is not, and an idle connection
-        # per thread per database would otherwise hold it for good.
-        with suppress(sqlite3.Error):
-            connection.execute("pragma shrink_memory")
-        pool[key] = (connection, identity, connection.total_changes)
-    else:
-        with suppress(sqlite3.Error):
-            connection.close()
 
 
 class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
