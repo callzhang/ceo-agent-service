@@ -3756,6 +3756,28 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                       and coalesce(newer_error.resolved_at, '')=''
                   )
                   and not (
+                    error_event.kind='scheduled_task_service_command_failed'
+                    and exists (
+                      select 1
+                      from schedule_occurrences as source_run
+                      join configs as source_config
+                        on source_config.schedule_snapshot_public_id=source_run.snapshot_id
+                       and source_config.record_type='scheduled_task_config_versions'
+                      join schedule_occurrences as later_run
+                        on later_run.scheduled_task_id=source_run.scheduled_task_id
+                       and later_run.id>source_run.id
+                      join configs as later_config
+                        on later_config.schedule_snapshot_public_id=later_run.snapshot_id
+                       and later_config.record_type='scheduled_task_config_versions'
+                      where source_run.event_id=error_event.message_id
+                        and error_event.conversation_id=
+                            'scheduled-task:' || cast(source_run.scheduled_task_id as text)
+                        and coalesce(json_extract(source_config.schedule_config_snapshot_json, '$.command'), '')<>''
+                        and json_extract(later_config.schedule_config_snapshot_json, '$.command')=
+                            json_extract(source_config.schedule_config_snapshot_json, '$.command')
+                    )
+                  )
+                  and not (
                     coalesce(error_event.conversation_id, '')='work_summary_input'
                     and exists (
                       select 1
