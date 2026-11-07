@@ -444,6 +444,7 @@ Reader 版本（Derek 2026-10-28）：Reader 是 PyInstaller 单独打包的 app
 微信 Skill 不重复追问（Derek 2026-10-28）：`ceo-wechat` 规定对话里已经由本账号向对方问过同一个问题或要过同一份材料、且对方之后没有任何回答时，返回 `no_action` 并在摘要点名那条早先的提问；对方再发一条读不出的、空的或占位消息不算回答，也不重新打开这个追问，要不要再问由本人决定。
 输入变化与指针、版本水位在原事务内更新；`input_version`／`claimed_input_version`
 仍用于原有并发判断。终态输入正文及重复精简 JSON 为空，旧 API 表示按 provenance 生成。
+Attempt 页面保留该精简约定；Trigger 使用独立只读接口 `/api/console/history/{id}/trigger` 异步取得内容。钉钉按 Attempt 自身保存的 `reply_task_id`／`matching_input_id` 找到原输入，再通过现有 DWS 读取其中原生会话和消息 ID，页面标注为平台当前内容。未精简正文直接展示；找不到原输入或原消息则明确无法读取，provider 错误只影响 Trigger 区域，无文本消息明确标注无文本。读取不恢复本地正文、不更改任务状态、不触发 Consumer、Audit 或外部写操作。
 已结算的真实历史身份不删除，无法证明的旧领取输入不推测。迁移必须在正式 quiet 停止窗口执行。
 配对逆迁恢复实际原表声明、索引、序列和旧正文投影，保留迁移后新增业务结果与回执；
 逆迁失败时沿用既有发布机制保持 replacement 停止。

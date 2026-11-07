@@ -2,7 +2,7 @@ import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { command, ConsoleApiError, displayValue } from "../api/console";
-import { getAttemptDetail, type AttemptConsumerResult, type AttemptDetail, type AttemptEmail, type AttemptMetadata, type AttemptRuntimeEntry, type AttemptToolUse } from "../api/attempts";
+import { getAttemptDetail, getAttemptTrigger, type AttemptConsumerResult, type AttemptDetail, type AttemptEmail, type AttemptMetadata, type AttemptRuntimeEntry, type AttemptToolUse } from "../api/attempts";
 import { SummaryText } from "../components/data/SummaryText";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
@@ -14,6 +14,22 @@ function DetailSection({ title, value, className = "" }: { title: string; value:
 
 function ReviewBlock({ title, value, className = "", lines = 5 }: { title: string; value: unknown; className?: string; lines?: number }) {
   return <section className={`attempt-review-block ${className}`}><h2>{title}</h2><SummaryText value={displayValue(value)} lines={lines} /></section>;
+}
+
+function TriggerBlock({ detail }: { detail: AttemptDetail }) {
+  const [trigger, setTrigger] = useState(detail.trigger);
+  useEffect(() => {
+    setTrigger(detail.trigger);
+    if (!detail.trigger.source_url) return;
+    const controller = new AbortController();
+    getAttemptTrigger(String(detail.id), controller.signal).then(({ item }) => {
+      if (!controller.signal.aborted) setTrigger(item);
+    }).catch(() => {
+      if (!controller.signal.aborted) setTrigger({ title: "Trigger", text: "原消息读取失败，请稍后刷新重试。" });
+    });
+    return () => controller.abort();
+  }, [detail.id, detail.trigger]);
+  return <ReviewBlock title={trigger.title} value={trigger.text} />;
 }
 
 const executionStatusLabels: Record<string, string> = {
@@ -619,7 +635,7 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
       <div className="attempt-detail-layout attempt-review-grid">
         <div className="attempt-detail-main">
           <ApprovalDecision detail={detail} />
-          <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><ReviewBlock title={detail.trigger.title} value={detail.trigger.text} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
+          <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><TriggerBlock key={detail.id} detail={detail} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
           {detail.delivery && <section className="console-card" aria-label="Action 投递回执"><h2>投递回执</h2><dl className="attempt-email-grid"><div><dt>Action</dt><dd>#{detail.delivery.action_id}</dd></div><div><dt>外部消息</dt><dd>{detail.delivery.provider_message_id || "未提供"}</dd></div><div><dt>发送时间</dt><dd>{detail.delivery.sent_at || "未提供"}</dd></div><div><dt>来源事实</dt><dd>{detail.delivery.source_label}</dd></div><div><dt>操作</dt><dd>{detail.delivery.operation || "未提供"}</dd></div><div><dt>目标</dt><dd>{detail.delivery.target || "未提供"}</dd></div><div><dt>回执</dt><dd>{detail.delivery.provider_receipt.available ? `#${detail.delivery.provider_receipt.id}` : "未记录"}</dd></div><div><dt>撤回状态</dt><dd>{detail.delivery.recall_status || "未撤回"}{detail.delivery.recalled_at ? ` · ${detail.delivery.recalled_at}` : ""}</dd></div></dl>{detail.delivery.provider_receipt.available && <details><summary>Provider 回执正文</summary><pre>{detail.delivery.provider_receipt.body}</pre></details>}</section>}
           <EmailContext email={detail.email} />
           <References references={detail.references} />

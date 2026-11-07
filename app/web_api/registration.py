@@ -19,7 +19,7 @@ from fastapi import FastAPI, HTTPException, Query, Request
 from fastapi.responses import JSONResponse
 
 from app.web_api.attention import AttentionListEnvelope, group_attention_rows
-from app.web_api.attempts import build_attempt_detail
+from app.web_api.attempts import build_attempt_detail, build_attempt_trigger
 from app.web_api.common import ApiListMeta, ApiMeta, json_safe, normalize_display_value, snapshot_at
 from app.web_api.tasks import (
     ConsoleBusinessAttentionDetailEnvelope,
@@ -844,6 +844,19 @@ def register_console_routes(
             attempt_id,
             email_store_factory=email_store_factory,
         )
+        if payload is None:
+            return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)
+        return JSONResponse(item_envelope(payload), status_code=status)
+
+    @app.get("/api/console/history/{attempt_id}/trigger")
+    def console_history_trigger(attempt_id: int):
+        try:
+            status, payload = build_attempt_trigger(
+                store_factory(), attempt_id, dws_factory=dws_factory,
+            )
+        except DwsError:
+            return JSONResponse({"ok": False, "code": "trigger_source_unavailable",
+                                 "message": "原消息读取失败，请稍后刷新重试。", "details": {}}, status_code=503)
         if payload is None:
             return JSONResponse({"ok": False, "code": "not_found", "message": "Attempt not found", "details": {}}, status_code=404)
         return JSONResponse(item_envelope(payload), status_code=status)

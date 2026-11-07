@@ -57,6 +57,133 @@ def test_attempt_detail_uses_only_public_ids(tmp_path: Path):
 CONVERSATION = "email-thread:thread-digest"
 TRIGGER = "email-action:action-digest"
 
+
+def _compacted_trigger_attempt(store):
+    task = _consumer_result_task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        action="skip", sensitivity_kind="general", send_status="skipped",
+    )
+    store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    assert store.get_reply_attempt(attempt_id).trigger_text == ""
+    return attempt_id, task
+
+
+def test_compacted_attempt_trigger_loads_exact_native_message_without_rerunning(
+    tmp_path, monkeypatch,
+):
+    from app.dws_client import DwsClient
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id, task = _compacted_trigger_attempt(store)
+    calls = []
+
+    def read_message(_self, conversation, message_id):
+        calls.append((conversation.open_conversation_id, message_id))
+        return DingTalkMessage.model_validate_json(task.trigger_message_json)
+
+    monkeypatch.setattr(DwsClient, "read_message_by_id", read_message)
+    client = TestClient(create_audit_app(store.path))
+    detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+    assert detail["trigger"]["source_url"] == f"/api/console/history/{attempt_id}/trigger"
+    assert calls == []  # Source I/O does not block the rest of the Attempt page.
+    response = client.get(detail["trigger"]["source_url"])
+    assert response.status_code == 200
+    assert response.json()["item"]["text"] == f"Avery: {task.trigger_text}"
+    assert "钉钉" in response.json()["item"]["title"]
+    assert calls == [(task.conversation_id, task.trigger_message_id)]
+    assert store.get_reply_task(task.id).status == "done"
+    assert store.get_reply_task(task.id).input_compacted
+    assert store.get_reply_attempt(attempt_id).trigger_text == ""
+
+
+@pytest.mark.parametrize("outcome", ["missing", "wrong_identity", "wrong_conversation", "provider_error", "empty"])
+def test_compacted_attempt_trigger_reports_source_read_result(tmp_path, monkeypatch, outcome):
+    from app.dws_client import DwsClient, DwsError
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    attempt_id, task = _compacted_trigger_attempt(store)
+
+    def read_message(*_args):
+        if outcome == "provider_error":
+            raise DwsError("provider unavailable")
+        if outcome == "missing":
+            return None
+        message = DingTalkMessage.model_validate_json(task.trigger_message_json)
+        return message.model_copy(update={
+            "open_message_id": "other-message" if outcome == "wrong_identity" else task.trigger_message_id,
+            "open_conversation_id": "other-conversation" if outcome == "wrong_conversation" else task.conversation_id,
+            "content": "" if outcome == "empty" else "Other source",
+        })
+
+    monkeypatch.setattr(DwsClient, "read_message_by_id", read_message)
+    response = TestClient(create_audit_app(store.path)).get(f"/api/console/history/{attempt_id}/trigger")
+    if outcome == "provider_error":
+        assert response.status_code == 503
+        assert response.json()["code"] == "trigger_source_unavailable"
+    else:
+        assert response.status_code == 200
+        text = response.json()["item"]["text"]
+        assert ("无文本内容" if outcome == "empty" else "无法读取") in text
+        assert "Other source" not in text
+
+
+def test_compacted_trigger_uses_bound_input_native_conversation_not_queue_alias(tmp_path, monkeypatch):
+    from app.dws_client import DwsClient
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    message = DingTalkMessage(
+        open_conversation_id="native-conversation", open_message_id="native-message",
+        conversation_title="Direct chat", single_chat=True, sender_name="Sender",
+        create_time="2026-11-06 10:00:00", content="Original request",
+    )
+    store.enqueue_reply_task(
+        conversation_id="queue-alias", conversation_title=message.conversation_title,
+        single_chat=True, trigger_message_id=message.open_message_id,
+        trigger_sender=message.sender_name, trigger_create_time=message.create_time,
+        trigger_text=message.content, trigger_message_json=message.model_dump_json(),
+    )
+    task = store.claim_reply_task(1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action="skip", sensitivity_kind="general", send_status="skipped",
+    )
+    store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    calls = []
+
+    def read_message(_self, conversation, message_id):
+        calls.append((conversation.open_conversation_id, message_id))
+        return message
+
+    monkeypatch.setattr(DwsClient, "read_message_by_id", read_message)
+    response = TestClient(create_audit_app(store.path)).get(f"/api/console/history/{attempt_id}/trigger")
+    assert response.status_code == 200
+    assert response.json()["item"]["text"] == "Sender: Original request"
+    assert calls == [("native-conversation", "native-message")]
+
+
+def test_stored_attempt_trigger_never_calls_provider(tmp_path, monkeypatch):
+    from app.dws_client import DwsClient
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    task = _consumer_result_task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action="reply", sensitivity_kind="general",
+    )
+    monkeypatch.setattr(DwsClient, "read_message_by_id", lambda *_: pytest.fail("unexpected provider read"))
+    client = TestClient(create_audit_app(store.path))
+    response = client.get(f"/api/console/history/{attempt_id}/trigger")
+    assert response.status_code == 200
+    assert response.json()["item"]["text"] == f"Avery: {task.trigger_text}"
+    assert client.get("/api/console/history/99999999/trigger").status_code == 404
+
 CONSUMER_EVENTS = [
     {
         "tool": "read_thread",

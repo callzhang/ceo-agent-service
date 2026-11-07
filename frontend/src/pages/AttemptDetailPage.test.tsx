@@ -4,9 +4,10 @@ import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const getAttemptDetail = vi.hoisted(() => vi.fn());
+const getAttemptTrigger = vi.hoisted(() => vi.fn());
 const command = vi.hoisted(() => vi.fn());
 
-vi.mock("../api/attempts", () => ({ getAttemptDetail }));
+vi.mock("../api/attempts", () => ({ getAttemptDetail, getAttemptTrigger }));
 vi.mock("../api/console", () => ({
   command,
   displayValue: (value: unknown) => typeof value === "string" ? value || "未提供" : JSON.stringify(value),
@@ -107,9 +108,31 @@ function renderPage(path = "/attempts/8448") {
 describe("AttemptDetailPage", () => {
   beforeEach(() => {
     getAttemptDetail.mockReset();
+    getAttemptTrigger.mockReset();
     command.mockReset();
     getAttemptDetail.mockResolvedValue({ item: detail, meta: { snapshot_at: "2026-08-29T10:01:00Z" } });
     command.mockResolvedValue({ ok: true, message: "反馈已保存", meta: { updated_at: "" } });
+  });
+
+  it("loads compacted trigger content independently of the Attempt result", async () => {
+    getAttemptDetail.mockResolvedValue({ item: {
+      ...detail, trigger: { title: "Trigger", text: "正在读取原消息", source_url: "/api/console/history/8448/trigger" },
+    }, meta: { snapshot_at: "2026-11-06T10:01:00Z" } });
+    getAttemptTrigger.mockResolvedValue({ item: { title: "Trigger · 钉钉原消息（当前内容）", text: "Lily: 请修复重复回复" } });
+    renderPage();
+    expect(await screen.findByText("Lily: 请修复重复回复")).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Trigger · 钉钉原消息（当前内容）" })).toBeInTheDocument();
+    expect(getAttemptTrigger).toHaveBeenCalledWith("8448", expect.any(AbortSignal));
+  });
+
+  it("keeps the Attempt readable when fetching its trigger fails", async () => {
+    getAttemptDetail.mockResolvedValue({ item: {
+      ...detail, trigger: { title: "Trigger", text: "正在读取原消息", source_url: "/api/console/history/8448/trigger" },
+    }, meta: { snapshot_at: "2026-11-06T10:01:00Z" } });
+    getAttemptTrigger.mockRejectedValue(new Error("provider unavailable"));
+    renderPage();
+    expect(await screen.findByText("原消息读取失败，请稍后刷新重试。")).toBeInTheDocument();
+    expect(screen.getByText("已完成跟进")).toBeInTheDocument();
   });
 
   it("shows the approval decision and keeps a superseded failure in history", async () => {

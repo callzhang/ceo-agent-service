@@ -16,6 +16,57 @@ from app.history_actions import (
 )
 from app.web_api.common import json_safe, normalize_display_value
 from app.agent_contracts import parse_persisted_consumer_result
+from app.dingtalk_models import DingTalkConversation
+
+
+def _trigger_block(attempt: Any) -> dict[str, str]:
+    if attempt.trigger_text.strip():
+        return {"title": "Trigger", "text": normalize_display_value(
+            f"{attempt.trigger_sender}: {attempt.trigger_text}"
+        )}
+    if attempt.trigger_text_provenance_json != "{}":
+        return {"title": "Trigger", "text": "正在读取原消息…",
+                "source_url": f"/api/console/history/{attempt.id}/trigger"}
+    return {"title": "Trigger", "text": f"{attempt.trigger_sender}: （未记录触发正文）"}
+
+
+def build_attempt_trigger(
+    store: Any, attempt_id: int, *, dws_factory: Callable[[], Any] | None = None,
+) -> tuple[int, dict[str, str] | None]:
+    """Read compacted trigger text from its retained native locator, without execution."""
+    attempt = store.get_reply_attempt(attempt_id)
+    if attempt is None:
+        return 404, None
+    block = _trigger_block(attempt)
+    if "source_url" not in block:
+        return 200, block
+    unavailable = {"title": "Trigger", "text": (
+        f"{attempt.trigger_sender}: 本地触发正文已精简，当前无法读取原消息。"
+    )}
+    provenance = json.loads(attempt.trigger_text_provenance_json)
+    inputs = store.list_reply_task_inputs(provenance["reply_task_id"])
+    source_input = next((item for item in inputs
+                         if item["id"] == provenance["matching_input_id"]
+                         and item["channel"] == attempt.channel
+                         and item["conversation_id"] == attempt.conversation_id
+                         and item["trigger_message_id"] == attempt.trigger_message_id), None)
+    if source_input is None or attempt.channel != "dingtalk" or dws_factory is None:
+        return 200, unavailable
+    source = json.loads(source_input["trigger_message_json"])
+    conversation_id = source.get("open_conversation_id")
+    if not conversation_id or source.get("open_message_id") != attempt.trigger_message_id:
+        return 200, unavailable
+    conversation = DingTalkConversation(
+        open_conversation_id=conversation_id, title=source_input["conversation_title"],
+        single_chat=bool(source_input["single_chat"]), unread_point=0,
+    )
+    message = dws_factory().read_message_by_id(conversation, attempt.trigger_message_id)
+    if (message is None or message.open_conversation_id != conversation_id
+            or message.open_message_id != attempt.trigger_message_id):
+        return 200, unavailable
+    return 200, {"title": "Trigger · 钉钉原消息（当前内容）", "text": (
+        f"{message.sender_name}: {message.content or '（该消息无文本内容）'}"
+    )}
 
 
 
@@ -1378,10 +1429,7 @@ def build_attempt_detail(
             ),
             metric_evidence,
         ),
-        "trigger": {
-            "title": "Trigger",
-            "text": normalize_display_value(f"{attempt.trigger_sender}: {attempt.trigger_text}"),
-        },
+        "trigger": _trigger_block(historical_attempt),
         "audit_explanation": {"title": "审计说明", "text": normalize_display_value(audit_explanation)},
         # Say what the turn wrote when it wrote something. "No generated reply
         # recorded" was shown for a turn that had composed a clarifying

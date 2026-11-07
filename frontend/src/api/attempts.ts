@@ -155,7 +155,7 @@ export interface AttemptDetail {
   };
   metadata: AttemptMetadata[];
   consumer_result: AttemptConsumerResult;
-  trigger: { title: string; text: string };
+  trigger: { title: string; text: string; source_url?: string };
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
   delivery: {
@@ -239,4 +239,8 @@ export interface AttemptDetail {
 
 export function getAttemptDetail(attemptId: string, signal?: AbortSignal) {
   return request<ConsoleResource<AttemptDetail>>(`/api/console/history/${encodeURIComponent(attemptId)}`, { signal });
+}
+
+export function getAttemptTrigger(attemptId: string, signal?: AbortSignal) {
+  return request<ConsoleResource<AttemptDetail["trigger"]>>(`/api/console/history/${encodeURIComponent(attemptId)}/trigger`, { signal });
 }
