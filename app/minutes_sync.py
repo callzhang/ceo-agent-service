@@ -8,7 +8,9 @@ Skill asked for judgement -- whether to request access to a restricted minute
 
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
+import fcntl
 from time import sleep as _sleep
 from datetime import datetime, timedelta, timezone
 import json
@@ -493,7 +495,24 @@ def _list_all_minutes(
     return items, "; ".join(errors)
 
 
-def sync_minutes_once(
+@contextmanager
+def _minutes_sync_lock(store):
+    database_path = store.path.resolve()
+    lock_path = database_path.with_name(f".{database_path.name}.minutes-sync.lock")
+    with lock_path.open("a+", encoding="utf-8") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
+
+
+def sync_minutes_once(store, dws, *, archive_dir: Path, now: datetime | None = None) -> MinutesSyncResult:
+    with _minutes_sync_lock(store):
+        return _sync_minutes_once(store, dws, archive_dir=archive_dir, now=now)
+
+
+def _sync_minutes_once(
     store,
     dws,
     *,
@@ -702,3 +721,61 @@ def _read_duration_for_restricted(dws, task_uuid: str) -> timedelta | None:
     except DwsError:
         return None
     return _duration(basic)
+
+
+def archive_transcription_recovery(store, archive_dir: Path, *, task_uuid: str, supplement: str, apply: bool) -> Path:
+    if not apply:
+        return _archive_transcription_recovery(store, archive_dir, task_uuid=task_uuid, supplement=supplement, apply=False)
+    with _minutes_sync_lock(store):
+        return _archive_transcription_recovery(store, archive_dir, task_uuid=task_uuid, supplement=supplement, apply=True)
+
+
+def _archive_transcription_recovery(
+    store, archive_dir: Path, *, task_uuid: str, supplement: str, apply: bool,
+) -> Path:
+    """Append a verified recovery to one existing archive, then mark it archived."""
+    marker = f'<!-- row_key: {task_uuid} -->'
+    matches = []
+    for path in archive_dir.rglob('*.md'):
+        with path.open(encoding='utf-8') as stream:
+            if stream.readline().rstrip('\r\n') == marker:
+                matches.append(path)
+    if len(matches) != 1:
+        raise ValueError('expected exactly one existing minutes archive')
+    path = matches[0]
+    original = path.read_text(encoding='utf-8')
+    if '# AI Summary\n' not in original or '# Transcript\n' not in original:
+        raise ValueError('existing archive is missing official artifacts')
+    if not original.split('# Transcript\n', 1)[1].strip():
+        raise ValueError('existing archive has no official transcript')
+    recovery_marker = '<!-- ai-services-asr-recovery -->'
+    suffix = recovery_marker + '\n' + supplement.rstrip() + '\n'
+    if recovery_marker in original:
+        if not original.endswith(suffix):
+            raise ValueError('archive contains a different recovery')
+        body = original
+    else:
+        body = original.rstrip() + '\n\n' + suffix
+    if not apply:
+        return path
+    import os
+    import tempfile
+
+    with tempfile.TemporaryDirectory(prefix='minutes-recovery-', dir='/tmp') as directory:
+        temporary = Path(directory) / 'archive.md'
+        temporary.write_text(body, encoding='utf-8')
+        if temporary.read_text(encoding='utf-8') != body:
+            raise OSError('recovery archive readback mismatch')
+        os.replace(temporary, path)
+        if path.read_text(encoding='utf-8') != body:
+            raise OSError('published recovery archive readback mismatch')
+    state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
+    cursor = json.loads(state.get('cursor_json') or '{}')
+    archived = set(cursor.get('archived_ids') or [])
+    archived.add(task_uuid)
+    cursor['archived_ids'] = sorted(archived)
+    store.set_daily_scan_state(
+        MINUTES_SYNC_SCANNER, last_success_at=state.get('last_success_at') or '',
+        cursor_json=json.dumps(cursor, sort_keys=True), last_error=state.get('last_error') or '',
+    )
+    return path

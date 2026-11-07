@@ -1124,7 +1124,7 @@ Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带
 文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。较大输入的逻辑 JSON 字段使用带版本标记的无损压缩 BLOB，最终 Tasks 向量保留其 SQLite 值类型；Task Agent、语义导入、项目修复和 Attention 投影在读取边界解码。副本回放以当前投影返回的精确 TEXT/BLOB 值做 CAS、通过当前 Tasks 写入器沿用既有 codec，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
 新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
-（Derek 2026-09-23）。AI 听记同步不再需要 Skill 判断：分页读取
+（Derek 2026-09-23）。独立 ASR 转写的单条听记恢复使用 `app.minutes_archive_recovery`：默认只预览；应用时先核验下载音频与 ASR，保留官方摘要失败和逐字稿，追加明确标示的内部摘要及补充转写，文件读回一致后登记同步游标；应用恢复与听记同步使用同一数据库进程间文件锁。AI 听记同步不再需要 Skill 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
 会议直接跳过。成功运行的归档命令单行结果摘要会持久化到 scheduled run，并显示在定时任务运行记录中，包含
 `discovered`、`synced`、`skipped`、`permission_requested`、`permission_pending`、`failed` 计数及可操作的跳过明细。
@@ -2164,6 +2164,8 @@ Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_s
 # 听记归档中的生成状态
 
 听记同步按 `textGenerationInfo` 的终态区分“未生成”和“生成失败”，不把提供方的状态元数据当作未知摘要结构。终态 `SKIPPED` 表示没有摘要，可归档已取得的逐字稿；终态 `FAILED` 保留提供方原因并计为失败。有逐字稿时保存带失败说明的部分归档，不加入 `archived_ids`，后续仍读取原听记。真正未知的摘要结构继续失败。
+
+已完成、经显式导入的 ai-services ASR 恢复是独立的内部归档来源：`python -m app.minutes_archive_recovery --db <生产库> --archive-dir <AI听记目录> --input-json <恢复包> --audio-file <原音频> --download-receipt <DWS下载回执>` 默认只预览，加 `--apply` 才由归档器写入。恢复包包含原 task_uuid、asr_job_id、audio_duration_seconds、audio_sha256、derived_summary 与实际 done 的 asr_result；不能用受理或处理中结果代替完成。恢复保留原官方全文及生成失败说明，追加明确标记的内部补充摘要、完整 ASR 文本和时间分段，不修改钉钉产物。写入并读回一致后登记该条归档完成；普通同步随后按真实完整归档跳过该条。其他未恢复的生成失败继续按原规则失败。此路径不会触发会议投递或重放业务动作。
 
 摘要只解析一次，再写入归档。读取不完整时不覆盖同路径已有的归档，避免摘要与逐字稿在不同轮次失败时互相抹掉先前可用内容；后续完整读取成功后，才覆盖同一文件并记录完整归档。以上不触发听记重新生成，也不覆盖钉钉官方摘要或逐字稿。
 
