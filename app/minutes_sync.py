@@ -124,6 +124,10 @@ class MinutesSummaryShapeUnknown(ValueError):
     """The summary payload carried content in a shape this archive cannot read."""
 
 
+class MinutesSummaryGenerationFailed(ValueError):
+    """The provider reported a completed, unsuccessful summary generation."""
+
+
 def summary_markdown(summary: object) -> str:
     """Return the provider's summary as the markdown this archive is written in.
 
@@ -144,18 +148,16 @@ def summary_markdown(summary: object) -> str:
         if isinstance(text, str):
             return _rendered_summary_document(text)
         text_generation = summary.get("textGenerationInfo")
-        visual_generation = summary.get("visualGenerationInfo")
         if (
             isinstance(text_generation, dict)
-            and text_generation.get("state") == "SKIPPED"
-            and text_generation.get("reason") == "NO_VALID_TEXT"
             and text_generation.get("terminal") is True
-            and isinstance(visual_generation, dict)
-            and visual_generation.get("state") == "SKIPPED"
-            and visual_generation.get("reason") == "UPSTREAM_SKIPPED"
-            and visual_generation.get("terminal") is True
         ):
-            return ""
+            if text_generation.get("state") == "SKIPPED":
+                return ""
+            if text_generation.get("state") == "FAILED":
+                raise MinutesSummaryGenerationFailed(
+                    json.dumps(text_generation, ensure_ascii=False, sort_keys=True)
+                )
     raise MinutesSummaryShapeUnknown(
         f"unreadable minutes summary payload: {sorted(summary)}"
         if isinstance(summary, dict)
@@ -295,13 +297,21 @@ def render_archive(
     paragraphs: list[dict[str, Any]],
 ) -> str:
     """Render the archive in the layout the existing local archive already uses."""
+    return _render_archive(
+        task_uuid=task_uuid, rendered_summary=summary_markdown(summary), paragraphs=paragraphs
+    )
+
+
+def _render_archive(
+    *, task_uuid: str, rendered_summary: str, paragraphs: list[dict[str, Any]],
+) -> str:
     lines = [
         f"<!-- row_key: {task_uuid} -->",
         f"<!-- source_url: {_SOURCE_URL_PREFIX}{task_uuid} -->",
         "",
         "# AI Summary",
         "",
-        summary_markdown(summary),
+        rendered_summary,
         "",
         "# Transcript",
         "",
@@ -565,8 +575,12 @@ def sync_minutes_once(
             pending.add(task_uuid)
             continue
 
+        summary_error = ""
         try:
             rendered_summary = summary_markdown(summary)
+        except MinutesSummaryGenerationFailed as exc:
+            summary_error = f"summary_generation_failed:{exc}"
+            rendered_summary = f"> Summary unavailable: {summary_error}"
         except MinutesSummaryShapeUnknown as exc:
             failed += 1
             failures.append((task_uuid, f"summary_shape_unknown:{exc}"[:200]))
@@ -582,6 +596,10 @@ def sync_minutes_once(
         # condition no run could clear -- 14 of them on 2026-09-19 -- and a
         # daily error nobody can act on is how a real one gets missed. It is
         # rediscovered and retried on every later pass either way.
+        if summary_error and not paragraphs:
+            failed += 1
+            failures.append((task_uuid, summary_error[:200]))
+            continue
         if not paragraphs and not rendered_summary.strip():
             skipped += 1
             duration = _duration(basic)
@@ -609,16 +627,25 @@ def sync_minutes_once(
                 )
             continue
         path = archive_path_for(archive_dir, basic, task_uuid=task_uuid)
-        try:
-            body = render_archive(
-                task_uuid=task_uuid, summary=summary, paragraphs=paragraphs
-            )
-        except MinutesSummaryShapeUnknown as exc:
-            failed += 1
-            failures.append((task_uuid, f"archive_render_failed:{exc}"[:200]))
+        if path.exists() and (summary_error or transcript_error):
+            # An incomplete read must not destroy an artifact from an earlier
+            # pass. Keep it until a complete read can replace the same file.
+            if summary_error:
+                failed += 1
+                failures.append((task_uuid, summary_error[:200]))
+            else:
+                skipped += 1
+                skips.append((task_uuid, transcript_error))
             continue
+        body = _render_archive(
+            task_uuid=task_uuid, rendered_summary=rendered_summary, paragraphs=paragraphs
+        )
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(body, encoding="utf-8")
+        if summary_error:
+            failed += 1
+            failures.append((task_uuid, summary_error[:200]))
+            continue
         if transcript_error:
             # The summary is saved so the minute is readable now, but the
             # minute is deliberately not marked archived: the transcript

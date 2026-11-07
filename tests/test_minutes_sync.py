@@ -304,6 +304,106 @@ def test_minutes_summary_with_terminal_no_valid_text_is_an_absent_summary() -> N
     assert summary_markdown(payload) == ""
 
 
+def test_terminal_skipped_summary_archives_available_transcript(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    payload = {
+        "generatingStatus": "NOT_STARTED",
+        "textGenerationInfo": {"state": "SKIPPED", "reason": "TEXT_TOO_SHORT", "terminal": True},
+        "visualGenerationInfo": {"state": "SKIPPED", "reason": "UPSTREAM_SKIPPED", "terminal": True},
+    }
+    dws = FakeDws(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "会", "startTime": 1_700_000_000_000}},
+        summary={"u1": payload},
+        paragraphs={"u1": [{"paragraph": "原始逐字稿"}]},
+    )
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert (result.synced, result.failed) == (1, 0)
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    assert "原始逐字稿" in written.read_text()
+    assert "u1" in _cursor(store)["archived_ids"]
+
+
+def test_failed_summary_preserves_transcript_and_retries_summary(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "u1"}],
+        basic={"u1": {"title": "会", "startTime": 1_700_000_000_000}},
+        summary={"u1": {
+            "generatingStatus": "NOT_STARTED",
+            "textGenerationInfo": {"state": "FAILED", "reason": "DEADLINE_EXCEEDED", "terminal": True},
+            "visualGenerationInfo": {"state": "SKIPPED", "reason": "UPSTREAM_SKIPPED", "terminal": True},
+        }},
+        paragraphs={"u1": [{"paragraph": "已可读取的逐字稿"}]},
+    )
+    first = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert (first.failed, first.synced) == (1, 0)
+    assert "summary_generation_failed" in first.failures[0][1]
+    assert "DEADLINE_EXCEEDED" in first.failures[0][1]
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    assert "已可读取的逐字稿" in written.read_text()
+    assert "DEADLINE_EXCEEDED" in written.read_text()
+    assert "u1" not in _cursor(store)["archived_ids"]
+
+    dws._summary["u1"] = {"fullSummary": "重新读到的完整摘要"}
+    second = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert (second.synced, second.failed) == (1, 0)
+    assert list((tmp_path / "AI听记").rglob("*.md")) == [written]
+    assert "重新读到的完整摘要" in written.read_text()
+    assert "DEADLINE_EXCEEDED" not in written.read_text()
+    assert "u1" in _cursor(store)["archived_ids"]
+
+
+def test_sync_does_not_parse_rendered_summary_twice(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    dws = FakeDws(
+        [{"taskUuid": "u1"}],
+        summary={"u1": {"fullSummary": json.dumps({
+            "meta_info": {}, "overview": '{"x":1}',
+        })}},
+        paragraphs={"u1": [{"paragraph": "逐字稿"}]},
+    )
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert result.synced == 1
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    assert '{"x":1}' in written.read_text()
+
+
+@pytest.mark.parametrize("first_failed_artifact", ["summary", "transcript"])
+def test_incomplete_read_does_not_replace_existing_artifact(
+    tmp_path: Path, first_failed_artifact: str,
+) -> None:
+    store = _store(tmp_path)
+    failed = {"textGenerationInfo": {"state": "FAILED", "reason": "DEADLINE_EXCEEDED", "terminal": True},
+              "visualGenerationInfo": {"state": "SKIPPED", "reason": "UPSTREAM_SKIPPED", "terminal": True}}
+
+    class Dws(FakeDws):
+        fail_transcript = first_failed_artifact == "transcript"
+
+        def get_all_minutes_transcription(self, task_uuid):
+            if self.fail_transcript:
+                raise DwsError("transcript unavailable")
+            return super().get_all_minutes_transcription(task_uuid)
+
+    dws = Dws([{"taskUuid": "u1"}],
+              summary={"u1": failed if first_failed_artifact == "summary" else {"fullSummary": "有效摘要"}},
+              paragraphs={"u1": [{"paragraph": "有效逐字稿"}]})
+    sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    [written] = list((tmp_path / "AI听记").rglob("*.md"))
+    original = written.read_text()
+    dws.fail_transcript = not dws.fail_transcript
+    dws._summary["u1"] = {"fullSummary": "有效摘要"} if first_failed_artifact == "summary" else failed
+    sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert written.read_text() == original
+    assert "u1" not in _cursor(store)["archived_ids"]
+    dws.fail_transcript = False
+    dws._summary["u1"] = {"fullSummary": "有效摘要"}
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
+    assert (result.synced, result.failed) == (1, 0)
+    assert "有效摘要" in written.read_text() and "有效逐字稿" in written.read_text()
+    assert "u1" in _cursor(store)["archived_ids"]
+
+
 def test_an_unreadable_summary_shape_fails_the_item_instead_of_archiving_it(
     tmp_path: Path,
 ) -> None:

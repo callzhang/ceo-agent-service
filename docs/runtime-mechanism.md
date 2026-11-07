@@ -2159,3 +2159,9 @@ Store29.2→30.1，运行时只接受当前 Store30.1 声明；不重新连接�
 
 
 Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_skill(name, offset=0, max_chars=4000)` returns at most 8,000 characters with offset, total_chars and next_offset. Follow next_offset until null; sha256 continues to identify the full immutable task-frozen body. Each native MCP response has one content block and no duplicate structuredContent. This avoids requiring a long rule body and other tool results to fit in one orchestration output; it changes no task ownership, business policy or approval action. Installed Skill discovery remains unchanged.
+# 听记归档中的生成状态
+
+听记同步按 `textGenerationInfo` 的终态区分“未生成”和“生成失败”，不把提供方的状态元数据当作未知摘要结构。终态 `SKIPPED` 表示没有摘要，可归档已取得的逐字稿；终态 `FAILED` 保留提供方原因并计为失败。有逐字稿时保存带失败说明的部分归档，不加入 `archived_ids`，后续仍读取原听记。真正未知的摘要结构继续失败。
+
+摘要只解析一次，再写入归档。读取不完整时不覆盖同路径已有的归档，避免摘要与逐字稿在不同轮次失败时互相抹掉先前可用内容；后续完整读取成功后，才覆盖同一文件并记录完整归档。以上不触发听记重新生成，也不覆盖钉钉官方摘要或逐字稿。
+
