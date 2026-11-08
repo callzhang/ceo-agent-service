@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from pydantic import ValidationError
+
 from app.agent_runtime_production import build_production_routed_codex_execution
 from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 from app.agent_runtime_router import (
@@ -18,6 +20,7 @@ from app.agent_runtime_router import (
     RoutedCodexExecutionCancelled,
     RoutedResultCodec,
     RoutedResultValidationError,
+    RoutedResultValidationRetry,
 )
 from app.agent_result import ResultParseError, parse_agent_text_result
 from app.store import AutoReplyStore
@@ -26,6 +29,7 @@ from app.workbench.codex_runtime import (
     _CancellableProcessExecutor,
     _CodexNormalizer,
 )
+from app.workbench.result_contracts import get_result_contract
 from app.workbench.runtime import (
     RuntimeCapabilities,
     RuntimeEvent,
@@ -161,11 +165,15 @@ class ServiceWorkbenchRuntime:
                 executor=owner.executor,
             )
 
+            contract = get_result_contract(owner.request.result_contract)
+
             def parse_result(raw: str) -> str:
                 try:
-                    return parse_agent_text_result(raw)
+                    return contract.parse_stream(raw) if contract else parse_agent_text_result(raw)
                 except ResultParseError as exc:
-                    raise RoutedResultValidationError(str(exc)) from exc
+                    cause = exc.__cause__
+                    detail = cause.json(include_input=False) if isinstance(cause, ValidationError) else str(exc)
+                    raise RoutedResultValidationError(detail) from exc
 
             def project_line(line: str) -> None:
                 if owner.projection_failed:
@@ -186,13 +194,20 @@ class ServiceWorkbenchRuntime:
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=_WORKBENCH_DEVELOPER_INSTRUCTIONS,
                     image_paths=owner.request.image_paths,
+                    output_schema_path=contract.schema_path if contract else None,
+                    use_output_schema=contract is not None,
                 ),
                 parser=parse_result,
-                result_codec=_WORKBENCH_RESULT_CODEC,
+                result_codec=(RoutedResultCodec.internal_text(schema_id=contract.identity)
+                              if contract else _WORKBENCH_RESULT_CODEC),
+                result_validation_retry=(RoutedResultValidationRetry.exactly_once(
+                    correction_instructions=('Continue the original task in this same session and '
+                                             'return only the declared native result JSON.'),
+                ) if contract else None),
                 conversation_id=owner.request.conversation_id,
                 required_capabilities=(
-                    LOCAL_SERVICE_RUNTIME_CAPABILITIES
-                    if owner.request.attachment_paths else frozenset()
+                    (LOCAL_SERVICE_RUNTIME_CAPABILITIES if owner.request.attachment_paths else frozenset())
+                    | (contract.required_capabilities if contract else frozenset())
                 ),
                 on_stdout_line=project_line,
                 cancel_requested=lambda: owner.stop_requested,

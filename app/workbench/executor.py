@@ -258,6 +258,7 @@ class WorkbenchExecutor:
                     prompt=prompt,
                     conversation_id=turn.task_id,
                     provider_session_ref=task.provider_session_ref,
+                    result_contract=self.store.get_turn_result_contract(turn.id),
                     attachment_paths=attachment_paths,
                     image_paths=image_paths,
                 )

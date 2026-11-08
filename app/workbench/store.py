@@ -1,4 +1,7 @@
 from app.deployment_drain import claim_connection
+from app.state_definitions import state_projection
+from app.state_storage import insert_state
+from app.workbench.result_contracts import get_result_contract
 import fcntl
 import hashlib
 import json
@@ -384,7 +387,9 @@ class WorkbenchStore(AutoReplyStore):
         *,
         user_text: str,
         client_request_id: str,
+        result_contract: str = "",
     ) -> WorkbenchTurn:
+        get_result_contract(result_contract)
         user_text = user_text.strip()
         client_request_id = client_request_id.strip()
         if not user_text:
@@ -401,6 +406,7 @@ class WorkbenchStore(AutoReplyStore):
                 if (
                     existing["task_id"] != task_id
                     or existing["user_text"] != user_text
+                    or self._turn_result_contract(db, existing["id"]) != result_contract
                 ):
                     raise WorkbenchConflictError(
                         "client_request_conflict",
@@ -440,6 +446,10 @@ class WorkbenchStore(AutoReplyStore):
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("task already has an active turn") from exc
+            if result_contract:
+                insert_state(db, 'service_state', {
+                    'key': f'workbench_result_contract:{turn_id}', 'value': result_contract,
+                })
             if task_sequence == 1 and task["title"] == _DEFAULT_WORKBENCH_TASK_TITLE:
                 db.execute(
                     "update workbench_tasks set title=?,updated_at=current_timestamp where id=? and title=?",
@@ -452,6 +462,19 @@ class WorkbenchStore(AutoReplyStore):
                 payload={"status": TurnStatus.QUEUED.value},
             )
             return self._turn_from_row(self._require_turn(db, turn_id))
+
+    @staticmethod
+    def _turn_result_contract(db, turn_id) -> str:
+        row = db.execute(
+            f"select value from ({state_projection('service_state')}) where key=?",
+            (f'workbench_result_contract:{turn_id}',),
+        ).fetchone()
+        return row['value'] if row is not None else ''
+
+    def get_turn_result_contract(self, turn_id: str) -> str:
+        turn_id = str(self._native_task_id(turn_id))
+        with self._connect() as db:
+            return self._turn_result_contract(db, turn_id)
 
     def get_turn(self, turn_id: str) -> WorkbenchTurn | None:
         turn_id = str(self._native_task_id(turn_id))

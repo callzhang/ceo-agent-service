@@ -684,11 +684,14 @@ def read_native_result_stream(kind: str, session_id: str, start: int, end: int) 
         path = find_codex_session_path(session_id, codex_home=_codex_home())
         native_records = _codex_turn_records(path, start, end)
     elif kind == "claude_cli":
+        from app.claude_runtime_adapter import CLAUDE_STRUCTURED_OUTPUT_TOOL
         path = claude_session_path(session_id)
         native_records = _native_records(path, start, end)
     else:
         return ""
     records = []
+    structured_records = []
+    structured_candidates = {}
     for payload in native_records:
         if kind == "codex_cli":
             item = payload.get("payload")
@@ -702,10 +705,27 @@ def read_native_result_stream(kind: str, session_id: str, start: int, end: int) 
                 records.append({"type": "item.completed", "item": {
                     "type": "agent_message", "text": message.get("text") or _content_text(message.get("content")),
                 }})
-        elif payload.get("type") == "assistant":
+        elif payload.get("type") in {"assistant", "user"}:
             message = payload.get("message")
             for block in message.get("content", []) if isinstance(message, dict) else []:
-                if isinstance(block, dict) and block.get("type") == "text":
+                if not isinstance(block, dict):
+                    continue
+                if (payload["type"] == "assistant" and block.get("type") == "tool_use"
+                        and block.get("name") == CLAUDE_STRUCTURED_OUTPUT_TOOL
+                        and isinstance(block.get("id"), str) and block["id"]
+                        and isinstance(block.get("input"), dict)):
+                    structured_candidates[block["id"]] = block["input"]
+                elif payload["type"] == "user" and block.get("type") == "tool_result":
+                    candidate = structured_candidates.pop(block.get("tool_use_id"), None)
+                    if candidate is not None and block.get("is_error", False) is False:
+                        # Native session files store the schema tool's input and
+                        # acceptance receipt, rather than the CLI terminal event.
+                        structured_records.append({"type": "item.completed", "item": {
+                            "type": "agent_message", "text": json.dumps(
+                                candidate, ensure_ascii=False, allow_nan=False),
+                        }})
+                elif payload["type"] == "assistant" and block.get("type") == "text":
                     records.append({"type": "item.completed", "item": {
                         "type": "agent_message", "text": block.get("text", "")}})
-    return "\n".join(json.dumps(record, ensure_ascii=False) for record in records)
+    output_records = structured_records if structured_records else records
+    return "\n".join(json.dumps(record, ensure_ascii=False) for record in output_records)
