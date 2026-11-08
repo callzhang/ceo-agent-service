@@ -104,6 +104,8 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 
 Codex 的运行适配器不再注入 `features.apps=false`；新建和续跑都沿用本机连接器配置，随后由角色边界决定可用范围，Audit 仍显式关闭 apps 和浏览器。配置继承不证明连接器已经安装、登录或能读取某个账号，必须以真实工具返回核实。
 
+Codex 适配器把 `Failed to refresh token` 加上 `session has ended`、`invalid refresh token` 或 CLI 实际输出的错误码 `invalid_refresh_token`（下划线写法，2026-11-08 Attempt 17030）判为 `codex_login_required`：属认证类失败，暂停该路由并允许 failover。漏判时它会落成 `runtime_unclassified`，同一路由上白白连续失败 4 个 turn。
+
 Codex Consumer 的工作工具面不是白名单（Derek 2026-10-24）：`make_role_agent_command` 对 Consumer 不再强制关闭
 `features.apps`、`features.plugins`、`features.remote_plugin`，也不再关闭 `~/.codex/config.toml` 里的其他 MCP server
 或限制它们的工具，而是沿用本机 CLI 的配置，并对这些 server 设置 `default_tools_approval_mode="approve"`
