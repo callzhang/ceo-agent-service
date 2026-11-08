@@ -457,3 +457,4 @@ tests/test_minutes_recovery_agent.py
 
 tests/test_automatic_repair_gate.py
 tests/test_repair_pr_feedback.py
+tests/test_claude_fixed_schema_delivery.py

@@ -573,4 +573,4 @@ reverts committed work they did not author.
 
 
 
-| codex-attention-root-repair-20261108 | integration of existing PR343 import-owner fix and scoped validation/docs; meeting runtime schema integration after owner handoff; own claim | Resolve current lint/meeting Attention via committed root fixes and formal recovery, preserve failed history; no direct sends, no policy changes. Auth failure recovered through existing scheduled cookie sync then original task. | active 2026-11-08 |
+| codex-attention-root-repair-20261108 | integration of existing PR343 import-owner fix and scoped validation/docs; tests/test_claude_fixed_schema_delivery.py; tests/gate_files.txt additive fixed-schema regression only; meeting runtime schema integration after owner handoff; own claim | Resolve current lint/meeting Attention via committed root fixes and formal recovery, preserve failed history; no direct sends, no policy changes. Auth failure recovered through existing scheduled cookie sync then original task. | active 2026-11-08 |
