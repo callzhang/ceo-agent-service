@@ -911,6 +911,9 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
                 "Batch", (), {"uidvalidity": 1, "messages": (provider_message,)}
             )()
 
+        def fetch_message(self, _locator, **_kwargs):
+            return provider_message
+
         def logout(self):
             return None
 
