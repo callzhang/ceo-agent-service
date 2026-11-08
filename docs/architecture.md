@@ -2426,3 +2426,17 @@ Workbench 带文件的任务由现有 executor 验证附件后传递本地文件
 New service Error writes and failed Attempt persistence transactionally enqueue coordination facts in existing service State. The failed-notification entry repeats the enqueue idempotently. The existing Workbench scheduler owns an independent coordination thread that advances one repair conversation at a time using its ordinary native runtime, routing, leases and restart recovery; GitHub readback cannot block ordinary turn dispatch. Source-to-parent creation is atomic; turn request IDs preserve a created turn across checkpoint interruption. A terminal turn without a remote PR continues that same conversation within `MAX_AUTOMATIC_ATTEMPTS`; explicit stop and concrete blocked/non-code diagnoses terminate visibly. A GitHub PR read back by the stable repair branch is `pr_created`, not merged/deployed or business recovery. Both error detail types show the persisted repair links/status; reads never launch repair. See [procedure](automatic-error-repair.md). Audit and original business actions are unchanged.
 
 A temporary exhausted PR lookup remains `awaiting_pr` and is rechecked every fifteen minutes without another Agent turn; the conversation and source association survive restart.
+
+### Native tool startup and typed-result correction
+
+Role-bound stdio MCP processes declare the service package root through their
+own `PYTHONPATH` environment. They can import `app.agent_cli` when the native
+Consumer runs from its isolated task directory; the native CLI's HOME, task cwd,
+credential store and existing tool boundary are unchanged.
+
+The transport validates the native terminal/session evidence and returns its
+text before the common role parser validates the business result. A result
+format error retains the existing typed error and field locations, so the next
+bounded role attempt receives `Result Correction` instead of an undifferentiated
+process failure. The canonical schema, attempt ceiling, Audit decisions and
+System execution/receipt rules are unchanged.

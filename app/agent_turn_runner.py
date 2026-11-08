@@ -1440,16 +1440,17 @@ class AgentTurnProcess(Generic[ResultT]):
                         assert claude_normalizer is not None
                         claude_normalizer.finalize()
                         proof = claude_normalizer.terminal_proof()
-                        result = claude_adapter.parse_final_result(
+                        raw_result = claude_adapter.parse_final_result(
                             normalizer=claude_normalizer,
                             proof=proof,
-                            parser=parse_claude_result,
+                            parser=lambda raw: raw,
                         )
                         trusted_session_id = claude_normalizer.session_id
                         if not trusted_session_id:
                             raise RuntimeError("claude_session_evidence_missing")
                         observed_session_id = trusted_session_id
                         pending_claude_session_id = trusted_session_id
+                        result = parse_claude_result(raw_result)
                     else:
                         try:
                             result = parse_result_for_route(process.stdout, route)

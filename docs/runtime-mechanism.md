@@ -2198,3 +2198,18 @@ DWS 文字发送、原生引用回复和文件发送先调用同一命令的原�
 `record_error`, failed plain/orchestrated Attempt persistence and failed Attempt updates enqueue an idempotent `automatic_repair:<source>:<id>` service State record. No historical backfill runs. The normal Workbench scheduler owns an independent coordination thread that advances durable records every ten seconds without blocking ordinary turn dispatch; one coordinator mutex serializes source association and continuation. Workbench parent plus association commit together and deterministic turn request IDs recover a turn created before its checkpoint. Workbench owns task lifecycle, route selection, deployment drain, CLI approval and native trajectory.
 
 The repair Agent reads the exact source/trajectory, uses an isolated development worktree, writes/runs regression tests and submits a PR. The coordinator reads actual GitHub PR metadata for the stable branch after each terminal turn. Absent PR delivery resumes the same conversation, bounded by the shared four-attempt limit. An explicit stop is not resumed; a concrete non-code or blocked diagnosis is displayed. The repair record's status is separate from native task status and from the original error. PR creation never resolves/replays a business action or implies CI/merge/deploy acceptance. Attempt and Service error APIs project both links; their card polls read-only status every five seconds while active. Detailed procedure: [automatic-error-repair.md](automatic-error-repair.md).
+
+### Declared MCP module launch and result error propagation
+
+The existing role `agent_cli` stdio configuration supplies the service source
+root as the subprocess's `PYTHONPATH`. Launching the Consumer in its task working
+directory no longer makes `python -m app.agent_cli` exit before the MCP handshake.
+This only fixes the already-declared server startup; it adds no tools or
+credentials and does not change the native CLI's home or its task sandbox.
+
+Native terminal validation completes before business JSON parsing. The common
+parser's `ResultParseError` reaches the existing result-failure handler directly;
+its safe field diagnostics and `codex_result_invalid` classification feed the
+next role attempt's existing correction prompt. Invalid fields remain rejected,
+transport/session failures retain their own handler, and the shared four-attempt
+ceiling is unchanged. No Audit policy or business replay is introduced.
