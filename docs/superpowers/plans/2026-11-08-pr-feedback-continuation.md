@@ -7,7 +7,7 @@ Derek explicitly authorizes implementation and deployment. Expected: CI failure 
 - [x] Continue the existing conversation/PR, with the existing bounded attempts per unchanged feedback and a fresh cycle for new evidence. Keep monitoring open PRs after green to catch subsequent feedback. Never merge/deploy or replay business actions.
 - [x] Update the shared card/procedure/contracts and verify targeted tests/build plus independent review.
 - [x] Push/deploy through the existing fixed gate; verify automatic PR343 feedback, same conversation/session, source links/health/queues and browser UI.
-- [ ] Observe the Agent update PR343 and obtain passing remote checks/review after the automatic feedback.
+- [x] Observe the Agent update the original pilot PR342 and obtain passing remote checks/review after automatic feedback. PR343 was closed by another authorized task before its CI was green and is not this acceptance case.
 
 Local verification: initial seven new scenarios failed against old coordinator; three independent-review regressions also failed before correction. After implementation, 34 focused backend tests and 55 frontend tests passed, production build succeeded, and the real PR343 readback returned all 53 checks plus review history. Independent bounded review found no remaining concrete blocker. Browser/live automatic continuation remain deployment acceptance steps.
 
@@ -40,3 +40,13 @@ Selection correction verification:43 related repair/native-contract tests pass i
 A cross-source selection regression additionally failed before correction: older reply-repair conversation (source Attempt900001) lost to a newer generic-error conversation (source Error1), because those counters are independent. Existing native Workbench parent IDs now order eligible conversations before source-local IDs. This does not compare IDs from separate source tables as age or alter active queued/running priority.
 
 Follow-up cross-source regression is green with44 related tests (4.59seconds), Ruff/diff clean and independent review clear. Later live evidence confirmed the previously unit-proven retry preference: while PR342 head88c6a3179 had completed failures waiting, source17034 turn418690 ended at15:04:08UTC and its next turn418693 started at15:04:40. The older PR342 did not start its turn418694 until15:12:49, after that newer turn ended. The selection fix was not deployed at these times.
+
+## Final acceptance — 2026-11-08
+
+The original Attempt17022 remains linked to Workbench parent404262 and PR342 https://github.com/callzhang/ceo-agent-service/pull/342. The system Agent autonomously pushed bfb07cb6a,1ef6c3282,eaa464558,88c6a3179 and9a6cafdfa while receiving current-head CI failures through the coordinator. No primary feedback message, repair-file edit, repair-branch push or attempt-counter reset was used in this CI continuation phase. Earlier manual pilot turns remain preserved in the conversation history; the total14 turns are not all newly automatic turns.
+
+Direct GitHub readback at15:40UTC found all53 checks SUCCESS on9a6cafdfab6f5dbeca5d27a430517036f7307338. At15:44UTC the read-only repair API independently returned checks_passed with review pending items zero and the same original conversation/PR links. Open green PRs remain watched for later feedback; this is not merge, deployment of the repair PR, or replay/recovery of the original business action.
+
+The final coordination release8c8f54a32cbce3887bc432cf0e5b7d67a9148349 passed the unchanged-limit gate:8915 passed,2 skipped,1 deselected,9 warnings in378.40seconds. Standard deployment installed9e1cda1f→8c8f54a3; production PID4897, healthz OK, Status queues, Attention(total4) and History(total41303) were read back. The business projections still contained16 historical failed reply tasks/Attempts,1 failed Meeting and3 pending email provider actions; no processing item was present in those projections at this snapshot. These are separate from PR CI acceptance. Other natural errors17030/17034 also auto-created PR344/PR345 and continue their own cycles; their completion is not counted as this original-pilot result.
+
+The passing gate clone was removed by the standard deploy lifecycle. The task-owned earlier failed gate clone was removed after its failure evidence and corrected regressions were recorded. Native CLI session logs and repair-Agent-owned worktrees/environments remain with their native owners.
