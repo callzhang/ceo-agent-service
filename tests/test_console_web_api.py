@@ -3565,8 +3565,6 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
 
 
 def test_reply_memory_queue_reads_current_action_schema_and_its_own_events(tmp_path):
-    from app.action_storage import insert_action
-
     path = tmp_path / "reply-memory-queue.sqlite3"
     store = AutoReplyStore(path)
     EmailStore(path)
