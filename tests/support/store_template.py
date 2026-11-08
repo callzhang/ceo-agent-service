@@ -5,7 +5,9 @@ most tests build at least one. The first construction in each pytest process
 is built by the real constructor and kept as a template; every later
 construction on a path that does not exist yet starts from a copy of it. The
 real constructor still runs on the copy with the original keyword options and
-validates the schema, so only the DDL execution is skipped.
+validates the schema. The copy notification preserves the source database's
+initialized state, avoiding cold-start WAL/lock preparation for an already
+initialized empty copy; it does not cache a validation outcome.
 """
 
 import gc
@@ -59,12 +61,16 @@ def _forget_live_events_of(target: Path) -> None:
 
     path = str(target.resolve())
     with native_events._live_lock:
-        turn_ids = [turn_id for turn_path, turn_id in native_events._live_turn_events if turn_path == path]
+        turn_ids = [
+            turn_id
+            for turn_path, turn_id in native_events._live_turn_events
+            if turn_path == path
+        ]
     for turn_id in turn_ids:
         native_events.forget_live_turn(target, turn_id)
 
 
-def install(store_class, kind: str) -> None:
+def install(store_class, kind: str, *, on_copy=lambda _path: None) -> None:
     """Make fresh-path construction of ``store_class`` start from the template."""
     original = store_class.__init__
 
@@ -73,9 +79,12 @@ def install(store_class, kind: str) -> None:
         if not target.exists():
             _forget_live_events_of(target)
         if not args and not target.exists() and target.parent.is_dir():
-            template = _copy_of_template(kind, lambda built: _build(original, store_class, built))
+            template = _copy_of_template(
+                kind, lambda built: _build(original, store_class, built)
+            )
             if template is not None:
                 shutil.copyfile(template, target)
+                on_copy(target)
         original(self, path, *args, **kwargs)
 
     store_class.__init__ = init
