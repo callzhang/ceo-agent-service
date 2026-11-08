@@ -808,6 +808,11 @@ def register_console_routes(
         ]
         return list_envelope(items, page=1, page_size=len(items), total=len(items))
 
+    @app.get("/api/console/repairs/{source}/{source_id}")
+    def console_repair_detail(source: str, source_id: int):
+        from app.automatic_repair import repair_presentation
+        return item_envelope(repair_presentation(store_factory(), source, source_id))
+
     @app.get("/api/console/history/errors/{error_id}")
     def console_error_detail(error_id: int):
         error = store_factory().get_error(error_id)
@@ -829,6 +834,7 @@ def register_console_routes(
             "resolved_at": error.resolved_at,
             "resolution": error.resolution,
             "context": "service error",
+            "repair": console_repair_detail("errors", error.id)["item"],
             "runtime": {
                 "conversation_id": error.conversation_id or "",
                 "message_id": error.message_id or "",

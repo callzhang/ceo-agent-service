@@ -2418,3 +2418,9 @@ Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_s
 恢复任务、轮次、预算和临时工作目录保存在原 Minutes cursor 的 `summary_recoveries` 中，普通同步保留这些扩展键；重启复用同一轮次/上传 job，不重新盲目上传。同步文件锁仅用于创建/更新状态或发布归档，等待 Agent 时释放。排队或处理中继续算同步未完成；只在真实归档写入、读回和 cursor 登记后减少失败数。归档保留官方失败及逐字稿，追加明确标注的内部摘要和完整补充转写；完成后清理原音频及临时文件。无官方逐字稿时保留空官方区段，再由完整 ASR 提供补充材料。
 
 Workbench 带文件的任务由现有 executor 验证附件后传递本地文件路径，并按该任务输入声明既有本地执行/工作区/服务数据能力；不具备能力的路由不被选择。无附件的任务保持原路由要求。此流程不修改 Audit、不触发对外消息、不更改钉钉官方产物或旧失败。
+
+### Automatic code repair for service errors
+
+New service Error writes and failed Attempt persistence transactionally enqueue coordination facts in existing service State. The failed-notification entry repeats the enqueue idempotently. The existing Workbench scheduler owns an independent coordination thread that advances one repair conversation at a time using its ordinary native runtime, routing, leases and restart recovery; GitHub readback cannot block ordinary turn dispatch. Source-to-parent creation is atomic; turn request IDs preserve a created turn across checkpoint interruption. A terminal turn without a remote PR continues that same conversation within `MAX_AUTOMATIC_ATTEMPTS`; explicit stop and concrete blocked/non-code diagnoses terminate visibly. A GitHub PR read back by the stable repair branch is `pr_created`, not merged/deployed or business recovery. Both error detail types show the persisted repair links/status; reads never launch repair. See [procedure](automatic-error-repair.md). Audit and original business actions are unchanged.
+
+A temporary exhausted PR lookup remains `awaiting_pr` and is rechecked every fifteen minutes without another Agent turn; the conversation and source association survive restart.

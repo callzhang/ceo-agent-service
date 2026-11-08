@@ -10220,6 +10220,10 @@ def create_audit_app(
         ),
     )
 
+    from app.automatic_repair import AutomaticRepairCoordinator
+    automatic_repair = AutomaticRepairCoordinator(
+        workbench_store, repository=Path.home() / "Projects" / "ceo-agent-service",
+    )
     workbench_lifecycle = register_workbench_routes(
         app,
         workbench_store,
@@ -10229,6 +10233,7 @@ def create_audit_app(
         mutation_guard=_require_trusted_json_mutation,
         stream_guard=_require_trusted_mutation,
         scheduler_interval_seconds=workbench_scheduler_interval_seconds,
+        before_run=automatic_repair.run_once,
     )
     if asset_dir.is_dir():
         app.mount(

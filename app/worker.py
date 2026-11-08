@@ -5761,6 +5761,9 @@ class DingTalkAutoReplyWorker:
     ) -> None:
         if self.dry_run:
             return
+        if send_status == "failed":
+            from app.automatic_repair_store import enqueue_repair
+            enqueue_repair(self.store, "reply_attempts", attempt_id)
         title, notification_message = self._problem_notification_content(
             task,
             send_status=send_status,
