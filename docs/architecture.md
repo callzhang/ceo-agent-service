@@ -2450,3 +2450,14 @@ each schema insertion receives a deep copy. The cache holds declaration data,
 not validation results, plans or decisions. All canonical/native purpose schemas
 and all runtime validators remain unchanged. Distinct model classes have
 separate entries, and mutable caller changes cannot poison subsequent schemas.
+
+### Attempt detail refresh after recovery
+
+An already-open Attempt page reads the current detail every ten seconds while
+visible, including terminal failures that may be recovered through another
+Console client. A pending read finishes before the next automatic read; leaving
+the page aborts it and stops the timer. Action readbacks supersede older reads,
+so a late poll cannot replace the newer result. Unsaved feedback stays in the
+form. Refresh is read-only and never retries a Task or changes an Audit result.
+The separately loaded provider Trigger is reread only when its source fields
+change, not on every status snapshot.

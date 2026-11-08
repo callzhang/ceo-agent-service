@@ -1,7 +1,7 @@
-import { render, screen, within } from "@testing-library/react";
+import { act, fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 const getAttemptDetail = vi.hoisted(() => vi.fn());
 const getAttemptTrigger = vi.hoisted(() => vi.fn());
@@ -106,12 +106,98 @@ function renderPage(path = "/attempts/8448") {
 }
 
 describe("AttemptDetailPage", () => {
+  afterEach(() => { vi.useRealTimers(); });
   beforeEach(() => {
     getAttemptDetail.mockReset();
     getAttemptTrigger.mockReset();
     command.mockReset();
     getAttemptDetail.mockResolvedValue({ item: detail, meta: { snapshot_at: "2026-08-29T10:01:00Z" } });
     command.mockResolvedValue({ ok: true, message: "反馈已保存", meta: { updated_at: "" } });
+  });
+
+  it("refreshes an open failed Attempt after its Task has recovered without reprocessing", async () => {
+    vi.useFakeTimers();
+    const failed = { ...detail, status: { ...detail.status, raw: "failed", message: "旧失败待处理" }, failure_reason: "旧的字段校验错误" };
+    const recovered = { ...detail, status: { ...detail.status, raw: "skipped", message: "已核实无需重复回复" }, audit_explanation: { title: "审计说明", text: "本人已处理，审核通过" } };
+    getAttemptDetail.mockResolvedValueOnce({ item: failed, meta: { snapshot_at: "2026-11-08T07:38:09Z" } })
+      .mockResolvedValue({ item: recovered, meta: { snapshot_at: "2026-11-08T10:16:25Z" } });
+    renderPage();
+    await act(async () => {});
+    expect(screen.getByText("旧的字段校验错误")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByText("已核实无需重复回复")).toBeInTheDocument();
+    expect(screen.getByText("本人已处理，审核通过")).toBeInTheDocument();
+    expect(screen.queryByText("旧的字段校验错误")).not.toBeInTheDocument();
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it("lets a slow detail read finish and aborts it when leaving the page", async () => {
+    vi.useFakeTimers();
+    let resolve!: (value: unknown) => void;
+    getAttemptDetail.mockImplementationOnce(() => new Promise((done) => { resolve = done; }));
+    const page = renderPage();
+    await act(async () => {});
+    const signal = getAttemptDetail.mock.calls[0][1] as AbortSignal;
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(getAttemptDetail).toHaveBeenCalledTimes(1);
+    expect(signal.aborted).toBe(false);
+    await act(async () => { resolve({ item: detail, meta: { snapshot_at: "2026-11-08T10:16:25Z" } }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(getAttemptDetail).toHaveBeenCalledTimes(2);
+    const nextSignal = getAttemptDetail.mock.calls[1][1] as AbortSignal;
+    page.unmount();
+    expect(nextSignal.aborted).toBe(true);
+    await act(async () => { await vi.advanceTimersByTimeAsync(30_000); });
+    expect(getAttemptDetail).toHaveBeenCalledTimes(2);
+  });
+
+  it("resumes read-only refresh after a transient detail error", async () => {
+    vi.useFakeTimers();
+    getAttemptDetail.mockRejectedValueOnce(new Error("详情暂时不可用"));
+    renderPage();
+    await act(async () => {});
+    expect(screen.getByRole("alert")).toHaveTextContent("详情暂时不可用");
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    expect(screen.getByText("已完成跟进")).toBeInTheDocument();
+    expect(screen.queryByRole("alert")).not.toBeInTheDocument();
+    expect(command).not.toHaveBeenCalled();
+  });
+
+  it("does not let an older poll overwrite an action readback or unsaved feedback", async () => {
+    vi.useFakeTimers();
+    const confirm = vi.spyOn(window, "confirm").mockReturnValue(true);
+    const failed = { ...detail, status: { ...detail.status, raw: "failed", message: "仍待恢复" }, actions: { ...detail.actions, can_rerun: true, terminal: false } };
+    let resolvePoll!: (value: unknown) => void;
+    getAttemptDetail.mockResolvedValueOnce({ item: failed, meta: { snapshot_at: "old" } })
+      .mockImplementationOnce(() => new Promise((done) => { resolvePoll = done; }))
+      .mockResolvedValue({ item: detail, meta: { snapshot_at: "current" } });
+    renderPage();
+    await act(async () => {});
+    const feedback = screen.getByDisplayValue("需要更具体");
+    fireEvent.change(feedback, { target: { value: "尚未提交的意见" } });
+    await act(async () => { await vi.advanceTimersByTimeAsync(10_000); });
+    const pollSignal = getAttemptDetail.mock.calls[1][1] as AbortSignal;
+    fireEvent.click(screen.getByRole("button", { name: "重新处理" }));
+    await act(async () => {});
+    expect(pollSignal.aborted).toBe(true);
+    expect(screen.getByText("这条事项已完成，无需你操作。")).toBeInTheDocument();
+    await act(async () => { resolvePoll({ item: failed, meta: { snapshot_at: "old" } }); });
+    expect(screen.queryByText("仍待恢复")).not.toBeInTheDocument();
+    expect(feedback).toHaveValue("尚未提交的意见");
+    expect(command).toHaveBeenCalledTimes(1);
+    confirm.mockRestore();
+  });
+
+  it("does not reread an unchanged provider Trigger on every status refresh", async () => {
+    vi.useFakeTimers();
+    getAttemptDetail.mockImplementation(async () => ({ item: { ...detail, trigger: { title: "Trigger", text: "正在读取原消息", source_url: "/api/console/history/8448/trigger" } }, meta: { snapshot_at: "current" } }));
+    getAttemptTrigger.mockResolvedValue({ item: { title: "Trigger", text: "原消息已读回" } });
+    renderPage();
+    await act(async () => {});
+    expect(screen.getByText("原消息已读回")).toBeInTheDocument();
+    await act(async () => { await vi.advanceTimersByTimeAsync(20_000); });
+    expect(getAttemptDetail).toHaveBeenCalledTimes(3);
+    expect(getAttemptTrigger).toHaveBeenCalledTimes(1);
   });
 
   it("loads compacted trigger content independently of the Attempt result", async () => {
