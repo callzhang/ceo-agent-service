@@ -6,6 +6,7 @@ import type { Artifact, Timeline, Turn, WorkbenchEvent } from "../types";
 import { ArtifactList } from "./ArtifactList";
 import { displayText, ExecutionStep } from "./ExecutionStep";
 import { MarkdownContent } from "./MarkdownContent";
+import { TrajectoryContent } from "./TrajectoryContent";
 
 interface ConversationTimelineProps {
   timeline: Timeline;
@@ -46,7 +47,7 @@ function TurnItem({ turn, events, artifactsById, taskId, active }: {
   const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);
   return (
     <article className="conversation-turn" data-status={turn.status} data-active={active || undefined}>
-      <div className="user-message"><p>{turn.user_text}</p></div>
+      <div className="user-message"><TrajectoryContent text={turn.user_text} label="任务输入" plain /></div>
       <div className="assistant-message">
         {blocks.map((block) => {
           if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownContent key={block.key} text={block.text ?? ""} /> : null;
@@ -55,8 +56,8 @@ function TurnItem({ turn, events, artifactsById, taskId, active }: {
           const artifact = artifactsById.get(block.artifactId ?? "");
           return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
         })}
-        {authoritativeFinalText && <MarkdownContent text={turn.final_text} />}
-        {!authoritativeFinalText && !renderedText && turn.final_text && <MarkdownContent text={turn.final_text} />}
+        {authoritativeFinalText && <TrajectoryContent text={turn.final_text} />}
+        {!authoritativeFinalText && !renderedText && turn.final_text && <TrajectoryContent text={turn.final_text} />}
         {turn.status === "queued" && <p className="turn-state" role="status">已排队</p>}
         {turn.status === "running" && <p className="turn-state" role="status">执行中</p>}
         {turn.status === "completed" && <p className="turn-state">已完成</p>}

@@ -1,9 +1,26 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { describe, expect, it } from "vitest";
 
 import { ExecutionStep } from "./ExecutionStep";
 
 describe("ExecutionStep", () => {
+  it("keeps string tool evidence exact rather than reserializing JSON numbers", () => {
+    render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "shell", input: '{"message_id":9007199254740993}', output: "1e400" }} />);
+    expect(screen.getByText('{"message_id":9007199254740993}', { selector: "pre" })).toBeInTheDocument();
+    expect(screen.getByText("1e400")).toBeInTheDocument();
+  });
+  it("previews the command and opens input/output before optional technical metadata", async () => {
+    render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "shell", input: { cmd: "pytest tests/test_example.py" }, output: "3 passed", tool_call_id: "exact-call" }} />);
+    const preview = screen.getByText("pytest tests/test_example.py");
+    expect(preview).toBeVisible();
+    await userEvent.click(preview);
+    expect(screen.getByText("3 passed")).toBeVisible();
+    const technical = screen.getByText("调用详情").closest("details");
+    expect(technical).not.toHaveAttribute("open");
+    await userEvent.click(screen.getByText("调用详情"));
+    expect(screen.getByText("exact-call")).toBeVisible();
+  });
   it("exposes its state label as a narrowly scoped status announcement", () => {
     render(<ExecutionStep kind="tool" status="aborted" payload={{ tool: "read", summary: "任务已结束，未收到工具完成事件。" }} />);
 
@@ -84,7 +101,7 @@ describe("ExecutionStep", () => {
     expect(screen.getAllByText("functions.exec_command")).toHaveLength(2);
     expect(screen.getByText("调用名称")).toBeInTheDocument();
     expect(screen.getByText("输入")).toBeInTheDocument();
-    expect(screen.getByText(/rg --files app/)).toBeInTheDocument();
+    expect(screen.getAllByText(/rg --files app/)).toHaveLength(2);
     expect(screen.getByText("输出")).toBeInTheDocument();
     expect(screen.getByText(/app\/codex_history\.py/)).toBeInTheDocument();
   });

@@ -4,7 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { displayValue, getCodexSession } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { ExecutionStep } from "../components/ExecutionStep";
-import { MarkdownContent } from "../components/MarkdownContent";
+import { TrajectoryContent } from "../components/TrajectoryContent";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 
@@ -44,33 +44,6 @@ function eventLabel(kind?: string) {
   return "执行事件";
 }
 
-function eventText(event: CodexSessionEvent) {
-  if (event.kind === "reasoning") return "思考摘要未保留";
-  const body = displayValue(event.body || "").trim();
-  if (!body) return "未记录内容";
-  try {
-    const value = JSON.parse(body) as { summary?: unknown; error_code?: unknown; outcome?: unknown };
-    if (value && typeof value === "object") {
-      const summary = typeof value.summary === "string" ? value.summary.trim() : "";
-      const outcome = typeof value.outcome === "string" ? value.outcome.trim() : "";
-      const error = typeof value.error_code === "string" ? value.error_code.trim() : "";
-      return summary || [outcome && `结果：${outcome}`, error && `异常：${error}`].filter(Boolean).join(" · ") || "已记录结构化执行结果";
-    }
-  } catch {
-    // The persisted event is ordinary text, so it remains directly readable.
-  }
-  return body;
-}
-
-function traceValue(value?: string): unknown {
-  if (!value) return "未记录";
-  try {
-    return JSON.parse(value);
-  } catch {
-    return value;
-  }
-}
-
 type TimelineRow = {
   event: CodexSessionEvent;
   output?: CodexSessionEvent;
@@ -81,22 +54,28 @@ function callId(event: CodexSessionEvent) {
 }
 
 function timelineRows(events: CodexSessionEvent[]): TimelineRow[] {
-  const outputsByCallId = new Map<string, CodexSessionEvent>();
+  const pending = new Map<string, TimelineRow[]>();
+  const rows: TimelineRow[] = [];
   for (const event of events) {
-    if (event.kind === "tool_output" && callId(event)) outputsByCallId.set(callId(event), event);
+    const id = callId(event);
+    if (event.kind === "tool_output" && id) {
+      const row = pending.get(id)?.shift();
+      if (row) { row.output = event; continue; }
+    }
+    const row: TimelineRow = { event };
+    rows.push(row);
+    if (event.kind === "tool_call" && id) {
+      const calls = pending.get(id) || [];
+      calls.push(row);
+      pending.set(id, calls);
+    }
   }
-  return events.flatMap((event) => {
-    if (event.kind === "tool_output") return [];
-    if (event.kind !== "tool_call") return [{ event }];
-    return [{ event, output: outputsByCallId.get(callId(event)) }];
-  });
+  return rows;
 }
 
 function SessionMarkdown({ event }: { event: CodexSessionEvent }) {
-  const text = eventText(event);
-  const shouldCollapse = text.length > 1_200 || event.kind === "system_context";
-  if (!shouldCollapse) return <MarkdownContent text={text} />;
-  return <details className="codex-session-event-content-collapse"><summary>查看完整内容（{text.length.toLocaleString()} 字）</summary><MarkdownContent text={text} /></details>;
+  if (event.kind === "reasoning") return <p className="muted">思考摘要未保留</p>;
+  return <TrajectoryContent text={displayValue(event.body || "").trim() || "未记录内容"} collapsed={event.kind === "system_context" || event.kind === "metadata"} />;
 }
 
 function SessionTrace({ event, output }: { event: CodexSessionEvent; output?: CodexSessionEvent }) {
@@ -104,25 +83,48 @@ function SessionTrace({ event, output }: { event: CodexSessionEvent; output?: Co
   const result = output?.trace?.output ?? trace.output;
   return <ExecutionStep
     kind="tool"
+    startedAt={event.timestamp}
+    completedAt={output?.timestamp}
     status={result === undefined ? "running" : "completed"}
     payload={{
       kind: "trace",
       name: trace.name || event.title?.replace(/^Tool call:\s*/, "") || "工具调用",
       tool_call_id: trace.call_id,
-      input: traceValue(trace.input ?? event.body),
-      ...(result !== undefined ? { output: traceValue(result) } : {}),
+      input: trace.input ?? event.body ?? "未记录",
+      ...(result !== undefined ? { output: result } : {}),
     }}
   />;
 }
 
+function eventCategory(event: CodexSessionEvent) {
+  if (["tool", "tool_call", "tool_output"].includes(event.kind || "")) return "tools";
+  if (event.kind === "assistant") return "assistant";
+  if (event.kind === "user") return "user";
+  return "context";
+}
+
 function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
+  const [filter, setFilter] = useState("all");
+  const [query, setQuery] = useState("");
+  const rows = useMemo(() => timelineRows(events), [events]);
+  const categories = [["all", "全部"], ["assistant", "Agent 输出"], ["tools", "工具调用"], ["user", "任务输入"], ["context", "上下文"]];
+  const search = query.trim().toLocaleLowerCase();
+  const visible = rows.map((row, index) => ({ ...row, index })).filter(({ event, output }) => {
+    if (filter !== "all" && eventCategory(event) !== filter) return false;
+    const content = [event.title, event.kind === "reasoning" ? "" : event.body, event.trace?.name, event.trace?.input, event.trace?.output, output?.body, output?.trace?.output].join("\n");
+    return !search || content.toLocaleLowerCase().includes(search);
+  });
   if (!events.length) return <section className="console-card page-state">本次没有可展示的执行事件。</section>;
-  const rows = timelineRows(events);
   return <section className="console-card codex-session-timeline" aria-label="Agent 执行时间线">
-    <div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序记录任务输入、Agent 输出与可见工具调用；展开工具卡可查看输入与输出。</p></div><span>{rows.length} 条记录</span></div>
-    <ol>{rows.map(({ event, output }, index) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
-      <div className="codex-session-event-rail"><span aria-hidden="true" /><time>{displayEventTime(event.timestamp)}</time></div>
-      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} /> : <><header><span>{eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header><SessionMarkdown event={event} /></>}</article>
+    <div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序展示已加载的轨迹；工具输入与返回合并阅读，长内容可展开。</p></div><span>{rows.length} 条记录</span></div>
+    <div className="trajectory-toolbar">
+      <div className="trajectory-filters" role="group" aria-label="轨迹类型">{categories.map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}<span>{value === "all" ? rows.length : rows.filter(({ event }) => eventCategory(event) === value).length}</span></button>)}</div>
+      <div className="trajectory-search"><input type="search" aria-label="搜索轨迹" placeholder="搜索工具、输入或返回内容…" value={query} onChange={(event) => setQuery(event.target.value)} /><span role="status">显示 {visible.length} / {rows.length} 条记录</span></div>
+    </div>
+    {!visible.length && <p className="page-state">没有匹配的轨迹记录。<button type="button" className="secondary-button" onClick={() => { setFilter("all"); setQuery(""); }}>清除筛选</button></p>}
+    <ol>{visible.map(({ event, output, index }) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
+      <div className="codex-session-event-rail"><span aria-hidden="true" /><small>#{index + 1}</small><time dateTime={event.timestamp}>{displayEventTime(event.timestamp)}</time></div>
+      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} /> : <><header><span>{event.kind === "tool_output" ? "未配对的工具返回" : eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>{event.kind === "tool_output" ? <pre className="trajectory-orphan-output">{event.trace?.output ?? event.body ?? "未记录内容"}</pre> : <SessionMarkdown event={event} />}</>}</article>
     </li>)}</ol>
   </section>;
 }

@@ -75,21 +75,31 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
   );
   const stateLabel = executionStateLabel(status);
   const duration = durationLabel(startedAt, completedAt);
+  const input = payload.input ?? payload.arguments;
+  let previewInput = input;
+  if (typeof input === "string") {
+    try { previewInput = JSON.parse(input); } catch { /* Raw command text. */ }
+  }
+  const inputRecord = previewInput && typeof previewInput === "object" ? previewInput as Record<string, unknown> : null;
+  const preview = payload.kind === "command" ? "" : exactText(inputRecord?.cmd ?? inputRecord?.command ?? inputRecord?.path ?? (typeof input === "string" ? input : ""));
   return (
     <details className={`execution-step execution-${failed ? "failed" : completed ? "completed" : aborted ? "aborted" : "running"}`}>
       <summary>
         <Icon aria-hidden="true" size={16} />
-        <span className="execution-name">{name}</span>
-        <span className="execution-state" role="status">{stateLabel}</span>
+        <span className="execution-name" title={name}>{name}{preview && <small className="execution-preview" title={preview}>{preview}</small>}</span>
+        <span className="execution-state" role="status">{stateLabel}{duration && <small className="execution-duration">{duration}</small>}</span>
         <ChevronRight className="execution-chevron" aria-hidden="true" size={15} />
       </summary>
       {kind === "file" ? <p>{summary}</p> : whiteBox ? (
         <div className="execution-details">
-          <dl className="execution-metadata">
+          {sessionTrace && payload.input !== undefined && <section><h4>输入</h4><pre>{detailText(payload.input)}</pre></section>}
+          {payload.arguments !== undefined && <section><h4>参数</h4><pre>{detailText(payload.arguments)}</pre></section>}
+          {payload.output !== undefined && <section><h4>输出</h4><pre>{detailText(payload.output)}</pre></section>}
+          {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}
+          <details className="execution-technical"><summary>调用详情{payload.provider_item !== undefined ? "与原始事件" : ""}</summary><dl className="execution-metadata">
             {sessionTrace ? (
               <>
                 <div><dt>调用名称</dt><dd><code>{exactText(payload.name, "未提供")}</code></dd></div>
-                {typeof payload.tool_call_id === "string" && <div><dt>调用 ID</dt><dd><code>{exactText(payload.tool_call_id)}</code></dd></div>}
               </>
             ) : payload.kind === "command" ? (
               <>
@@ -103,17 +113,13 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
                 <div><dt>工具</dt><dd><code>{exactText(payload.tool, "未提供")}</code></dd></div>
               </>
             )}
-            <div><dt>Workbench 调用 ID</dt><dd><code>{exactText(payload.tool_call_id, "未提供")}</code></dd></div>
-            <div><dt>Provider 项目 ID</dt><dd><code>{exactText(payload.native_id, "未提供")}</code></dd></div>
+            {typeof payload.tool_call_id === "string" && <div><dt>调用 ID</dt><dd><code>{exactText(payload.tool_call_id)}</code></dd></div>}
+            {typeof payload.native_id === "string" && <div><dt>Provider 项目 ID</dt><dd><code>{exactText(payload.native_id)}</code></dd></div>}
             <TimeDetail label="开始时间" value={startedAt} />
             <TimeDetail label="完成时间" value={completedAt} />
-            {duration && <div><dt>耗时</dt><dd>{duration}</dd></div>}
           </dl>
-          {sessionTrace && payload.input !== undefined && <section><h4>输入</h4><pre>{detailText(payload.input)}</pre></section>}
-          {payload.arguments !== undefined && <section><h4>参数</h4><pre>{detailText(payload.arguments)}</pre></section>}
-          {payload.output !== undefined && <section><h4>输出</h4><pre>{detailText(payload.output)}</pre></section>}
-          {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}
           {payload.provider_item !== undefined && <section><h4>原始工具事件</h4><pre>{detailText(payload.provider_item)}</pre></section>}
+          </details>
           {status === "aborted" && <p className="execution-aborted-note">{summary}</p>}
           {failed && <p className="execution-failure-note">{summary}</p>}
         </div>

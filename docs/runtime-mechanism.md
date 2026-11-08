@@ -2260,3 +2260,8 @@ A command factory's output-schema declaration reaches Claude CLI through its nat
 The formal deploy gate uses native pytest `tmp_path_retention_policy=failed`: passing test temporary directories are removed at fixture teardown, while failed test evidence remains available. This avoids repeatedly enumerating directories from already-passed cases as the suite grows. The fixed test manifest, assertions, strict schema validation, 600-second/2-GB process limits, gate-result rule, quiet wait and deployment mutex are unchanged.
 
 Repair selection uses the latest native Workbench turn status. A truly queued/running turn retains the single repair slot, including a turn created before an interrupted checkpoint whose readback is deferred. Once that turn ends, a stale repair-level running label carries no priority; existing native conversation order determines the next eligible source before a newer source retries. Source-local error and Attempt counters are not compared as conversation age. Existing capacity, retry bounds, stop behavior and frozen-intent recovery are unchanged.
+
+
+### Agent 轨迹阅读
+
+工作台长任务输入和长文本保留短预览，完整正文可展开；终态结构化结果先展示 `summary`，完整 JSON（包括其他字段）仍可展开读取。共用工具卡以名称、命令预览、状态和耗时为摘要，展开后优先展示参数／输入和结果／输出，调用身份、时间和原始 provider 事件放在二级详情。原生会话页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；调用与返回按调用 ID 逐次配对，未配对的返回独立显示，不被隐藏。筛选只改变当前阅读视图，不改原生记录、业务状态或运行流程。

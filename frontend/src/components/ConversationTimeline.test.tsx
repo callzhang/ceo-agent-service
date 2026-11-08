@@ -35,6 +35,15 @@ const timeline: Timeline = {
 };
 
 describe("ConversationTimeline", () => {
+  it("collapses long repair prompts while showing structured final summaries", async () => {
+    const repaired = { ...turn, status: "completed" as const, user_text: "读取轨迹并修复。".repeat(200), final_text: JSON.stringify({ summary: "已更新 PR，等待 CI。", remaining_work: ["观察检查"] }) };
+    render(<ConversationTimeline timeline={{ ...timeline, turns: [repaired], events: [], artifacts: [] }} activeTurnId={null} />);
+    const inputToggle = screen.getByText(/展开任务输入/);
+    expect(inputToggle.closest("details")).not.toHaveAttribute("open");
+    expect(screen.getByText("已更新 PR，等待 CI。")).toBeVisible();
+    await userEvent.click(screen.getByText("查看完整 JSON"));
+    expect(screen.getByText(/"remaining_work":/)).toBeVisible();
+  });
   it("uses the exact stable assistant item key contract", () => {
     expect(assistantTurnKey(turn)).toBe("turn:turn-1:assistant");
   });
