@@ -18,21 +18,45 @@ def build_recovery_prompt(work_dir: Path, service_root: Path) -> str:
 def read_completed_asr(
     workbench_store: Any, turn_id: str, expected_job_id: str
 ) -> dict | None:
-    for event in workbench_store.events_after(turn_id):
-        if event.event_type != "tool_completed":
+    for job_id, result in _completed_asr_results(
+        workbench_store, turn_id, expected_job_id
+    ):
+        if job_id == expected_job_id:
+            return result
+    return None
+
+
+def completed_asr_receipt(
+    workbench_store: Any, turn_id: str, expected_job_ids: list[str]
+) -> dict | None:
+    for job_id in reversed(expected_job_ids):
+        result = read_completed_asr(workbench_store, turn_id, job_id)
+        if result is not None:
+            return {"job_id": job_id, "result": result}
+    return None
+
+
+def _completed_asr_results(
+    workbench_store: Any, turn_id: str, expected_job_id: str | None = None
+):
+    for event in _native_events(workbench_store, turn_id):
+        if event.get("type") != "item.completed":
             continue
-        payload = event.payload
+        payload = event.get("item", {})
         if (
-            payload.get("kind") != "mcp"
+            payload.get("type") != "mcp_tool_call"
             or payload.get("server") != "ai_services"
             or payload.get("tool") != "get_audio_transcription"
-            or payload.get("status") != "completed"
+            or payload.get("status") not in (None, "completed")
         ):
             continue
         arguments = payload.get("arguments")
         if not isinstance(arguments, dict):
             raise ValueError("native ASR call arguments unavailable")
-        if arguments.get("job_id") != expected_job_id:
+        job_id = arguments.get("job_id")
+        if not isinstance(job_id, str) or not job_id.strip():
+            raise ValueError("native ASR job identity unavailable")
+        if expected_job_id is not None and job_id != expected_job_id:
             continue
         result = payload.get("result")
         if isinstance(result, str):
@@ -69,5 +93,20 @@ def read_completed_asr(
             or not data["segments"]
         ):
             raise ValueError("native ASR result is incomplete")
-        return data
-    return None
+        yield job_id, data
+
+
+def _native_events(workbench_store: Any, turn_id: str) -> list[dict]:
+    from app.native_trajectory import read_run_events_from_attempts
+
+    with workbench_store._connect() as db:
+        workbench_store._require_turn(db, turn_id)
+        attempts = db.execute(
+            "select runtime_kind,session_id,transcript_reference,transcript_start,transcript_end "
+            "from runtime_attempts where workload_kind='workbench' and workload_key=? "
+            "and session_id<>'' order by id",
+            (turn_id,),
+        ).fetchall()
+    if not attempts:
+        return []
+    return read_run_events_from_attempts({}, attempts)

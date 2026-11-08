@@ -2420,3 +2420,46 @@ Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_s
 恢复任务、轮次、预算和临时工作目录保存在原 Minutes cursor 的 `summary_recoveries` 中，普通同步保留这些扩展键；重启复用同一轮次/上传 job，不重新盲目上传。同步文件锁仅用于创建/更新状态或发布归档，等待 Agent 时释放。排队或处理中继续算同步未完成；只在真实归档写入、读回和 cursor 登记后减少失败数。归档保留官方失败及逐字稿，追加明确标注的内部摘要和完整补充转写；完成后清理原音频及临时文件。无官方逐字稿时保留空官方区段，再由完整 ASR 提供补充材料。
 
 Workbench 带文件的任务由现有 executor 验证附件后传递本地文件路径，并按该任务输入声明既有本地执行/工作区/服务数据能力；不具备能力的路由不被选择。无附件的任务保持原路由要求。此流程不修改 Audit、不触发对外消息、不更改钉钉官方产物或旧失败。
+
+自动恢复的上传回执与冻结音频身份由服务写入既有 cursor，不能以 Agent 自写文件替代。完成结算优先于新生成次数限制；原始音频丢失时只读重新下载并对照冻结摘要，不重新提交 ASR。原生完成结果必须匹配该来源真实记录的 upload job，归档后清理临时音频及检查点。
+
+### Automatic code repair for service errors
+
+New service Error writes and failed Attempt persistence transactionally enqueue coordination facts in existing service State. The failed-notification entry repeats the enqueue idempotently. The existing Workbench scheduler owns an independent coordination thread that advances one repair conversation at a time using its ordinary native runtime, routing, leases and restart recovery; GitHub readback cannot block ordinary turn dispatch. Source-to-parent creation is atomic; turn request IDs preserve a created turn across checkpoint interruption. A terminal turn without a remote PR continues that same conversation within `MAX_AUTOMATIC_ATTEMPTS`; explicit stop and concrete blocked/non-code diagnoses terminate visibly. A GitHub PR read back by the stable repair branch is linked as `pr_created`, then enters CI/review observation. Both error detail types show the persisted repair links/status; reads never launch repair. See [procedure](automatic-error-repair.md). Audit and original business actions are unchanged.
+
+A temporary exhausted PR lookup remains `awaiting_pr` and is rechecked every fifteen minutes without another Agent turn; the conversation and source association survive restart.
+
+Attached open repair PRs now remain under sixty-second GitHub observation after `pr_created` and `checks_passed`. Current-head CheckRun/status failures, unresolved review threads and unhandled review bodies automatically create native turns in the same conversation/session and existing PR. Paginated evidence is head-checked; pending/absent checks wait. Durable feedback intent plus deterministic request IDs recover a created turn across crashes even if GitHub changes. Fingerprint-specific four-attempt counts survive A→B→A feedback changes; exhausted feedback stays visible and watches for new evidence. Green requires completed passing checks and resolved/handled review feedback; later feedback resumes observation. Closed PRs end monitoring. Original error state, Audit and business actions are unchanged.
+
+PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
+
+### Native tool startup and typed-result correction
+
+Role-bound stdio MCP processes declare the service package root through their
+own `PYTHONPATH` environment. They can import `app.agent_cli` when the native
+Consumer runs from its isolated task directory; the native CLI's HOME, task cwd,
+credential store and existing tool boundary are unchanged.
+
+The transport validates the native terminal/session evidence and returns its
+text before the common role parser validates the business result. A result
+format error retains the existing typed error and field locations, so the next
+bounded role attempt receives `Result Correction` instead of an undifferentiated
+process failure. The canonical schema, attempt ceiling, Audit decisions and
+System execution/receipt rules are unchanged.
+
+Fixed Consumer action model declarations reuse their generated JSON schema;
+each schema insertion receives a deep copy. The cache holds declaration data,
+not validation results, plans or decisions. All canonical/native purpose schemas
+and all runtime validators remain unchanged. Distinct model classes have
+separate entries, and mutable caller changes cannot poison subsequent schemas.
+
+### Attempt detail refresh after recovery
+
+An already-open Attempt page reads the current detail every ten seconds while
+visible, including terminal failures that may be recovered through another
+Console client. A pending read finishes before the next automatic read; leaving
+the page aborts it and stops the timer. Action readbacks supersede older reads,
+so a late poll cannot replace the newer result. Unsaved feedback stays in the
+form. Refresh is read-only and never retries a Task or changes an Audit result.
+The separately loaded provider Trigger is reread only when its source fields
+change, not on every status snapshot.

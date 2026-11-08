@@ -19358,6 +19358,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 attempt_id,
                 audit_tool_events_json,
             )
+            if send_status == "failed":
+                from app.automatic_repair_store import enqueue_in_transaction
+                enqueue_in_transaction(db, "reply_attempts", attempt_id)
             return attempt_id
 
     def update_reply_attempt(
@@ -19629,6 +19632,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
             if task_status in {"done", "skipped"}:
                 self._compact_settled_reply_task_input(db, task_id)
+            if send_status == "failed":
+                from app.automatic_repair_store import enqueue_in_transaction
+                enqueue_in_transaction(db, "reply_attempts", attempt_id)
             return attempt_id
 
     @staticmethod
@@ -20676,6 +20682,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         updated_at = db.execute("select current_timestamp").fetchone()[0]
         update_action(db, "reply_attempts", attempt_id,
                       {**updates, "updated_at": updated_at})
+        if updates.get("send_status") == "failed":
+            from app.automatic_repair_store import enqueue_in_transaction
+            enqueue_in_transaction(db, "reply_attempts", attempt_id)
 
     def record_reply_feedback(
         self,
@@ -24090,9 +24099,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         detail: str,
     ) -> None:
         with self._immediate_write_transaction() as db:
-            insert_error_action(db, {"conversation_id": conversation_id,
-                                     "message_id": message_id, "kind": kind,
-                                     "detail": detail})
+            result = insert_error_action(db, {"conversation_id": conversation_id,
+                                              "message_id": message_id, "kind": kind,
+                                              "detail": detail})
+            from app.automatic_repair_store import enqueue_in_transaction
+            enqueue_in_transaction(db, "errors", int(result.lastrowid))
 
     def list_errors(
         self, limit: int | None = None, offset: int = 0

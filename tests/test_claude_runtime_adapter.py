@@ -135,6 +135,7 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
     assert set(mcp_config["mcpServers"]) == {"agent_cli"}
     assert mcp_config["mcpServers"]["agent_cli"] == {
         "type": "stdio", "command": sys.executable,
+        "env": {"PYTHONPATH": str(Path(__file__).resolve().parents[1])},
         "args": [
             "-m", "app.agent_cli", "--role", "consumer",
             "--task-id", "17", "--db", "/tmp/role.sqlite3",
@@ -1310,3 +1311,29 @@ def test_service_mcp_servers_are_connected_directly(adapter, route, tmp_path, mo
         "headers": {"Authorization": "Bearer keyed-secret"},
     }
     assert servers["local"] == {"type": "stdio", "command": "/opt/local-mcp", "args": ["--serve"]}
+
+
+def test_role_tool_server_starts_from_isolated_task_directory(adapter, route, tmp_path):
+    import subprocess
+    import os
+
+    command = adapter.build_command(
+        route=route, session_id=None, max_turns=5,
+        policy=ClaudeCommandPolicy.consumer(
+            task_id=17, db_path=str(tmp_path / "not-opened.sqlite3"),
+            execution_generation="generation",
+        ),
+    )
+    server = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]["agent_cli"]
+    environment = dict(os.environ)
+    environment.pop("PYTHONPATH", None)
+    environment.update(server.get("env", {}))
+    task_directory = tmp_path / "isolated-task"
+    task_directory.mkdir()
+    # --help imports the real declared module, then exits before DB/MCP work.
+    result = subprocess.run(
+        [server["command"], "-m", "app.agent_cli", "--help"],
+        cwd=task_directory, env=environment, capture_output=True, text=True, timeout=30,
+    )
+    assert result.returncode == 0, result.stderr
+    assert "--task-id" in result.stdout

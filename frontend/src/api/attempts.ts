@@ -1,3 +1,4 @@
+import type { AutomaticRepairStatus } from "../components/repair/AutomaticRepairCard";
 import { request, type ConsoleResource } from "./console";
 
 export interface AttemptMetadata {
@@ -142,6 +143,7 @@ export interface AttemptSystemExecution {
 }
 
 export interface AttemptDetail {
+  repair?: AutomaticRepairStatus | null;
   id: number;
   title: string;
   type: string;

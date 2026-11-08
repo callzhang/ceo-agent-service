@@ -24,8 +24,9 @@ duration to the original DWS download. The work directory contains
    <python_executable> -m app.minutes_auto_recovery upload --work-dir <original-work-dir> --upload-url <native-upload-url>
    ```
 
-   This streams the original recording as multipart `file` and atomically saves
-   the server's actual job ID before returning. Audio bytes never go through the
+   This streams the original recording as multipart `file`, records the actual
+   server job ID against the frozen source metadata in the service cursor, then
+   saves the local checkpoint before returning. Audio bytes never go through the
    model. Poll that ID using native `ai_services.get_audio_transcription` calls,
    so the service can reconstruct the actual tool response from this native turn.
 4. Return only a concise supplementary Markdown summary in the recording's
@@ -66,3 +67,22 @@ upload job ID may require repeating that pure transcription submission; this is
 not an exactly-once upload guarantee. No business operation is replayed.
 
 An archive I/O interruption resumes the same completed native turn and its exact summary; it does not spend a new Agent attempt or generate a different supplement. Only an invalid/missing Agent result requires a new turn.
+
+ASR receipts are read directly from the completed turn's native runtime references with the existing unified trajectory reader. UI tool-event rows are not required; a zero-length superseded route does not hide the following valid native result.
+
+## Durable completion after interruption
+
+The scanner cursor retains the frozen source metadata and actual upload job
+identities. Before transmitting bytes, the helper checks that its metadata still
+matches that source; it persists the real HTTP response before exposing the job
+ID. The archive coordinator accepts only a completed native ASR call for one of
+those recorded upload jobs. A model-written result file is never completion
+evidence. If the source has multiple recorded uploads, the latest one with a
+completed native result is used; unrelated jobs are not archive evidence.
+
+A completed ASR/summary is finalized before evaluating the budget for new Agent
+turns. If temporary audio was already cleaned, the coordinator downloads the
+original source again read-only and the existing publisher checks it against the
+frozen audio hash. This creates no new ASR or Agent generation. It does not reset
+the budget or alter the old native runs. Reacquired temporary files are cleaned
+after the actual archive publication and readback.

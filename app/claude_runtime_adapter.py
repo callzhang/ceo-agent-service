@@ -499,6 +499,7 @@ class ClaudeRuntimeAdapter:
         if policy.role:
             transports = {"agent_cli": {
                 "type": "stdio", "command": sys.executable,
+                "env": {"PYTHONPATH": str(Path(__file__).resolve().parents[1])},
                 "args": [
                     "-m", "app.agent_cli", "--role", policy.role,
                     "--task-id", str(policy.task_id), "--db", policy.db_path,

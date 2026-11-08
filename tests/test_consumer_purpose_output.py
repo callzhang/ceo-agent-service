@@ -105,3 +105,36 @@ def test_retry_wire_schema_does_not_offer_a_technical_error_state():
         assert list(validator.iter_errors(invalid))
         with pytest.raises(ValidationError):
             model.model_validate(invalid)
+
+
+def test_action_schema_reuses_fixed_models_without_sharing_mutable_output(monkeypatch):
+    from app import consumer_purpose as purpose
+
+    class CurrentContent(purpose.Content):
+        pass
+
+    original_contracts = purpose.action_contracts
+    builds = []
+    original_schema = CurrentContent.model_json_schema
+
+    def generated(cls, **kwargs):
+        builds.append(cls)
+        return original_schema(**kwargs)
+
+    def contracts(name):
+        return {action: (target, CurrentContent if payload is purpose.Content else payload, capability, operation)
+                for action, (target, payload, capability, operation) in original_contracts(name).items()}
+
+    monkeypatch.setattr(CurrentContent, 'model_json_schema', classmethod(generated))
+    monkeypatch.setattr(purpose, 'action_contracts', contracts)
+    model = purpose_output_model('general')
+    first = model.model_json_schema()
+    reply = next(b for b in first['allOf'][0]['oneOf']
+                 if b['properties']['action']['const'] == 'reply')
+    reply['properties']['payload']['properties']['content']['minLength'] = 99
+    for _ in range(4):
+        current = model.model_json_schema()
+        branch = next(b for b in current['allOf'][0]['oneOf']
+                      if b['properties']['action']['const'] == 'reply')
+        assert branch['properties']['payload']['properties']['content']['minLength'] == 1
+    assert builds == [CurrentContent]

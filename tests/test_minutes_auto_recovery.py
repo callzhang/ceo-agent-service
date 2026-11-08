@@ -38,6 +38,7 @@ class Workbench:
         self.turns = []
         self.attachments = []
         self.status = "completed"
+        self.recorded = False
 
     def create_task(self, **kw):
         self.tasks.append(kw)
@@ -55,9 +56,16 @@ class Workbench:
             error_code="test failure",
         )
         self.turns.append(turn)
+        self.recorded = False
         return turn
 
     def get_turn(self, turn_id):
+        if not self.recorded:
+            from app.minutes_auto_recovery import record_upload
+
+            metadata = json.loads(self.attachments[-1]["content"])
+            record_upload(metadata, {"job_id": "native-job"})
+            self.recorded = True
         return self.turns[-1]
 
 
@@ -90,12 +98,14 @@ def prepare(directory, task_uuid, dws):
 
 
 def asr(*args):
-    return {
+    data = {
         "status": "done",
         "model": "test-asr",
         "text": "actual transcript",
         "segments": [{"start": 0, "end": 5, "text": "actual transcript"}],
     }
+
+    return {"job_id": "native-job", "result": data}
 
 
 def test_automatic_pipeline_archives_and_cleans_only_after_native_completion(
@@ -106,7 +116,7 @@ def test_automatic_pipeline_archives_and_cleans_only_after_native_completion(
     store, archive, path, result = setup(tmp_path)
     wb = Workbench()
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    monkeypatch.setattr(auto, "completed_asr_receipt", asr)
     recovered = auto.recover_summaries(
         store,
         object(),
@@ -145,7 +155,7 @@ def test_pending_is_not_success_and_next_pass_reuses_same_turn(tmp_path, monkeyp
     wb = Workbench()
     wb.status = "running"
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    monkeypatch.setattr(auto, "completed_asr_receipt", asr)
     first = auto.recover_summaries(
         store,
         object(),
@@ -180,7 +190,7 @@ def test_failed_or_self_reported_completion_does_not_archive(
     wb = Workbench()
     wb.status = status
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", lambda *args: receipt)
+    monkeypatch.setattr(auto, "completed_asr_receipt", lambda *args: receipt)
     answer = auto.recover_summaries(
         store,
         object(),
@@ -285,7 +295,7 @@ def test_concurrent_recovery_resumes_one_native_turn_and_both_report_actual_arch
     store, archive, path, result = setup(tmp_path)
     wb = Workbench()
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    monkeypatch.setattr(auto, "completed_asr_receipt", asr)
 
     def run():
         return auto.recover_summaries(
@@ -313,7 +323,7 @@ def test_agent_completed_without_asr_can_resume_in_new_native_turn(
     store, archive, path, result = setup(tmp_path)
     wb = Workbench()
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", lambda *args: None)
+    monkeypatch.setattr(auto, "completed_asr_receipt", lambda *args: None)
     first = auto.recover_summaries(
         store,
         object(),
@@ -324,7 +334,11 @@ def test_agent_completed_without_asr_can_resume_in_new_native_turn(
         temp_root=tmp_path,
     )
     assert first.failed == 1
-    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    monkeypatch.setattr(
+        auto,
+        "completed_asr_receipt",
+        lambda *args: asr() if len(wb.turns) > 1 else None,
+    )
     second = auto.recover_summaries(
         store,
         object(),
@@ -346,7 +360,7 @@ def test_recovery_budget_is_persisted_and_expired_audio_is_cleaned(
     wb = Workbench()
     wb.status = "failed"
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    monkeypatch.setattr(auto, "completed_asr_receipt", asr)
     for _ in range(auto.MAX_AUTOMATIC_ATTEMPTS + 1):
         actual = auto.recover_summaries(
             store,
@@ -370,7 +384,7 @@ def test_archive_publication_error_retries_same_completed_turn(tmp_path, monkeyp
     store, archive, path, result = setup(tmp_path)
     wb = Workbench()
     monkeypatch.setattr(auto, "prepare_audio", prepare)
-    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    monkeypatch.setattr(auto, "completed_asr_receipt", asr)
     publisher = auto.recover_archive
 
     def interrupted(*args, **kwargs):
@@ -398,3 +412,127 @@ def test_archive_publication_error_retries_same_completed_turn(tmp_path, monkeyp
         temp_root=tmp_path,
     )
     assert second.failed == 0 and len(wb.turns) == 1
+
+
+def test_finished_native_artifact_finalizes_before_budget_check_after_cleanup(
+    tmp_path, monkeypatch
+):
+    from app import minutes_auto_recovery as auto
+
+    store, archive, path, result = setup(tmp_path)
+    wb = Workbench()
+    monkeypatch.setattr(auto, "prepare_audio", prepare)
+    monkeypatch.setattr(auto, "completed_asr_receipt", lambda *args: None)
+    for _ in range(auto.MAX_AUTOMATIC_ATTEMPTS):
+        actual = auto.recover_summaries(
+            store,
+            object(),
+            archive_dir=archive,
+            service_root=tmp_path,
+            result=result,
+            workbench=wb,
+            temp_root=tmp_path,
+        )
+        assert actual.failed == 1
+    assert len(wb.turns) == auto.MAX_AUTOMATIC_ATTEMPTS
+    monkeypatch.setattr(auto, "completed_asr_receipt", asr)
+    actual = auto.recover_summaries(
+        store,
+        object(),
+        archive_dir=archive,
+        service_root=tmp_path,
+        result=result,
+        workbench=wb,
+        temp_root=tmp_path,
+    )
+    assert actual.failed == 0 and actual.synced == 1
+    assert len(wb.turns) == auto.MAX_AUTOMATIC_ATTEMPTS
+    assert "Supplementary summary" in path.read_text()
+
+    cursor = json.loads(store.get_daily_scan_state(MINUTES_SYNC_SCANNER)["cursor_json"])
+    assert not Path(cursor["summary_recoveries"]["source"]["work_dir"]).exists()
+
+
+def test_native_job_must_match_the_sources_actual_upload_receipt(tmp_path, monkeypatch):
+    from app import minutes_auto_recovery as auto
+
+    store, archive, path, result = setup(tmp_path)
+    wb = Workbench()
+    monkeypatch.setattr(auto, "prepare_audio", prepare)
+    wrong = asr()
+    wrong["job_id"] = "another-source-job"
+    monkeypatch.setattr(auto, "completed_asr_receipt", lambda *args: wrong)
+    answer = auto.recover_summaries(
+        store,
+        object(),
+        archive_dir=archive,
+        service_root=tmp_path,
+        result=result,
+        workbench=wb,
+        temp_root=tmp_path,
+    )
+    assert answer.failed == 1 and "Supplementary summary" not in path.read_text()
+
+
+def test_upload_persists_server_job_before_local_checkpoint(tmp_path, monkeypatch):
+    from app import minutes_auto_recovery as auto
+
+    store, archive, path, result = setup(tmp_path)
+    directory = tmp_path / "upload"
+    directory.mkdir()
+    prepare(directory, "source", None)
+    metadata = json.loads((directory / "metadata.json").read_text())
+    metadata.update(database_path=str(store.path), work_dir=str(directory))
+    (directory / "metadata.json").write_text(json.dumps(metadata))
+    cursor = json.loads(store.get_daily_scan_state(MINUTES_SYNC_SCANNER)["cursor_json"])
+    cursor["summary_recoveries"] = {"source": {"source_metadata": metadata}}
+    store.set_daily_scan_state(
+        MINUTES_SYNC_SCANNER,
+        cursor_json=json.dumps(cursor),
+        last_success_at="old",
+        last_error="",
+    )
+    calls = []
+
+    class Client:
+        def __init__(self, **kwargs):
+            pass
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            pass
+
+        def post(self, url, *, files):
+            calls.append(url)
+            assert files["file"][1].read() == b"actual test audio"
+            return SimpleNamespace(
+                raise_for_status=lambda: None,
+                json=lambda: {"job_id": "actual-server-job"},
+            )
+
+    monkeypatch.setattr(auto.httpx, "Client", Client)
+    original_write = auto._write
+
+    def write(path, value):
+        if path.name == "upload-result.json":
+            state = json.loads(
+                store.get_daily_scan_state(MINUTES_SYNC_SCANNER)["cursor_json"]
+            )
+            assert state["summary_recoveries"]["source"]["upload_job_ids"] == [
+                "actual-server-job"
+            ]
+        return original_write(path, value)
+
+    monkeypatch.setattr(auto, "_write", write)
+    assert (
+        auto.upload_audio(directory, "https://configured-upload.example")["job_id"]
+        == "actual-server-job"
+    )
+    assert len(calls) == 1
+    metadata["audio_duration_seconds"] = 11
+    (directory / "metadata.json").write_text(json.dumps(metadata))
+    with pytest.raises(ValueError, match="source metadata changed"):
+        auto.upload_audio(directory, "https://configured-upload.example")
+    assert len(calls) == 1

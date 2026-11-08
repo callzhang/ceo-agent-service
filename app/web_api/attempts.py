@@ -1387,7 +1387,9 @@ def build_attempt_detail(
     if callable(list_commands):
         for record in list_commands(attempt.conversation_id, attempt.trigger_message_id):
             metadata.append({"label": "操作记录", "value": _console_command_display(record)})
+    from app.automatic_repair import repair_presentation
     return 200, {
+        "repair": repair_presentation(store, "reply_attempts", historical_attempt.id),
         "id": attempt.id,
         "title": normalize_display_value(attempt.conversation_title),
         "type": normalize_display_value(attempt.action),

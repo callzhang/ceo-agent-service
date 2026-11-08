@@ -164,3 +164,17 @@ def test_workbench_without_files_keeps_existing_route_requirements(tmp_path: Pat
     )
     assert not routed.calls[0].get("required_capabilities")
     assert routed.calls[0]["prompt"] == "Hello"
+
+
+def test_workbench_does_not_override_requested_output_format(tmp_path: Path):
+    routed = _FakeRoutedExecution()
+    runtime = ServiceWorkbenchRuntime(
+        workspace=tmp_path, routed_execution_factory=lambda **kwargs: routed,
+    )
+    request = RuntimeRequest(turn_id='2', conversation_id='1', workspace=tmp_path,
+                             prompt='Return ONLY a JSON object with outcome and summary.')
+    runtime.wait(runtime.start(request, on_event=lambda event: None))
+    instructions = routed.calls[0]['command_factory'].developer_instructions
+    assert 'ordinary text' not in instructions
+    assert 'requested output format' in instructions
+    assert routed.calls[0]['prompt'] == request.prompt

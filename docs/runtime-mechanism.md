@@ -2187,6 +2187,60 @@ DWS 文字发送、原生引用回复和文件发送先调用同一命令的原�
 
 `sync_minutes_once_command` 在普通同步后自动调用 `recover_summaries`。摘要首次类型化失败后只重读一次，第二次使用 300 秒读取超时；通用网络重试独立维持原预算。第二次仍为生成失败或可重试读取故障时创建现有 Workbench 任务，由主服务的 Workbench scheduler 认领；未知结构、认证和权限错误仍是真实失败，不扩大成转写权限。
 
-自动 Agent 的工作文件是本次原始录音及其真实下载回执，操作说明位于 `docs/minutes-asr-recovery.md`。实际 upload job ID 在返回前保存；下一轮优先复用 job。Agent 只返回补充摘要，服务通过 `WorkbenchStore.events_after` 从实际原生轨迹核对 ASR 调用和 job、完成文本与分段，再用原正式归档器发布。不能用 Agent 声明完成或自写结果文件替代原生工具结果。后台 Turn 尚未完成时服务命令保持未完成；下次同步复用其持久化身份。失败 Turn 使用现有有界自动尝试预算，显式停止不自动重启。
+自动 Agent 的工作文件是本次原始录音及其真实下载回执，操作说明位于 `docs/minutes-asr-recovery.md`。实际 upload job ID 在返回前保存；下一轮优先复用 job。Agent 只返回补充摘要，服务按真实 Workbench turn 的 runtime_attempt 引用直接从统一原生轨迹读取器核对 ASR 调用和 job、完成文本与分段，再用原正式归档器发布。不能用 Agent 声明完成或自写结果文件替代原生工具结果。后台 Turn 尚未完成时服务命令保持未完成；下次同步复用其持久化身份。失败 Turn 使用现有有界自动尝试预算，显式停止不自动重启。
 
 源 cursor 的 `summary_recoveries` 记录原生 task/turn 引用及临时目录。普通 sync 保留扩展元数据；等待 Agent 不持有同步锁，正式发布使用同一锁。已归档源后续同步不再提交，完成后删除临时音频和检查点，保留原生处理历史。文件任务沿用 executor 的附件验证，并向统一路由声明既有本地运行能力；无能力的路由不选中，无运行路线特例。
+
+### 发布测试的空数据库准备
+
+测试夹具复制的是由真实构造器建立并校验的完整空库。复制成功后，夹具向现有 Store 初始化状态缓存登记该路径，让真实构造器按“已初始化库”进入原有校验；此前每份完整副本仍被当成冷库，反复执行 WAL/锁和初始化准备。实际构造器与生产代码不变，版本、完整结构、外键/约束及业务测试仍执行；新回归验证独立副本隔离、坏版本和额外 DDL 继续拒绝。相同 80 份副本操作测得约 5.95–6.03 秒降至 3.90–4.55 秒；正式 gate 仍保留全部清单、600 秒和 2 GB 上限，不删除或跳过测试。
+
+自动 ASR 的 source metadata 与实际 upload job 身份在原 cursor 中持久保存；上传器在发出字节前核对冻结来源，收到真实响应后先登记到服务，再输出 job ID。归档核验原生调用的 job 必须属于该来源已登记的上传。已有完成产物优先结算，不受新生成预算耗尽阻挡；临时原音频已清理时只读重取，并按冻结 hash 验证后发布，随后再次清理。不会重置预算、修改原运行或新增 ASR 以制造成功。
+
+### Automatic error-to-PR continuation
+
+`record_error`, failed plain/orchestrated Attempt persistence and failed Attempt updates enqueue an idempotent `automatic_repair:<source>:<id>` service State record. No historical backfill runs. The normal Workbench scheduler owns an independent coordination thread that advances durable records every ten seconds without blocking ordinary turn dispatch; one coordinator mutex serializes source association and continuation. Workbench parent plus association commit together and deterministic turn request IDs recover a turn created before its checkpoint. Workbench owns task lifecycle, route selection, deployment drain, CLI approval and native trajectory.
+
+The repair Agent reads the exact source/trajectory, uses an isolated development worktree, writes/runs regression tests and submits a PR. The coordinator reads actual GitHub PR metadata for the stable branch after each terminal turn. Absent PR delivery resumes the same conversation, bounded by the shared four-attempt limit. An explicit stop is not resumed; a concrete non-code or blocked diagnosis is displayed. The repair record's status is separate from native task status and from the original error. PR creation enters ongoing CI/review observation; it never resolves/replays a business action or implies merge/deploy acceptance. Attempt and Service error APIs project both links; their card polls read-only status every five seconds while active. Detailed procedure: [automatic-error-repair.md](automatic-error-repair.md).
+
+Attached open repair PRs now remain under sixty-second GitHub observation after `pr_created` and `checks_passed`. Current-head CheckRun/status failures, unresolved review threads and unhandled review bodies automatically create native turns in the same conversation/session and existing PR. Paginated evidence is head-checked; pending/absent checks wait. Durable feedback intent plus deterministic request IDs recover a created turn across crashes even if GitHub changes. Fingerprint-specific four-attempt counts survive A→B→A feedback changes; exhausted feedback stays visible and watches for new evidence. Green requires completed passing checks and resolved/handled review feedback; later feedback resumes observation. Closed PRs end monitoring. Original error state, Audit and business actions are unchanged.
+
+PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
+
+### Declared MCP module launch and result error propagation
+
+The existing role `agent_cli` stdio configuration supplies the service source
+root as the subprocess's `PYTHONPATH`. Launching the Consumer in its task working
+directory no longer makes `python -m app.agent_cli` exit before the MCP handshake.
+This only fixes the already-declared server startup; it adds no tools or
+credentials and does not change the native CLI's home or its task sandbox.
+
+Native terminal validation completes before business JSON parsing. The common
+parser's `ResultParseError` reaches the existing result-failure handler directly;
+its safe field diagnostics and `codex_result_invalid` classification feed the
+next role attempt's existing correction prompt. Invalid fields remain rejected,
+transport/session failures retain their own handler, and the shared four-attempt
+ceiling is unchanged. No Audit policy or business replay is introduced.
+
+### Repeated action schema construction
+
+A release-gate profile of 205 representative tests showed 20,596 repeated JSON
+schema builds inside the fixed Consumer action declarations. Their immutable
+model schema is now generated once per model and copied for each use; this does
+not cache business validation or skip database/schema checks. The full general,
+OA and both native output encodings serialize identically before/after. A
+regression checks both build reuse and output independence. Sixty repeated
+public schema calls measured 0.776–0.818 seconds before and 0.337–0.354 seconds
+after; the full release gate must still pass its original 600-second/2-GB limits
+with every existing selected test retained.
+
+### Attempt detail refresh after recovery
+
+An already-open Attempt page reads the current detail every ten seconds while
+visible, including terminal failures that may be recovered through another
+Console client. A pending read finishes before the next automatic read; leaving
+the page aborts it and stops the timer. Action readbacks supersede older reads,
+so a late poll cannot replace the newer result. Unsaved feedback stays in the
+form. Refresh is read-only and never retries a Task or changes an Audit result.
+The separately loaded provider Trigger is reread only when its source fields
+change, not on every status snapshot.

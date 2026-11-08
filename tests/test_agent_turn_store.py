@@ -2265,3 +2265,63 @@ def test_audit_revision_does_not_resume_noncontinuable_prior_session(tmp_path):
     ).run
 
     assert audit_1.codex_session_id == ""
+
+
+def test_typed_consumer_failure_keeps_field_feedback_for_existing_retry(tmp_path, monkeypatch):
+    from app.agent_result import ResultParseError
+    from app.agent_turn_runner import result_correction_prompt
+    from app import native_trajectory
+
+    store = AutoReplyStore(tmp_path / "turns.sqlite3")
+    task = _task(store)
+    route = _claude_route()
+    config = load_runtime_config({
+        "CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+        **claude_api_env("test-secret", model=route.model),
+    })
+    run = _claim_consumer(store, task).run
+    # Mirrors the real no-action/plan target mismatch: the output is JSON,
+    # but fields belonging to an action were placed in an empty target.
+    value = _consumer_wire_result(action="no_action", summary="No reply required.")
+    value["target"] = {"conversation_id": "private-source-id"}
+    sid = "result-correction-session"
+    raw = json.dumps(value)
+    events = [
+        {"type": "system", "subtype": "init", "session_id": sid},
+        {"type": "assistant", "session_id": sid,
+         "message": {"role": "assistant", "content": [{"type": "text", "text": raw}]}},
+        {"type": "result", "subtype": "success", "is_error": False,
+         "session_id": sid, "result": raw},
+    ]
+    native = tmp_path / "native.jsonl"
+    native.write_text(json.dumps(events[1]) + "\n")
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *a, **k: native)
+
+    def executor(command, *, on_stdout_line, **kwargs):
+        for event in events:
+            on_stdout_line(json.dumps(event))
+        return ProcessRunResult(0, "\n".join(map(json.dumps, events)), "")
+
+    process = AgentTurnProcess(
+        store=store, task=task, workspace=tmp_path, owner="consumer", executor=executor,
+        runtime_config=config, forced_runtime_route=route,
+        claude_adapter=ClaudeRuntimeAdapter(workspace=tmp_path, config=config,
+                                          claude_bin="claude-test", service_mcp_servers=()),
+    )
+    with pytest.raises(ResultParseError):
+        process.execute(run=run, prompt="Evaluate current source.", session_id=None,
+                        developer_instructions="Use the current result schema.",
+                        configure_command=lambda command: None,
+                        parse_result=parse_consumer_agent_wire_result)
+    failed = store.get_agent_run(run.id, load_events=False)
+    error = json.loads(failed.structured_error_json)
+    assert error["code"] == "codex_result_invalid"
+    assert error["stage"] == "result"
+    assert "conversation_id" in error["detail"]
+    assert "private-source-id" not in error["detail"]
+    correction = result_correction_prompt(store, task, role=AgentRole.CONSUMER, proposal_revision=0)
+    assert "Result Correction" in correction and "conversation_id" in correction
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.failure_class == "result"
+    assert attempt.failure_code == "codex_result_invalid"
+    assert attempt.session_id == sid and attempt.transcript_end > 0
