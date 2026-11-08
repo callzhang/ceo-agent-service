@@ -8,7 +8,8 @@ from threading import Barrier
 import pytest
 
 from app import current_schema_manifest as schema
-from app.store import AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AutoReplyStore
 
 
 @pytest.fixture

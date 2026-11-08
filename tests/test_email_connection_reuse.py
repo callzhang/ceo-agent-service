@@ -12,7 +12,7 @@ import pytest
 from app.email_store import EmailStore
 from app.state_definitions import state_projection
 from app.state_storage import upsert_state
-from app.store import _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
 from app.task8_storage import register_task8_functions
 
 

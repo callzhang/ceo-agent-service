@@ -1,0 +1,25 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": [
+        "pr_created",
+        "no_code_change",
+        "blocked"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary"
+  ],
+  "title": "RepairDiagnosis",
+  "type": "object"
+}

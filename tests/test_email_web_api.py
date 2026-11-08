@@ -59,7 +59,8 @@ from app.state_storage import insert_state
 from app.configs_storage import insert_config
 
 from app.email_task_adapter import email_conversation_id
-from app.store import AgentRole, AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AgentRole, AutoReplyStore
 from app.agent_contracts import ConsumerAgentResult
 from app.web_api.email import _project_legacy_model_inventory, register_email_routes
 from tests.support.candidate_review import complete_synthetic_approval

@@ -36,8 +36,7 @@ from app.reviewed_candidate_store import (
 )
 from app.sqlite_schema_lock import schema_initialize_lock
 from app.sqlite_connections import (
-    _IDLE_CONNECTIONS, _database_file_identity, _take_idle_connection,
-    _close_idle_connections, _return_idle_connection,
+    _database_file_identity, _return_idle_connection, _take_idle_connection,
 )
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS, MAX_AUTOMATIC_RETRIES
 from app.email_canonical_storage import (

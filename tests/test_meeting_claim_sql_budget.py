@@ -2,7 +2,8 @@
 
 from app.action_storage import task_delivery_projection
 from app.current_schema_manifest import schema_objects
-from app.store import AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AutoReplyStore
 from app.task_entity_storage import update_task_cas
 
 

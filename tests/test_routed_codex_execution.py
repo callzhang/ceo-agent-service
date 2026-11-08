@@ -5,6 +5,7 @@ import os
 import threading
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime, timedelta
+from pathlib import Path
 
 import pytest
 
@@ -82,7 +83,7 @@ class FakeClaudeAdapter:
     def build_env(self, route):
         return {"ROUTE": route.name}
 
-    def new_event_normalizer(self, *, expected_session_id=None):
+    def new_event_normalizer(self, *, expected_session_id=None, json_schema=None):
         return FakeClaudeNormalizer()
 
     def parse_final_result(self, *, normalizer, proof, parser):
@@ -2661,3 +2662,85 @@ def test_claude_attempt_range_uses_native_lines_not_codex_or_stdout(tmp_path, mo
     attempt = store.list_runtime_operation_attempts("structured", key)[-1]
     assert attempt.transcript_start == (20 if resumed else 0)
     assert attempt.transcript_end == 22
+
+
+def test_claude_declared_schema_reaches_native_cli_and_strict_parser(
+    tmp_path, monkeypatch
+):
+    from app.claude_runtime_adapter import ClaudeRuntimeAdapter
+
+    monkeypatch.setattr(Path, "home", classmethod(lambda cls: tmp_path / "home"))
+    store = AutoReplyStore(tmp_path / "claude-schema.sqlite3")
+    key = seed_structured_parent(store, 41)
+    config = _friday_config(monkeypatch, "claude_oauth")
+    adapter = ClaudeRuntimeAdapter(
+        workspace=tmp_path, config=config, claude_bin="claude-test"
+    )
+    schema = {
+        "type": "object",
+        "properties": {"value": {"type": "integer"}},
+        "required": ["value"],
+        "additionalProperties": False,
+    }
+    path = tmp_path / "native.schema.json"
+    path.write_text(json.dumps(schema))
+    calls = []
+
+    def executor(command, **kwargs):
+        calls.append(command)
+        assert json.loads(command[command.index("--json-schema") + 1]) == schema
+        assert "Output JSON Schema" not in kwargs["prompt"]
+        assert "native_schema_marker" not in kwargs["prompt"]
+        return ProcessRunResult(
+            0,
+            "\n".join(
+                map(
+                    json.dumps,
+                    [
+                        {
+                            "type": "system",
+                            "subtype": "init",
+                            "session_id": "claude-session",
+                        },
+                        {
+                            "type": "result",
+                            "subtype": "success",
+                            "is_error": False,
+                            "session_id": "claude-session",
+                            "result": "Human-readable explanation",
+                            "structured_output": {"value": 42},
+                        },
+                    ],
+                )
+            ),
+            "",
+        )
+
+    routed = RoutedCodexExecution(
+        store=store,
+        config=config,
+        router=AgentRuntimeRouter(
+            routes=config.routes,
+            store=store,
+            snapshots=_friday_snapshots(config),
+            now=lambda: NOW,
+        ),
+        adapter=FakeAdapter(),
+        claude_adapter=adapter,
+        executor=executor,
+        now=lambda: NOW,
+    )
+    result = routed.execute(
+        workload_kind="structured",
+        workload_key=key,
+        prompt="produce value",
+        command_factory=CodexCommandFactory.standard(
+            developer_instructions="rules",
+            output_schema_path=path,
+            use_output_schema=True,
+        ),
+        parser=lambda raw: json.loads(parse_agent_text_result(raw))["value"],
+        result_codec=INT_CODEC,
+    )
+    assert result.value == 42
+    assert len(calls) == 1

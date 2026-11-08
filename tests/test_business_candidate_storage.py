@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from app import store as store_module
+from app.sqlite_connections import _close_idle_connections
 from app.business_candidate_definitions import CANDIDATE_FIELDS, candidate_projection
 from app.business_candidate_storage import (insert_business_candidate, update_business_candidate,
                                             delete_business_candidate)
@@ -21,7 +21,7 @@ SOURCE_METADATA = json.loads((Path(__file__).parents[1] / 'docs/superpowers/spec
 def source(request, tmp_path):
     path = tmp_path / 'current.sqlite'
     AutoReplyStore(path)
-    store_module._close_idle_connections()
+    _close_idle_connections()
     db = sqlite3.connect(path)
     db.execute('pragma foreign_keys=off')
     db.execute('create table test_transaction_marker(id integer primary key)')

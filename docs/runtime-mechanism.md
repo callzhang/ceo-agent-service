@@ -2207,6 +2207,8 @@ Attached open repair PRs now remain under sixty-second GitHub observation after 
 
 PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
 
+Automatic repair declares a durable per-turn native result contract (initial diagnosis v1 / PR correction v3), committed atomically with each Workbench turn in existing State. RuntimeRequest restores that declaration; fixed repository schemas, typed parsing, local/structured capability requirements and existing same-session validation correction apply uniformly through native CLI adapters. Commentary alone cannot complete a typed repair turn. Freeform turns retain their declared text contract; no task kind or runtime-route branch is added. Initial and PR correction intents both freeze the original prompt/request ID/contract before creation, preserving recovery when producer code changes. Task bodies do not duplicate the CLI-supplied schema.
+
 ### Declared MCP module launch and result error propagation
 
 The existing role `agent_cli` stdio configuration supplies the service source
@@ -2244,3 +2246,19 @@ so a late poll cannot replace the newer result. Unsaved feedback stays in the
 form. Refresh is read-only and never retries a Task or changes an Audit result.
 The separately loaded provider Trigger is reread only when its source fields
 change, not on every status snapshot.
+
+### SQLite connection-pool helper ownership
+
+Connection-pool helpers are imported from their defining module,
+`app.sqlite_connections`. Store itself imports only helpers it calls; tests,
+fixtures and validation tools no longer depend on unused facade re-exports.
+The existing Ruff check reproduces the former two F401 failures and passes
+after the import repair. Pool sharing and test cleanup still use the same
+thread-local objects and functions; focused pool/configuration/Email regressions
+pass without changing database behavior, assertions or task state.
+
+### Native Claude structured output
+
+A command factory's output-schema declaration reaches Claude CLI through its native inline `--json-schema` argument, using the same default schema as Codex when no explicit path is supplied. The schema is no longer duplicated inside Claude task text. When a schema is declared, successful terminal evidence requires `structured_output`; the adapter serializes that native value for the existing strict caller parser. Ordinary text turns keep their text result. This changes transport/result wiring, not Audit standards, tool permissions, delivery or receipt rules. The full real CLI probe includes the native StructuredOutput tool and its matching result, with no open tool items at completion.
+
+The formal deploy gate uses native pytest `tmp_path_retention_policy=failed`: passing test temporary directories are removed at fixture teardown, while failed test evidence remains available. This avoids repeatedly enumerating directories from already-passed cases as the suite grows. The fixed test manifest, assertions, strict schema validation, 600-second/2-GB process limits, gate-result rule, quiet wait and deployment mutex are unchanged.

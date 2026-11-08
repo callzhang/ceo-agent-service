@@ -110,7 +110,7 @@ def pytest_collection_modifyitems(config, items):
 def close_idle_store_connections_after_each_test():
     """Every test has its own database file; do not keep a connection to each one."""
     yield
-    from app.store import _close_idle_connections
+    from app.sqlite_connections import _close_idle_connections
 
     _close_idle_connections()
 

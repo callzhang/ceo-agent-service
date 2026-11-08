@@ -1,0 +1,40 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": [
+        "pr_updated",
+        "blocked"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "addressed_review_ids": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Addressed Review Ids",
+      "type": "array"
+    },
+    "remaining_work": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Remaining Work",
+      "type": "array"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary",
+    "addressed_review_ids",
+    "remaining_work"
+  ],
+  "title": "PRRepairResult",
+  "type": "object"
+}

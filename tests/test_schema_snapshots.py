@@ -27,6 +27,8 @@ SCHEMA_DIR = Path(__file__).resolve().parent.parent / "app" / "schemas"
 
 # Snapshots that equal their model today. Keep them that way.
 PINNED: dict[str, tuple[str, str]] = {
+    "automatic_repair.diagnosis.v1.schema.json": ("app.automatic_repair_contracts", "RepairDiagnosis"),
+    "automatic_repair.pr.v3.schema.json": ("app.automatic_repair_contracts", "PRRepairResult"),
     "audit_agent_result.schema.json": ("app.agent_contracts", "AuditAgentResult"),
     "consumer_agent_result.schema.json": ("app.consumer_agent", "ConsumerAgentResult"),
     "meeting_alignment_decision.schema.json": (
