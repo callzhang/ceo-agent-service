@@ -1,3 +1,4 @@
+import { AutomaticRepairCard } from "../components/repair/AutomaticRepairCard";
 import { useEffect, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -606,6 +607,7 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
     {state === "loading" && !detail && <section className="console-card page-state" role="status">正在加载…</section>}
     {state === "error" && <section className="console-card page-state page-state-error" role="alert">{message}</section>}
     {detail && <>
+      <AutomaticRepairCard repair={detail.repair} />
       <section className="console-card compact-card attempt-conversation-banner" aria-label="主题与操作">
         <div className="attempt-conversation-left" data-testid="attempt-conversation-summary">
           <div className="attempt-conversation-title"><span>{detail.conversation.label}：</span><strong>{detail.conversation.title}</strong></div>

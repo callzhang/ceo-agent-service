@@ -1,3 +1,4 @@
+import { AutomaticRepairCard, type AutomaticRepairStatus } from "../components/repair/AutomaticRepairCard";
 import { useEffect, useState } from "react";
 import { Link, useParams } from "react-router-dom";
 
@@ -37,6 +38,7 @@ function RuntimeErrorDetailContent({ errorId }: { errorId: string }) {
 
   return (
     <ConsolePageLayout title="Service error" actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/attention">返回 Attention</Link></>}>
+      <AutomaticRepairCard repair={item?.repair as AutomaticRepairStatus | null | undefined} />
       <section className="console-card runtime-error-detail">
         {error && <div className="page-state page-state-error" role="alert">{error}</div>}
         {!item && !error && <div className="page-state" role="status">正在加载…</div>}

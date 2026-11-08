@@ -11,6 +11,7 @@ import os
 import re
 import stat
 import threading
+import time
 from collections.abc import Callable, Sequence
 from dataclasses import asdict
 from dataclasses import dataclass
@@ -228,16 +229,21 @@ class EventBroker:
 
 class WorkbenchScheduler:
     def __init__(
-        self, executor: WorkbenchExecutor, *, interval_seconds: float = 1.0
+        self, executor: WorkbenchExecutor, *, interval_seconds: float = 1.0,
+        before_run: Callable[[], None] | None = None,
     ) -> None:
         if interval_seconds < 0.01 or interval_seconds > 60:
             raise ValueError("scheduler interval must be between 0.01 and 60 seconds")
         self._executor = executor
+        self._before_run = before_run
         self._interval_seconds = interval_seconds
         self._stop = threading.Event()
         self._wake = threading.Event()
         self._lock = threading.Lock()
         self._close_complete: bool | None = None
+        self._maintenance_thread = threading.Thread(
+            target=self._run_maintenance, name="workbench-repair-coordinator", daemon=True,
+        ) if before_run is not None else None
         self._thread = threading.Thread(
             target=self._run,
             name="workbench-api-scheduler",
@@ -251,6 +257,8 @@ class WorkbenchScheduler:
             if self._thread.is_alive():
                 return
             self._thread.start()
+            if self._maintenance_thread is not None:
+                self._maintenance_thread.start()
 
     def wake(self) -> None:
         if not self._stop.is_set():
@@ -268,6 +276,15 @@ class WorkbenchScheduler:
             self._wake.wait(self._interval_seconds)
             self._wake.clear()
 
+    def _run_maintenance(self) -> None:
+        assert self._before_run is not None
+        while not self._stop.is_set():
+            try:
+                self._before_run()
+            except Exception:
+                _LOGGER.exception("automatic repair coordinator cycle failed")
+            self._stop.wait(self._interval_seconds)
+
     def stop(self) -> None:
         with self._lock:
             self._stop.set()
@@ -276,11 +293,13 @@ class WorkbenchScheduler:
     def join(self, *, timeout: float) -> bool:
         if timeout < 0:
             raise ValueError("scheduler join timeout must be nonnegative")
-        with self._lock:
-            started = self._thread.ident is not None
-        if started and self._thread is not threading.current_thread():
-            self._thread.join(timeout=timeout)
-        complete = not self._thread.is_alive()
+        deadline = time.monotonic() + timeout
+        for thread in (self._thread, self._maintenance_thread):
+            if thread is not None and thread.ident is not None and thread is not threading.current_thread():
+                thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        complete = not self._thread.is_alive() and (
+            self._maintenance_thread is None or not self._maintenance_thread.is_alive()
+        )
         with self._lock:
             self._close_complete = complete
         return complete
@@ -736,13 +755,14 @@ def register_workbench_routes(
     sse_poll_seconds: float = 1.0,
     sse_keepalive_seconds: float = 15.0,
     scheduler_interval_seconds: float = 1.0,
+    before_run: Callable[[], None] | None = None,
 ) -> WorkbenchScheduler:
     del asset_dir
     if sse_poll_seconds <= 0 or sse_keepalive_seconds < 15:
         raise ValueError("invalid SSE timing")
     broker = EventBroker()
     scheduler = WorkbenchScheduler(
-        executor, interval_seconds=scheduler_interval_seconds
+        executor, interval_seconds=scheduler_interval_seconds, before_run=before_run,
     )
     roots = tuple(
         dict.fromkeys(
