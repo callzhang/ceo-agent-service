@@ -527,3 +527,21 @@ def test_uncheckpointed_queued_intent_still_occupies_single_repair_slot(store, t
     poll(store, tmp_path, snapshot(checks=[failed_check()]))
     assert get_repair(store, 'errors', older)['turn_ids'] == old_entry['turn_ids']
     assert len(store.list_turns(newer_entry['task_id'])) == 2
+
+
+def test_existing_conversation_order_is_independent_of_source_id_counters(store, tmp_path, monkeypatch):
+    import app.automatic_repair as module
+    older = store.create_task(title="older reply repair", runtime_kind="codex")
+    newer = store.create_task(title="newer error repair", runtime_kind="codex")
+    entries = [
+        dict(source="reply_attempts", source_id=900001, task_id=older.id,
+             status="awaiting_checks", turn_ids=[]),
+        dict(source="errors", source_id=1, task_id=newer.id,
+             status="running", turn_ids=[]),
+    ]
+    monkeypatch.setattr(module, "list_repairs", lambda unused: entries)
+    watcher = coordinator(store, tmp_path)
+    selected = []
+    monkeypatch.setattr(watcher, "_advance", selected.append)
+    watcher.run_once()
+    assert selected == [entries[0]]

@@ -80,7 +80,8 @@ class AutomaticRepairCoordinator:
                 if active or entry.get('next_readback_at', 0) <= now:
                     candidates.append((entry, active))
             candidates.sort(key=lambda item: (not item[1],
-                                              not bool(item[0]['task_id']), item[0]['source_id']))
+                                              not bool(item[0]['task_id']), int(item[0]['task_id'] or 0),
+                                              item[0]['source_id']))
             if candidates:
                 self._advance(candidates[0][0])
 
