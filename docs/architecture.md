@@ -1618,8 +1618,10 @@ scope 的 token，但 keychain 里这份会被本机其他进程改写，线路�
 所有 workload（Agent turn、任务 Agent、会议、邮件分类、workbench、TODO 截止日期回填）都能路由到
 Claude。Claude 的 developer instructions 与完整输出 schema 仍由
 `app.claude_runtime_adapter.claude_input_contract` 与任务拼成同一条消息；
-Claude Consumer 另通过 CLI `--json-schema` 接收内联的兼容 wire schema，原有
-Pydantic 模型继续校验完整条件与业务规则。Audit 和其余 Claude workload 仍按既有
+Claude Consumer 另通过 CLI `--json-schema` 接收内联的兼容 wire schema：去掉
+Claude 不支持的 `oneOf`/`allOf`/`if-then`，但用 `anyOf` 保留每个 action 与其
+target/payload 的对应分支（与当前 purpose 的 canonical action 契约同源），错误的
+target 字段在原生层即被拒绝；原有 Pydantic 模型继续校验完整条件与业务规则。Audit 和其余 Claude workload 仍按既有
 单消息 schema 路径运行，不改变工具、路由或会话；
 事件流由该 adapter 的 normalizer 校验，最终消息再整理成 Codex 同形的 runtime 事件交给 workload
 的解析器，解析器不需要知道是哪条 runtime 执行的。

@@ -2007,9 +2007,13 @@ Meeting Codex Developer 指令只保留任务特有的 DWS 群与身份只读取
 
 Claude Consumer additionally passes a compatible `ConsumerAgentWireResult` schema
 inline through native CLI `--json-schema`. This projection retains the field
-shapes and required fields but removes the wire schema's unsupported `oneOf` and
-`allOf` conditions; the unchanged Pydantic wire/business models remain the
-authoritative validator for those relationships and every result. The adapter
+shapes and required fields and removes the unsupported `oneOf`, `allOf` and
+`if/then` keywords, but re-expresses the canonical per-action branches
+(`action` const with its `target` and `payload` shapes, from `action_contracts`)
+as a top-level `anyOf`, so the native schema rejects a wrong target such as a
+`reply` with `reply_to_message_id` or a `plan` with a message target. Outcome and
+error conditions stay with the unchanged Pydantic wire/business models, which
+remain the authoritative validator for every result. The adapter
 uses the native result's JSON text through the existing event normalizer and
 parser. Audit and other Claude workloads keep their existing command; no route,
 tool, Skill, prompt rule, retry or session policy changes.
