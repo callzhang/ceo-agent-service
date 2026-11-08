@@ -455,4 +455,4 @@ tests/test_minutes_auto_recovery.py
 tests/test_minutes_summary_retry.py
 tests/test_minutes_recovery_agent.py
 
-tests/test_automatic_repair.py
+tests/test_automatic_repair_gate.py

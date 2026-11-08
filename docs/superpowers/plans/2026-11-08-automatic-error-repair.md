@@ -13,3 +13,5 @@
 - [x] Run focused backend/frontend tests, Ruff and frontend build, then update architecture/runtime/procedure docs and gate manifest.
 - [ ] Commit/push/integrate through current release path, deploy the exact pushed commit with the existing gate and read back service state.
 - [ ] Feed a real failing diagnostic through the live error writer, observe trigger and continuation through actual PR, and inspect links in the browser. Preserve original business error status.
+
+Gate budget evidence: first fixed-budget run reached the final new test at 600 seconds without an earlier assertion failure. All fifteen regressions remain; fast lifecycle/atomicity/remote-delivery contracts live in test_automatic_repair_gate.py, while API/notification and broader recovery integration remain in test_automatic_repair.py and are run separately. Every pre-existing manifest entry remains unchanged; no limit or gate implementation changes.
