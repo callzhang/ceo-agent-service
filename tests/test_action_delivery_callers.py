@@ -231,7 +231,6 @@ def test_nonempty_external_key_lookup_keeps_native_result(tmp_path, key):
         from app.action_entity_storage import create_action
         action = create_action(db, values={
             "operation": "message.send",
-            "parameters_json": '{"conversation_id":"conversation","trigger_message_id":"message"}',
             "status": "done", "external_action_key": key,
             "action_identity": "identity", "delivery_channel": "dingtalk",
             "conversation_id": "conversation", "trigger_message_id": "message",
