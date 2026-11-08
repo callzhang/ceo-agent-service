@@ -316,7 +316,11 @@ def _recover_summaries(
                     turn = (
                         wb.get_turn(entry["turn_id"]) if entry.get("turn_id") else None
                     )
-                    if turn is not None and turn.status == "completed":
+                    if (
+                        turn is not None
+                        and turn.status == "completed"
+                        and isinstance(exc, ValueError)
+                    ):
                         entry["retry_needed"] = True
                     if turn is not None and (
                         turn.status == "stopped"

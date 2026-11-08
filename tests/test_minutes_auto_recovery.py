@@ -362,3 +362,39 @@ def test_recovery_budget_is_persisted_and_expired_audio_is_cleaned(
     cursor = json.loads(store.get_daily_scan_state(MINUTES_SYNC_SCANNER)["cursor_json"])
     assert not Path(cursor["summary_recoveries"]["source"]["work_dir"]).exists()
     assert "Supplementary summary" not in path.read_text()
+
+
+def test_archive_publication_error_retries_same_completed_turn(tmp_path, monkeypatch):
+    from app import minutes_auto_recovery as auto
+
+    store, archive, path, result = setup(tmp_path)
+    wb = Workbench()
+    monkeypatch.setattr(auto, "prepare_audio", prepare)
+    monkeypatch.setattr(auto, "read_completed_asr", asr)
+    publisher = auto.recover_archive
+
+    def interrupted(*args, **kwargs):
+        raise OSError("publication interrupted")
+
+    monkeypatch.setattr(auto, "recover_archive", interrupted)
+    first = auto.recover_summaries(
+        store,
+        object(),
+        archive_dir=archive,
+        service_root=tmp_path,
+        result=result,
+        workbench=wb,
+        temp_root=tmp_path,
+    )
+    assert first.failed == 1
+    monkeypatch.setattr(auto, "recover_archive", publisher)
+    second = auto.recover_summaries(
+        store,
+        object(),
+        archive_dir=archive,
+        service_root=tmp_path,
+        result=result,
+        workbench=wb,
+        temp_root=tmp_path,
+    )
+    assert second.failed == 0 and len(wb.turns) == 1

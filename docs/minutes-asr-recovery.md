@@ -64,3 +64,5 @@ previous turn and reused. Explicit stops and exhausted budgets remain failed;
 their temporary recording is removed. A process crash before saving a returned
 upload job ID may require repeating that pure transcription submission; this is
 not an exactly-once upload guarantee. No business operation is replayed.
+
+An archive I/O interruption resumes the same completed native turn and its exact summary; it does not spend a new Agent attempt or generate a different supplement. Only an invalid/missing Agent result requires a new turn.
