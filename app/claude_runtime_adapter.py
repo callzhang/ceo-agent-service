@@ -28,6 +28,8 @@ from app.codex_runtime_adapter import _safe_child_environment
 from app.service_codex_config import ServiceMcpServer, load_service_mcp_servers
 
 ResultT = TypeVar("ResultT")
+# Native Claude CLI --json-schema results are recorded under this protocol tool.
+CLAUDE_STRUCTURED_OUTPUT_TOOL = "StructuredOutput"
 _POLICY_SEAL = object()
 # Provider telemetry the Claude transport emits around a turn: the
 # subscription quota window (which can precede session init) and the
@@ -325,6 +327,7 @@ class ClaudeRuntimeAdapter:
         self,
         *,
         expected_session_id: str | None = None,
+        json_schema: dict[str, object] | None = None,
     ) -> ClaudeEventNormalizer:
         owner = object()
         return ClaudeEventNormalizer(
@@ -332,6 +335,7 @@ class ClaudeRuntimeAdapter:
             owner=owner,
             proof_issuer=self._issue_terminal_proof,
             cleanup_owner=self._discard_owner,
+            structured_output_required=json_schema is not None,
         )
 
     def parse_final_result(
@@ -560,6 +564,7 @@ class ClaudeEventNormalizer:
         owner: object,
         proof_issuer: Callable[[object, str, str], ClaudeTerminalProof],
         cleanup_owner: Callable[[object], None],
+        structured_output_required: bool = False,
     ) -> None:
         if (
             expected_session_id is not None
@@ -567,6 +572,7 @@ class ClaudeEventNormalizer:
         ):
             raise ValueError("expected_session_id must be normalized")
         self._expected_session_id = expected_session_id
+        self._structured_output_required = structured_output_required
         self._owner = owner
         self._proof_issuer = proof_issuer
         self._cleanup_owner = cleanup_owner
@@ -662,7 +668,7 @@ class ClaudeEventNormalizer:
                     events.append(normalized)
             return tuple(events)
         if event_type == "result":
-            raw = _validated_success_result(event)
+            raw = _validated_success_result(event, structured_output_required=self._structured_output_required)
             if self._started_items:
                 raise ClaudeEventPolicyError("claude_open_tool_items")
             self._final_seen = True
@@ -789,16 +795,22 @@ def _required_string(value: object) -> str | None:
     )
 
 
-def _validated_success_result(event: dict[str, object]) -> str:
+def _validated_success_result(event: dict[str, object], *, structured_output_required: bool = False) -> str:
     if (
         event.get("type") != "result"
         or event.get("subtype") != "success"
         or event.get("is_error") is not False
         or _required_string(event.get("session_id")) is None
-        or not isinstance(event.get("result"), str)
     ):
         raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
-    return event["result"]
+    if 'structured_output' in event:
+        try:
+            return json.dumps(event['structured_output'], ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+        except (TypeError, ValueError) as exc:
+            raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete")) from exc
+    if structured_output_required or not isinstance(event.get('result'), str):
+        raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
+    return event['result']
 
 
 def _trusted_error_result_text(stdout: str) -> str:

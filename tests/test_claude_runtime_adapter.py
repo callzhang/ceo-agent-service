@@ -1337,3 +1337,33 @@ def test_role_tool_server_starts_from_isolated_task_directory(adapter, route, tm
     )
     assert result.returncode == 0, result.stderr
     assert "--task-id" in result.stdout
+
+
+def test_native_structured_output_is_the_terminal_result(adapter):
+    normalizer = adapter.new_event_normalizer()
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = normalizer.normalize_event({
+        **FINAL_RESULT, 'result': 'Human explanation, not the structured result.',
+        'structured_output': {'ok': True},
+    })
+    parsed = adapter.parse_final_result(normalizer=normalizer,
+        proof=normalizer.terminal_proof(), parser=json.loads)
+    assert parsed == {'ok': True}
+    assert json.loads(event['result']) == {'ok': True}
+
+
+def test_declared_schema_requires_native_terminal_structured_output(adapter):
+    normalizer = adapter.new_event_normalizer(json_schema={'type':'object'})
+    normalizer.normalize_event(SYSTEM_INIT)
+    with pytest.raises(ClaudeEventPolicyError,match='claude_result_incomplete'):
+        normalizer.normalize_event(FINAL_RESULT)
+
+
+def test_native_structured_output_does_not_require_a_text_result(adapter):
+    normalizer = adapter.new_event_normalizer(json_schema={'type':'object'})
+    normalizer.normalize_event(SYSTEM_INIT)
+    terminal = dict(FINAL_RESULT, structured_output={'ok':True})
+    del terminal['result']
+    normalizer.normalize_event(terminal)
+    assert adapter.parse_final_result(normalizer=normalizer,
+        proof=normalizer.terminal_proof(),parser=json.loads) == {'ok':True}
