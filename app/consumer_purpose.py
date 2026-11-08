@@ -1,6 +1,7 @@
 """Common purpose output, with action contracts selected before inference."""
 
 from functools import lru_cache
+from copy import deepcopy
 from hashlib import sha256
 import json
 from typing import ClassVar, Literal
@@ -96,6 +97,11 @@ def action_contracts(purpose: str):
     raise ValueError(f'unknown Consumer purpose: {purpose}')
 
 
+@lru_cache(maxsize=128)
+def _action_model_schema(definition):
+    return definition.model_json_schema(ref_template='#/$defs/{model}')
+
+
 def _purpose_schema(schema, model):
     definitions = action_contracts(model.purpose)
     schema['properties']['action']['enum'] = list(definitions)
@@ -103,7 +109,7 @@ def _purpose_schema(schema, model):
     for name, (target, payload, _, _) in definitions.items():
         fields = {'action': {'const': name}}
         for field, definition in [('target', target), ('payload', payload)]:
-            shape = definition.model_json_schema(ref_template='#/$defs/{model}')
+            shape = deepcopy(_action_model_schema(definition))
             schema.setdefault('$defs', {}).update(shape.pop('$defs', {}))
             fields[field] = shape
         if name == 'retry':

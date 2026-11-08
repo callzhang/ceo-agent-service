@@ -2442,3 +2442,9 @@ format error retains the existing typed error and field locations, so the next
 bounded role attempt receives `Result Correction` instead of an undifferentiated
 process failure. The canonical schema, attempt ceiling, Audit decisions and
 System execution/receipt rules are unchanged.
+
+Fixed Consumer action model declarations reuse their generated JSON schema;
+each schema insertion receives a deep copy. The cache holds declaration data,
+not validation results, plans or decisions. All canonical/native purpose schemas
+and all runtime validators remain unchanged. Distinct model classes have
+separate entries, and mutable caller changes cannot poison subsequent schemas.

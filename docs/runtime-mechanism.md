@@ -2215,3 +2215,15 @@ its safe field diagnostics and `codex_result_invalid` classification feed the
 next role attempt's existing correction prompt. Invalid fields remain rejected,
 transport/session failures retain their own handler, and the shared four-attempt
 ceiling is unchanged. No Audit policy or business replay is introduced.
+
+### Repeated action schema construction
+
+A release-gate profile of 205 representative tests showed 20,596 repeated JSON
+schema builds inside the fixed Consumer action declarations. Their immutable
+model schema is now generated once per model and copied for each use; this does
+not cache business validation or skip database/schema checks. The full general,
+OA and both native output encodings serialize identically before/after. A
+regression checks both build reuse and output independence. Sixty repeated
+public schema calls measured 0.776–0.818 seconds before and 0.337–0.354 seconds
+after; the full release gate must still pass its original 600-second/2-GB limits
+with every existing selected test retained.
