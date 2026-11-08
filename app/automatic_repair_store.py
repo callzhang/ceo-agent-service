@@ -6,7 +6,7 @@ from app.state_definitions import state_projection
 from app.state_storage import insert_state, state_json_field, upsert_state
 
 PREFIX = 'automatic_repair:'
-TERMINAL = frozenset({'pr_created', 'no_code_change', 'blocked', 'failed', 'stopped'})
+TERMINAL = frozenset({'no_code_change', 'blocked', 'failed', 'stopped', 'pr_closed'})
 
 
 def repair_key(source: str, source_id: int) -> str:

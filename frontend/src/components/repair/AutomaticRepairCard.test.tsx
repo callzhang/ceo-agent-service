@@ -22,3 +22,11 @@ it('does not invent a repair for historical errors', () => {
   const { container } = render(<AutomaticRepairCard repair={null} />);
   expect(container).toBeEmptyDOMElement();
 });
+
+it('shows CI and review progress in the existing repair card', () => {
+  const view = render(<MemoryRouter><AutomaticRepairCard repair={{ status: 'awaiting_checks', summary: '等待当前提交的检查', conversation_url: '/?task=12', pr_url: 'https://github.com/example/service/pull/7', turn_count: 3 }} /></MemoryRouter>);
+  expect(screen.getByRole('heading', { name: '自动修复 · 等待 CI / review' })).toBeInTheDocument();
+  view.rerender(<MemoryRouter><AutomaticRepairCard repair={{ status: 'checks_passed', summary: '当前提交已通过；继续监听反馈', conversation_url: '/?task=12', pr_url: 'https://github.com/example/service/pull/7', turn_count: 3 }} /></MemoryRouter>);
+  expect(screen.getByRole('heading', { name: '自动修复 · CI / review 已通过' })).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: '查看修复对话' })).toHaveAttribute('href', '/?task=12');
+});
