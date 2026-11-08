@@ -301,9 +301,13 @@ class ClaudeRuntimeAdapter:
             tools = "Read,Glob,Grep,Bash" if selected_policy.role == "consumer" else "Read,Glob,Grep"
             command.extend(["--restricted", "--tools", tools])
         if json_schema is not None:
+            # Claude's native validator does not register the fixed schemas'
+            # dialect URI. Omit that metadata, preserving every constraint and
+            # leaving the original schema for strict local validation intact.
+            cli_schema = {key: value for key, value in json_schema.items() if key != "$schema"}
             command.extend([
                 "--json-schema",
-                json.dumps(json_schema, ensure_ascii=False, separators=(",", ":")),
+                json.dumps(cli_schema, ensure_ascii=False, separators=(",", ":")),
             ])
         if session_id is not None:
             command.extend(["--resume", session_id])
