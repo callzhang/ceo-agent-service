@@ -9,3 +9,5 @@ Verification: the native CLI parameter regression fails when the argument is rem
 Workbench optional per-turn contracts and history reconstruction are a separate follow-up and are not required by this transport commit.
 
 Claude CLI schema arguments omit only the top-level `$schema` dialect metadata: its native validator rejects the fixed files' 2020-12 URI. All field constraints pass through unchanged; fixed files and strict local model validation retain their original contract. Both fixed Meeting schema regressions failed before this change and pass afterward.
+
+The current-incident integration additionally covers both fixed Meeting files and the routed declaration→native CLI argument→terminal structured value→strict Meeting Audit model chain in `test_claude_fixed_schema_delivery.py`; this fast file is included in the ordinary release gate. A real no-tools synthetic probe using the fixed Audit schema first reproduced the native CLI dialect error, then succeeded with only the unsupported metadata removed. No real meeting or recipient was used, and these synthetic results never create business approval or delivery.
