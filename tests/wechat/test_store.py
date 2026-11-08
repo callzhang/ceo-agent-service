@@ -13,7 +13,8 @@ from pathlib import Path
 import pytest
 
 from app.external_retry import MAX_AUTOMATIC_RETRIES
-from app.store import AgentRunLeaseLostError, AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
 from tests.wechat.support import approve_delivery

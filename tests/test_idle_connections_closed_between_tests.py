@@ -1,4 +1,4 @@
-import app.store as store_module
+from app.sqlite_connections import _IDLE_CONNECTIONS
 from app.store import AutoReplyStore
 
 # The two tests rely on file order: the first leaves an idle connection behind,
@@ -10,8 +10,8 @@ def test_a_store_call_leaves_an_idle_connection_in_the_pool(tmp_path):
     with store._connect() as db:
         db.execute("select 1")
 
-    assert store_module._IDLE_CONNECTIONS.pool
+    assert _IDLE_CONNECTIONS.pool
 
 
 def test_the_previous_tests_idle_connection_was_closed():
-    assert not getattr(store_module._IDLE_CONNECTIONS, "pool", None)
+    assert not getattr(_IDLE_CONNECTIONS, "pool", None)

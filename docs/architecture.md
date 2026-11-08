@@ -2461,3 +2461,13 @@ so a late poll cannot replace the newer result. Unsaved feedback stays in the
 form. Refresh is read-only and never retries a Task or changes an Audit result.
 The separately loaded provider Trigger is reread only when its source fields
 change, not on every status snapshot.
+
+### SQLite connection-pool helper ownership
+
+Connection-pool helpers are imported from their defining module,
+`app.sqlite_connections`. Store itself imports only helpers it calls; tests,
+fixtures and validation tools no longer depend on unused facade re-exports.
+The existing Ruff check reproduces the former two F401 failures and passes
+after the import repair. Pool sharing and test cleanup still use the same
+thread-local objects and functions; focused pool/configuration/Email regressions
+pass without changing database behavior, assertions or task state.

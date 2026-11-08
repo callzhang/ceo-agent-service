@@ -10,7 +10,8 @@ from app.email_classifier_contracts import EmailClassificationStatus
 from app.email_store import EmailStore
 from app.shared_action_lifecycle import transition
 from app.schedules_storage import create_schedules_schema
-from app.store import AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AutoReplyStore
 from app.configs_definitions import (
     CONFIG_FIELDS, CONFIG_FRESH_PROJECTIONS, CONFIG_PROJECTIONS,
 )

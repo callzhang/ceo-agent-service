@@ -9,7 +9,8 @@ import pytest
 from app.configs_definitions import config_projection
 from app.current_schema_manifest import schema_is_current
 from app.email_store import EMAIL_SCHEMA_VERSION, EmailStore
-from app.store import STORE_SCHEMA_VERSION, AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import STORE_SCHEMA_VERSION, AutoReplyStore
 from app.state_definitions import state_projection
 from tests.test_email_action_plan_direct_dao import _genuine_old_source
 

@@ -135,7 +135,8 @@ from pathlib import Path
 from app.email_store import DIRECT_EMAIL_ACTION_SQL,EmailStore
 from app.action_entity_storage import create_action,append_action_receipt
 from app.task8_storage import register_task8_functions
-from app.store import AutoReplyStore,_close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AutoReplyStore
 path=sys.argv[1]; seed=json.loads(sys.argv[2]); store=AutoReplyStore(Path(path)); email=EmailStore(Path(path)); email.list_action_attempts(seed['action_id'])
 db=sqlite3.connect(path); db.row_factory=sqlite3.Row; register_task8_functions(db)
 row=db.execute('select parameters_json from ('+DIRECT_EMAIL_ACTION_SQL+') where action_id=?',(seed['action_id'],)).fetchone(); assert row[0]==seed['parameters']
