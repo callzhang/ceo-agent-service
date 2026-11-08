@@ -573,3 +573,4 @@ reverts committed work they did not author.
 
 
 | codex-attempt-detail-refresh-20261108 | frontend/src/pages/AttemptDetailPage.tsx; frontend/src/pages/AttemptDetailPage.test.tsx; scoped architecture/runtime docs; own claim | Fix stale open Attempt detail with read-only refresh; no Task rerun or Audit changes. | active 2026-11-08 |
+| codex-pr-feedback-result-contract-20261108 | app/automatic_repair.py; app/workbench/service_runtime.py output-format instruction only; tests/test_repair_pr_feedback.py; tests/test_workbench_service_runtime.py; scoped repair/architecture/runtime docs and acceptance plan; own row | Fix observed live continuation: Workbench developer text-format conflict invalidated typed receipt, and retry omitted previous result/unmet goal. Preserve native routes and four-attempt ceiling; deploy and re-verify same PR/conversation. | active 2026-11-08 |
