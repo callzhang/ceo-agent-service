@@ -13,6 +13,8 @@ export interface AutomaticRepairStatus {
 
 const labels: Record<string, string> = {
   queued: '等待自动修复', running: 'Agent 正在修复', pr_created: 'PR 已创建',
+  awaiting_checks: '等待 CI / review', checks_passed: 'CI / review 已通过',
+  feedback_blocked: 'PR 反馈修复受阻', pr_closed: 'PR 已关闭',
   awaiting_pr: '等待 PR 读回', blocked: '修复受阻', failed: '修复未完成', stopped: '修复已停止', no_code_change: '无需代码变更',
 };
 
@@ -21,7 +23,7 @@ export function AutomaticRepairCard({ repair }: { repair?: AutomaticRepairStatus
   const [refreshError, setRefreshError] = useState('');
   useEffect(() => { setCurrent(repair); }, [repair]);
   useEffect(() => {
-    if (!current?.refresh_url || !['queued', 'running', 'awaiting_pr'].includes(current.status)) return;
+    if (!current?.refresh_url || !['queued', 'running', 'awaiting_pr', 'pr_created', 'awaiting_checks', 'checks_passed', 'feedback_blocked'].includes(current.status)) return;
     const controller = new AbortController();
     const refresh = () => {
       request<ConsoleResource<AutomaticRepairStatus | null>>(current.refresh_url!, { signal: controller.signal })
