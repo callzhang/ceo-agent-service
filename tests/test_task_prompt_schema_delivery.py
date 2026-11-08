@@ -67,7 +67,7 @@ def schema_occurrences(text, schema):
     return count
 
 
-def test_single_message_task_route_receives_one_complete_schema(monkeypatch, tmp_path):
+def test_native_task_route_declares_schema_once_outside_message(monkeypatch, tmp_path):
     prompt, call = prompt_and_factory(monkeypatch, tmp_path)
     factory = call["command_factory"]
     schema = task_agent_output_schema()
@@ -76,7 +76,8 @@ def test_single_message_task_route_receives_one_complete_schema(monkeypatch, tmp
     submitted = _claude_turn_text(factory, prompt)
     assert "FULL_SKILL_RULE" not in submitted
     assert "CURRENT_SEMANTIC_FACT" in submitted
-    assert schema_occurrences(submitted, schema) == 1
+    assert schema_occurrences(submitted, schema) == 0
+    assert "# Output JSON Schema" not in submitted
 
 
 def test_codex_task_schema_is_out_of_band_and_business_input_remains(monkeypatch, tmp_path):
