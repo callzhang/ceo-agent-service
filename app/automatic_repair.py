@@ -70,13 +70,19 @@ class AutomaticRepairCoordinator:
                 return
             # One repair at a time; ordinary user Workbench turns retain the
             # executor's existing independent capacity and leases.
-            entries = [entry for entry in list_repairs(self.store)
-                       if entry['status'] not in TERMINAL
-                       and entry.get('next_readback_at', 0) <= time.time()]
-            entries.sort(key=lambda entry: (entry['status'] != 'running',
-                                            not bool(entry['task_id']), entry['source_id']))
-            if entries:
-                self._advance(entries[0])
+            candidates = []
+            now = time.time()
+            for entry in list_repairs(self.store):
+                if entry['status'] in TERMINAL:
+                    continue
+                summary = self.store.get_task_summary(entry['task_id']) if entry['task_id'] else None
+                active = summary is not None and summary[1] in {'queued', 'running'}
+                if active or entry.get('next_readback_at', 0) <= now:
+                    candidates.append((entry, active))
+            candidates.sort(key=lambda item: (not item[1],
+                                              not bool(item[0]['task_id']), item[0]['source_id']))
+            if candidates:
+                self._advance(candidates[0][0])
 
     def _advance(self, entry: dict) -> None:
         if entry.get('next_readback_at', 0) > time.time():

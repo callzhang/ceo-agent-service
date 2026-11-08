@@ -1,3 +1,5 @@
+import pytest
+
 from app.automatic_repair import AutomaticRepairCoordinator
 from app.automatic_repair_store import get_repair, save_repair
 from tests.test_automatic_repair_gate import coordinator, finish, store as store
@@ -476,3 +478,52 @@ def test_invalid_result_gets_format_feedback_in_same_conversation(store, tmp_pat
     prompt = store.get_turn(latest["turn_ids"][-1]).user_text
     assert "json_invalid" in prompt
     assert "remaining_work" in prompt
+
+
+@pytest.mark.parametrize('latest_state', ['queued', 'running', 'completed', 'failed'])
+def test_actual_turn_state_yields_finished_repair_to_older_ready_pr(store, tmp_path, latest_state):
+    import time
+    older, old_entry = attached(store, tmp_path)
+    old_entry.update(status='awaiting_checks', next_readback_at=time.time() + 300)
+    save_repair(store, old_entry)
+    newer, _ = attached(store, tmp_path)
+    poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    newer_entry = get_repair(store, 'errors', newer)
+    if latest_state == 'running':
+        assert store.claim_next_turn(owner='test', lease_seconds=300).id == newer_entry['turn_ids'][-1]
+    elif latest_state in {'completed', 'failed'}:
+        finish(store, newer_entry['turn_ids'][-1], status=latest_state)
+    old_entry['next_readback_at'] = 0
+    save_repair(store, old_entry)
+    poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    assert len(get_repair(store, 'errors', older)['turn_ids']) == (2 if latest_state in {'completed', 'failed'} else 1)
+    assert get_repair(store, 'errors', newer)['turn_ids'] == newer_entry['turn_ids']
+
+
+def test_uncheckpointed_queued_intent_still_occupies_single_repair_slot(store, tmp_path, monkeypatch):
+    import time
+    import app.automatic_repair as module
+    older, old_entry = attached(store, tmp_path)
+    old_entry.update(status='awaiting_checks', next_readback_at=time.time() + 300)
+    save_repair(store, old_entry)
+    newer, newer_entry = attached(store, tmp_path)
+    real_save = module.save_repair
+    calls = 0
+    def crash_after_creation(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError('checkpoint interrupted')
+        return real_save(*args)
+    monkeypatch.setattr(module, 'save_repair', crash_after_creation)
+    with pytest.raises(RuntimeError, match='checkpoint interrupted'):
+        poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    monkeypatch.setattr(module, 'save_repair', real_save)
+    pending = get_repair(store, 'errors', newer)
+    pending['next_readback_at'] = time.time() + 60
+    save_repair(store, pending)
+    old_entry['next_readback_at'] = 0
+    save_repair(store, old_entry)
+    poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    assert get_repair(store, 'errors', older)['turn_ids'] == old_entry['turn_ids']
+    assert len(store.list_turns(newer_entry['task_id'])) == 2
