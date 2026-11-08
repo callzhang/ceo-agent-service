@@ -19,9 +19,10 @@ import httpx
 
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.minutes_archive_recovery import recover_archive
-from app.minutes_recovery_agent import build_recovery_prompt, read_completed_asr
+from app.minutes_recovery_agent import build_recovery_prompt, completed_asr_receipt
 from app.minutes_sync import MINUTES_SYNC_SCANNER, MinutesSyncResult, _minutes_sync_lock
 from app.workbench.store import WorkbenchStore
+from app.store import AutoReplyStore
 
 
 def _read(path: Path) -> dict:
@@ -109,6 +110,8 @@ def prepare_audio(directory: Path, task_uuid: str, dws) -> None:
 def upload_audio(work_dir: Path, upload_url: str) -> dict:
     """Upload original bytes; checkpoint the returned job before exposing its ID."""
     metadata = _read(work_dir / "metadata.json")
+    source_store = AutoReplyStore(Path(metadata["database_path"]))
+    _upload_recovery(source_store, metadata)
     audio = work_dir / "original-media"
     with audio.open("rb") as stream:
         if (
@@ -125,10 +128,35 @@ def upload_audio(work_dir: Path, upload_url: str) -> dict:
             )
             response.raise_for_status()
             result = response.json()
-    if not isinstance(result.get("job_id"), str) or not result["job_id"]:
+    if (
+        not isinstance(result, dict)
+        or not isinstance(result.get("job_id"), str)
+        or not result["job_id"]
+    ):
         raise ValueError("ASR upload did not return a job identity")
+    record_upload(metadata, result)
     _write(work_dir / "upload-result.json", result)
     return result
+
+
+def _upload_recovery(store, metadata: dict) -> tuple[dict, dict, dict]:
+    state, cursor = _cursor(store)
+    recovery = cursor["summary_recoveries"][metadata["task_uuid"]]
+    if metadata != recovery["source_metadata"]:
+        raise ValueError("ASR upload source metadata changed")
+    return state, cursor, recovery
+
+
+def record_upload(metadata: dict, result: dict) -> None:
+    """Persist the source-bound server receipt before exposing the job ID."""
+    store = AutoReplyStore(Path(metadata["database_path"]))
+    with _minutes_sync_lock(store):
+        state, cursor, recovery = _upload_recovery(store, metadata)
+        jobs = recovery.setdefault("upload_job_ids", [])
+        if result["job_id"] not in jobs:
+            jobs.append(result["job_id"])
+        recovery["upload_receipt"] = result
+        _save(store, state, cursor)
 
 
 def _ensure_turn(
@@ -164,6 +192,17 @@ def _ensure_turn(
             _save(store, state, cursor)
         if not (directory / "metadata.json").exists():
             prepare_audio(directory, task_uuid, dws)
+        metadata = _read(directory / "metadata.json")
+        metadata.update(
+            database_path=str(store.path.resolve()), work_dir=str(directory)
+        )
+        recovery.setdefault("source_metadata", metadata)
+        if metadata != recovery["source_metadata"]:
+            raise ValueError("prepared source metadata changed")
+        _write(directory / "metadata.json", metadata)
+        if recovery.get("upload_receipt"):
+            _write(directory / "upload-result.json", recovery["upload_receipt"])
+        _save(store, state, cursor)
         if not recovery.get("task_id"):
             recovery["task_id"] = wb.create_task(
                 title=f"Minutes supplementary archive: {task_uuid}",
@@ -206,37 +245,39 @@ def _cleanup_archived(store) -> None:
         _save(store, state, cursor)
 
 
-def _finish(store, wb, archive_dir: Path, recovery: dict) -> None:
-    directory = Path(recovery["work_dir"])
-    metadata = _read(directory / "metadata.json")
-    upload_path = directory / "upload-result.json"
-    if not upload_path.exists():
-        raise ValueError(
-            f"native Agent completed without an ASR upload receipt; turn={recovery['turn_id']}"
-        )
-    upload = _read(upload_path)
-    completed_path = directory / "asr-complete.json"
-    # A file written by an Agent is not an ASR receipt. Reconstruct the actual
-    # native call from the recorded turns, including a previous failed turn
-    # whose ASR completed before its summary step failed.
-    asr = None
-    for turn_id in recovery["turn_ids"]:
-        asr = read_completed_asr(wb, turn_id, upload["job_id"])
-        if asr is not None:
+def _finish(store, wb, dws, archive_dir: Path, recovery: dict) -> None:
+    # The actual native tool call is the durable ASR receipt. Temporary upload
+    # files are for polling/resume, not the source of truth for completion.
+    _, cursor = _cursor(store)
+    recovery = cursor["summary_recoveries"][recovery["source_metadata"]["task_uuid"]]
+    native = None
+    for turn_id in reversed(recovery["turn_ids"]):
+        native = completed_asr_receipt(wb, turn_id, recovery.get("upload_job_ids", []))
+        if native is not None:
             break
-    if asr is None:
+    if native is None:
         raise ValueError("completed native ASR result not found")
-    _write(completed_path, asr)
+    if native["job_id"] not in recovery.get("upload_job_ids", []):
+        raise ValueError("native ASR job does not match a source upload receipt")
     turn = wb.get_turn(recovery["turn_id"])
     if turn is None or turn.status != "completed" or not turn.final_text.strip():
         raise ValueError("supplementary summary has not completed")
+    metadata = recovery["source_metadata"]
+    directory = Path(recovery["work_dir"])
+    if not (directory / "original-media").exists():
+        with _minutes_sync_lock(store):
+            state, cursor = _cursor(store)
+            cursor["summary_recoveries"][metadata["task_uuid"]]["cleaned"] = False
+            _save(store, state, cursor)
+        directory.mkdir(parents=True, exist_ok=True)
+        prepare_audio(directory, metadata["task_uuid"], dws)
     packet = {
         **{
             key: metadata[key]
             for key in ("task_uuid", "audio_sha256", "audio_duration_seconds")
         },
-        "asr_job_id": upload["job_id"],
-        "asr_result": _read(completed_path),
+        "asr_job_id": native["job_id"],
+        "asr_result": native["result"],
         "derived_summary": turn.final_text,
     }
     recover_archive(
@@ -274,22 +315,43 @@ def _recover_summaries(
         if task_uuid in recovered:
             continue
         try:
+            # Finalizing an existing completed result is not another Agent
+            # attempt. Do it before checking the budget for new generations.
+            _, current_cursor = _cursor(store)
+            existing = current_cursor.get("summary_recoveries", {}).get(task_uuid)
+            if existing and existing.get("turn_id"):
+                previous = wb.get_turn(existing["turn_id"])
+                if (
+                    previous is not None
+                    and previous.status == "completed"
+                    and previous.final_text.strip()
+                    and completed_asr_receipt(
+                        wb, previous.id, existing.get("upload_job_ids", [])
+                    )
+                    is not None
+                ):
+                    _finish(store, wb, dws, archive_dir, existing)
+                    recovered.add(task_uuid)
+                    continue
             recovery = _ensure_turn(store, wb, dws, task_uuid, service_root, temp_root)
             while True:
                 turn = wb.get_turn(recovery["turn_id"])
                 if turn is None:
                     raise ValueError("recovery turn is missing")
                 if turn.status == "completed":
-                    _finish(store, wb, archive_dir, recovery)
+                    _finish(store, wb, dws, archive_dir, recovery)
                     recovered.add(task_uuid)
                     break
                 if turn.status in {"failed", "stopped"}:
                     directory = Path(recovery["work_dir"])
                     if (directory / "upload-result.json").exists():
-                        job = _read(directory / "upload-result.json")["job_id"]
-                        asr = read_completed_asr(wb, turn.id, job)
-                        if asr is not None:
-                            _write(directory / "asr-complete.json", asr)
+                        _, current_cursor = _cursor(store)
+                        current = current_cursor["summary_recoveries"][task_uuid]
+                        native = completed_asr_receipt(
+                            wb, turn.id, current.get("upload_job_ids", [])
+                        )
+                        if native is not None:
+                            _write(directory / "asr-complete.json", native["result"])
                     raise RuntimeError(
                         f"Minutes recovery {turn.status}: {turn.error_code}"
                     )
