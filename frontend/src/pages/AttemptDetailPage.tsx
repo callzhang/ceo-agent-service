@@ -1,5 +1,5 @@
 import { AutomaticRepairCard } from "../components/repair/AutomaticRepairCard";
-import { useEffect, useState, type FormEvent } from "react";
+import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
 
 import { command, ConsoleApiError, displayValue } from "../api/console";
@@ -29,7 +29,7 @@ function TriggerBlock({ detail }: { detail: AttemptDetail }) {
       if (!controller.signal.aborted) setTrigger({ title: "Trigger", text: "原消息读取失败，请稍后刷新重试。" });
     });
     return () => controller.abort();
-  }, [detail.id, detail.trigger]);
+  }, [detail.id, detail.trigger.source_url, detail.trigger.title, detail.trigger.text]);
   return <ReviewBlock title={trigger.title} value={trigger.text} />;
 }
 
@@ -531,29 +531,46 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
   const [customDecision, setCustomDecision] = useState("");
   const [decisionSubmitting, setDecisionSubmitting] = useState(false);
 
-  useEffect(() => {
-    const controller = new AbortController();
-    setState("loading");
-    getAttemptDetail(attemptId, controller.signal).then((response) => {
-      if (controller.signal.aborted) return;
+  const activeRead = useRef<{ controller: AbortController; pending: boolean } | null>(null);
+  const refreshDetail = useCallback(async () => {
+    activeRead.current?.controller.abort();
+    const read = { controller: new AbortController(), pending: true };
+    activeRead.current = read;
+    try {
+      const response = await getAttemptDetail(attemptId, read.controller.signal);
+      if (read.controller.signal.aborted) return;
       setDetail(response.item);
       setSnapshot(response.meta.snapshot_at);
       setState("ready");
-    }).catch((error: unknown) => {
-      if (controller.signal.aborted) return;
-      setMessage(error instanceof Error ? error.message : "Attempt 加载失败");
-      setState("error");
-    });
-    return () => controller.abort();
+    } catch (error) {
+      if (!read.controller.signal.aborted) throw error;
+    } finally {
+      read.pending = false;
+    }
   }, [attemptId]);
+
+  useEffect(() => {
+    const refresh = () => {
+      void refreshDetail().catch((error: unknown) => {
+        setMessage(error instanceof Error ? error.message : "Attempt 加载失败");
+        setState("error");
+      });
+    };
+    refresh();
+    const timer = window.setInterval(() => {
+      if (document.visibilityState === "visible" && !activeRead.current?.pending) refresh();
+    }, 10_000);
+    return () => {
+      window.clearInterval(timer);
+      activeRead.current?.controller.abort();
+    };
+  }, [refreshDetail]);
 
   const runAction = async (url: string, success: string, payload?: Record<string, unknown>) => {
     setMessage("操作进行中…");
     try {
       const result = payload ? await command(url, payload) : await command(url);
-      const refreshed = await getAttemptDetail(attemptId);
-      setDetail(refreshed.item);
-      setSnapshot(refreshed.meta.snapshot_at);
+      await refreshDetail();
       setMessage(result.message || success);
     } catch (error) {
       setMessage(error instanceof Error ? error.message : "操作失败");
@@ -569,9 +586,7 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
     } catch (error) {
       if (error instanceof ConsoleApiError && error.status === 409) {
         try {
-          const refreshed = await getAttemptDetail(attemptId);
-          setDetail(refreshed.item);
-          setSnapshot(refreshed.meta.snapshot_at);
+          await refreshDetail();
           setCustomDecision("");
           setMessage("这次提交未被接受，页面已刷新；请查看当前状态后再继续。");
         } catch {
@@ -585,9 +600,7 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
     }
 
     try {
-      const refreshed = await getAttemptDetail(attemptId);
-      setDetail(refreshed.item);
-      setSnapshot(refreshed.meta.snapshot_at);
+      await refreshDetail();
       setCustomDecision("");
       setMessage(result.message || "人工决策已提交");
     } catch (error) {

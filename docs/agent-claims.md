@@ -571,3 +571,5 @@ reverts committed work they did not author.
 
 | codex-meeting-run-cleanup-20261029 | app/store.py::update_meeting_alignment_job only; app/logical_run_storage.py; tests/test_logical_run_owner.py; new tests/test_meeting_result_storage.py; scripts/validate_database_closeout_copy.py; tests/test_validate_database_closeout_copy.py; tests/gate_files.txt only those new rows; tests/test_runs11_definitions.py::test_all_original_kinds_native_positive_insert frozen clock only; scoped architecture/runtime and acceptance notes | Derek approved no-DDL Meeting result single-write and retired logical Run entry cleanup. Current Run/provenance only; preserve all lifecycle, provenance, receipt and policy semantics. No real outbound tests. | Active: isolated codex/meeting-run-cleanup-20261029, baseline29c891346; root owns store; bounded child owns old Run module/test/script. |
 
+
+| codex-attempt-detail-refresh-20261108 | frontend/src/pages/AttemptDetailPage.tsx; frontend/src/pages/AttemptDetailPage.test.tsx; scoped architecture/runtime docs; own claim | Fix stale open Attempt detail with read-only refresh; no Task rerun or Audit changes. | active 2026-11-08 |

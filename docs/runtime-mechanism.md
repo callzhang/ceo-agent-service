@@ -2227,3 +2227,14 @@ regression checks both build reuse and output independence. Sixty repeated
 public schema calls measured 0.776–0.818 seconds before and 0.337–0.354 seconds
 after; the full release gate must still pass its original 600-second/2-GB limits
 with every existing selected test retained.
+
+### Attempt detail refresh after recovery
+
+An already-open Attempt page reads the current detail every ten seconds while
+visible, including terminal failures that may be recovered through another
+Console client. A pending read finishes before the next automatic read; leaving
+the page aborts it and stops the timer. Action readbacks supersede older reads,
+so a late poll cannot replace the newer result. Unsaved feedback stays in the
+form. Refresh is read-only and never retries a Task or changes an Audit result.
+The separately loaded provider Trigger is reread only when its source fields
+change, not on every status snapshot.
