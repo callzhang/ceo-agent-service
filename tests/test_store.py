@@ -24,6 +24,7 @@ from threading import Barrier, Event, Thread, get_ident
 import pytest
 
 import app.store as store_module
+from app.sqlite_connections import _close_idle_connections
 from tests.support.native_run_rows import (
     insert_native_run as _insert_native_run,
     insert_run_row as _insert_run_row,
@@ -4156,7 +4157,7 @@ def test_store_restores_wal_for_current_schema_database(tmp_path: Path):
     AutoReplyStore(db_path)
     store_module._INITIALIZED_STORE_PATHS.clear()
     # Leaving WAL needs this to be the only connection to the file.
-    store_module._close_idle_connections()
+    _close_idle_connections()
     with sqlite3.connect(db_path) as db:
         assert db.execute("pragma journal_mode = delete").fetchone()[0] == "delete"
 
@@ -4358,7 +4359,7 @@ def test_store_connections_close_after_context_exit(tmp_path: Path):
 
     # The connection now waits in this thread's idle slot for the next call;
     # closing the slot closes it.
-    store_module._close_idle_connections()
+    _close_idle_connections()
     with pytest.raises(sqlite3.ProgrammingError):
         db.execute("select 1").fetchone()
 

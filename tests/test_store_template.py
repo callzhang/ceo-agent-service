@@ -77,7 +77,8 @@ def test_initialized_empty_clones_validate_without_repeating_bootstrap(
 def test_copied_initialized_corruption_still_rejected(
     tmp_path, monkeypatch, corruption
 ):
-    from app.store import AutoReplyStore, _close_idle_connections
+    from app.sqlite_connections import _close_idle_connections
+    from app.store import AutoReplyStore
 
     monkeypatch.setattr(store_template, "_TEMPLATES", {})
     monkeypatch.setattr(store_template, "_DIRECTORY", tmp_path / "templates")

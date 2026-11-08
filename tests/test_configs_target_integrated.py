@@ -14,7 +14,8 @@ from app.configs_storage import delete_config, insert_config, update_config
 from app.configs_definitions import CONFIG_FIELDS, config_projection
 from app.schedules_storage import insert_schedule, delete_schedule
 from app.schedules_definitions import schedule_projection, SCHEDULE_FIELDS
-from app.store import AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AutoReplyStore
 from tests.configs_source_fixtures import ROOT, source_db, insert as source_insert
 
 

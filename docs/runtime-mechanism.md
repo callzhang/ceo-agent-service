@@ -2243,6 +2243,16 @@ form. Refresh is read-only and never retries a Task or changes an Audit result.
 The separately loaded provider Trigger is reread only when its source fields
 change, not on every status snapshot.
 
+### SQLite connection-pool helper ownership
+
+Connection-pool helpers are imported from their defining module,
+`app.sqlite_connections`. Store itself imports only helpers it calls; tests,
+fixtures and validation tools no longer depend on unused facade re-exports.
+The existing Ruff check reproduces the former two F401 failures and passes
+after the import repair. Pool sharing and test cleanup still use the same
+thread-local objects and functions; focused pool/configuration/Email regressions
+pass without changing database behavior, assertions or task state.
+
 ### Native Claude structured output
 
 A command factory's output-schema declaration reaches Claude CLI through its native inline `--json-schema` argument, using the same default schema as Codex when no explicit path is supplied. The schema is no longer duplicated inside Claude task text. When a schema is declared, successful terminal evidence requires `structured_output`; the adapter serializes that native value for the existing strict caller parser. Ordinary text turns keep their text result. This changes transport/result wiring, not Audit standards, tool permissions, delivery or receipt rules. The full real CLI probe includes the native StructuredOutput tool and its matching result, with no open tool items at completion.
