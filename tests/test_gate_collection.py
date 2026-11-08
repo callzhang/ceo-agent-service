@@ -104,3 +104,26 @@ def test_gate_does_not_hide_test_failures(pytester):
     result = pytester.runpytest("-q", "-p", PLUGIN, str(path))
     result.assert_outcomes(failed=1)
     assert "original assertion failure" in result.stdout.str()
+
+
+def test_gate_removes_passed_temporary_files_but_keeps_failed_evidence(pytester):
+    path = pytester.makepyfile("""
+def test_passed(tmp_path):
+    (tmp_path / 'passed-evidence').write_text('passed')
+
+def test_failed(tmp_path):
+    (tmp_path / 'failed-evidence').write_text('failed')
+    assert False, 'original failure stays a failure'
+""")
+    baseline_root = pytester.path / "baseline-temp"
+    baseline = pytester.runpytest("-q", "--basetemp", str(baseline_root), str(path))
+    baseline.assert_outcomes(passed=1, failed=1)
+    assert (baseline_root / "test_passed0" / "passed-evidence").is_file()
+    assert (baseline_root / "test_failed0" / "failed-evidence").is_file()
+
+    gate_root = pytester.path / "gate-temp"
+    actual = pytester.runpytest(*TEST_GATE_ARGS[2:], "--basetemp", str(gate_root), str(path))
+    actual.assert_outcomes(passed=1, failed=1)
+    assert "original failure stays a failure" in actual.stdout.str()
+    assert not (gate_root / "test_passed0").exists()
+    assert (gate_root / "test_failed0" / "failed-evidence").read_text() == "failed"

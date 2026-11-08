@@ -206,6 +206,7 @@ TEST_GATE_MANIFEST = "tests/gate_files.txt"
 TEST_GATE_ARGS = (
     "-m", "pytest", "-q", "-p", "no:cacheprovider",
     "-p", "tests.support.gate_collection", "--tb=short",
+    "-o", "tmp_path_retention_policy=failed",
 )
 #: Derek, 2026-10-25: on. It was off from 2026-10-25 until tests/gate_files.txt
 #: was live. A source constant on purpose: no option or environment variable.
