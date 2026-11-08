@@ -85,8 +85,13 @@ def test_checkpoint_interruption_reuses_the_already_created_turn(store, tmp_path
     store.record_error(None, None, 'failure', 'detail')
     error = store.list_errors(limit=1)[0]
     real_save = module.save_repair
+    calls = 0
     def interrupted(*args):
-        raise RuntimeError('checkpoint interrupted')
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError('checkpoint interrupted')
+        return real_save(*args)
     monkeypatch.setattr(module, 'save_repair', interrupted)
     with pytest.raises(RuntimeError, match='checkpoint interrupted'):
         coordinator(store, tmp_path).run_once()

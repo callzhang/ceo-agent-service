@@ -16,11 +16,15 @@ import time
 import tomllib
 import uuid
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Any
 
+from pydantic import ValidationError
+
+from app.agent_runtime_router import RoutedResultValidationError, RoutedResultValidationRetry
 from app.codex_runner import CodexRunner
+from app.workbench.result_contracts import get_result_contract
 from app.process_runner import ProcessRunResult
 from app.workbench.runtime import (
     RuntimeCapabilities,
@@ -714,6 +718,7 @@ class CodexRuntime:
         prompt: str,
         provider_session_ref: str,
         model: str = "",
+        result_contract: str = "",
         image_paths: Sequence[Path] = (),
         workspace: Path | None = None,
     ) -> list[str]:
@@ -722,12 +727,14 @@ class CodexRuntime:
         if provider_session_ref and not _is_canonical_session_ref(provider_session_ref):
             raise ValueError("invalid provider session reference")
         validated_images = self._validated_images(image_paths, effective_workspace)
+        contract = get_result_contract(result_contract)
         runner = CodexRunner(workspace=effective_workspace, codex_bin=self.codex_bin)
         command = runner.build_command(
             prompt=prompt,
             session_id=provider_session_ref or None,
             image_paths=validated_images,
-            use_output_schema=False,
+            use_output_schema=contract is not None,
+            output_schema_path=contract.schema_path if contract else None,
             approval_policy="on-failure",
             use_approval_bypass=False,
             preserve_native_model_config=True,
@@ -755,6 +762,7 @@ class CodexRuntime:
             prompt=request.prompt,
             provider_session_ref=request.provider_session_ref,
             model=request.model,
+            result_contract=request.result_contract,
             image_paths=request.image_paths,
             workspace=request_workspace,
         )
@@ -807,6 +815,7 @@ class CodexRuntime:
             stop()
 
     def _run(self, owner: _RuntimeOwner) -> None:
+        provider_session_ref = owner.request.provider_session_ref
         try:
             base_env = CodexRunner(
                 workspace=owner.request.workspace,
@@ -817,63 +826,97 @@ class CodexRuntime:
                 Path(base_env.get("CODEX_HOME", "~/.codex")).expanduser()
                 / "config.toml",
             )
-            process_result = owner.executor(
-                command,
-                prompt=owner.request.prompt,
-                env=base_env,
-                total_timeout_seconds=self.total_timeout_seconds,
-                idle_timeout_seconds=self.idle_timeout_seconds,
-                on_stdout_line=owner.normalizer.accept_line,
-            )
-            with owner.lock:
-                stopped = owner.stop_requested
-            if stopped:
-                result = RuntimeResult(status="stopped")
-            elif process_result.timed_out:
-                result = RuntimeResult(
-                    status="failed",
-                    error_code="provider_timeout",
-                    error_detail="provider execution timed out",
+            prompt = owner.request.prompt
+            for correction in range(2):
+                with owner.lock:
+                    if owner.stop_requested:
+                        result = RuntimeResult(status="stopped")
+                        break
+                process_result = owner.executor(
+                    command,
+                    prompt=prompt,
+                    env=base_env,
+                    total_timeout_seconds=self.total_timeout_seconds,
+                    idle_timeout_seconds=self.idle_timeout_seconds,
+                    on_stdout_line=owner.normalizer.accept_line,
                 )
-            elif process_result.returncode != 0:
-                result = RuntimeResult(
-                    status="failed",
-                    error_code="provider_process_failed",
-                    error_detail=(
-                        process_result.stderr.strip()
-                        or process_result.stdout.strip()
-                        or f"provider process exited with code {process_result.returncode}"
-                    ),
-                )
-            elif owner.normalizer.terminal_status == "failed":
-                result = RuntimeResult(
-                    status="failed",
-                    error_code="provider_turn_failed",
-                    error_detail="provider turn failed",
-                )
-            elif owner.normalizer.terminal_status != "completed":
-                result = RuntimeResult(
-                    status="failed",
-                    error_code="incomplete_provider_output",
-                    error_detail="provider execution ended without completion",
-                )
-            elif not owner.normalizer.provider_session_ref:
-                result = RuntimeResult(
-                    status="failed",
-                    error_code="missing_provider_session",
-                    error_detail="provider execution did not identify its session",
-                )
-            else:
-                result = RuntimeResult(
-                    status="completed",
-                    final_text=owner.normalizer.final_text,
-                    provider_session_ref=owner.normalizer.provider_session_ref,
-                )
+                provider_session_ref = owner.normalizer.provider_session_ref or provider_session_ref
+                with owner.lock:
+                    stopped = owner.stop_requested
+                if stopped:
+                    result = RuntimeResult(status="stopped")
+                elif process_result.timed_out:
+                    result = RuntimeResult(
+                        status="failed",
+                        error_code="provider_timeout",
+                        error_detail="provider execution timed out",
+                    )
+                elif process_result.returncode != 0:
+                    result = RuntimeResult(
+                        status="failed",
+                        error_code="provider_process_failed",
+                        error_detail=(
+                            process_result.stderr.strip()
+                            or process_result.stdout.strip()
+                            or f"provider process exited with code {process_result.returncode}"
+                        ),
+                    )
+                elif owner.normalizer.terminal_status == "failed":
+                    result = RuntimeResult(
+                        status="failed",
+                        error_code="provider_turn_failed",
+                        error_detail="provider turn failed",
+                    )
+                elif owner.normalizer.terminal_status != "completed":
+                    result = RuntimeResult(
+                        status="failed",
+                        error_code="incomplete_provider_output",
+                        error_detail="provider execution ended without completion",
+                    )
+                elif not owner.normalizer.provider_session_ref:
+                    result = RuntimeResult(
+                        status="failed",
+                        error_code="missing_provider_session",
+                        error_detail="provider execution did not identify its session",
+                    )
+                else:
+                    final_text = owner.normalizer.final_text
+                    contract = get_result_contract(owner.request.result_contract)
+                    if contract:
+                        try:
+                            final_text = contract.model.model_validate_json(final_text).model_dump_json()
+                        except ValidationError as exc:
+                            detail = exc.json(include_input=False)
+                            if correction == 0:
+                                retry = RoutedResultValidationRetry.exactly_once(
+                                    correction_instructions="Continue original task in same session and return only declared native result JSON.",
+                                )
+                                prompt = retry.corrected_prompt(owner.request.prompt,
+                                                                RoutedResultValidationError(detail))
+                                command = _command_with_mcp_startup_timeouts(self.build_command(
+                                    prompt=prompt,
+                                    provider_session_ref=owner.normalizer.provider_session_ref,
+                                    model=owner.request.model,
+                                    result_contract=owner.request.result_contract,
+                                    image_paths=owner.request.image_paths,
+                                    workspace=owner.request.workspace,
+                                ), Path(base_env.get("CODEX_HOME", "~/.codex")).expanduser() / "config.toml")
+                                owner.normalizer = _CodexNormalizer(owner.normalizer._on_event)
+                                owner.normalizer.provider_session_ref = provider_session_ref
+                                continue
+                            raise _AdapterFailure("runtime_result_validation_failed", detail) from exc
+                    result = RuntimeResult(
+                        status="completed",
+                        final_text=final_text,
+                        provider_session_ref=owner.normalizer.provider_session_ref,
+                    )
+                break
         except _AdapterFailure as exc:
             result = RuntimeResult(
                 status="failed",
                 error_code=exc.code,
                 error_detail=exc.detail,
+                provider_session_ref=owner.normalizer.provider_session_ref,
             )
         except Exception as exc:
             result = RuntimeResult(
@@ -881,6 +924,8 @@ class CodexRuntime:
                 error_code="runtime_failure",
                 error_detail=f"{type(exc).__name__}: {exc}",
             )
+        if provider_session_ref and not result.provider_session_ref:
+            result = replace(result, provider_session_ref=provider_session_ref)
         owner.result = result
         owner.done.set()
 

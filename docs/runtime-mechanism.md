@@ -2203,6 +2203,8 @@ Attached open repair PRs now remain under sixty-second GitHub observation after 
 
 PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
 
+Automatic repair declares a durable per-turn native result contract (initial diagnosis v1 / PR correction v3), committed atomically with each Workbench turn in existing State. RuntimeRequest restores that declaration; fixed repository schemas, typed parsing, local/structured capability requirements and existing same-session validation correction apply uniformly through native CLI adapters. Commentary alone cannot complete a typed repair turn. Freeform turns retain their declared text contract; no task kind or runtime-route branch is added. Initial and PR correction intents both freeze the original prompt/request ID/contract before creation, preserving recovery when producer code changes. Task bodies do not duplicate the CLI-supplied schema.
+
 ### Declared MCP module launch and result error propagation
 
 The existing role `agent_cli` stdio configuration supplies the service source

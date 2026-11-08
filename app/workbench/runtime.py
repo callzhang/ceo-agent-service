@@ -132,6 +132,7 @@ class RuntimeRequest:
     model: str = ""
     attachment_paths: tuple[Path, ...] = ()
     image_paths: tuple[Path, ...] = ()
+    result_contract: str = ""
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", Path(self.workspace))

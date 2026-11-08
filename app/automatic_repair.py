@@ -7,29 +7,17 @@ import json
 from pathlib import Path
 import subprocess
 import time
-from typing import Literal
 
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+from pydantic import ValidationError
 
+from app.automatic_repair_contracts import (
+    PRRepairResult, RepairDiagnosis, REPAIR_DIAGNOSIS_CONTRACT, REPAIR_PR_CONTRACT,
+)
 from app.automatic_repair_store import (
     TERMINAL, ensure_conversation, get_repair, list_repairs, save_repair,
 )
 from app.repair_pull_request import PullRequestReader, assess_feedback, review_fingerprint
 from app.external_retry import DEFAULT_MAX_RETRY_DELAY_SECONDS, MAX_AUTOMATIC_ATTEMPTS, run_external
-
-
-class RepairDiagnosis(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    outcome: Literal['pr_created', 'no_code_change', 'blocked']
-    summary: str = Field(min_length=1)
-
-
-class PRRepairResult(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    outcome: Literal['pr_updated', 'blocked']
-    summary: str = Field(min_length=1)
-    addressed_review_ids: list[str] = Field(default_factory=list)
-    remaining_work: list[str]
 
 
 def repair_presentation(store, source: str, source_id: int) -> dict | None:
@@ -94,6 +82,9 @@ class AutomaticRepairCoordinator:
         if entry.get('next_readback_at', 0) > time.time():
             return
         entry = ensure_conversation(self.store, entry)
+        if entry.get('pending_initial_turn'):
+            self._submit_initial_turn(entry)
+            return
         if entry['pr_url']:
             self._advance_pr(entry)
             return
@@ -153,11 +144,20 @@ class AutomaticRepairCoordinator:
             'For a proven non-code cause use outcome no_code_change; for an external blocker use blocked. '
             "A plan or an intention to continue is not completion."
         )
-        turn = self.store.create_turn(
-            entry['task_id'], user_text=prompt,
-            client_request_id=f'automatic-repair:{source}:{identity}:{len(turn_ids) + 1}',
-        )
-        entry.update(status='running', turn_ids=[*turn_ids, turn.id])
+        entry['pending_initial_turn'] = {
+            'prompt': prompt, 'result_contract': REPAIR_DIAGNOSIS_CONTRACT,
+            'request_id': f'automatic-repair:{source}:{identity}:{len(turn_ids) + 1}',
+        }
+        save_repair(self.store, entry)
+        self._submit_initial_turn(entry)
+
+    def _submit_initial_turn(self, entry: dict) -> None:
+        pending = entry['pending_initial_turn']
+        turn = self.store.create_turn(entry['task_id'], user_text=pending['prompt'],
+                                      client_request_id=pending['request_id'],
+                                      result_contract=pending['result_contract'])
+        entry.update(status='running', turn_ids=[*entry['turn_ids'], turn.id])
+        del entry['pending_initial_turn']
         save_repair(self.store, entry)
 
     def _advance_pr(self, entry: dict) -> None:
@@ -227,15 +227,15 @@ class AutomaticRepairCoordinator:
                     "Read full job logs/discussions, verify root causes, add/run focused regressions, "
                     "commit and push the same PR. Resolve verified review corrections; report actual external blockers. "
                     "Do not weaken checks/test limits, merge the PR, deploy, or replay business actions. "
-                    "Return ONLY JSON matching result_schema; list concrete remaining_work until the goal is met. "
+                    "Return the declared native result JSON, including concrete remaining_work until the goal is met. "
                     "The coordinator independently observes the new head and remote results.\n"
                     + json.dumps({'previous_result': entry.get('last_feedback_result'),
-                                  'current_feedback': feedback, 'result_schema': schema},
+                                  'current_feedback': feedback},
                                  ensure_ascii=False, sort_keys=True)
                 )
                 entry['pending_feedback_turn'] = {
                     'prompt': prompt, 'identity': identity, 'attempt': attempts + 1,
-                    'feedback': feedback,
+                    'feedback': feedback, 'result_contract': REPAIR_PR_CONTRACT,
                     'request_id': f"automatic-repair:{entry['source']}:{entry['source_id']}:pr:{identity}:{attempts + 1}",
                 }
                 # Save intent before creating a native turn. A crash and changed GitHub
@@ -248,7 +248,8 @@ class AutomaticRepairCoordinator:
     def _submit_feedback_turn(self, entry: dict) -> None:
         pending = entry['pending_feedback_turn']
         turn = self.store.create_turn(entry['task_id'], user_text=pending['prompt'],
-                                      client_request_id=pending['request_id'])
+                                      client_request_id=pending['request_id'],
+                                      result_contract=pending.get('result_contract', ''))
         counts = entry.get('feedback_attempt_counts', {})
         counts[pending['identity']] = pending['attempt']
         feedback = pending['feedback']
