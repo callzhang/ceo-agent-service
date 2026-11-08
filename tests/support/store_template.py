@@ -46,7 +46,7 @@ def _copy_of_template(kind: str, build) -> Path | None:
 
 
 def _build(original, store_class, template: Path) -> None:
-    from app.store import _close_idle_connections
+    from app.sqlite_connections import _close_idle_connections
 
     original(store_class.__new__(store_class), template)
     _close_idle_connections()

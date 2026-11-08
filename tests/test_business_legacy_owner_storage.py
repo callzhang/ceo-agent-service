@@ -4,7 +4,7 @@ import sqlite3
 
 import pytest
 
-from app import store as store_module
+from app.sqlite_connections import _close_idle_connections
 from app.business_legacy_owner_storage import assign_import_task, read_import_task
 from app.business_storage import insert_business
 from app.store import AutoReplyStore
@@ -13,7 +13,7 @@ from app.store import AutoReplyStore
 def current_db(tmp_path):
     path = tmp_path / "owner.sqlite"
     AutoReplyStore(path)
-    store_module._close_idle_connections()
+    _close_idle_connections()
     db = sqlite3.connect(path)
     db.execute("pragma foreign_keys=off")
     db.execute("begin")

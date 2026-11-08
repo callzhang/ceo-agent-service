@@ -62,7 +62,8 @@ from app.email_provider_folders import FolderRole, ProviderFolder
 from app.email_task_adapter import email_action_identity
 from app.email_pipeline import apply_human_confirmation
 from app.email_unsubscribe import normalize_unsubscribe_result_text
-from app.store import AgentRole, AutoReplyStore, _close_idle_connections
+from app.sqlite_connections import _close_idle_connections
+from app.store import AgentRole, AutoReplyStore
 from app.action_storage import (
     email_action_projection,
     insert_action,
