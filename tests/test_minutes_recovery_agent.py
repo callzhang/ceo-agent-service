@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from app.minutes_recovery_agent import build_recovery_prompt, read_completed_asr
+from app.minutes_recovery_agent import (
+    build_recovery_prompt,
+    completed_asr_receipt,
+    read_completed_asr,
+)
 
 
 def event(
@@ -43,7 +47,9 @@ ASR = {
     ],
 )
 def test_completed_native_receipt_returns_asr(result, monkeypatch):
-    monkeypatch.setattr("app.minutes_recovery_agent._native_events", lambda *_: [event(result)])
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events", lambda *_: [event(result)]
+    )
     assert read_completed_asr(None, "turn-1", "job-1") == ASR
 
 
@@ -56,13 +62,65 @@ def test_completed_native_receipt_returns_asr(result, monkeypatch):
         [event({"structuredContent": ASR}, server="other")],
         [event({"structuredContent": ASR}, status="failed")],
         [
-            {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(ASR)}}
+            {
+                "type": "item.completed",
+                "item": {"type": "agent_message", "text": json.dumps(ASR)},
+            }
         ],
     ],
 )
 def test_absent_or_unrelated_native_receipt_is_not_asr(events, monkeypatch):
     monkeypatch.setattr("app.minutes_recovery_agent._native_events", lambda *_: events)
     assert read_completed_asr(None, "turn-1", "job-1") is None
+
+
+def test_completed_receipt_matches_recorded_source_job(monkeypatch):
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events",
+        lambda *_: [event({"structuredContent": ASR})],
+    )
+    assert completed_asr_receipt(None, "turn-1", ["job-1"]) == {
+        "job_id": "job-1",
+        "result": ASR,
+    }
+
+
+def test_completed_receipt_selects_latest_completed_source_upload(monkeypatch):
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events",
+        lambda *_: [
+            event({"structuredContent": ASR}),
+            event({"structuredContent": ASR}, job_id="job-2"),
+        ],
+    )
+    assert completed_asr_receipt(None, "turn-1", ["job-1", "job-2"]) == {
+        "job_id": "job-2",
+        "result": ASR,
+    }
+    assert completed_asr_receipt(None, "turn-1", ["unrelated"]) is None
+
+
+def test_completed_receipt_ignores_running_and_failed_before_success(monkeypatch):
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events",
+        lambda *_: [
+            event({"structuredContent": {"status": "running"}}),
+            {**event({"structuredContent": ASR}), "type": "item.failed"},
+            event({"structuredContent": ASR}),
+        ],
+    )
+    assert completed_asr_receipt(None, "turn-1", ["job-1"]) == {
+        "job_id": "job-1",
+        "result": ASR,
+    }
+
+
+def test_completed_receipt_unknown_returns_none(monkeypatch):
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events",
+        lambda *_: [event({"structuredContent": {"status": "running"}})],
+    )
+    assert completed_asr_receipt(None, "turn-1", ["job-1"]) is None
 
 
 def test_prompt_uses_original_job_and_prohibits_forged_asr(tmp_path):
@@ -116,9 +174,14 @@ def test_completed_claude_receipt_is_hydrated_from_native_turn(tmp_path, monkeyp
         insert_runtime_attempt_row(
             db,
             {
-                "workload_kind": "workbench", "workload_key": turn.id,
-                "attempt_number": 1, "route_name": "first", "runtime_kind": "codex_cli",
-                "credential_mode": "oauth", "model": "model", "status": "superseded",
+                "workload_kind": "workbench",
+                "workload_key": turn.id,
+                "attempt_number": 1,
+                "route_name": "first",
+                "runtime_kind": "codex_cli",
+                "credential_mode": "oauth",
+                "model": "model",
+                "status": "superseded",
             },
         )
         insert_runtime_attempt_row(
@@ -143,3 +206,7 @@ def test_completed_claude_receipt_is_hydrated_from_native_turn(tmp_path, monkeyp
     )
     store.complete_turn(turn.id, status="completed", owner="worker")
     assert read_completed_asr(WorkbenchStore(store.path), turn.id, "job-1") == ASR
+    assert completed_asr_receipt(WorkbenchStore(store.path), turn.id, ["job-1"]) == {
+        "job_id": "job-1",
+        "result": ASR,
+    }
