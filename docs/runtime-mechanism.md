@@ -2201,6 +2201,8 @@ The repair Agent reads the exact source/trajectory, uses an isolated development
 
 Attached open repair PRs now remain under sixty-second GitHub observation after `pr_created` and `checks_passed`. Current-head CheckRun/status failures, unresolved review threads and unhandled review bodies automatically create native turns in the same conversation/session and existing PR. Paginated evidence is head-checked; pending/absent checks wait. Durable feedback intent plus deterministic request IDs recover a created turn across crashes even if GitHub changes. Fingerprint-specific four-attempt counts survive A→B→A feedback changes; exhausted feedback stays visible and watches for new evidence. Green requires completed passing checks and resolved/handled review feedback; later feedback resumes observation. Closed PRs end monitoring. Original error state, Audit and business actions are unchanged.
 
+PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
+
 ### Declared MCP module launch and result error propagation
 
 The existing role `agent_cli` stdio configuration supplies the service source

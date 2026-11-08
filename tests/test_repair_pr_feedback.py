@@ -391,6 +391,7 @@ def test_commented_review_body_requires_explicit_handling_receipt(store, tmp_pat
             dict(
                 outcome="pr_updated",
                 summary="Verified and covered",
+                remaining_work=[],
                 addressed_review_ids=["review-body"],
             )
         ),
@@ -430,3 +431,48 @@ def test_earlier_commented_body_is_not_hidden_by_later_approval():
     old_request = dict(first, state="CHANGES_REQUESTED")
     pr["reviews"] = [old_request, approved]
     assert not assess_feedback(pr)[2]
+
+
+def test_retry_carries_previous_result_and_remaining_goal(store, tmp_path):
+    import json
+
+    identity, _ = attached(store, tmp_path)
+    data = snapshot(checks=[failed_check()])
+    poll(store, tmp_path, data)
+    entry = get_repair(store, "errors", identity)
+    finish(
+        store,
+        entry["turn_ids"][-1],
+        json.dumps(
+            {
+                "outcome": "blocked",
+                "summary": "These tests also fail on main",
+                "remaining_work": ["Repair stale test callers"],
+                "addressed_review_ids": [],
+            }
+        ),
+    )
+    poll(store, tmp_path, data)
+    latest = get_repair(store, "errors", identity)
+    prompt = store.get_turn(latest["turn_ids"][-1]).user_text
+    assert "These tests also fail on main" in prompt
+    assert "Repair stale test callers" in prompt
+    assert "Goal:" in prompt
+    assert latest["last_feedback_result"]["outcome"] == "blocked"
+
+
+def test_invalid_result_gets_format_feedback_in_same_conversation(store, tmp_path):
+    identity, original = attached(store, tmp_path)
+    data = snapshot(checks=[failed_check()])
+    poll(store, tmp_path, data)
+    entry = get_repair(store, "errors", identity)
+    finish(
+        store, entry["turn_ids"][-1], 'An explanation followed by {"outcome":"blocked"}'
+    )
+    poll(store, tmp_path, data)
+    latest = get_repair(store, "errors", identity)
+    assert latest["task_id"] == original["task_id"]
+    assert latest["last_feedback_result"]["error"] == "invalid_result"
+    prompt = store.get_turn(latest["turn_ids"][-1]).user_text
+    assert "json_invalid" in prompt
+    assert "remaining_work" in prompt

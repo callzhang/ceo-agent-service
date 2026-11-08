@@ -42,8 +42,8 @@ _WORKBENCH_RESULT_CODEC = RoutedResultCodec.internal_text(
 )
 _WORKBENCH_DEVELOPER_INSTRUCTIONS = (
     "Complete the user's main-page task using the service runtime and its available "
-    "Skills, MCP servers, and local tools. Return the final user-facing answer as "
-    "ordinary text. Native CLI auto review is the only command approval mechanism."
+    "Skills, MCP servers, and local tools. Follow the user's requested output format "
+    "for the final answer. Native CLI auto review is the only command approval mechanism."
 )
 
 
