@@ -28,6 +28,7 @@ from app.agent_runtime_contracts import (
     runtime_route_surface_capabilities,
 )
 from app.codex_decision import extract_codex_session_id
+from app.codex_runner import CODEX_DECISION_SCHEMA_PATH
 from app.codex_failure import CODEX_PROVIDER_AUTH_FAILED
 from app.codex_history import count_codex_session_lines
 from app.codex_runtime_adapter import CodexRuntimeAdapter
@@ -287,7 +288,7 @@ def _claude_turn_text(command_factory: CodexCommandFactory, prompt: str) -> str:
     """Claude reads its instructions from the same contract Agent turns use."""
     return claude_input_contract(
         prompt=prompt,
-        developer_instructions=_out_of_band_instructions(command_factory),
+        developer_instructions=command_factory.developer_instructions,
     )
 
 
@@ -1918,17 +1919,22 @@ class RoutedCodexExecution:
         assert adapter is not None
         from app.claude_runtime_adapter import ClaudeCommandPolicy
 
+        schema = None
+        if command_factory.use_output_schema:
+            schema_path = command_factory.output_schema_path or CODEX_DECISION_SCHEMA_PATH
+            schema = json.loads(schema_path.read_text(encoding='utf-8'))
         command = adapter.build_command(
             route=route,
             session_id=session_id,
             max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
+            json_schema=schema,
             policy=(
                 ClaudeCommandPolicy.no_tools()
                 if command_factory.model_only else ClaudeCommandPolicy.normal()
             ),
         )
         env = adapter.build_env(route)
-        normalizer = adapter.new_event_normalizer(expected_session_id=session_id)
+        normalizer = adapter.new_event_normalizer(expected_session_id=session_id, json_schema=schema)
         process = self._executor(
             command,
             prompt=_claude_turn_text(command_factory, prompt),

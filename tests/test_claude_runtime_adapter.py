@@ -144,6 +144,23 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
     }
 
 
+
+@pytest.mark.parametrize("filename", [
+    "meeting_alignment_audit.schema.json", "meeting_alignment_decision.schema.json",
+])
+def test_fixed_schema_cli_argument_omits_only_dialect_metadata(adapter, route, filename):
+    schema = json.loads((Path(__file__).parents[1] / "app/schemas" / filename).read_text())
+    original = json.dumps(schema, sort_keys=True)
+    command = adapter.build_command(
+        route=route, session_id=None, max_turns=5,
+        policy=ClaudeCommandPolicy.no_tools(), json_schema=schema,
+    )
+    delivered = json.loads(command[command.index("--json-schema") + 1])
+    assert delivered == {key: value for key, value in schema.items() if key != "$schema"}
+    assert json.dumps(schema, sort_keys=True) == original
+    assert command[command.index("--tools") + 1] == ""
+
+
 def test_consumer_native_schema_is_inline_and_not_added_to_audit(adapter, route):
     from app.agent_wire_contracts import claude_consumer_output_schema
 
@@ -1337,3 +1354,33 @@ def test_role_tool_server_starts_from_isolated_task_directory(adapter, route, tm
     )
     assert result.returncode == 0, result.stderr
     assert "--task-id" in result.stdout
+
+
+def test_native_structured_output_is_the_terminal_result(adapter):
+    normalizer = adapter.new_event_normalizer()
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = normalizer.normalize_event({
+        **FINAL_RESULT, 'result': 'Human explanation, not the structured result.',
+        'structured_output': {'ok': True},
+    })
+    parsed = adapter.parse_final_result(normalizer=normalizer,
+        proof=normalizer.terminal_proof(), parser=json.loads)
+    assert parsed == {'ok': True}
+    assert json.loads(event['result']) == {'ok': True}
+
+
+def test_declared_schema_requires_native_terminal_structured_output(adapter):
+    normalizer = adapter.new_event_normalizer(json_schema={'type':'object'})
+    normalizer.normalize_event(SYSTEM_INIT)
+    with pytest.raises(ClaudeEventPolicyError,match='claude_result_incomplete'):
+        normalizer.normalize_event(FINAL_RESULT)
+
+
+def test_native_structured_output_does_not_require_a_text_result(adapter):
+    normalizer = adapter.new_event_normalizer(json_schema={'type':'object'})
+    normalizer.normalize_event(SYSTEM_INIT)
+    terminal = dict(FINAL_RESULT, structured_output={'ok':True})
+    del terminal['result']
+    normalizer.normalize_event(terminal)
+    assert adapter.parse_final_result(normalizer=normalizer,
+        proof=normalizer.terminal_proof(),parser=json.loads) == {'ok':True}
