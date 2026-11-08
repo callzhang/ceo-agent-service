@@ -220,7 +220,7 @@ not change Audit's review standard.
 走上面的完整路径。`command` 非空的是服务命令任务：它只声明服务命令目录中的一个名字，不需要
 Runtime、Skill 或工作目录。判断标准是这次执行本身有没有判断空间：确定性的发现或同步工作属于
 服务命令，需要 Skill 判断的才是 Agent 任务。AI 听记同步的分页读取、归档和内容游标都由
-`app/minutes_sync.py` 确定性完成，因此它也是服务命令。
+`app/minutes_sync.py` 完成普通读取与归档，因此它也是服务命令；摘要生成故障自动交给现有 Workbench Agent 恢复。
 摘要接口终态跳过时同步器保留可用逐字稿；终态生成失败保留失败原因和可用官方逐字稿，未完成的条目继续重读。对于已完成的独立 ai-services ASR，可通过 `python -m app.minutes_archive_recovery` 显式预览或应用单条归档恢复：核验下载回执、音频摘要、ASR 状态和时间边界，保留官方原文并追加内部依据 ASR 转写整理的摘要与补充转写。只有写入和读回一致后才登记已归档；预览不写入。同步扫描与应用恢复按数据库共享进程间文件锁，避免并发覆盖归档或游标。
 “工作来源”扫描还会只读发现管理周报、项目管理部周报和部门产研周报，按文档 ID、链接、统计周期和内容 digest
 建立 Task-first `work_summary` 输入；同一文档版本重复扫描保持幂等，报告内容仍由 Task Agent 提取 Project 和 Task。
@@ -2410,3 +2410,11 @@ NULL authorization snapshot 和历史 category 仍是原有事实，计划 ID、
 
 
 Frozen task Skill reads are paged for every Consumer/Audit runtime: `read_task_skill(name, offset=0, max_chars=4000)` returns at most 8,000 characters with offset, total_chars and next_offset. Follow next_offset until null; sha256 continues to identify the full immutable task-frozen body. Each native MCP response has one content block and no duplicate structuredContent. This avoids requiring a long rule body and other tool results to fit in one orchestration output; it changes no task ownership, business policy or approval action. Installed Skill discovery remains unchanged.
+
+### 听记摘要的自动恢复
+
+`sync-minutes-once` 遇到类型化摘要生成失败或可重试读取错误时，仅增加一次摘要重读（300 秒超时；DWS 通用传输重试维持原规则）。仍失败才把确切 source UUID 交给 `app.minutes_auto_recovery`：下载原音频并保留 DWS 回执，创建原生 Workbench Task/Turn，由系统已有调度器运行 Agent。Agent 按 `docs/minutes-asr-recovery.md` 调用配置的 ai-services MCP，返回内部补充摘要；服务从该 Turn 的原生工具轨迹读取实际完成的 ASR，使用现有 `recover_archive` 核验并归档。认证/权限或未知响应结构不进入 ASR。
+
+恢复任务、轮次、预算和临时工作目录保存在原 Minutes cursor 的 `summary_recoveries` 中，普通同步保留这些扩展键；重启复用同一轮次/上传 job，不重新盲目上传。同步文件锁仅用于创建/更新状态或发布归档，等待 Agent 时释放。排队或处理中继续算同步未完成；只在真实归档写入、读回和 cursor 登记后减少失败数。归档保留官方失败及逐字稿，追加明确标注的内部摘要和完整补充转写；完成后清理原音频及临时文件。无官方逐字稿时保留空官方区段，再由完整 ASR 提供补充材料。
+
+Workbench 带文件的任务由现有 executor 验证附件后传递本地文件路径，并按该任务输入声明既有本地执行/工作区/服务数据能力；不具备能力的路由不被选择。无附件的任务保持原路由要求。此流程不修改 Audit、不触发对外消息、不更改钉钉官方产物或旧失败。

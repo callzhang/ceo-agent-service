@@ -83,6 +83,7 @@ class MinutesSyncResult:
     #: apart from `failures` so the summary cannot pass a skip off as a
     #: failure, which is exactly what made the first version of this unclear.
     skips: tuple[tuple[str, str], ...] = ()
+    summary_recovery_ids: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         accounted = (
@@ -495,6 +496,37 @@ def _list_all_minutes(
     return items, "; ".join(errors)
 
 
+def _read_summary_with_retry(dws, task_uuid: str) -> tuple[object, str]:
+    """Retry only a terminal generation failure or a typed transient read error."""
+    first_error = ""
+    for attempt in range(2):
+        try:
+            payload = (dws.get_minutes_summary(task_uuid) if attempt == 0
+                       else dws.get_minutes_summary(task_uuid, timeout_seconds=300))
+            summary = (payload or {}).get("result") or {}
+            try:
+                summary_markdown(summary)
+            except MinutesSummaryGenerationFailed as exc:
+                current_error = f"summary_generation_failed:{exc}"
+            except MinutesSummaryShapeUnknown as exc:
+                if first_error:
+                    raise MinutesSummaryShapeUnknown(f"{first_error}; retry: {exc}") from exc
+                return summary, ""
+            else:
+                return summary, ""
+        except DwsError as exc:
+            if exc.needs_login or exc.needs_authorization or not exc.retryable_external_dependency:
+                if first_error:
+                    exc.args = (f"{first_error}; retry: {exc}",)
+                raise
+            current_error = f"summary_read_failed:{exc}"
+        if attempt == 0:
+            first_error = current_error
+        else:
+            return {}, f"{first_error}; retry: {current_error}"
+    raise AssertionError("unreachable")
+
+
 @contextmanager
 def _minutes_sync_lock(store):
     database_path = store.path.resolve()
@@ -548,13 +580,14 @@ def _sync_minutes_once(
     synced = skipped = requested = still_pending = failed = 0
     failures: list[tuple[str, str]] = []
     skips: list[tuple[str, str]] = []
+    summary_recovery_ids: list[str] = []
     for task_uuid in candidates:
         transcript_error = ""
+        summary_error = ""
         try:
             basic_payload = dws.get_minutes_info(task_uuid)
             basic = (basic_payload or {}).get("result") or {}
-            summary_payload = dws.get_minutes_summary(task_uuid)
-            summary = (summary_payload or {}).get("result") or {}
+            summary, summary_error = _read_summary_with_retry(dws, task_uuid)
             try:
                 paragraphs = (
                     dws.get_all_minutes_transcription(task_uuid) or {}
@@ -567,15 +600,25 @@ def _sync_minutes_once(
                 # daily pass, each with a complete published summary sitting
                 # behind the same error. A restricted transcript is a
                 # permission question and still goes down that path.
-                if _is_restricted_minute_error(transcript_exc):
+                if (_is_restricted_minute_error(transcript_exc)
+                        or transcript_exc.needs_login or transcript_exc.needs_authorization):
                     raise
                 paragraphs = []
                 transcript_error = f"transcript_unavailable:{transcript_exc}"[:200]
+        except MinutesSummaryShapeUnknown as exc:
+            failed += 1
+            failures.append((task_uuid, f"summary_shape_unknown:{exc}"[:200]))
+            continue
         except DwsError as exc:
             if not _is_restricted_minute_error(exc):
                 failed += 1
-                failures.append((task_uuid, f"dws_error:{exc}"[:200]))
+                detail = f"dws_error:{exc}"
+                if summary_error:
+                    detail += f"; {summary_error}"
+                failures.append((task_uuid, detail[:200]))
                 continue
+            if summary_error:
+                failures.append((task_uuid, summary_error[:200]))
             duration = _read_duration_for_restricted(dws, task_uuid)
             if not should_request_access(duration):
                 skipped += 1
@@ -594,12 +637,9 @@ def _sync_minutes_once(
             pending.add(task_uuid)
             continue
 
-        summary_error = ""
         try:
-            rendered_summary = summary_markdown(summary)
-        except MinutesSummaryGenerationFailed as exc:
-            summary_error = f"summary_generation_failed:{exc}"
-            rendered_summary = f"> Summary unavailable: {summary_error}"
+            rendered_summary = (f"> Summary unavailable: {summary_error}" if summary_error
+                                else summary_markdown(summary))
         except MinutesSummaryShapeUnknown as exc:
             failed += 1
             failures.append((task_uuid, f"summary_shape_unknown:{exc}"[:200]))
@@ -615,10 +655,10 @@ def _sync_minutes_once(
         # condition no run could clear -- 14 of them on 2026-09-19 -- and a
         # daily error nobody can act on is how a real one gets missed. It is
         # rediscovered and retried on every later pass either way.
-        if summary_error and not paragraphs:
-            failed += 1
-            failures.append((task_uuid, summary_error[:200]))
-            continue
+        if summary_error:
+            summary_recovery_ids.append(task_uuid)
+            if transcript_error:
+                failures.append((task_uuid, transcript_error))
         if not paragraphs and not rendered_summary.strip():
             skipped += 1
             duration = _duration(basic)
@@ -678,6 +718,12 @@ def _sync_minutes_once(
         pending.discard(task_uuid)
         synced += 1
 
+    cursor.update({"archived_ids": sorted(archived), "permission_pending_ids": sorted(pending)})
+    if pagination_error:
+        cursor.update(pagination_deferred=True, pagination_error=pagination_error)
+    else:
+        cursor.pop("pagination_deferred", None)
+        cursor.pop("pagination_error", None)
     store.set_daily_scan_state(
         MINUTES_SYNC_SCANNER,
         last_success_at=(
@@ -685,21 +731,7 @@ def _sync_minutes_once(
             if not pagination_error
             else state.get("last_success_at") or ""
         ),
-        cursor_json=json.dumps(
-            {
-                "archived_ids": sorted(archived),
-                "permission_pending_ids": sorted(pending),
-                **(
-                    {
-                        "pagination_deferred": True,
-                        "pagination_error": pagination_error,
-                    }
-                    if pagination_error
-                    else {}
-                ),
-            },
-            sort_keys=True,
-        ),
+        cursor_json=json.dumps(cursor, sort_keys=True),
         last_error=pagination_error,
     )
     return MinutesSyncResult(
@@ -711,6 +743,7 @@ def _sync_minutes_once(
         failed=failed,
         failures=tuple(failures),
         skips=tuple(skips),
+        summary_recovery_ids=tuple(summary_recovery_ids),
     )
 
 
@@ -746,8 +779,6 @@ def _archive_transcription_recovery(
     original = path.read_text(encoding='utf-8')
     if '# AI Summary\n' not in original or '# Transcript\n' not in original:
         raise ValueError('existing archive is missing official artifacts')
-    if not original.split('# Transcript\n', 1)[1].strip():
-        raise ValueError('existing archive has no official transcript')
     recovery_marker = '<!-- ai-services-asr-recovery -->'
     suffix = recovery_marker + '\n' + supplement.rstrip() + '\n'
     if recovery_marker in original:

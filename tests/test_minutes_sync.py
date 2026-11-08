@@ -44,7 +44,7 @@ class FakeDws:
             raise error
         return {"result": self._basic.get(task_uuid, {})}
 
-    def get_minutes_summary(self, task_uuid):
+    def get_minutes_summary(self, task_uuid, *, timeout_seconds=None):
         error = self._errors.get(task_uuid)
         if error is not None:
             raise error

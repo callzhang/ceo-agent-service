@@ -6,6 +6,7 @@ from pathlib import Path
 
 from app.workbench.runtime import RuntimeRequest
 from app.workbench.service_runtime import ServiceWorkbenchRuntime
+from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 
 
 @dataclass(frozen=True)
@@ -119,3 +120,47 @@ def test_ui_event_projection_cannot_abort_shared_service_execution(tmp_path: Pat
 
     assert result.status == "completed"
     assert result.final_text == "共享执行已完成"
+
+
+def test_workbench_file_inputs_require_local_capabilities_and_reach_agent(
+    tmp_path: Path,
+):
+    routed = _FakeRoutedExecution()
+    runtime = ServiceWorkbenchRuntime(
+        workspace=tmp_path, routed_execution_factory=lambda **_: routed
+    )
+    attachment = tmp_path / "source file.txt"
+    attachment.write_text("source")
+    request = RuntimeRequest(
+        turn_id="2",
+        conversation_id="1",
+        workspace=tmp_path,
+        prompt="Read the source",
+        attachment_paths=(attachment,),
+    )
+
+    assert (
+        runtime.wait(runtime.start(request, on_event=lambda _: None)).status
+        == "completed"
+    )
+    assert (
+        routed.calls[0]["required_capabilities"] == LOCAL_SERVICE_RUNTIME_CAPABILITIES
+    )
+    assert str(attachment) in routed.calls[0]["prompt"]
+
+
+def test_workbench_without_files_keeps_existing_route_requirements(tmp_path: Path):
+    routed = _FakeRoutedExecution()
+    runtime = ServiceWorkbenchRuntime(
+        workspace=tmp_path, routed_execution_factory=lambda **_: routed
+    )
+    request = RuntimeRequest(
+        turn_id="2", conversation_id="1", workspace=tmp_path, prompt="Hello"
+    )
+
+    assert (
+        runtime.wait(runtime.start(request, on_event=lambda _: None)).status
+        == "completed"
+    )
+    assert not routed.calls[0].get("required_capabilities")
+    assert routed.calls[0]["prompt"] == "Hello"

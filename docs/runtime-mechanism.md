@@ -1124,7 +1124,7 @@ Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因
 其中“会议行动项”命令还会在同一轮只读发现管理周报、项目管理部周报和部门产研周报；报告按文档内容摘要建立带
 文档 ID、链接、统计周期和内容 digest 的 `work_summary` 输入，重复扫描同一 digest 不重复入队。较大输入的逻辑 JSON 字段使用带版本标记的无损压缩 BLOB，最终 Tasks 向量保留其 SQLite 值类型；Task Agent、语义导入、项目修复和 Attention 投影在读取边界解码。副本回放以当前投影返回的精确 TEXT/BLOB 值做 CAS、通过当前 Tasks 写入器沿用既有 codec，准确来源／状态／正文指纹及 lease 校验不变；小 payload 保持普通 JSON。`python -m app.work_summary_payload --db <database>` 只对仍需保留正文的非终态行按小批事务压缩，可续跑；done/skipped 行继续使用终态精简，不删数据或自动 VACUUM。
 新安装创建的全部默认任务都是暂停状态，用户配好连接器后自行启用；seed 从不改变已有任务的启用状态
-（Derek 2026-09-23）。独立 ASR 转写的单条听记恢复使用 `app.minutes_archive_recovery`：默认只预览；应用时先核验下载音频与 ASR，保留官方摘要失败和逐字稿，追加明确标示的内部摘要及补充转写，文件读回一致后登记同步游标；应用恢复与听记同步使用同一数据库进程间文件锁。AI 听记同步不再需要 Skill 判断：分页读取
+（Derek 2026-09-23）。独立 ASR 转写的单条听记恢复使用 `app.minutes_archive_recovery`：默认只预览；应用时先核验下载音频与 ASR，保留官方摘要失败和逐字稿，追加明确标示的内部摘要及补充转写，文件读回一致后登记同步游标；应用恢复与听记同步使用同一数据库进程间文件锁。AI 听记普通同步不需要 Agent 判断：分页读取
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
 会议直接跳过。成功运行的归档命令单行结果摘要会持久化到 scheduled run，并显示在定时任务运行记录中，包含
 `discovered`、`synced`、`skipped`、`permission_requested`、`permission_pending`、`failed` 计数及可操作的跳过明细。
@@ -2178,3 +2178,11 @@ DWS 文字发送、原生引用回复和文件发送先调用同一命令的原�
 ## 定时服务命令的当前 Attention
 
 基础设施服务命令错误通过原 event_id 精确绑定调度记录；同一调度配置、同一快照 command 仅以最新一次运行作为当前状态。配置版本变化但命令未变时仍是同一轮询任务。旧错误和运行历史原样保留，不被标为成功或已恢复；最新运行失败仍进入 Attention。不同命令、无法绑定来源的错误继续独立显示；command 为空的 Agent 周报等独立业务运行不按调度配置合并。
+
+### 自动摘要超时恢复
+
+`sync_minutes_once_command` 在普通同步后自动调用 `recover_summaries`。摘要首次类型化失败后只重读一次，第二次使用 300 秒读取超时；通用网络重试独立维持原预算。第二次仍为生成失败或可重试读取故障时创建现有 Workbench 任务，由主服务的 Workbench scheduler 认领；未知结构、认证和权限错误仍是真实失败，不扩大成转写权限。
+
+自动 Agent 的工作文件是本次原始录音及其真实下载回执，操作说明位于 `docs/minutes-asr-recovery.md`。实际 upload job ID 在返回前保存；下一轮优先复用 job。Agent 只返回补充摘要，服务通过 `WorkbenchStore.events_after` 从实际原生轨迹核对 ASR 调用和 job、完成文本与分段，再用原正式归档器发布。不能用 Agent 声明完成或自写结果文件替代原生工具结果。后台 Turn 尚未完成时服务命令保持未完成；下次同步复用其持久化身份。失败 Turn 使用现有有界自动尝试预算，显式停止不自动重启。
+
+源 cursor 的 `summary_recoveries` 记录原生 task/turn 引用及临时目录。普通 sync 保留扩展元数据；等待 Agent 不持有同步锁，正式发布使用同一锁。已归档源后续同步不再提交，完成后删除临时音频和检查点，保留原生处理历史。文件任务沿用 executor 的附件验证，并向统一路由声明既有本地运行能力；无能力的路由不选中，无运行路线特例。

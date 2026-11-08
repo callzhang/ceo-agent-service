@@ -3169,8 +3169,9 @@ class DwsClient:
             raise DwsError("invalid minutes info response")
         return payload
 
-    def get_minutes_summary(self, task_uuid: str) -> dict[str, Any]:
-        payload = self.run_json(self.build_minutes_summary_command(task_uuid))
+    def get_minutes_summary(self, task_uuid: str, *, timeout_seconds: int | None = None) -> dict[str, Any]:
+        command = self.build_minutes_summary_command(task_uuid)
+        payload = self.run_json(command) if timeout_seconds is None else self.run_json(command, timeout_seconds=timeout_seconds)
         if not isinstance(payload, dict):
             raise DwsError("invalid minutes summary response")
         return payload

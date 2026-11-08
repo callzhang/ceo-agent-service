@@ -2377,7 +2377,8 @@ def sync_minutes_once_command(
 ) -> str | object:
     """Mirror new DingTalk AI minutes into the local archive.
 
-    Deterministic throughout, and it sends nothing outward. A partial result
+    The normal pass is deterministic. Failed summaries use a native internal
+    recovery Agent; no messages are sent outward. A partial result
     must fail the service command so the scheduled trigger cannot be recorded
     as successfully dispatched while some minutes remain unsynchronized.
 
@@ -2390,6 +2391,8 @@ def sync_minutes_once_command(
     known minute, so a daily pass reads one page.
     """
     from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, sync_minutes_once
+    from app.minutes_auto_recovery import recover_summaries
+    from app.config import service_root
 
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
@@ -2401,6 +2404,10 @@ def sync_minutes_once_command(
         store,
         dws,
         archive_dir=settings.workspace / MINUTES_ARCHIVE_DIRECTORY,
+    )
+    result = recover_summaries(
+        store, dws, archive_dir=settings.workspace / MINUTES_ARCHIVE_DIRECTORY,
+        service_root=service_root(), result=result,
     )
     print(f"sync-minutes-once {result.summary()}", flush=True)
     if result.failed or result.permission_pending:

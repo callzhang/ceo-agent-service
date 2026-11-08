@@ -1,0 +1,66 @@
+# Internal Minutes ASR recovery procedure
+
+This is an internal file task created by `sync-minutes-once` after a typed
+summary-generation failure or retryable summary-read error persisted through one
+workflow retry. The normal provider retry uses a 300-second read timeout. It does
+not regenerate, overwrite or represent DingTalk's official summary as repaired.
+
+Read the supplied metadata file and its original working directory (given in the
+user request). `metadata.json` binds the task UUID, actual audio SHA-256 and actual
+duration to the original DWS download. The work directory contains
+`original-media`, `download-receipt.json` and optional job checkpoints.
+
+1. If `asr-complete.json` exists, read the completed transcript and prepare the
+   summary from it. The service rechecks its original native tool receipt.
+2. Otherwise, if `upload-result.json` exists, call the configured native
+   `ai_services.get_audio_transcription` MCP tool with that exact `job_id`.
+   Poll that same job until done; do not upload again while it is running.
+   Only an explicit expired/missing-job response permits replacement.
+3. For a new job call native `ai_services.create_audio_upload` (language can be
+   detected automatically). From the service root run the upload helper with
+   `metadata.json`'s `python_executable`:
+
+   ```text
+   <python_executable> -m app.minutes_auto_recovery upload --work-dir <original-work-dir> --upload-url <native-upload-url>
+   ```
+
+   This streams the original recording as multipart `file` and atomically saves
+   the server's actual job ID before returning. Audio bytes never go through the
+   model. Poll that ID using native `ai_services.get_audio_transcription` calls,
+   so the service can reconstruct the actual tool response from this native turn.
+4. Return only a concise supplementary Markdown summary in the recording's
+   language, grounded in the completed transcript: subject, important facts,
+   decisions and outstanding work. Mark uncertain details. Speaker labels are
+   anonymous; do not infer identities. Do not return operational commentary as the
+   summary, fabricate transcript data, write result checkpoints yourself, change
+   code, send messages, modify DingTalk or manually publish the archive.
+
+The service requires a completed native Agent turn and real ASR result, validates
+source download identity/hash/time boundaries with the existing archive recovery
+function, and appends an explicitly attributed internal summary and full ASR
+transcript. It preserves the official text and failure explanation. Only an
+atomically published file with a matching readback enters `archived_ids`. Audio
+and temporary checkpoints are deleted after publication. Native Workbench task,
+turn and runtime records remain the processing history.
+
+A pending turn is not successful synchronization. Its real IDs and working
+directory remain in the Minutes scanner cursor; the next pass resumes it rather
+than submitting another job. Failed native turns consume the existing bounded
+attempt budget; exhausted or stopped tasks retain a real failure.
+
+## Native MCP connection setup
+
+The configured MCP server is `ai_services`. Each allowed native CLI uses its own
+normal credential store; a working desktop connector does not establish a
+background Claude connection. If the native CLI reports authorization required,
+complete that CLI's own MCP login once. Do not copy tokens between clients or
+replace the connection with an ad hoc HTTP credential proxy. A connection error
+stays a real failed recovery and consumes no fake archive success.
+
+If a native Agent ends normally without producing the required ASR/summary, the
+service records the result failure in the cursor and uses a new bounded native
+turn on the next sync. An existing completed ASR is reconstructed from the real
+previous turn and reused. Explicit stops and exhausted budgets remain failed;
+their temporary recording is removed. A process crash before saving a returned
+upload job ID may require repeating that pure transcription submission; this is
+not an exactly-once upload guarantee. No business operation is replayed.

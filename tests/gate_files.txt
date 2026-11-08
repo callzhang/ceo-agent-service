@@ -450,3 +450,7 @@ tests/test_reviewed_candidate_store.py
 tests/test_native_reviewed_candidate_store.py
 tests/test_service_message_sender.py
 tests/test_scheduled_service_attention.py
+
+tests/test_minutes_auto_recovery.py
+tests/test_minutes_summary_retry.py
+tests/test_minutes_recovery_agent.py

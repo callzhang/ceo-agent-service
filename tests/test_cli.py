@@ -4948,10 +4948,6 @@ def test_main_passes_max_batches_to_bounded_scan_commands(
 def test_sync_minutes_once_command_fails_when_sync_has_failed_items(
     tmp_path, monkeypatch, capsys
 ):
-    class FakeStore:
-        def __init__(self, db_path):
-            assert db_path == tmp_path / "worker.sqlite3"
-
     class FakeDwsClient:
         def __init__(self, **kwargs):
             assert kwargs == {
@@ -4960,17 +4956,9 @@ def test_sync_minutes_once_command_fails_when_sync_has_failed_items(
                 "ding_receiver_user_id": None,
             }
 
-    result = SimpleNamespace(
-        failed=2,
-        permission_pending=0,
-        synced=2,
-        summary=lambda: (
-            "discovered=4 synced=2 skipped=0 "
-            "permission_requested=0 permission_pending=0 failed=2"
-        ),
-    )
+    from app.minutes_sync import MinutesSyncResult
+    result = MinutesSyncResult(discovered=4, failed=2, synced=2)
     minutes_sync = import_module("app.minutes_sync")
-    monkeypatch.setattr(cli, "AutoReplyStore", FakeStore)
     monkeypatch.setattr(cli, "DwsClient", FakeDwsClient)
     monkeypatch.setattr(
         minutes_sync,

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import threading
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -10,6 +11,7 @@ from typing import Any
 from uuid import uuid4
 
 from app.agent_runtime_production import build_production_routed_codex_execution
+from app.agent_runtime_contracts import LOCAL_SERVICE_RUNTIME_CAPABILITIES
 from app.agent_runtime_router import (
     CodexCommandFactory,
     RoutedCodexExecutionError,
@@ -173,10 +175,14 @@ class ServiceWorkbenchRuntime:
                 except Exception:  # noqa: BLE001 - UI projection is non-authoritative
                     owner.projection_failed = True
 
+            prompt = owner.request.prompt
+            if owner.request.attachment_paths:
+                paths = [str(path) for path in owner.request.attachment_paths]
+                prompt += "\n\nAttached local files: " + json.dumps(paths, ensure_ascii=False)
             routed_result = routed.execute(
                 workload_kind="workbench",
                 workload_key=owner.request.turn_id,
-                prompt=owner.request.prompt,
+                prompt=prompt,
                 command_factory=CodexCommandFactory.standard(
                     developer_instructions=_WORKBENCH_DEVELOPER_INSTRUCTIONS,
                     image_paths=owner.request.image_paths,
@@ -184,6 +190,10 @@ class ServiceWorkbenchRuntime:
                 parser=parse_result,
                 result_codec=_WORKBENCH_RESULT_CODEC,
                 conversation_id=owner.request.conversation_id,
+                required_capabilities=(
+                    LOCAL_SERVICE_RUNTIME_CAPABILITIES
+                    if owner.request.attachment_paths else frozenset()
+                ),
                 on_stdout_line=project_line,
                 cancel_requested=lambda: owner.stop_requested,
             )
@@ -239,5 +249,3 @@ class ServiceWorkbenchRuntime:
         if (not conversation_id.isascii() or not conversation_id.isdecimal()
                 or int(conversation_id) <= 0 or str(int(conversation_id)) != conversation_id):
             raise ValueError("conversation_id must be a canonical parent Task ID")
-        if request.attachment_paths:
-            raise ValueError("attachments are not supported by the service runtime")
