@@ -81,6 +81,7 @@ projection。对具有 `business_object_key` 的任务，当前状态由 `busine
 | `runtime_result_validation_failed` | runtime 结果校验失败 | 终态失败或按 provider retryable 重试 |
 | `runtime_post_start_failed` | runtime 已启动但后续阶段失败 | 按同一 run 的基础设施策略重试 |
 | `codex_provider_auth_failed` | Codex provider 认证失败 | 修复认证后重试 |
+| `codex_login_required` | 原生 Codex OAuth 刷新令牌失效（`invalid_refresh_token`／`workspace routing discovery unauthorized (401)`）；暂停该路由，不计入普通进程失败预算 | 重新登录 Codex 后重试 |
 | `external_action_uncertain` | 外部动作或投递结果仍未确认，已保存原始回执 | 终态 failed，保留 Attention，不自动重跑不可逆动作 |
 | `external_action_failed` | 外部动作执行或投递失败，已完成动作的记录保留 | 终态 failed，保留 Attention |
 | `codex_capacity_pause` | provider 容量不足，任务进入延迟队列 | 到 retry_at 后自动重试 |
