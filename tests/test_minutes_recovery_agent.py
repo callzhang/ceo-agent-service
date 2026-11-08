@@ -1,18 +1,8 @@
 import json
-from types import SimpleNamespace
 
 import pytest
 
 from app.minutes_recovery_agent import build_recovery_prompt, read_completed_asr
-
-
-class EventStore:
-    def __init__(self, events):
-        self.events = events
-
-    def events_after(self, turn_id):
-        assert turn_id == "turn-1"
-        return self.events
 
 
 def event(
@@ -23,17 +13,17 @@ def event(
     tool="get_audio_transcription",
     status="completed",
 ):
-    return SimpleNamespace(
-        event_type="tool_completed",
-        payload={
-            "kind": "mcp",
+    return {
+        "type": "item.completed",
+        "item": {
+            "type": "mcp_tool_call",
             "server": server,
             "tool": tool,
             "status": status,
             "arguments": {"job_id": job_id},
             "result": result,
         },
-    )
+    }
 
 
 ASR = {
@@ -52,8 +42,9 @@ ASR = {
         json.dumps(ASR),
     ],
 )
-def test_completed_native_receipt_returns_asr(result):
-    assert read_completed_asr(EventStore([event(result)]), "turn-1", "job-1") == ASR
+def test_completed_native_receipt_returns_asr(result, monkeypatch):
+    monkeypatch.setattr("app.minutes_recovery_agent._native_events", lambda *_: [event(result)])
+    assert read_completed_asr(None, "turn-1", "job-1") == ASR
 
 
 @pytest.mark.parametrize(
@@ -65,14 +56,13 @@ def test_completed_native_receipt_returns_asr(result):
         [event({"structuredContent": ASR}, server="other")],
         [event({"structuredContent": ASR}, status="failed")],
         [
-            SimpleNamespace(
-                event_type="turn_completed", payload={"text": json.dumps(ASR)}
-            )
+            {"type": "item.completed", "item": {"type": "agent_message", "text": json.dumps(ASR)}}
         ],
     ],
 )
-def test_absent_or_unrelated_native_receipt_is_not_asr(events):
-    assert read_completed_asr(EventStore(events), "turn-1", "job-1") is None
+def test_absent_or_unrelated_native_receipt_is_not_asr(events, monkeypatch):
+    monkeypatch.setattr("app.minutes_recovery_agent._native_events", lambda *_: events)
+    assert read_completed_asr(None, "turn-1", "job-1") is None
 
 
 def test_prompt_uses_original_job_and_prohibits_forged_asr(tmp_path):
@@ -93,26 +83,6 @@ def test_completed_claude_receipt_is_hydrated_from_native_turn(tmp_path, monkeyp
     task = store.create_task(title="ASR", runtime_kind="codex")
     turn = store.create_turn(task.id, user_text="Recover", client_request_id="request")
     assert store.claim_next_turn(owner="worker") is not None
-    base = {
-        "kind": "mcp",
-        "server": "ai_services",
-        "tool": "get_audio_transcription",
-        "native_id": "call-1",
-    }
-    store.append_event(
-        turn.id,
-        sequence=2,
-        event_type="tool_started",
-        payload={**base, "status": "running"},
-        owner="worker",
-    )
-    store.append_event(
-        turn.id,
-        sequence=3,
-        event_type="tool_completed",
-        payload={**base, "status": "completed"},
-        owner="worker",
-    )
     records = [
         {
             "type": "assistant",
@@ -146,15 +116,24 @@ def test_completed_claude_receipt_is_hydrated_from_native_turn(tmp_path, monkeyp
         insert_runtime_attempt_row(
             db,
             {
+                "workload_kind": "workbench", "workload_key": turn.id,
+                "attempt_number": 1, "route_name": "first", "runtime_kind": "codex_cli",
+                "credential_mode": "oauth", "model": "model", "status": "superseded",
+            },
+        )
+        insert_runtime_attempt_row(
+            db,
+            {
                 "workload_kind": "workbench",
                 "workload_key": turn.id,
-                "attempt_number": 1,
+                "attempt_number": 2,
                 "route_name": "primary",
                 "runtime_kind": "claude_cli",
                 "credential_mode": "oauth",
                 "model": "model",
                 "status": "completed",
                 "session_id": "session-id",
+                "transcript_reference": "claude_session:session-id",
                 "transcript_start": 0,
                 "transcript_end": 2,
             },

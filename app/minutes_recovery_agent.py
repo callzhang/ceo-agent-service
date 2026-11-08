@@ -18,15 +18,15 @@ def build_recovery_prompt(work_dir: Path, service_root: Path) -> str:
 def read_completed_asr(
     workbench_store: Any, turn_id: str, expected_job_id: str
 ) -> dict | None:
-    for event in workbench_store.events_after(turn_id):
-        if event.event_type != "tool_completed":
+    for event in _native_events(workbench_store, turn_id):
+        if event.get("type") != "item.completed":
             continue
-        payload = event.payload
+        payload = event.get("item", {})
         if (
-            payload.get("kind") != "mcp"
+            payload.get("type") != "mcp_tool_call"
             or payload.get("server") != "ai_services"
             or payload.get("tool") != "get_audio_transcription"
-            or payload.get("status") != "completed"
+            or payload.get("status") not in (None, "completed")
         ):
             continue
         arguments = payload.get("arguments")
@@ -71,3 +71,19 @@ def read_completed_asr(
             raise ValueError("native ASR result is incomplete")
         return data
     return None
+
+
+def _native_events(workbench_store: Any, turn_id: str) -> list[dict]:
+    from app.native_trajectory import read_run_events_from_attempts
+
+    with workbench_store._connect() as db:
+        workbench_store._require_turn(db, turn_id)
+        attempts = db.execute(
+            "select runtime_kind,session_id,transcript_reference,transcript_start,transcript_end "
+            "from runtime_attempts where workload_kind='workbench' and workload_key=? "
+            "and session_id<>'' order by id",
+            (turn_id,),
+        ).fetchall()
+    if not attempts:
+        return []
+    return read_run_events_from_attempts({}, attempts)

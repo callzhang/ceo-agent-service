@@ -66,3 +66,5 @@ upload job ID may require repeating that pure transcription submission; this is
 not an exactly-once upload guarantee. No business operation is replayed.
 
 An archive I/O interruption resumes the same completed native turn and its exact summary; it does not spend a new Agent attempt or generate a different supplement. Only an invalid/missing Agent result requires a new turn.
+
+ASR receipts are read directly from the completed turn's native runtime references with the existing unified trajectory reader. UI tool-event rows are not required; a zero-length superseded route does not hide the following valid native result.
