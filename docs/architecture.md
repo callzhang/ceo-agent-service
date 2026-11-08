@@ -2219,11 +2219,13 @@ resolve the latest Attempt through the task's current execution generation and
 AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
 never substituted for an Attempt ID; a record without a persisted Attempt says
 so in its expanded details. Membership, terminal states and retry policy do not change.
-Attempt detail HTML and the React detail API accept stable public Attempt IDs. For compatibility,
-if a requested number is not a public ID but is an existing `actions.id` for a
-reply Attempt, it redirects to that row's public `legacy_key`; a public-ID match
-always takes precedence. This read-only alias does not change the Attempt or its
-Failed/Attention classification.
+Attempt detail HTML and the React detail API accept stable public Attempt IDs
+only (retired 2026-10-30): a request carrying an old physical `actions.id` is
+no longer resolved or redirected to that row's public `legacy_key` and returns
+404 unless the number is itself a public Attempt ID. The historical rows and
+the `legacy_key` column are retained in the schema; the read is otherwise
+unchanged and still never changes the Attempt's Failed/Attention
+classification.
 
 ### Work Summary retry budget
 

@@ -163,7 +163,7 @@ def test_a_certain_label_is_persisted_without_any_mailbox_action(tmp_path):
     with sqlite3.connect(database) as db:
         assert db.execute(
             "select count(*) from actions where record_type='action' "
-            "and action_classification_id is not null"
+            "and action_action_plan_id is not null"
         ).fetchone()[0] == 0
         assert db.execute(
             "select count(*) from tasks where kind='email_classification'"

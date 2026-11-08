@@ -67,7 +67,7 @@ class RecordingSystemDws:
     def __init__(self) -> None:
         self.sent: list[tuple[str | None, str, dict[str, object]]] = []
         self.responses: list[tuple[str, str]] = []
-        self.calendar_status = "needs_action"
+        self.calendar_status = "needsAction"
 
     def send_message(self, conversation_id, text, **kwargs):
         self.sent.append((conversation_id, text, kwargs))
@@ -75,6 +75,9 @@ class RecordingSystemDws:
 
     def verify_message_send_result(self, result):
         return {"state": "sent", "message_id": result["message_id"]}
+
+    def get_current_user_id(self):
+        return "self-user"
 
     def respond_calendar_event(self, event_id: str, response: str):
         self.responses.append((event_id, response))
