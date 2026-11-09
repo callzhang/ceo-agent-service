@@ -1976,7 +1976,7 @@ infer the domain outcome from a provider result envelope.
 
 Historical terminal Attempt or settlement projections cannot override a current external_action_uncertain/external_action_failed task error. A later verified provider result uses the normal execution completion writer. Original Attempt and settlement history remains unchanged.
 
-After any reviewed action dispatch returns an uncertain result, System Executor first persists that exact dispatch outcome, then immediately asks the same handler for read-only reconciliation. A verified readback is written to the normal external-action ledger and completes the action without another dispatch. Inconclusive or failed readback leaves the persisted uncertain outcome intact for the existing reconciliation path; it never authorizes replay.
+When a DingTalk OA `revert_task` dispatch is accepted by the provider but its immediate readback remains pending, System Executor first persists that exact dispatch outcome, then asks the same handler for read-only reconciliation. A verified readback is written to the normal external-action ledger and completes the action without another dispatch. Inconclusive or failed readback leaves the persisted uncertain outcome intact for the existing reconciliation path; it never authorizes replay.
 
 An operator may explicitly stop a current failed `external_action_uncertain` Reply task through
 `GET /api/console/reply-tasks/{task_id}` followed by `POST /api/console/reply-tasks/{task_id}/skip` with
