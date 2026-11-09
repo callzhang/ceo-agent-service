@@ -3,6 +3,7 @@ import { Virtuoso, type VirtuosoHandle } from "react-virtuoso";
 
 import { timelineBlocks } from "../events";
 import type { Artifact, Timeline, Turn, WorkbenchEvent } from "../types";
+import { NativeAttemptTrajectory } from "./NativeAttemptTrajectory";
 import { ArtifactList } from "./ArtifactList";
 import { displayText, ExecutionStep } from "./ExecutionStep";
 import { MarkdownContent } from "./MarkdownContent";
@@ -44,14 +45,19 @@ function TurnItem({ turn, events, artifactsById, taskId, active }: {
   const blocks = useMemo(() => timelineBlocks(turn.id, events, turn.status), [events, turn.id, turn.status]);
   const renderedText = blocks.some((block) => block.kind === "markdown");
   const nonterminal = ["queued", "running"].includes(turn.status);
+  const nativeTools = !nonterminal && Boolean(turn.runtime_attempts?.length);
   const authoritativeFinalText = !nonterminal && Boolean(turn.final_text);
   return (
     <article className="conversation-turn" data-status={turn.status} data-active={active || undefined}>
       <div className="user-message"><TrajectoryContent text={turn.user_text} label="任务输入" plain /></div>
       <div className="assistant-message">
+        {nativeTools && <p className="native-tools-heading">工具执行记录 · 按原生调用分组，组内按发生顺序展示</p>}
+        {nativeTools && turn.runtime_attempts?.map((attempt) => <NativeAttemptTrajectory key={attempt.id} id={String(attempt.id)} compact />)}
+        {nativeTools && events.length > 0 && <p className="native-service-events">已加载服务事件：{events.filter((event) => event.event_type === "tool_started").length} 次工具开始，{events.filter((event) => event.event_type === "tool_completed").length} 次工具结束。以下为服务记录的输出与产物，不与原生工具混排。</p>}
         {blocks.map((block) => {
           if (block.kind === "markdown") return !authoritativeFinalText ? <MarkdownContent key={block.key} text={block.text ?? ""} /> : null;
           if (block.kind === "thinking") return <details className="thinking-block" key={block.key}><summary>思考摘要</summary><p>{block.text}</p></details>;
+          if (block.kind === "tool" && nativeTools) return null;
           if (block.kind === "tool" || block.kind === "file") return <ExecutionStep key={block.key} kind={block.kind} status={block.status} payload={block.payload} startedAt={block.startedAt} completedAt={block.completedAt} />;
           const artifact = artifactsById.get(block.artifactId ?? "");
           return artifact?.turn_id === turn.id ? <ArtifactList key={block.key} taskId={taskId} turnId={turn.id} artifacts={[artifact]} /> : null;
