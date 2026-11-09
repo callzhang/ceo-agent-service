@@ -5,6 +5,32 @@ from pydantic import ValidationError
 from app.consumer_purpose import purpose_output_model
 
 
+@pytest.mark.parametrize(('purpose', 'action', 'target', 'payload', 'locations'), [
+    ('oa', 'approve', {'process_instance_id': 'p', 'task_id': 't'},
+     {'task_id': 't'}, {('payload', 'remark'), ('payload', 'task_id')}),
+    ('oa', 'approve', {'process_instance_id': 'p', 'remark': 'misplaced'},
+     {'remark': 'Reviewed'}, {('target', 'task_id'), ('target', 'remark')}),
+    ('general', 'reply', {'conversation_id': 123, 'message_id': 'm'},
+     {'content': 'Reply'}, {('target', 'conversation_id')}),
+    ('general', 'reply', {'conversation_id': 'c', 'message_id': 'm'},
+     {'message_id': 'm'}, {('payload', 'content'), ('payload', 'message_id')}),
+    ('general', 'plan', {}, {'objective': 'Review', 'actions': [
+        {'description': 'Reply', 'action_identity': 'reply', 'capability': 'dingtalk-chat',
+         'operation': 'reply', 'target': {'conversation_id': 'c', 'message_id': 'm'}}],
+         'sourced_facts': [], 'authored_judgment': 'Review'},
+     {('payload', 'actions', 0, 'payload'), ('payload', 'actions')}),
+])
+def test_action_validation_keeps_the_enclosing_field_path(
+    purpose, action, target, payload, locations,
+):
+    with pytest.raises(ValidationError) as raised:
+        purpose_output_model(purpose).model_validate({
+            'action': action, 'reason': 'Review', 'target': target,
+            'payload': payload, 'evidence_refs': [],
+        })
+    assert {error['loc'] for error in raised.value.errors()} == locations
+
+
 def test_oa_return_is_a_real_business_action():
     output = purpose_output_model('oa').model_validate({
         'action': 'return', 'reason': 'Access denied; unable to request access',
