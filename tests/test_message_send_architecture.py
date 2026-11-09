@@ -491,11 +491,18 @@ def test_dws_raw_carrier_coverage_anchors(monkeypatch) -> None:
     client.ding_user("user-1", "body")
     client.ding_self("body")
 
-    # Chat message writes (send/reply) run a --dry-run validation before the real call.
-    assert [c[1:3] for c in commands[:4]] == [["chat", "+messages-send"]] * 2 + [["chat", "+messages-reply"]] * 2
-    assert commands[0][-1] == "--dry-run" and commands[1] == commands[0][:-1]
-    assert commands[2][-1] == "--dry-run" and commands[3] == commands[2][:-1]
-    assert [command[3] for command in commands[4:]] == [
+    chat_writes = [command for command in commands if command[1:3] in (
+        ["chat", "+messages-send"], ["chat", "+messages-reply"],
+    )]
+    assert [command[1:3] for command in chat_writes] == [
+        ["chat", "+messages-send"], ["chat", "+messages-send"],
+        ["chat", "+messages-reply"], ["chat", "+messages-reply"],
+    ]
+    assert chat_writes[0][-1] == "--dry-run" and chat_writes[1] == chat_writes[0][:-1]
+    assert chat_writes[2][-1] == "--dry-run" and chat_writes[3] == chat_writes[2][:-1]
+
+    carrier_writes = [command for command in commands if "--dry-run" not in command]
+    assert [command[3] for command in carrier_writes[2:]] == [
         "send-by-bot", "send-by-bot", "send", "send",
     ]
 
