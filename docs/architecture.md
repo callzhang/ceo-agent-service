@@ -127,6 +127,7 @@ Attempt History 的“需要你处理/选择处理方式”只对应当前可操
 `workbench` workload 进入统一 `RoutedCodexExecution`，与后台 Agent 共用模型路由、会话、
 runtime attempt、失败切换和 CLI 原生 `auto_review`。页面后端只把统一运行事件投影为时间线并
 维护停止请求；不得自行构造 provider 命令、启用 approval bypass，或实现第二套命令审批。
+主页面失败保留统一路由给出的具体 `failure_code`。详情按该 turn 精确关联的原生 RuntimeAttempt 展示运行环境、失败类别和错误码，并为每次调用提供原生轨迹入口；历史失败只做读取投影，不覆盖已存错误或状态。没有原生调用记录时仍展示工作台自身的错误码。未知错误码不再被统一替换为无原因的失败文案，原生 stdout/stderr 不复制到错误详情。总时限、无输出时限及自动续接预算维持现有设置。
 
 审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许十个内容反馈周期（Audit 的 return/reject，2026-10-26 Derek 由三次放宽；被打回是正常业务流程，不是重试），基础设施和技术失败不消耗反馈周期，技术重试另有各自的预算。反馈次数耗尽本身是自动闭环失败，不是人工决策依据。Consumer 和 Audit 必须按固定顺序对新候选应用质量门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`；其他情况按适用规则自主处理。Consumer 的新结果类型化校验会拒绝不满足门槛的 `needs_human`；Audit 在审核候选前及校验其绑定结果时独立重算同一门槛，不符合时拒绝该新候选。已持久化候选在恢复、拒绝分支比较、已审核动作执行及历史读回时按历史证据解析，不重新套用新准入门槛；这保留原始 run 与已审核决定，且不会重新执行已确认动作。历史解析不能让新模型输出绕过 Consumer/Audit 校验。Audit 必须核对新结果分类与四项分值一致；不满足门槛的人工升级不得通过。
 

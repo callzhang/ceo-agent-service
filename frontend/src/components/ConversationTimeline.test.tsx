@@ -203,6 +203,21 @@ describe("ConversationTimeline", () => {
     expect(screen.queryByText("分页片段")).not.toBeInTheDocument();
   });
 
+  it("links each failed turn to its exact native runtime attempts", () => {
+    const failed = {
+      ...turn, status: "failed" as const, error_detail: "运行时执行未完成（claude_idle_timeout）。",
+      runtime_attempts: [
+        { id: 12, runtime: "codex_cli", status: "failed", failure_code: "codex_total_timeout", failure_class: "transport", url: "/runtime-attempts/12/trajectory" },
+        { id: 13, runtime: "claude_cli", status: "failed", failure_code: "claude_idle_timeout", failure_class: "transport", url: "/runtime-attempts/13/trajectory" },
+      ],
+    };
+    render(<ConversationTimeline timeline={{ ...timeline, turns: [failed], events: [] }} activeTurnId={null} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("claude_idle_timeout");
+    const links = within(screen.getByRole("navigation", { name: "本轮原生轨迹" }));
+    expect(links.getByRole("link", { name: /#12.*codex_cli.*codex_total_timeout/ })).toHaveAttribute("href", "/runtime-attempts/12/trajectory");
+    expect(links.getByRole("link", { name: /#13.*claude_cli.*claude_idle_timeout/ })).toHaveAttribute("href", "/runtime-attempts/13/trajectory");
+  });
+
   it("shows an aborted explanation for an unmatched tool on a failed historical turn", () => {
     const failed = { ...turn, status: "failed" as const, error_detail: "执行器中断" };
     render(

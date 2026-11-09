@@ -165,7 +165,7 @@ Attempt 详情仅在当前状态要求人工决定，或该候选已有历史选
 
 Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候选。服务从当前编排上下文绑定 `stage_index` 与 `predecessor_review_id`，模型复述错误不会将候选误判为跨阶段或错误前置。返回反馈不会推进阶段；仅当前阶段审核通过且其动作有已验证的完成回执，后续阶段才会开放。候选的阶段、前置审核、代际及执行验证仍由服务严格校验。
 
-主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。页面 turn 使用 `workbench`
+主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。失败页保留路由的具体错误码，按本轮持久化原生调用展示失败类别和完整轨迹链接；历史读取不改写原始错误或失败状态。未关联原生调用时使用工作台自身的错误码，不复制原生 stdout/stderr。此投影不改变执行时限、自动续接或重试预算。页面 turn 使用 `workbench`
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。

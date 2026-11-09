@@ -63,6 +63,11 @@ function TurnItem({ turn, events, artifactsById, taskId, active }: {
         {turn.status === "completed" && <p className="turn-state">已完成</p>}
         {turn.status === "stopped" && <p className="turn-state">已停止</p>}
         {turn.status === "failed" && <p className="turn-error" role="alert">执行失败：{displayText(turn.error_detail || turn.error_code, "未知错误")}</p>}
+        {Boolean(turn.runtime_attempts?.length) && <nav className="trajectory-invocations" aria-label="本轮原生轨迹">
+          {turn.runtime_attempts?.map((attempt) => <a key={attempt.id} href={attempt.url}>
+            查看原生轨迹 #{attempt.id} · {attempt.runtime}{attempt.failure_code ? ` · ${attempt.failure_code}` : ""}
+          </a>)}
+        </nav>}
       </div>
     </article>
   );

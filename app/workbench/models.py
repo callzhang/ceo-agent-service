@@ -26,6 +26,15 @@ class WorkbenchTask(StrictModel):
     updated_at: str
 
 
+class WorkbenchRuntimeAttempt(StrictModel):
+    id: int
+    runtime: str
+    status: str
+    failure_code: str
+    failure_class: str
+    url: str
+
+
 class WorkbenchTurn(StrictModel):
     id: str
     task_id: str
@@ -37,6 +46,7 @@ class WorkbenchTurn(StrictModel):
     final_text: str = ""
     error_code: str = ""
     error_detail: str = ""
+    runtime_attempts: list[WorkbenchRuntimeAttempt] = Field(default_factory=list)
     started_at: str = ""
     completed_at: str = ""
     created_at: str

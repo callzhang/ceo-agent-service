@@ -1553,7 +1553,10 @@ class WorkbenchStore(AutoReplyStore):
 
     @staticmethod
     def _turn_from_row(row: sqlite3.Row) -> WorkbenchTurn:
-        values = {key: row[key] for key in WorkbenchTurn.model_fields}
+        values = {
+            key: row[key] for key in WorkbenchTurn.model_fields
+            if key != "runtime_attempts"  # Related native calls are hydrated separately.
+        }
         values["stop_requested"] = bool(values["stop_requested"])
         return WorkbenchTurn.model_validate(values)
 
