@@ -110,6 +110,22 @@ def test_auto_mode_sends(tmp_path):
     assert sender.sent == [1]
 
 
+def test_auto_mode_treats_lost_delivery_transition_as_contention(monkeypatch, tmp_path):
+    store = AutoReplyStore(tmp_path / "w.sqlite3")
+    _seed(store)
+    monkeypatch.setattr(service, "recover_before_sender", lambda *_args, **_kwargs: [])
+
+    class ContendedSender(FakeSender):
+        def send(self, delivery, scope, *, prepared=None):
+            raise AgentRunLeaseLostError(
+                f"WeChat delivery superseded or not in expected state: {delivery.id}"
+            )
+
+    assert service.process_ready_wechat_deliveries(
+        store, ContendedSender(), mode="auto", sender_enabled=True,
+    ) == 0
+
+
 def test_auto_mode_reuses_exact_audited_candidate_preparation(monkeypatch):
     candidate = {
         "task_id": 41,
