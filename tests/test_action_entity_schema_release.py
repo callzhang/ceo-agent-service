@@ -62,6 +62,142 @@ def _source_database(path):
         db.commit()
 
 
+@pytest.fixture
+def statement_source(tmp_path, monkeypatch):
+    import re
+    from app import action_storage
+    from app.action_entity_release_manifest import source_objects
+    from app.run_storage import insert_run
+    from app.task8_storage import register_task8_functions, task8_insert_parts
+
+    path = tmp_path / "statement-source.sqlite3"
+    _source_database(path)
+    writes = []
+
+    class RecordingConnection(sqlite3.Connection):
+        def execute(self, sql, parameters=(), /):
+            if sql.startswith("insert into actions("):
+                writes.append(sql)
+            return super().execute(sql, parameters)
+
+    actions_sql = next(obj[3] for obj in source_objects("fresh_memory_fk")
+                       if obj[0] == "table" and obj[1] == "actions")
+    source_codes = {name: int(code) for code, name in re.findall(
+        r"when (\d+) then '([^']+)'", actions_sql)}
+
+    class SourceRecordTypes:
+        def code(self, name):
+            return source_codes[name]
+
+    monkeypatch.setattr(action_storage, "ACTION_RECORD_TYPES", SourceRecordTypes())
+    with closing(sqlite3.connect(path, factory=RecordingConnection)) as db:
+        register_task8_functions(db)
+        db.execute("pragma foreign_keys=on")
+        parts = task8_insert_parts("reply_tasks", {
+            "conversation_id": "statement-chat", "conversation_title": "source",
+            "single_chat": 0, "trigger_message_id": "statement-trigger",
+            "trigger_create_time": "source", "trigger_sender": "sender",
+            "status": "done", "business_object_key": "statement-business",
+        })
+        task_id = db.execute(
+            f"insert into tasks({parts.columns}) values({parts.values}) returning id",
+            parts.parameters,
+        ).fetchone()[0]
+        insert_run(db, "agent_runs", {
+            "id": 911, "task_id": task_id, "execution_generation": "statement-generation",
+            "role": "consumer",
+        })
+        run_id = db.execute("select id from runs where record_type='agent_runs'").fetchone()[0]
+        yield db, writes, task_id, run_id
+
+
+def test_distinct_action_reference_owners_reuse_the_same_insert_statement(statement_source):
+    from app.action_storage import insert_action
+    from app.action_entity_transfer import capture_source_facts
+
+    db, writes, task_id, run_id = statement_source
+    before_schema = db.execute("select type,name,sql from sqlite_schema order by type,name").fetchall()
+    insert_action(db, "review_candidates", {
+        "id": 11, "task_id": task_id, "consumer_run_id": 911,
+        "execution_generation": "statement-generation", "stage_index": 0,
+        "proposal_revision": 0, "candidate_digest": "statement-digest",
+        "candidate_json": "{}", "created_at": "candidate-clock",
+    }, execution_owner=True, layout=_source_execution_layout("review_candidates"))
+    insert_action(db, "candidate_reviews", {
+        "id": 12, "candidate_id": 11, "audit_run_id": 911, "decision": "approve",
+        "candidate_digest": "statement-digest", "result_json": "{}", "created_at": "review-clock",
+    })
+    insert_action(db, "sent_replies", {
+        "id": 21, "conversation_id": "statement-chat", "trigger_message_id": "statement-trigger",
+        "reply_text": "source reply", "sent_at": "sent-clock", "agent_run_id": 911,
+    })
+
+    assert len(writes) == 3
+    assert len(set(writes)) == 1
+    candidate_id = db.execute(
+        "select id from actions where record_type='review_candidates' and legacy_key='11'"
+    ).fetchone()[0]
+    assert db.execute(
+        "select task_id,consumer_run_id,candidate_id,audit_run_id from actions "
+        "where record_type='review_candidates' and legacy_key='11'"
+    ).fetchone() == (task_id, run_id, None, None)
+    assert db.execute(
+        "select task_id,consumer_run_id,candidate_id,audit_run_id from actions "
+        "where record_type='candidate_reviews' and legacy_key='12'"
+    ).fetchone() == (None, None, candidate_id, run_id)
+    assert db.execute(
+        "select agent_run_id from actions where record_type='sent_replies' and legacy_key='21'"
+    ).fetchone() == (None,)
+    assert capture_source_facts(db)["sent_replies"][0]["agent_run_id"] == 911
+    assert db.execute("pragma foreign_key_check").fetchall() == []
+    assert db.execute("select type,name,sql from sqlite_schema order by type,name").fetchall() == before_schema
+
+
+@pytest.mark.parametrize("physical_references", [(), ("agent_run_id", "execution_id")])
+def test_unused_reference_columns_do_not_take_payload_values(physical_references):
+    from app.action_storage import insert_action
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        columns = "".join(f",{field} integer" for field in physical_references)
+        db.execute("create table actions(id integer primary key,_kind integer,payload_json blob,"
+                   "legacy_key text" + columns + ")")
+        result = insert_action(db, "sent_replies", {
+            "id": 21, "conversation_id": "chat", "trigger_message_id": "trigger",
+            "reply_text": "body", "agent_run_id": 911,
+        })
+        assert result.lastrowid == 21 and result.rowcount == 1
+        for field in physical_references:
+            assert db.execute(f"select {field} from actions").fetchone() == (None,)
+
+
+def test_statement_shape_never_discards_a_required_missing_reference_column():
+    from app.action_storage import insert_action
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        db.execute("create table actions(id integer primary key,_kind integer,payload_json blob,legacy_key text)")
+        with pytest.raises(sqlite3.OperationalError, match="no column named"):
+            insert_action(db, "candidate_reviews", {
+                "id": 12, "candidate_id": None, "audit_run_id": None,
+                "decision": "approve", "candidate_digest": "digest", "result_json": "{}",
+            })
+        assert db.execute("select count(*) from actions").fetchone()[0] == 0
+
+
+def test_reference_columns_follow_the_actual_unqualified_insert_target():
+    from app.action_storage import insert_action
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        declaration = "(id integer primary key,_kind integer,payload_json blob,legacy_key text"
+        db.execute("create table actions" + declaration + ",agent_run_id integer)")
+        db.execute("create temp table actions" + declaration + ")")
+        result = insert_action(db, "sent_replies", {
+            "id": 21, "conversation_id": "chat", "trigger_message_id": "trigger", "reply_text": "body",
+        })
+        assert result.lastrowid == 21
+        assert db.execute("select legacy_key from temp.actions").fetchone() == ("21",)
+        assert db.execute("select count(*) from main.actions").fetchone()[0] == 0
+
+
 def _prepare(path):
     contract = release.prepare_action_entity_release(path)
     assert contract["source_version"] == SOURCE_VERSION
