@@ -101,7 +101,12 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     assert sum(series.values()) == 1
     with store._connect() as db:
         assert [tuple(row) for row in db.execute(WECHAT_DELIVERIES)] == original_deliveries
-        assert [tuple(row) for row in db.execute("select * from tasks")] == original_tasks
+        # The app's Workbench scheduler legitimately turns a failed Attempt into
+        # an automatic-repair turn; the reads must not change any other Task.
+        assert [
+            tuple(row)
+            for row in db.execute("select * from tasks where kind!='workbench_turn'")
+        ] == original_tasks
         assert [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")] == original_attempts
 
 
