@@ -402,7 +402,7 @@ def test_meeting_audit_treats_explicit_followup_assignment_as_limited_share_evid
 
     assert "会议原文明确把后续工作分配给精确收件人" in codex.prompt
     assert "该分配本身是分享完成该任务所需信息的依据" in codex.prompt
-    assert "不能据此扩大到无关或敏感内容" in codex.prompt
+    assert "不能据此扩大到与该工作无关的内容" in codex.prompt
     assert "Avery，下周继续梳理方案并带回讨论。" in codex.prompt
 
 
@@ -595,8 +595,8 @@ def test_business_summary_can_use_relevant_meeting_attendee_when_no_group_fits()
     assert decision.target is not None and decision.target.direct_user_id == "mina"
 
 
-@pytest.mark.parametrize("private", [False, True])
-def test_agent_rejects_principal_as_business_or_sensitive_dm(private):
+def test_agent_rejects_principal_as_ordinary_business_dm():
+    private = False
     payload = summary_payload()
     target = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "derek",
@@ -687,7 +687,7 @@ def test_prompt_contains_full_transcript_and_behavioral_contracts():
     assert "不得改写、加标题或写成说明性文字" in prompt
     assert "业务总结" in prompt and "敏感私聊消息" in prompt
     assert "人员评价、绩效、薪酬、晋升、去留、候选人结论" in prompt
-    assert "缺少披露授权不能用私聊兜底" in prompt
+    assert "An unresolved recipient is an unresolved delivery" in prompt
     assert "必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示" in prompt
     assert "sensitive_private_message" in prompt
     assert "每场会议最多生成一条合并消息" not in prompt
@@ -708,10 +708,10 @@ def test_prompt_always_splits_personnel_sensitive_content_from_business_group():
         work_profile_source="/configured/work_profile.md",
     )
 
-    assert "HR 职务不是自动披露授权" in prompt
+    assert "A title alone" in prompt
     assert "必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示" in prompt
     assert "即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息" in prompt
-    assert "敏感信息按具体内容发给职责和披露授权均有实时证据的个人" in prompt
+    assert "Select a source-identified individual for the specific sensitive content" in prompt
 
 
 def test_meeting_audit_prompt_overrides_shared_sensitive_group_rule():
@@ -735,9 +735,10 @@ def test_loaded_meeting_skill_keeps_no_self_audience_contract():
         source(), work_profile="", work_profile_source="",
         consumer_prompt="Use $ceo-meeting-work", skill_protocol=skill,
     )
-    assert "Never send a private split or fallback to the current principal" in prompt
+    assert "The principal can be explicitly" in prompt
+    assert "Ordinary business direct-message fallback still goes to another attendee" in prompt
     assert "direct it to the current principal" not in prompt
-    assert "Titles, HR roles, and private chat are not authorization" in prompt
+    assert "and private chat alone are not authorization" in prompt
 
 
 def test_prompt_contains_scheduled_consumer_prompt_and_targeted_skills():
@@ -1904,3 +1905,28 @@ def test_planner_and_audit_compare_group_purpose_with_whole_meeting_summary():
         assert "Do not drop supported meeting conclusions to fit a narrower group" in prompt
         assert "previously selected group" in prompt
         assert "exact attendee/group equality is not required" in prompt
+
+
+def test_sensitive_private_summary_can_address_source_identified_principal():
+    payload = summary_payload()
+    payload['sensitive_private_message'] = {
+        'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'derek',
+                   'title': 'Derek', 'candidates': []},
+        'message': 'Restricted conclusions discussed with Derek.',
+        'reason': 'Separate from the ordinary business group.',
+        'recipient_evidence': ['Derek participated in this sensitive discussion and owns its follow-up.'],
+    }
+    decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(source())
+    assert decision.sensitive_private_message.target.direct_user_id == 'derek'
+
+
+def test_sensitive_private_is_required_in_planner_and_audit_instead_of_omission():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
+    planner = build_meeting_alignment_prompt(source(), work_profile='', work_profile_source='test')
+    MeetingAlignmentAgent(MeetingAlignmentCodexRunner(routed_execution=routed)).audit(source(), decision, run_id=9)
+    for prompt in (planner, routed.calls[0]['prompt']):
+        assert 'Do not omit sensitive conclusions or actions' in prompt
+        assert 'The principal may be the explicitly selected sensitive recipient' in prompt
+        assert 'return the candidate for a separate private summary' in prompt
+        assert 'approve only when the gap is explicitly recorded' not in prompt

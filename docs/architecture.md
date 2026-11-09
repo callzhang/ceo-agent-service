@@ -787,10 +787,10 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 均从群正文和标题拆出，作为独立私聊发送给身份、当前职责和披露授权均有实时证据的个人；HR 群及
 参会人高匹配度不改变此规则。明确业务私聊的稳定 `user_id` 必须唯一匹配来源参会人
 或日历证明的组织者，身份和受众理由保留在决策中；不可从逐字稿发言人推断组织者。
-群不可发送时保留失败，不能静默换成组织者或本人。私聊入口拒绝本人及已核验别名；
+群不可发送时保留失败，不能静默换成组织者或本人。普通业务单聊入口拒绝本人及已核验别名；敏感私聊可明确选择来源名册中的本人，但须有该内容的参与、决定或后续工作依据，不能自动兜底；
 职务、HR 身份和私聊本身均不构成披露授权，身份检查也不替模型证明业务理由真实。
 群标题相似、部分参会人重合或近期活跃本身不构成业务承接证据。
-裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。会议总结中的人员敏感内容始终不得进入业务群，不逐一审核群成员是否可接收敏感详情；敏感部分只可按具体内容发给经核验且有披露授权的个人，找不到时保留未解决事项。普通业务群只检查群内业务讨论和参会人成员匹配，不逐成员审查普通业务内容的披露授权；没有合适群时普通业务总结可发给相关参会人单聊，目标使用来源里的稳定身份，群是否可发送由服务投递时核验，不可发送则失败且不改投，不得为发送而选宽泛群。敏感分类和个人授权判断由 Agent 根据证据完成，不增加运行时关键词过滤或比例授权阈值。
+裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。会议总结中的人员敏感内容始终不得进入业务群，不逐一审核群成员是否可接收敏感详情；敏感部分按具体内容发给来源身份唯一匹配的应知情个人；参与该敏感讨论、承担相关决定或后续工作可以构成依据，职务本身不够。可有依据地选择本人，不自动发给本人。缺少敏感私聊或收件人依据时，独立 Audit 退回现有反馈修订流程，不能把省略并记录缺口当作完整发送。普通业务群只检查群内业务讨论和参会人成员匹配，不逐成员审查普通业务内容的披露授权；没有合适群时普通业务总结可发给相关参会人单聊，目标使用来源里的稳定身份，群是否可发送由服务投递时核验，不可发送则失败且不改投，不得为发送而选宽泛群。敏感分类和个人授权判断由 Agent 根据证据完成，不增加运行时关键词过滤或比例授权阈值。
 找群先核对会议材料里明确提及的讨论群，再从结论、行动和负责人提炼主题，分别以原文中文
 业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
 候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
@@ -2518,3 +2518,6 @@ Runtime result persistence and native-result recovery use the same typed-result 
 The explicit stalled Reply Task recovery API (`POST /api/console/history/tasks/{task_id}/recover-stalled`) and `python -m app.reply_task_recovery --db <db> --task-id <id> --execution-generation <generation> --apply` share one atomic recovery transaction. They require the exact processing task/generation and the existing stale threshold for Task lock, business Run and active native runtime progress, reject persisted external actions/effects/receipts, then reuse the normal requeue transition and close only unfinished runtime records as real failures. Candidates, completed/failed history and generation are retained; the normal Consumer/Audit/System path makes the next decision. No other task is claimed and the deployment quiet gate is unchanged.
 
 Stalled recovery also refuses live dispatcher owners, unexpired or unparseable Run/runtime leases, and missing dispatcher ownership history. These checks run inside the same immediate transaction as the task/generation transition.
+
+仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_message`，不生成群占位消息，也不使用 `skip_no_content`。仅敏感私聊使用原 `:sensitive` 投递键及回执；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
+敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。

@@ -808,7 +808,8 @@ def _audit_frozen_meeting_candidate(
         if request.get("candidate_sha256") != digest:
             raise ValueError("frozen Meeting candidate digest changed before Audit")
         if (
-            decision.action != "send" or decision.target is None
+            decision.action != "send"
+            or (decision.target is None and decision.sensitive_private_message is None)
             or decision.final_message != job.final_message
         ):
             raise ValueError("frozen Meeting candidate no longer matches its delivery fields")
@@ -2018,12 +2019,19 @@ def _write_meeting_summary_to_calendar_or_retry(
             ValueError("confirmed meeting delivery is missing summary text"),
         )
         return
-    if evidence.source == "transcript":
+    decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
+    private_only = decision.target is None and decision.sensitive_private_message is not None
+    if decision.sensitive_private_message is not None and not private_only:
+        # Only the ordinary summary belongs in the shared calendar, even when
+        # ordinary and sensitive content used one direct-message audience.
+        summary = decision.final_message.strip()
+    if private_only or evidence.source == "transcript":
         receipt = json.dumps(
             {
                 "event_id": evidence.event_id,
                 "state": "skipped",
-                "reason": "Minutes recording has no original calendar event",
+                "reason": ("Sensitive-only summary was delivered privately" if private_only
+                           else "Minutes recording has no original calendar event"),
             },
             ensure_ascii=False,
             sort_keys=True,
@@ -2623,9 +2631,15 @@ def _find_nested_value(payload: Any, key: str) -> str:
 
 def _notify_meeting_sent(job: Any, result: MeetingDeliveryResult) -> None:
     conversation_id = meeting_delivery_conversation_id(result)
+    title = job.title
+    message = result.message_text or job.final_message
+    decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
+    if decision.sensitive_private_message is not None:
+        title = decision.message_title
+        message = decision.final_message or "敏感会议总结已通过私聊发送。"
     send_macos_notification(
-        title=f"CEO meeting follow-up: {job.title}",
-        message=result.message_text or job.final_message,
+        title=f"CEO meeting follow-up: {title}",
+        message=message,
         url=dingtalk_conversation_notification_url(conversation_id),
     )
 
