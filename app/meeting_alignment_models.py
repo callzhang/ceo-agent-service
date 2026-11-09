@@ -78,7 +78,7 @@ NO_SEND_EMPTY_RULE = CrossFieldRule(
 )
 SEND_FINAL_MESSAGE_RULE = CrossFieldRule(
     "send requires final_message",
-    "final_message 必须非空",
+    "有普通内容时 final_message 必须非空；仅敏感私聊时 final_message 为空、target=null、mention_names=[]，且 sensitive_private_message 非 null",
 )
 SEND_TRIGGER_REASONS_RULE = CrossFieldRule(
     "send requires trigger_reasons",
@@ -86,7 +86,7 @@ SEND_TRIGGER_REASONS_RULE = CrossFieldRule(
 )
 SEND_TARGET_RULE = CrossFieldRule(
     "send requires an explicit delivery target",
-    "target 必须是对象，不能是 null",
+    "有普通内容时 target 必须是对象；仅敏感私聊时 target=null，使用 sensitive_private_message.target",
 )
 GROUP_TARGET_FIELDS_RULE = CrossFieldRule(
     "group target requires candidates and conversation_id",
@@ -110,7 +110,7 @@ DIRECT_TARGET_TITLE_RULE = CrossFieldRule(
     "target.kind=direct 时，title 必须非空",
 )
 PRIVATE_MESSAGE_BUSINESS_SCOPE_RULE = CrossFieldRule(
-    "sensitive private message is only valid beside a business summary",
+    "sensitive private message requires business scope",
     "sensitive_private_message 非 null 时，audience_scope 必须是 business",
 )
 MEETING_AUDIT_FEEDBACK_RULE = CrossFieldRule(
@@ -274,7 +274,7 @@ class DeliveryTarget(StrictModel):
     direct_user_id: str = Field(
         description=(
             "收件人的稳定 user_id；group 形态必须写空字符串，direct 形态写对方在"
-            "来源里的真实 user_id；业务私信必须非空，且不得是当前用户或其已核验别名；"
+            "来源里的真实 user_id；业务私信必须非空；普通总结单聊不得是当前用户或其已核验别名，敏感私聊可按具体内容明确选择当前用户；"
             "只有个人完整日历 1:1 名册解析不出 user_id 时才写空字符串。"
         )
     )
@@ -312,18 +312,16 @@ class SensitivePrivateMessage(StrictModel):
         return self
 
 
-def meeting_business_direct_recipient(
+def meeting_source_direct_recipient(
     source: MeetingSource,
     target: DeliveryTarget,
     *,
     participant_only: bool = False,
 ) -> MeetingParticipant:
-    """Resolve an explicit audience without directory search or self fallback."""
+    """Resolve an explicit source identity without choosing an audience."""
     user_id = target.direct_user_id.strip()
     if not source.current_user_id.strip():
         raise ValueError("principal identity is required before private delivery")
-    if user_id == source.current_user_id.strip():
-        raise ValueError("private target must not be the principal")
     if target.kind != "direct" or not user_id:
         raise ValueError("business direct target requires an explicit stable user_id")
     matches = [
@@ -342,6 +340,19 @@ def meeting_business_direct_recipient(
         recipient.name.split()
     ).casefold():
         raise ValueError("private target title must match the stable source recipient")
+    return recipient
+
+
+def meeting_business_direct_recipient(
+    source: MeetingSource,
+    target: DeliveryTarget,
+    *,
+    participant_only: bool = False,
+) -> MeetingParticipant:
+    """Ordinary business fallback addresses another source-identified attendee."""
+    if target.direct_user_id.strip() == source.current_user_id.strip():
+        raise ValueError("private target must not be the principal")
+    recipient = meeting_source_direct_recipient(source, target, participant_only=participant_only)
     principal = [
         person for person in source.participants
         if person.user_id.strip() == source.current_user_id.strip()
@@ -425,7 +436,7 @@ class MeetingAlignmentDecision(StrictModel):
     mention_names: list[str]
     target: DeliveryTarget | None = Field(
         description=(
-            "必填且不能为 null。group 与 direct 两种形态的字段互斥，但 kind、"
+            "有普通内容时必填且不能为 null；只有敏感内容时写 null 并使用 sensitive_private_message 的目标。group 与 direct 两种形态的字段互斥，但 kind、"
             "conversation_id、direct_user_id、title、candidates 五个键在任何形态下都必须"
             "出现，未使用的一侧要显式写成空值而不是省略："
             "audience_scope=business 时优先 target.kind=group；没有合适业务群时可 target.kind=direct，"
@@ -447,7 +458,7 @@ class MeetingAlignmentDecision(StrictModel):
     )
     final_message: str = Field(
         description=(
-            "必须非空；按实际内容、业务目的和披露范围核验近期讨论与业务承接；含人员敏感信息时，"
+            "普通总结正文；只有敏感内容时写空字符串、target=null、mention_names=[] 并只投递 sensitive_private_message。按实际内容、业务目的和披露范围核验近期讨论与业务承接；含人员敏感信息时，"
             "必须移除全部敏感详情及间接暗示，发送到业务群的内容仅保留普通业务总结；"
             "普通业务群选群无需逐一核验成员披露授权。"
         )
@@ -455,8 +466,8 @@ class MeetingAlignmentDecision(StrictModel):
     sensitive_private_message: SensitivePrivateMessage | None = Field(
         description=(
             "没有人员敏感内容时必须是 null；只要存在人员敏感内容就必须独立私聊，即使业务群是 HR 群或参会人高度匹配也不得合并；"
-            "缺少受众授权不能私聊兜底，禁止当前用户及其已核验别名。"
-            "recipient_evidence 记录实时身份、当前职务职责和实际内容披露授权；"
+            "按具体敏感内容选择来源中身份唯一匹配的应知情个人，可包括有依据的当前用户，不自动发给本人。"
+            "recipient_evidence 记录稳定来源身份及参与该敏感讨论、承担相关决定或后续工作的依据；"
             "非 null 时 audience_scope 必须是 business。"
         )
     )
@@ -538,13 +549,15 @@ class MeetingAlignmentDecision(StrictModel):
         if has_derek_viewpoint_trigger != has_derek_viewpoint:
             raise ValueError(DEREK_VIEWPOINT_PAIRING_RULE.message)
 
-        if not self.final_message.strip():
+        if not self.final_message.strip() and (
+            self.target is not None or self.sensitive_private_message is None or self.mention_names
+        ):
             raise ValueError(SEND_FINAL_MESSAGE_RULE.message)
         if not self.trigger_reasons:
             raise ValueError(SEND_TRIGGER_REASONS_RULE.message)
-        if self.target is None:
+        if self.target is None and (self.final_message.strip() or self.sensitive_private_message is None):
             raise ValueError(SEND_TARGET_RULE.message)
-        if self.target.kind == "group":
+        if self.target is not None and self.target.kind == "group":
             if (
                 not self.target.conversation_id.strip()
                 or not self.target.candidates
@@ -557,7 +570,7 @@ class MeetingAlignmentDecision(StrictModel):
                 != self.target.conversation_id
             ):
                 raise ValueError(GROUP_TARGET_FIRST_CANDIDATE_RULE.message)
-        else:
+        elif self.target is not None:
             if self.target.conversation_id.strip() or self.target.candidates:
                 raise ValueError(DIRECT_TARGET_NO_GROUP_FIELDS_RULE.message)
             if not self.target.title.strip():
