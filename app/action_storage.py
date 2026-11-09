@@ -2097,7 +2097,7 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
     }
     payload.update({field: value for field, value in values.items() if field in PAYLOAD_FIELDS[record_type]})
     used_references = _kind_references(record_type, execution_owner=execution_owner)
-    physical_fields = {row[1] for row in db.execute("pragma main.table_xinfo(actions)") if row[6] == 0}
+    physical_fields = {row[1] for row in db.execute("pragma table_xinfo(actions)") if row[6] == 0}
     # One declared table uses stable INSERT columns across its record kinds.
     # Keep missing required columns in the SQL so SQLite still rejects them.
     fields = [field for field in (REFERENCES | DELIVERY_REFERENCES | EXECUTION_REFERENCES)

@@ -183,6 +183,21 @@ def test_statement_shape_never_discards_a_required_missing_reference_column():
         assert db.execute("select count(*) from actions").fetchone()[0] == 0
 
 
+def test_reference_columns_follow_the_actual_unqualified_insert_target():
+    from app.action_storage import insert_action
+
+    with closing(sqlite3.connect(":memory:")) as db:
+        declaration = "(id integer primary key,_kind integer,payload_json blob,legacy_key text"
+        db.execute("create table actions" + declaration + ",agent_run_id integer)")
+        db.execute("create temp table actions" + declaration + ")")
+        result = insert_action(db, "sent_replies", {
+            "id": 21, "conversation_id": "chat", "trigger_message_id": "trigger", "reply_text": "body",
+        })
+        assert result.lastrowid == 21
+        assert db.execute("select legacy_key from temp.actions").fetchone() == ("21",)
+        assert db.execute("select count(*) from main.actions").fetchone()[0] == 0
+
+
 def _prepare(path):
     contract = release.prepare_action_entity_release(path)
     assert contract["source_version"] == SOURCE_VERSION

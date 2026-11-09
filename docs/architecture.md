@@ -9,7 +9,7 @@ Meeting 的业务结果由 `task_results` 中的 `(task_id, result_kind)` 唯一
 
 标准 schema 声明只按“无／有 Email migration ledger”两种语义缓存，容量保持两项。无参和显式 `email_ledger=False` 共用同一项，避免等价调用互相驱逐后反复重建参照 schema。真实数据库仍按原有文件身份及 SQLite schema cookie 失效规则读取结构并作完整比对；DDL、替换文件、备份恢复、版本与缺失对象的检查不变。
 
-非 Reply 的通用 Action 写入按真实 `actions` 表声明固定可写引用列，复用 SQLite 自身的参数化语句缓存，避免每种动作的列清单重复编译相同约束。每次仍读取当前声明；仅原 `_kind_references` 指定的引用执行原有父身份转换，其余已声明引用列保持原默认 NULL，payload 中同名业务值不提升为父引用。必需但缺失的引用列仍保留在 INSERT 中，由 SQLite 报错，不静默丢弃。公开 ID 分配、writer lock／事务、`INSERT OR IGNORE`、`RETURNING`、FK／CHECK／唯一性以及 Schema 均不变；没有缓存校验结果或增加 SQLite 缓存容量。
+非 Reply 的通用 Action 写入按真实 `actions` 表声明固定可写引用列，复用 SQLite 自身的参数化语句缓存，避免每种动作的列清单重复编译相同约束。每次仍按与 INSERT 相同的 SQLite 表名解析顺序读取当前声明；仅原 `_kind_references` 指定的引用执行原有父身份转换，其余已声明引用列保持原默认 NULL，payload 中同名业务值不提升为父引用。必需但缺失的引用列仍保留在 INSERT 中，由 SQLite 报错，不静默丢弃。公开 ID 分配、writer lock／事务、`INSERT OR IGNORE`、`RETURNING`、FK／CHECK／唯一性以及 Schema 均不变；没有缓存校验结果或增加 SQLite 缓存容量。
 
 正式发布门禁仍逐项执行 `tests/gate_files.txt` 的固定文件清单。pytest 在同一次、不可变的提交副本中复用原生目录收集器的子节点枚举，避免为每个文件重新枚举相同目录；原生文件匹配、参数化、包初始化、夹具、收集错误及测试失败继续由 pytest 处理，不缓存用例结果。变更以相同清单的完整用例 ID 和顺序逐项相等验证；600 秒、2 GB、单进程、发布互斥及 quiet／恢复规则不变。
 

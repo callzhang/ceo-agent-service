@@ -6,7 +6,7 @@
 
 标准 schema 声明只按“无／有 Email migration ledger”两种语义缓存，容量保持两项。无参和显式 `email_ledger=False` 共用同一项，避免等价调用互相驱逐后反复重建参照 schema。真实数据库仍按原有文件身份及 SQLite schema cookie 失效规则读取结构并作完整比对；DDL、替换文件、备份恢复、版本与缺失对象的检查不变。
 
-非 Reply 的通用 Action 写入按真实 `actions` 表声明固定可写引用列，复用 SQLite 自身的参数化语句缓存，避免每种动作的列清单重复编译相同约束。每次仍读取当前声明；仅原 `_kind_references` 指定的引用执行原有父身份转换，其余已声明引用列保持原默认 NULL，payload 中同名业务值不提升为父引用。必需但缺失的引用列仍保留在 INSERT 中，由 SQLite 报错，不静默丢弃。公开 ID 分配、writer lock／事务、`INSERT OR IGNORE`、`RETURNING`、FK／CHECK／唯一性以及 Schema 均不变；没有缓存校验结果或增加 SQLite 缓存容量。
+非 Reply 的通用 Action 写入按真实 `actions` 表声明固定可写引用列，复用 SQLite 自身的参数化语句缓存，避免每种动作的列清单重复编译相同约束。每次仍按与 INSERT 相同的 SQLite 表名解析顺序读取当前声明；仅原 `_kind_references` 指定的引用执行原有父身份转换，其余已声明引用列保持原默认 NULL，payload 中同名业务值不提升为父引用。必需但缺失的引用列仍保留在 INSERT 中，由 SQLite 报错，不静默丢弃。公开 ID 分配、writer lock／事务、`INSERT OR IGNORE`、`RETURNING`、FK／CHECK／唯一性以及 Schema 均不变；没有缓存校验结果或增加 SQLite 缓存容量。
 
 Attempt HTML／JSON详情只接受当前公开Attempt ID；不再把Actions物理ID转换成公开ID或重定向。History链接沿用公开身份。旧service-bugfix候选的生产／查询入口及DTO已退休，其唯一历史记录保留在原存储中，不形成当前待执行任务。同步outbox与跟进回执的应用读取只保留真实运行调用；单元测试使用测试目录内的当前投影窄查询，不在应用中保留测试专用DAO。 Run 按原生 ID 读取；memory 写入事件保留现行写入与重建，测试按当前投影读取。同步和任务投递的测试造数放在测试支持层，不保留测试专用应用写入口。
 
