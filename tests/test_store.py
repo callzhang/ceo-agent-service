@@ -7,6 +7,7 @@ from tests.sent_fixtures import historical_sent_delivery
 
 from tests.test_email_legacy_schema import published_source as published_source
 import errno
+import fcntl
 import hashlib
 import importlib.util
 import inspect
@@ -4386,6 +4387,29 @@ def test_store_initializes_same_path_once_per_process(tmp_path: Path, monkeypatc
     AutoReplyStore(db_path)
 
     assert calls == [db_path.resolve()]
+
+
+def test_store_schema_preflight_runs_under_shared_initialization_lock(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from app.current_schema_manifest import require_current_pair
+
+    db_path = tmp_path / "worker.sqlite3"
+    db_path.touch()
+    original_preflight = require_current_pair
+
+    def assert_locked_preflight(path: Path) -> None:
+        lock_path = db_path.with_name(f".{db_path.name}.initialize.lock")
+        with lock_path.open("a+", encoding="utf-8") as lock_file:
+            with pytest.raises(BlockingIOError):
+                fcntl.flock(
+                    lock_file.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB
+                )
+        original_preflight(path)
+
+    monkeypatch.setattr(store_module, "require_current_pair", assert_locked_preflight)
+
+    AutoReplyStore(db_path)
 
 
 def test_store_cold_open_does_not_initialize_existing_current_schema(
