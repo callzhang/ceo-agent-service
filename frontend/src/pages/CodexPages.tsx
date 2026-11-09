@@ -8,7 +8,7 @@ import { TrajectoryContent } from "../components/TrajectoryContent";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 
-type CodexSessionEvent = {
+export type CodexSessionEvent = {
   timestamp?: string;
   kind?: string;
   title?: string;
@@ -18,6 +18,7 @@ type CodexSessionEvent = {
     name?: string;
     input?: string;
     output?: string;
+    status?: string;
   };
 };
 
@@ -78,16 +79,17 @@ function SessionMarkdown({ event }: { event: CodexSessionEvent }) {
   return <TrajectoryContent text={displayValue(event.body || "").trim() || "未记录内容"} collapsed={event.kind === "system_context" || event.kind === "metadata"} />;
 }
 
-function SessionTrace({ event, output }: { event: CodexSessionEvent; output?: CodexSessionEvent }) {
+function SessionTrace({ event, output, terminal = false }: { event: CodexSessionEvent; output?: CodexSessionEvent; terminal?: boolean }) {
   const trace = event.trace || {};
   const result = output?.trace?.output ?? trace.output;
   return <ExecutionStep
     kind="tool"
     startedAt={event.timestamp}
     completedAt={output?.timestamp}
-    status={result === undefined ? "running" : "completed"}
+    status={output?.trace?.status || trace.status || (result === undefined ? (terminal ? "aborted" : "running") : "completed")}
     payload={{
       kind: "trace",
+      summary: terminal && result === undefined ? "本次运行已结束，原生记录中未收到此工具的返回。" : "",
       name: trace.name || event.title?.replace(/^Tool call:\s*/, "") || "工具调用",
       tool_call_id: trace.call_id,
       input: trace.input ?? event.body ?? "未记录",
@@ -103,7 +105,7 @@ function eventCategory(event: CodexSessionEvent) {
   return "context";
 }
 
-function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
+export function SessionTimeline({ events, terminal = false }: { events: CodexSessionEvent[]; terminal?: boolean }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const rows = useMemo(() => timelineRows(events), [events]);
@@ -124,7 +126,7 @@ function SessionTimeline({ events }: { events: CodexSessionEvent[] }) {
     {!visible.length && <p className="page-state">没有匹配的轨迹记录。<button type="button" className="secondary-button" onClick={() => { setFilter("all"); setQuery(""); }}>清除筛选</button></p>}
     <ol>{visible.map(({ event, output, index }) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
       <div className="codex-session-event-rail"><span aria-hidden="true" /><small>#{index + 1}</small><time dateTime={event.timestamp}>{displayEventTime(event.timestamp)}</time></div>
-      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} /> : <><header><span>{event.kind === "tool_output" ? "未配对的工具返回" : eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>{event.kind === "tool_output" ? <pre className="trajectory-orphan-output">{event.trace?.output ?? event.body ?? "未记录内容"}</pre> : <SessionMarkdown event={event} />}</>}</article>
+      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} terminal={terminal} /> : <><header><span>{event.kind === "tool_output" ? "未配对的工具返回" : eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>{event.kind === "tool_output" ? <pre className="trajectory-orphan-output">{event.trace?.output ?? event.body ?? "未记录内容"}</pre> : <SessionMarkdown event={event} />}</>}</article>
     </li>)}</ol>
   </section>;
 }

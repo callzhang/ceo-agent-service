@@ -84,6 +84,9 @@ class FridayRuntimeContract:
 
         return f"/v1/operations/{operation_id}"
 
+    def trace_path(self, thread_id: str) -> str:
+        return f"/v1/threads/{thread_id}/trace"
+
     def artifacts_path(self) -> str:
         """Return the artifact collection endpoint.
 

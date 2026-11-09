@@ -480,3 +480,27 @@ def test_execute_propagates_session_token_without_converting_to_bearer():
     assert [call.headers for call in transport.calls] == [
         {"X-Friday-Session-Token": "session-token"}
     ] * 4
+
+
+def test_read_trajectory_uses_only_existing_operation_and_trace(runtime_config):
+    transport = FakeTransport([
+        _success({'operation':{'scope_type':'run','scope_id':'run-1'}}),
+        _success({'thread_id':'thread-1','runs':[{'run_id':'run-1'}], 'events':[
+            {'run_id':'other','event_type':'run.failed','payload':{'error':'unrelated'}},
+            {'run_id':'run-1','event_type':'run.failed','payload':{'error':'actual'}},
+        ]}),
+    ])
+    adapter = FridayRuntimeAdapter(runtime_config, transport=transport)
+    assert adapter.read_trajectory('thread-1','op-1')['events'] == [
+        {'run_id':'run-1','event_type':'run.failed','payload':{'error':'actual'}}]
+    assert [(call.method, call.path) for call in transport.calls] == [
+        ('GET','/v1/operations/op-1'),('GET','/v1/threads/thread-1/trace')]
+
+
+def test_read_trajectory_reports_wrong_operation_thread_instead_of_empty_success(runtime_config):
+    transport = FakeTransport([
+        _success({'operation':{'scope_type':'run','scope_id':'other-run'}}),
+        _success({'thread_id':'thread-1','runs':[{'run_id':'run-1'}], 'events':[]}),
+    ])
+    with pytest.raises(FridayRuntimeContractError,match='absent'):
+        FridayRuntimeAdapter(runtime_config,transport=transport).read_trajectory('thread-1','op-1')

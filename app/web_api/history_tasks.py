@@ -118,6 +118,8 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
             if int(row["id"]) not in {int(a["id"]) for a in attempts}
         ]
     attempts.sort(key=lambda row: int(row["id"]))
+    runtime_attempts = store.list_agent_runtime_attempts_for_runs([int(run["id"]) for run in runs])
+    from app.web_api.native_trajectory import attempt_link
     current_generation = str(task["execution_generation"] or "")
     return {
         "task": {
@@ -143,6 +145,7 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
                 "status": str(run["status"] or ""),
                 "started_at": str(run["started_at"] or run["created_at"] or ""),
                 "completed_at": str(run["completed_at"] or ""),
+                "runtime_attempts": [attempt_link(item) for item in runtime_attempts.get(int(run["id"]), [])],
             }
             for run in runs
         ],

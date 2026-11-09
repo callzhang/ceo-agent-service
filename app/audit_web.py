@@ -9828,6 +9828,7 @@ def _is_spa_page_path(path: str) -> bool:
             "/tasks/",
             "/settings/",
             "/codex/",
+            "/runtime-attempts/",
             "/attempts/",
             "/meeting-attempts/",
             "/oa-approvals/",

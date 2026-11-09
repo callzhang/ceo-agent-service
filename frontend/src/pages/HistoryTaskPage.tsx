@@ -7,7 +7,7 @@ import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
 import { previewText } from "./HistoryPage";
 
-interface TaskRun { id: number; execution_generation: string; current: boolean; role: string; proposal_revision: number; turn_attempt: number; status: string; started_at: string; completed_at: string }
+interface TaskRun { id: number; execution_generation: string; current: boolean; role: string; proposal_revision: number; turn_attempt: number; status: string; started_at: string; completed_at: string; runtime_attempts?: Array<{ id: number; url: string; runtime: string; status: string }> }
 interface TaskAttempt { id: number; action: string; status: string; updated_at: string; summary: string; detail_url: string }
 interface TaskHistory {
   task: { id: number; title: string; channel: string; sender: string; trigger_text: string; status: string; error: string; execution_generation: string; created_at: string; updated_at: string };
@@ -80,7 +80,7 @@ function HistoryTaskContent({ taskId }: { taskId: string }) {
               <span className="history-type-badge">{roleLabels[run.role] || run.role}</span>
               <span className="history-row-status"><StatusBadge value={run.status} /></span>
               <span className="history-row-actor">{run.current ? "当前代" : "历史代"}</span>
-              <span className="history-row-content"><strong>修订 {run.proposal_revision} · 第 {run.turn_attempt + 1} 轮</strong><span className="history-row-preview">{run.execution_generation}</span></span>
+              <span className="history-row-content"><strong>修订 {run.proposal_revision} · 第 {run.turn_attempt + 1} 轮</strong><span className="history-row-preview">{run.execution_generation}</span><span className="trajectory-attempt-links">{run.runtime_attempts?.map((entry) => <Link key={entry.id} to={entry.url}>查看 {entry.runtime} 原生轨迹 · #{entry.id}</Link>)}</span></span>
               <time dateTime={run.started_at}>{shortTime(run.started_at)}</time>
             </div>)}
           </div>

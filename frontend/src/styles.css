@@ -2159,3 +2159,8 @@ h1, h2, h3, p { margin-top: 0; }
   .execution-metadata > div { grid-template-columns: 90px minmax(0, 1fr); }
   .codex-session-event-rail { grid-template-columns: auto auto; gap: 10px; }
 }
+
+.trajectory-attempt-links { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.trajectory-attempt-links a { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--accent); font-size: .78rem; text-decoration: none; overflow-wrap: anywhere; }
+.trajectory-attempt-links a[aria-current="page"] { background: #e3f1eb; border-color: var(--accent); font-weight: 750; }
+.trajectory-loading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }

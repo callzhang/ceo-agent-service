@@ -123,6 +123,8 @@ def register_console_routes(
     scheduled_task_wake_callback: Callable[[], None] | None = None,
     scheduled_task_now: Callable[[], Any] | None = None,
 ) -> None:
+    from app.web_api.native_trajectory import register_native_trajectory_routes
+    register_native_trajectory_routes(app, store_factory)
     feature_registry_factory = feature_registry_factory or FeatureRegistry
     skill_file_service_factory = skill_file_service_factory or SkillFileService
 
@@ -821,6 +823,7 @@ def register_console_routes(
                 {"ok": False, "code": "not_found", "message": "Error record not found", "details": {}},
                 status_code=404,
             )
+        from app.web_api.native_trajectory import error_trajectory_links
         resolved = bool(error.resolved_at)
         return item_envelope({
             "id": error.id,
@@ -834,6 +837,7 @@ def register_console_routes(
             "resolved_at": error.resolved_at,
             "resolution": error.resolution,
             "context": "service error",
+            "runtime_attempts": error_trajectory_links(store_factory(), error),
             "repair": console_repair_detail("errors", error.id)["item"],
             "runtime": {
                 "conversation_id": error.conversation_id or "",
@@ -1131,6 +1135,8 @@ def register_console_routes(
             if conversation_id
             else ""
         )
+        from app.web_api.native_trajectory import run_trajectory_links
+        trajectories = run_trajectory_links(store, run.id)
         from app.audit_web import _audit_event_uses_for_attempt
 
         tool_uses = _audit_event_uses_for_attempt(run)
@@ -1188,7 +1194,7 @@ def register_console_routes(
                 "updated_at": run.updated_at,
             },
             "actions": {
-                "agent_url": f"/codex/{run.codex_session_id}" if run.codex_session_id else "",
+                "agent_url": trajectories[0]["url"] if trajectories else (f"/codex/{run.codex_session_id}" if run.codex_session_id else ""),
                 "dingtalk_url": dingtalk_url,
             },
         })
