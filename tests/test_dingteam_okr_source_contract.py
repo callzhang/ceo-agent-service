@@ -88,3 +88,77 @@ def test_okr_browser_preserves_existing_session_through_shared_launcher(source, 
 
     assert calls == [(playwright, profile, {"initialize_from_snapshot": False})]
     assert closed == [True]
+
+
+@pytest.fixture(scope="module")
+def sso_chrome():
+    from playwright.sync_api import Error, sync_playwright
+
+    with sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(channel="chrome", headless=True)
+        except Error:
+            pytest.skip("Chrome is unavailable for the local SSO DOM regression")
+        try:
+            yield browser
+        finally:
+            browser.close()
+
+
+def sso_pages(body):
+    """Old screens remain visible underneath the active screen, as in native SSO."""
+    return (
+        "<style>.app-page{position:absolute;inset:0;background:white}"
+        ".app-page-curr{z-index:2}</style><output id='events'></output>"
+        + "<div class='app-page'>" + body.replace("current", "old") + "</div>"
+        + "<div class='app-page app-page-curr'>" + body + "</div>"
+    )
+
+
+def test_direct_sso_ignores_earlier_button_on_old_page(source, sso_chrome, monkeypatch):
+    monkeypatch.setattr(source.browser, "ENTRY_URL", "about:blank", raising=False)
+    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 500)
+    monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
+    page = sso_chrome.new_page()
+    try:
+        page.set_content(sso_pages(
+            "<div class='module-confirm'><div class='module-confirm-button "
+            "base-comp-button-type-primary' "
+            "onclick=\"document.querySelector('#events').textContent+='current,'\">"
+            "Log In</div></div>"
+        ))
+
+        source._submit_local_dingtalk_account(page)
+
+        assert page.locator("#events").text_content() == "current,"
+    finally:
+        page.close()
+
+
+def test_qr_sso_uses_active_tab_avatar_and_organization(source, sso_chrome, monkeypatch):
+    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 500)
+    monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
+    monkeypatch.setattr(source, "LOCAL_SSO_CORP_NAME", "Synthetic Corp")
+    confirmations = []
+    monkeypatch.setattr(source, "_confirm_local_dingtalk_login", lambda: confirmations.append(True))
+    page = sso_chrome.new_page()
+    page.route("https://login.dingtalk.com/oauth2/test", lambda route: route.fulfill(
+        body=sso_pages(
+            "<div class='flex-box-tab-content'><button role='tab' "
+            "onclick=\"document.querySelector('#events').textContent+='current-tab,'\">"
+            "扫码登录</button></div>"
+            "<button class='module-qrcode-user-avatar' "
+            "onclick=\"document.querySelector('#events').textContent+='current-avatar,'\">Account</button>"
+            "<button class='module-corp-sel-listitem' "
+            "onclick=\"document.querySelector('#events').textContent+='current-corp,'\">Synthetic Corp</button>"
+        ), content_type="text/html; charset=utf-8",
+    ))
+    try:
+        page.goto("https://login.dingtalk.com/oauth2/test")
+
+        assert source._attempt_local_dingtalk_sso(page) is True
+
+        assert page.locator("#events").text_content() == "current-tab,current-avatar,current-corp,"
+        assert confirmations == [True]
+    finally:
+        page.close()
