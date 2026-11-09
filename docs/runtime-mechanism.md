@@ -2224,6 +2224,8 @@ next role attempt's existing correction prompt. Invalid fields remain rejected,
 transport/session failures retain their own handler, and the shared four-attempt
 ceiling is unchanged. No Audit policy or business replay is introduced.
 
+原生进程结束后的结果编码及既有内容、结构、大小校验仍处于同一个异常处理阶段。编码被拒绝时，原生运行和父运行立即按原错误记录为失败，不能遗留 `running` 阻塞恢复或部署；不将被拒绝结果记为完成，也不改变超时或维护门禁。
+
 ### Repeated action schema construction
 
 A release-gate profile of 205 representative tests showed 20,596 repeated JSON

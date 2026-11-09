@@ -2453,6 +2453,13 @@ at their enclosing fields, preserving full paths such as `payload.remark` and
 messages and locations, never rejected input values. The canonical schema, attempt ceiling, Audit decisions and
 System execution/receipt rules are unchanged.
 
+Runtime result encoding and its existing content, shape and size checks finish
+inside the same failure-handling phase as result preparation. A rejection after
+the native process exits therefore closes both the runtime attempt and parent
+run as failed, retaining the original diagnostic; it cannot leave an apparent
+running turn blocking normal recovery or deployment. Rejected results are not
+stored as completed, and no timeout or maintenance policy changes.
+
 Fixed Consumer action model declarations reuse their generated JSON schema;
 each schema insertion receives a deep copy. The cache holds declaration data,
 not validation results, plans or decisions. All canonical/native purpose schemas

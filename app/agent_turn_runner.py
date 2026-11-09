@@ -1618,6 +1618,17 @@ class AgentTurnProcess(Generic[ResultT]):
                     cast(ConsumerAgentResult | AuditAgentResult, result),
                     allow_configured_feedback_links=True,
                 )
+            if getattr(result, "outcome") not in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}:
+                durable_consumer_result = run.role is AgentRole.CONSUMER
+                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
+                runtime_result_envelope_json = (
+                    _encode_runtime_domain_result(
+                        schema_id=runtime_result_schema_id, role=run.role,
+                        result=cast(ConsumerAgentResult | AuditAgentResult, result),
+                        result_reference_run_id=run.id if durable_consumer_result else None,
+                    ) if route.runtime_kind is RuntimeKind.CLAUDE_CLI or durable_consumer_result
+                    else json.dumps({"schema_id": runtime_result_schema_id})
+                )
         except _RecoveredCompletedRuntimeResult:
             pass
         except CompletedRuntimeResultBlockedError:
@@ -1749,18 +1760,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_session = pending_claude_session_id if is_claude else observed_session_id
                 native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
                 native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
-                durable_consumer_result = run.role is AgentRole.CONSUMER
-                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
                 self.store.complete_agent_runtime_attempt(
                     active_attempt.id, native_session, native_reference,
                     attempt_transcript_start, native_end,
                     owner=self.owner,
                     result_schema_id=runtime_result_schema_id,
-                    result_envelope_json=_encode_runtime_domain_result(
-                        schema_id=runtime_result_schema_id, role=run.role,
-                        result=cast(ConsumerAgentResult | AuditAgentResult, result),
-                        result_reference_run_id=run.id if durable_consumer_result else None,
-                    ) if is_claude or durable_consumer_result else json.dumps({"schema_id": runtime_result_schema_id}),
+                    result_envelope_json=runtime_result_envelope_json,
                     conversation_id=self.task.conversation_id if durable_consumer_result else "",
                     route_name=route.name,
                     conversation_contract_hash=session_contract_hash_for_route(route),
