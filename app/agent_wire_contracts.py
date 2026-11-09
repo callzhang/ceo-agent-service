@@ -23,7 +23,7 @@ from app.agent_contracts import (
     RiskLevel,
     _consumer_result_json_schema,
 )
-from app.consumer_purpose import ConsumerPurposeOutput, _purpose_schema
+from app.consumer_purpose import ConsumerPurposeOutput, _purpose_schema, action_contracts
 from app.agent_reported_error import agent_error_payload
 from app.agent_result import ResultParseError, parse_typed_agent_result
 
@@ -192,6 +192,16 @@ def claude_consumer_output_schema(purpose="general") -> dict[str, object]:
             for child in value:
                 project(child)
     project(native)
+    # The stripped oneOf was the only place Claude could see each action's
+    # target/payload keys; restate them as plain descriptions.
+    for index, field in enumerate(("target", "payload")):
+        shapes = []
+        for name, definition in action_contracts(purpose).items():
+            keys = ", ".join(definition[index].model_fields)
+            shapes.append(f"{name}: {keys or '(empty object)'}")
+        native["properties"][field]["description"] = (
+            f"Exactly these {field} keys for the chosen action, no others. " + "; ".join(shapes)
+        )
     return native
 
 
