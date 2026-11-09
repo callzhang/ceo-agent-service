@@ -41,3 +41,20 @@ def test_workforce_plan_score_requires_content_for_authorized_committee():
     assert not score(case, result)
     result["final_message"] = "W-21 roster review pending."
     assert score(case, result)
+
+
+def test_group_scope_evaluation_validates_result_without_source():
+    from pathlib import Path
+    from scripts.eval_meeting_audience import run_local
+    from scripts.eval_meeting_group_scope import BUILD
+
+    root = Path(__file__).resolve().parents[1]
+    result = run_local(root, BUILD, {
+        'role': 'validate_audit',
+        'result': {'outcome': 'approve', 'summary': 'Supported.', 'feedback': None},
+    })
+    assert result.returncode == 0, result.stderr
+    invalid = run_local(root, BUILD, {
+        'role': 'validate_audit', 'result': {'outcome': 'approve', 'feedback': None},
+    })
+    assert invalid.returncode != 0
