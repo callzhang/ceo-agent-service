@@ -76,7 +76,12 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
                 "reply_text": "Yes.", "status": "sent",
             })
         original_deliveries = [tuple(row) for row in db.execute(WECHAT_DELIVERIES)]
-        original_tasks = [tuple(row) for row in db.execute("select * from tasks")]
+        # The history read starts the Workbench scheduler, which may enqueue a
+        # separate automatic-repair turn for this failed Attempt. Keep this
+        # projection assertion scoped to the reply task being verified.
+        original_reply_tasks = [
+            tuple(row) for row in db.execute("select * from tasks where kind='reply'")
+        ]
         original_attempts = [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")]
 
     with _client(tmp_path) as client:
@@ -101,7 +106,9 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     assert sum(series.values()) == 1
     with store._connect() as db:
         assert [tuple(row) for row in db.execute(WECHAT_DELIVERIES)] == original_deliveries
-        assert [tuple(row) for row in db.execute("select * from tasks")] == original_tasks
+        assert [
+            tuple(row) for row in db.execute("select * from tasks where kind='reply'")
+        ] == original_reply_tasks
         assert [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")] == original_attempts
 
 
