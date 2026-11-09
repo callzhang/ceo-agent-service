@@ -820,6 +820,8 @@ Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。�
 
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通、敏感和目标绑定版本的 prepared outbound 即使还没有 provider 回执，也会阻止重放；这些动作由原有投递恢复路径处理，重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。精确指定 Minutes UUID 时，列表中同一 ID 的重复条目只形成一次来源刷新和恢复结果，不把已排队的恢复误报为失败。Console 可从最新失败 Meeting Attempt 显式请求重跑；入口确认 Attempt 仍是该 Task 最新运行后，按精确 Minutes UUID 只读刷新该会议的来源与参会名单，再调用同一受保护重放方法。来源不可用或任务不再符合重放条件时保持原状态。后续重新进入普通 Meeting 分析和独立 Audit，历史 Run 保持不变，不直接发送或跳过原有外发回执门禁。
 
+重开未发送的 Meeting 时清除旧候选和目标，但保留此前有效 Audit `return` 的反馈和反馈轮数，让新 Consumer 能继续处理原有争议；反馈本身不代表事实已确认，也不代替新一轮独立 Audit。
+
 Meeting planner 与 Audit 的 RuntimeAttempt 分别使用 `meeting` 和 `meeting_audit` workload kind，并以准确 Meeting Run 十进制 ID 为 key；native `parent_id` 都指向该 Run。显式迁移转换器保留新 source 的数字 `meeting_audit` key，也只在转换中处理历史 `meeting` 加 `:audit` key。重放检查读取 TaskBusinessKey 中已保存的公开投递键，以及对应的敏感和目标派生版本，确保 Task ID 重映射后仍识别已有 prepared outbound。
 
 Meeting Codex 命令设置原生 `project_doc_max_bytes=0`，不再额外注入工作区 `AGENTS.md`。会议来源、工作人格和本轮冻结的托管 Skill 仍由服务提交；全局原生指令、Schema 和独立会话保持原样。

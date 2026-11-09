@@ -13968,6 +13968,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ended_at: str,
         eligible_at: str,
     ) -> MeetingAlignmentJob | None:
+        from app.meeting_alignment_models import previous_meeting_audit_feedback
         from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
         with self._immediate_write_transaction() as db:
             task = get_task(db, job_id)
@@ -14027,8 +14028,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 parameters=parameters)
             if changed is None:
                 return None
-            db.execute("update task_results set decision_json='{}',target_kind='',target_id='',target_title='',mentions_json='[]',final_message='',send_result_json='{}' "
-                       "where task_id=? and result_kind='meeting_alignment'", (job_id,))
+            feedback, _ = previous_meeting_audit_feedback(current.decision_json)
+            retained_decision = (
+                json.dumps({"_service_audit": json.loads(current.decision_json)["_service_audit"]}, ensure_ascii=False)
+                if feedback is not None else "{}"
+            )
+            db.execute("update task_results set decision_json=?,target_kind='',target_id='',target_title='',mentions_json='[]',final_message='',send_result_json='{}' "
+                       "where task_id=? and result_kind='meeting_alignment'", (retained_decision, job_id))
             return self._native_meeting_alignment_job(db, job_id)
 
     def restore_confirmed_meeting_delivery(
