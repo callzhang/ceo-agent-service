@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import imaplib
 import socket
@@ -51,6 +52,13 @@ class TransientEmailDiscoveryError(TimeoutError):
     """All failed account scans ended in a retryable provider outage."""
 
 
+# Python gives these socket errors no OSError subclass, so a dropped route or
+# interface surfaces as a bare OSError that the isinstance checks below miss.
+_TRANSIENT_NETWORK_ERRNOS = frozenset(
+    {errno.ENETUNREACH, errno.ENETDOWN, errno.EHOSTUNREACH}
+)
+
+
 def _is_transient_discovery_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
     cause: BaseException | None = exc
@@ -67,6 +75,8 @@ def _is_transient_discovery_error(exc: Exception) -> bool:
             })
         if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
                               httpx.TimeoutException)):
+            return True
+        if isinstance(cause, OSError) and cause.errno in _TRANSIENT_NETWORK_ERRNOS:
             return True
         cause = cause.__cause__
     return False
