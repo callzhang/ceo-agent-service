@@ -2280,3 +2280,7 @@ Attempt 的处理／审计步骤、历史代记录、Task 历史、Meeting 详�
 工作台长任务输入和长文本保留短预览，完整正文可展开；终态结构化结果先展示 `summary`，完整 JSON（包括其他字段）仍可展开读取。共用工具卡默认显示实际名称、命令或参数预览、返回内容的首尾预览、状态和耗时；命令参数数组保持可读，展开后保留完整输入与返回，调用身份、时间和原始 provider 事件放在二级详情。终态工作台对话按每个已保存的 runtime_attempt 直接复用原生轨迹读取器，独立按调用 ID 配对工具开始与返回，不再依赖跨运行环境的 SQLite 工具事件数量。对话内只展示工具，任务输入和最终答复沿用原位置；完整轨迹页仍可查看上下文和中间输出。每次调用先读取一页，可继续加载全部剩余页，只有全部读完才将未返回工具标记中止；源缺失时按调用显示不可用原因。执行中的对话保留实时事件流。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
 
 结果保存与原生结果恢复复用调用方既有的类型化敏感值校验；Audit 对精确绑定候选的系统反馈后缀使用同一既有规则，不改写结果正文。正文凭据、非绑定链接、大小和文档字段检查保持不变。
+
+按任务恢复停滞运行：History 的 `recover-stalled` POST 与 `app.reply_task_recovery` CLI 复用同一事务，必须明确 Task ID 和当前执行代次。沿用既有停滞阈值，Task 锁、Run、活动原生调用仍有近期推进时拒绝；存在外部动作、执行意图或回执时拒绝。通过后复用正常 requeue，未结束的运行记录真实失败、Task 回到 pending，保留候选和历史，再经原 Consumer→Audit→System 处理；不领取其他任务，不跳过部署静默门禁。
+
+Stalled recovery also refuses live dispatcher owners, unexpired or unparseable Run/runtime leases, and missing dispatcher ownership history. These checks run inside the same immediate transaction as the task/generation transition.
