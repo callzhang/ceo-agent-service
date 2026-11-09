@@ -4253,3 +4253,33 @@ def test_a_rejected_target_is_kept_with_the_failure(tmp_path):
     assert job.target_id == "u-unverified"
     assert job.target_title == "Unverified"
     assert json.loads(job.decision_json)["target"]["title"] == "Unverified"
+
+
+@pytest.mark.parametrize("duplicate_on_later_page", [False, True])
+def test_exact_replay_returns_one_result_for_duplicate_native_id(tmp_path, duplicate_on_later_page):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    first = {"items": [meeting], "has_more": duplicate_on_later_page,
+             "next_token": "page-2" if duplicate_on_later_page else ""}
+    pages = {"": first}
+    if duplicate_on_later_page:
+        pages["page-2"] = {"items": [dict(meeting)], "has_more": False, "next_token": ""}
+    else:
+        first["items"].append(dict(meeting))
+    dws = FakeDws(minutes_pages=pages)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting["taskUuid"], title="Original meeting", source_json="{}",
+        participants_json="[]", ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(), status="pending",
+    )
+    store.update_meeting_alignment_job(job_id, status="failed", error="original failure")
+
+    results = queue_recent_meeting_alignment_replay(
+        store, dws, now=NOW, limit=1, meeting_id=meeting["taskUuid"],
+    )
+
+    assert len(results) == 1
+    assert results[0]["outcome"] == "queued"
+    assert results[0]["job_id"] == job_id
+    assert dws.info_calls == [meeting["taskUuid"]]
+    assert store.get_meeting_alignment_job(job_id).status == "pending"
