@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-repair-errors-16232 | `app/wechat/service.py`; `tests/wechat/test_send_mode.py`; `docs/architecture.md`; `docs/runtime-mechanism.md`; this claim row | Treat a delivery whose fenced status transition lost to concurrent delivery/task state as a per-delivery contention outcome in the automatic sender loop. Preserve the store's generation/status guard; do not replay or infer the external send result. Add focused regression and document the sender loop behavior. | 2026-11-09 |
 
 
 
