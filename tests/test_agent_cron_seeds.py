@@ -2132,12 +2132,14 @@ def test_report_seed_migrates_exact_default_prompt_and_copy_preserving_run(
 
 
 def test_scheduled_terminal_run_uses_current_finalizer_signature(monkeypatch):
+    from dataclasses import make_dataclass
     from types import SimpleNamespace
     from unittest.mock import create_autospec
     from app.agent_cron import consumer as module
     import app.task_artifacts
 
     task = SimpleNamespace(id=1, execution_generation='generation', channel='scheduled',
+        manual_rerun_attempt_id=None,
         status='processing', trigger_message_json='{}', conversation_id='c',
         conversation_title='title', trigger_message_id='m', trigger_sender='s', trigger_text='input')
     run = SimpleNamespace(id=7, tool_events=[], codex_session_id='', transcript_start_line=0,
@@ -2150,7 +2152,9 @@ def test_scheduled_terminal_run_uses_current_finalizer_signature(monkeypatch):
         get_agent_run=lambda _: run)
     store.finalize_orchestrated_reply_task = create_autospec(
         AutoReplyStore.finalize_orchestrated_reply_task.__get__(store, AutoReplyStore))
-    built = SimpleNamespace(context=object())
+    Context = make_dataclass("Context", [("manual_rerun", object)])
+    BuiltContext = make_dataclass("BuiltContext", [("context", Context)])
+    built = BuiltContext(context=Context(manual_rerun=None))
     monkeypatch.setattr(module.ScheduledAgentContext, 'from_execution_json', lambda *args, **kwargs: built)
     monkeypatch.setattr(module, 'validate_scheduled_execution_availability', lambda *_: None)
     monkeypatch.setattr(app.task_artifacts, 'cleanup_terminal_task_artifacts', lambda *_: None)

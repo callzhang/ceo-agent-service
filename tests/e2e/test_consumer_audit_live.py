@@ -67,7 +67,10 @@ class RecordingSystemDws:
     def __init__(self) -> None:
         self.sent: list[tuple[str | None, str, dict[str, object]]] = []
         self.responses: list[tuple[str, str]] = []
-        self.calendar_status = "needs_action"
+        self.calendar_status = "needsAction"
+
+    def get_current_user_id(self):
+        return "calendar-principal-1"
 
     def send_message(self, conversation_id, text, **kwargs):
         self.sent.append((conversation_id, text, kwargs))

@@ -35,7 +35,7 @@ WECHAT_DELIVERIES = f"select * from ({WECHAT_DELIVERY_SQL})"
     ],
 )
 def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
-    tmp_path, delivery_status, generation, conversation, latest_sent, expected_failed,
+    tmp_path, monkeypatch, delivery_status, generation, conversation, latest_sent, expected_failed,
     attempt_status,
 ):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
@@ -55,6 +55,10 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
         trigger_message_id="message-1", trigger_sender="Morgan",
         trigger_text="Can you help later?", action="send_reply",
         sensitivity_kind="normal", send_status=attempt_status, channel="wechat",
+    )
+    monkeypatch.setattr(
+        "app.automatic_repair.AutomaticRepairCoordinator.run_once",
+        lambda _self: None,
     )
     with store._connect() as db:
         db.execute("update tasks set status='done' where id=?", (task.id,))

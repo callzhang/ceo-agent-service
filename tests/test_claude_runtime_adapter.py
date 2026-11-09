@@ -1384,3 +1384,19 @@ def test_native_structured_output_does_not_require_a_text_result(adapter):
     normalizer.normalize_event(terminal)
     assert adapter.parse_final_result(normalizer=normalizer,
         proof=normalizer.terminal_proof(),parser=json.loads) == {'ok':True}
+
+
+def test_consumer_native_schema_tells_claude_each_actions_target_and_payload_shape():
+    from app.agent_wire_contracts import claude_consumer_output_schema
+
+    properties = claude_consumer_output_schema("oa")["properties"]
+    target, payload = properties["target"]["description"], properties["payload"]["description"]
+
+    # Incident: the stripped oneOf left `comment` with a free-form target, so
+    # the model sent task_id/remark and the strict parser rejected four turns.
+    assert "comment: process_instance_id" in target
+    assert "task_id" not in target.split("comment:")[1].split(";")[0]
+    assert "comment: content" in payload
+    assert "approve: process_instance_id, task_id" in target
+    assert "approve: remark" in payload
+    assert "request_access: process_instance_id, file_id" in target

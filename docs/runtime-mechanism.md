@@ -2013,7 +2013,10 @@ shapes and required fields but removes the wire schema's unsupported `oneOf` and
 `allOf` conditions; the unchanged Pydantic wire/business models remain the
 authoritative validator for those relationships and every result. The adapter
 uses the native result's JSON text through the existing event normalizer and
-parser. Audit and other Claude workloads keep their existing command; no route,
+parser. The projection also restates, in the `target` and `payload` field
+descriptions, each action's exact keys from `action_contracts` (the removed `oneOf`
+was the only place Claude could see them; reply_attempts #17055 sent `task_id` in an
+OA `comment` target and was rejected four times). Audit and other Claude workloads keep their existing command; no route,
 tool, Skill, prompt rule, retry or session policy changes.
 
 Email action-family metadata belongs to the shared `actions` table. If its generated Email column, CHECK, collation or attempt parent FK is malformed, the genuine Store schema preflight raises `sqlite3.IntegrityError` before EmailStore's own current-schema validation, even with `validate_rows=False`. The Email Web route's existing exception mapping marks this `sqlite_integrity_error` and keeps Email unavailable. It does not repair the malformed structure or add a retry, recovery or authorization rule.

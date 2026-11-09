@@ -6778,10 +6778,18 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
     class FakeStore:
         def __init__(self, _path):
             self.resolutions = []
+            self.health = []
+            self.errors = []
 
         def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
             self.resolutions.append((kind, resolution))
             return 1
+
+        def set_service_health_component(self, component, **values):
+            self.health.append((component, values))
+
+        def record_error(self, *values):
+            self.errors.append(values)
 
     store = FakeStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
