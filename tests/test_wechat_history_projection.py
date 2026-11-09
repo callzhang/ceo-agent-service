@@ -35,9 +35,14 @@ WECHAT_DELIVERIES = f"select * from ({WECHAT_DELIVERY_SQL})"
     ],
 )
 def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
-    tmp_path, delivery_status, generation, conversation, latest_sent, expected_failed,
+    tmp_path, monkeypatch, delivery_status, generation, conversation, latest_sent, expected_failed,
     attempt_status,
 ):
+    # This test proves history reads do not mutate Tasks; the app's Workbench
+    # scheduler would otherwise turn a failed Attempt's queued repair into a
+    # workbench_turn Task mid-test (a timing-dependent write unrelated to reads).
+    monkeypatch.setattr(
+        "app.automatic_repair.AutomaticRepairCoordinator.run_once", lambda self: None)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         channel="wechat", conversation_id="wechat-current", conversation_title="Morgan",
