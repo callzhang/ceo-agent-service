@@ -66,3 +66,25 @@ def test_actual_invalid_json_keeps_invalid_response(source, capsys):
 def test_source_worker_budget_is_unchanged(source):
     assert source.HEADLESS_SOURCE_TIMEOUT_SECONDS == 220
     assert source.HEADLESS_SOURCE_SHUTDOWN_SECONDS == 5
+
+
+def test_okr_browser_preserves_existing_session_through_shared_launcher(source, tmp_path, monkeypatch):
+    from types import SimpleNamespace
+
+    profile = tmp_path / "okr-session"
+    monkeypatch.setattr(source.browser, "PROFILE_DIR", profile, raising=False)
+    calls = []
+    closed = []
+    context = SimpleNamespace(close=lambda: closed.append(True))
+    playwright = object()
+
+    def launch(actual_playwright, actual_profile, **kwargs):
+        calls.append((actual_playwright, actual_profile, kwargs))
+        return context
+
+    monkeypatch.setattr("app.service_browser.launch_service_chrome", launch)
+    with source._service_browser(playwright) as opened:
+        assert opened is context
+
+    assert calls == [(playwright, profile, {"initialize_from_snapshot": False})]
+    assert closed == [True]

@@ -59,3 +59,33 @@ def test_the_profile_holds_the_current_cookie_copy_when_chrome_opens(tmp_path: P
     launch_service_chrome(Playwright(), tmp_path / "profile")
 
     assert seen == [["github.com"]]
+
+
+def test_existing_session_can_start_without_replacing_its_cookie_files(tmp_path, monkeypatch):
+    snapshot = tmp_path / "snapshot"
+    (snapshot / "Default").mkdir(parents=True)
+    (snapshot / "Default" / "Cookies").write_bytes(b"synthetic owner session")
+    monkeypatch.setattr("app.chrome_cookie_snapshot.snapshot_root", lambda: snapshot)
+    profile = tmp_path / "existing-session"
+    cookies = profile / "Default" / "Cookies"
+    cookies.parent.mkdir(parents=True)
+    cookies.write_bytes(b"synthetic dedicated session")
+    sidecars = [cookies.with_name(name) for name in ("Cookies-journal", "Cookies-wal", "Cookies-shm")]
+    for sidecar in sidecars:
+        sidecar.write_bytes(b"synthetic session sidecar")
+    playwright = _Playwright()
+
+    assert launch_service_chrome(
+        playwright, profile, initialize_from_snapshot=False
+    ) == "context"
+
+    assert cookies.read_bytes() == b"synthetic dedicated session"
+    assert all(path.read_bytes() == b"synthetic session sidecar" for path in sidecars)
+    (call,) = playwright.chromium.calls
+    assert call["channel"] == "chrome" and call["headless"] is True
+    assert call["ignore_default_args"] == ["--use-mock-keychain", "--password-store=basic"]
+    assert "initialize_from_snapshot" not in call
+    with pytest.raises(ValueError, match="headless"):
+        launch_service_chrome(
+            playwright, profile, headless=False, initialize_from_snapshot=False
+        )
