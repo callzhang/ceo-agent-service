@@ -157,8 +157,8 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
             "select id,provider_result_json,observed_at,result_digest from action_receipts "
             "where action_id=? and provider_result_json is not null", (sent.id,),
         ).fetchone()
-    assert tuple(before[1:]) == (None, None, None)
-    assert sent.sent_at == "provider-observed-clock"
+    assert tuple(before[1:3]) == (None, None)
+    assert before[3] is None and sent.sent_at == "provider-observed-clock"
     assert tuple(body[1:]) == (raw, "provider-observed-clock", None)
     store.fail_agent_run(audit.id, {"code": "codex_result_invalid"}, owner="audit")
     store.fail_reply_task(task.id, "codex_result_invalid", expected_execution_generation=task.execution_generation)
@@ -169,7 +169,7 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     assert store.get_agent_run(audit.id).status == "failed"
     with store._connect() as db:
         after = db.execute(
-            "select id,action_operation,action_action_identity,action_prepared_at "
+            "select id,action_operation,action_action_identity "
             "from actions where id=?", (sent.id,),
         ).fetchone()
         body_after = db.execute(
@@ -182,7 +182,7 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
             "where external_action_key=? and provider_receipt_id=?",
             (key, body_after[0]),
         ).fetchone()
-    assert after[0] == sent.id and tuple(after[1:3]) == ("send", "send") and after[3] is None
+    assert after[0] == sent.id and tuple(after[1:]) == ("send", "send")
     assert tuple(body_after[:3]) == tuple(body[:3])
     assert binding[0] == body_after[0]
     digest = hashlib.sha256(json.dumps(

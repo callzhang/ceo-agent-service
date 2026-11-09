@@ -11,11 +11,17 @@ from typing import Any
 
 from fastapi import FastAPI
 from fastapi.responses import JSONResponse
+from pydantic import BaseModel, ConfigDict, Field
 
 from app.action_storage import REPLY_ATTEMPT_COMMON_SQL
 from app.web_api.common import json_safe, normalize_display_value, snapshot_at
 
 _CHUNK = 500
+
+
+class StalledRecoveryInput(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+    execution_generation: str = Field(min_length=1)
 
 
 def _chunks(ids: list[int]):
@@ -118,6 +124,8 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
             if int(row["id"]) not in {int(a["id"]) for a in attempts}
         ]
     attempts.sort(key=lambda row: int(row["id"]))
+    runtime_attempts = store.list_agent_runtime_attempts_for_runs([int(run["id"]) for run in runs])
+    from app.web_api.native_trajectory import attempt_link
     current_generation = str(task["execution_generation"] or "")
     return {
         "task": {
@@ -143,6 +151,7 @@ def build_task_history(store: Any, task_id: int) -> dict[str, Any] | None:
                 "status": str(run["status"] or ""),
                 "started_at": str(run["started_at"] or run["created_at"] or ""),
                 "completed_at": str(run["completed_at"] or ""),
+                "runtime_attempts": [attempt_link(item) for item in runtime_attempts.get(int(run["id"]), [])],
             }
             for run in runs
         ],
@@ -173,6 +182,20 @@ def register_history_task_routes(app: FastAPI, store_factory: Any) -> None:
                 status_code=404,
             )
         return {"item": json_safe(payload), "meta": {"snapshot_at": snapshot_at()}}
+
+    @app.post("/api/console/history/tasks/{task_id}/recover-stalled")
+    def console_history_task_recover_stalled(task_id: int, binding: StalledRecoveryInput):
+        from app.reply_task_recovery import recover_stalled_reply_task
+
+        try:
+            task = recover_stalled_reply_task(store_factory(), task_id,
+                expected_execution_generation=binding.execution_generation)
+        except ValueError as exc:
+            return JSONResponse({"ok": False, "code": "stalled_task_recovery_not_allowed",
+                                 "message": str(exc)}, status_code=409)
+        return {"item": {"task_id": task.id, "status": task.status,
+                         "execution_generation": task.execution_generation},
+                "meta": {"snapshot_at": snapshot_at()}}
 
     @app.post("/api/console/history/tasks/{task_id}/retry")
     def console_history_task_retry(task_id: int):

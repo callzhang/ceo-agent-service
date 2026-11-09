@@ -38,6 +38,23 @@ function detailText(value: unknown): string {
   return typeof encoded === "string" ? encoded : String(value);
 }
 
+function commandText(value: unknown): string {
+  return Array.isArray(value) ? value.map((arg) => JSON.stringify(arg)).join(" ") : exactText(value);
+}
+
+function previewText(value: unknown): string {
+  let readable = value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      const content = Array.isArray(parsed) ? parsed : parsed?.content;
+      if (Array.isArray(content) && content.length && content.every((part) => typeof part?.text === "string")) readable = content.map((part) => part.text).join("\n");
+    } catch { /* Preview plain text; expanded evidence remains exact. */ }
+  }
+  const text = detailText(readable);
+  return text.length > 240 ? `${text.slice(0, 120)}\n…\n${text.slice(-120)}` : text;
+}
+
 function durationLabel(startedAt?: string, completedAt?: string): string {
   if (!startedAt || !completedAt) return "";
   const start = parseWorkbenchTimestamp(startedAt);
@@ -64,7 +81,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
     : sessionTrace
       ? exactText(payload.name, "工具调用")
       : whiteBox
-      ? exactText(payload.kind === "command" ? payload.command : payload.name, exactText(payload.name, "工具调用"))
+      ? (payload.kind === "command" ? commandText(payload.command) : exactText(payload.name)) || exactText(payload.name, "工具调用")
       : executionName(payload.tool);
   const rawSummary = payload.summary ?? payload.change;
   const summary = displayText(
@@ -75,25 +92,38 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
   );
   const stateLabel = executionStateLabel(status);
   const duration = durationLabel(startedAt, completedAt);
+  const input = payload.input ?? payload.arguments;
+  let previewInput = input;
+  if (typeof input === "string") {
+    try { previewInput = JSON.parse(input); } catch { /* Raw command text. */ }
+  }
+  const inputRecord = previewInput && typeof previewInput === "object" ? previewInput as Record<string, unknown> : null;
+  const previewValue = inputRecord?.cmd ?? inputRecord?.command ?? inputRecord?.path ?? input;
+  const preview = payload.kind === "command" || previewValue === undefined ? "" : previewText(previewValue);
+  const result = payload.output ?? payload.result;
+  const resultPreview = result === undefined ? "" : previewText(result);
   return (
     <details className={`execution-step execution-${failed ? "failed" : completed ? "completed" : aborted ? "aborted" : "running"}`}>
       <summary>
         <Icon aria-hidden="true" size={16} />
-        <span className="execution-name">{name}</span>
-        <span className="execution-state" role="status">{stateLabel}</span>
+        <span className="execution-name" title={name}>{name}{preview && <small className="execution-preview" title={preview}>{preview}</small>}{resultPreview && <small className="execution-result-preview"><span>返回</span>{resultPreview}</small>}</span>
+        <span className="execution-state" role="status">{stateLabel}{duration && <small className="execution-duration">{duration}</small>}</span>
         <ChevronRight className="execution-chevron" aria-hidden="true" size={15} />
       </summary>
       {kind === "file" ? <p>{summary}</p> : whiteBox ? (
         <div className="execution-details">
-          <dl className="execution-metadata">
+          {sessionTrace && payload.input !== undefined && <section><h4>输入</h4><pre>{detailText(payload.input)}</pre></section>}
+          {payload.arguments !== undefined && <section><h4>参数</h4><pre>{detailText(payload.arguments)}</pre></section>}
+          {payload.output !== undefined && <section><h4>输出</h4><pre>{detailText(payload.output)}</pre></section>}
+          {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}
+          <details className="execution-technical"><summary>调用详情{payload.provider_item !== undefined ? "与原始事件" : ""}</summary><dl className="execution-metadata">
             {sessionTrace ? (
               <>
                 <div><dt>调用名称</dt><dd><code>{exactText(payload.name, "未提供")}</code></dd></div>
-                {typeof payload.tool_call_id === "string" && <div><dt>调用 ID</dt><dd><code>{exactText(payload.tool_call_id)}</code></dd></div>}
               </>
             ) : payload.kind === "command" ? (
               <>
-                <div><dt>命令</dt><dd><code>{exactText(payload.command, "未提供")}</code></dd></div>
+                <div><dt>命令</dt><dd><code>{commandText(payload.command) || "未提供"}</code></dd></div>
                 {typeof payload.cwd === "string" && <div><dt>工作目录</dt><dd><code>{exactText(payload.cwd)}</code></dd></div>}
                 {typeof payload.exit_code === "number" && <div><dt>退出码</dt><dd>{payload.exit_code}</dd></div>}
               </>
@@ -103,17 +133,13 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
                 <div><dt>工具</dt><dd><code>{exactText(payload.tool, "未提供")}</code></dd></div>
               </>
             )}
-            <div><dt>Workbench 调用 ID</dt><dd><code>{exactText(payload.tool_call_id, "未提供")}</code></dd></div>
-            <div><dt>Provider 项目 ID</dt><dd><code>{exactText(payload.native_id, "未提供")}</code></dd></div>
+            {typeof payload.tool_call_id === "string" && <div><dt>调用 ID</dt><dd><code>{exactText(payload.tool_call_id)}</code></dd></div>}
+            {typeof payload.native_id === "string" && <div><dt>Provider 项目 ID</dt><dd><code>{exactText(payload.native_id)}</code></dd></div>}
             <TimeDetail label="开始时间" value={startedAt} />
             <TimeDetail label="完成时间" value={completedAt} />
-            {duration && <div><dt>耗时</dt><dd>{duration}</dd></div>}
           </dl>
-          {sessionTrace && payload.input !== undefined && <section><h4>输入</h4><pre>{detailText(payload.input)}</pre></section>}
-          {payload.arguments !== undefined && <section><h4>参数</h4><pre>{detailText(payload.arguments)}</pre></section>}
-          {payload.output !== undefined && <section><h4>输出</h4><pre>{detailText(payload.output)}</pre></section>}
-          {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}
           {payload.provider_item !== undefined && <section><h4>原始工具事件</h4><pre>{detailText(payload.provider_item)}</pre></section>}
+          </details>
           {status === "aborted" && <p className="execution-aborted-note">{summary}</p>}
           {failed && <p className="execution-failure-note">{summary}</p>}
         </div>

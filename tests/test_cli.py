@@ -6783,8 +6783,8 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
             self.resolutions.append((kind, resolution))
             return 1
 
-        def set_service_health_component(self, *_args, **_kwargs):
-            pass
+        def set_service_health_component(self, name, **fields):
+            self.health = (name, fields)
 
     store = FakeStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)

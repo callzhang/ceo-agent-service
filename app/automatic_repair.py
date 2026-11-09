@@ -12,6 +12,7 @@ from pydantic import ValidationError
 
 from app.automatic_repair_contracts import (
     PRRepairResult, RepairDiagnosis, REPAIR_DIAGNOSIS_CONTRACT, REPAIR_PR_CONTRACT,
+    RepairMergeResult, REPAIR_MERGE_CONTRACT,
 )
 from app.automatic_repair_store import (
     TERMINAL, ensure_conversation, get_repair, list_repairs, save_repair,
@@ -29,6 +30,7 @@ def repair_presentation(store, source: str, source_id: int) -> dict | None:
         'refresh_url': f'/api/console/repairs/{source}/{source_id}',
         'conversation_url': f"/?task={entry['task_id']}" if entry['task_id'] else '',
         'pr_url': entry['pr_url'], 'turn_count': len(entry['turn_ids']),
+        'merge_commit': entry.get('merge_commit', ''), 'merged_at': entry.get('merged_at', ''),
     }
 
 
@@ -70,13 +72,20 @@ class AutomaticRepairCoordinator:
                 return
             # One repair at a time; ordinary user Workbench turns retain the
             # executor's existing independent capacity and leases.
-            entries = [entry for entry in list_repairs(self.store)
-                       if entry['status'] not in TERMINAL
-                       and entry.get('next_readback_at', 0) <= time.time()]
-            entries.sort(key=lambda entry: (entry['status'] != 'running',
-                                            not bool(entry['task_id']), entry['source_id']))
-            if entries:
-                self._advance(entries[0])
+            candidates = []
+            now = time.time()
+            for entry in list_repairs(self.store):
+                if entry['status'] in TERMINAL:
+                    continue
+                summary = self.store.get_task_summary(entry['task_id']) if entry['task_id'] else None
+                active = summary is not None and summary[1] in {'queued', 'running'}
+                if active or entry.get('next_readback_at', 0) <= now:
+                    candidates.append((entry, active))
+            candidates.sort(key=lambda item: (not item[1],
+                                              not bool(item[0]['task_id']), int(item[0]['task_id'] or 0),
+                                              item[0]['source_id']))
+            if candidates:
+                self._advance(candidates[0][0])
 
     def _advance(self, entry: dict) -> None:
         if entry.get('next_readback_at', 0) > time.time():
@@ -139,7 +148,8 @@ class AutomaticRepairCoordinator:
             f"This is turn {len(turn_ids) + 1}/{MAX_AUTOMATIC_ATTEMPTS} in the SAME repair conversation. "
             f"Previous progress: {entry['summary'] or 'No previous repair turn.'} "
             "Read the original trajectory, fix the mechanism, run regression tests and open a PR. "
-            "Continue existing work instead of restarting diagnosis. Do not merge, deploy or replay business actions. "
+            "Continue existing work instead of restarting diagnosis. The same conversation will merge "
+            "a proven deterministic fix after CI/review pass. Do not deploy or replay business actions. "
             'End with ONLY JSON: {"outcome":"pr_created","summary":"concrete result and evidence"}. '
             'For a proven non-code cause use outcome no_code_change; for an external blocker use blocked. '
             "A plan or an intention to continue is not completion."
@@ -167,11 +177,22 @@ class AutomaticRepairCoordinator:
         turn = self.store.get_turn(entry['turn_ids'][-1]) if entry['turn_ids'] else None
         if turn is not None and turn.status in {'queued', 'running'}:
             return
-        if turn is not None and turn.status == 'stopped':
+        contract = self.store.get_turn_result_contract(turn.id) if turn is not None else ''
+        stopped = turn is not None and turn.status == 'stopped'
+        if stopped and contract != REPAIR_MERGE_CONTRACT:
             entry.update(status='stopped', summary='修复对话已停止。')
             save_repair(self.store, entry)
             return
-        if turn is not None and entry.get('active_feedback'):
+        if turn is not None and not stopped and contract == REPAIR_MERGE_CONTRACT:
+            try:
+                merge_result = RepairMergeResult.model_validate_json(turn.final_text)
+            except ValidationError as exc:
+                entry['last_merge_result'] = {
+                    'error': 'invalid_result', 'details': json.loads(exc.json(include_input=False)),
+                }
+            else:
+                entry['last_merge_result'] = merge_result.model_dump()
+        elif turn is not None and not stopped and entry.get('active_feedback'):
             try:
                 result = PRRepairResult.model_validate_json(turn.final_text)
             except ValidationError as exc:
@@ -195,8 +216,23 @@ class AutomaticRepairCoordinator:
             return
         entry.update(pr_head=pr['headRefOid'], pr_state=pr['state'],
                      next_readback_at=time.time() + self.pr_poll_seconds)
+        if pr['state'] == 'MERGED':
+            commit = (pr.get('mergeCommit') or {}).get('oid', '')
+            if pr.get('baseRefName') and pr['baseRefName'] != 'main':
+                entry.update(status='pr_closed', summary=f'PR 已合并到 {pr["baseRefName"]}，未合并到 main。')
+            elif commit and pr.get('mergedAt') and pr.get('baseRefName') == 'main':
+                entry.update(status='merged', merge_commit=commit, merged_at=pr['mergedAt'],
+                             summary=f'PR 已合并到 main，合并提交 {commit}；原业务状态保持原记录。')
+            else:
+                entry.update(status='awaiting_pr', summary='GitHub 已显示 MERGED，等待合并提交与时间读回。')
+            save_repair(self.store, entry)
+            return
         if pr['state'] != 'OPEN':
             entry.update(status='pr_closed', summary=f"PR 状态为 {pr['state']}；自动续接已结束。")
+            save_repair(self.store, entry)
+            return
+        if stopped:
+            entry.update(status='stopped', summary='合并对话已停止，GitHub 尚未返回合并结果；不自动重新执行。')
             save_repair(self.store, entry)
             return
         feedback, identity, actionable, passed, pending = assess_feedback(pr, entry.get('handled_reviews', []))
@@ -205,9 +241,11 @@ class AutomaticRepairCoordinator:
             {'feedback_id': identity, 'result_schema': schema}, sort_keys=True,
         ).encode()).hexdigest()
         if not actionable:
-            entry.update(status='checks_passed' if passed else 'awaiting_checks',
-                         summary=('当前提交的 CI 已通过，review 待处理项为零；继续监听后续反馈。' if passed else
-                                  f'等待当前提交的检查结果：{pending} 项进行中；尚未判定通过。'))
+            if passed:
+                self._continue_merge(entry, pr, feedback)
+                return
+            entry.update(status='awaiting_checks',
+                         summary=f'等待当前提交的检查结果：{pending} 项进行中；尚未判定通过。')
         else:
             attempts = entry.get('feedback_attempt_counts', {}).get(identity, 0)
             if attempts >= MAX_AUTOMATIC_ATTEMPTS:
@@ -226,7 +264,8 @@ class AutomaticRepairCoordinator:
                     "Use the previous result and current remote facts below to finish remaining work. "
                     "Read full job logs/discussions, verify root causes, add/run focused regressions, "
                     "commit and push the same PR. Resolve verified review corrections; report actual external blockers. "
-                    "Do not weaken checks/test limits, merge the PR, deploy, or replay business actions. "
+                    "Do not weaken checks/test limits, deploy, or replay business actions. "
+                    "After checks/review pass, this same conversation will merge a proven deterministic fix. "
                     "Return the declared native result JSON, including concrete remaining_work until the goal is met. "
                     "The coordinator independently observes the new head and remote results.\n"
                     + json.dumps({'previous_result': entry.get('last_feedback_result'),
@@ -245,6 +284,47 @@ class AutomaticRepairCoordinator:
                 return
         save_repair(self.store, entry)
 
+    def _continue_merge(self, entry: dict, pr: dict, feedback: dict) -> None:
+        result = entry.get('last_merge_result', {})
+        if result.get('head_sha') == pr['headRefOid'] and result.get('outcome') in {'review_required', 'blocked'}:
+            entry.update(status='review_required' if result['outcome'] == 'review_required' else 'merge_blocked',
+                         summary=result['summary'])
+            save_repair(self.store, entry)
+            return
+        identity = hashlib.sha256(json.dumps({
+            'merge_head': pr['headRefOid'], 'result_schema': RepairMergeResult.model_json_schema(),
+        }, sort_keys=True).encode()).hexdigest()
+        attempts = entry.get('feedback_attempt_counts', {}).get(identity, 0)
+        if attempts >= MAX_AUTOMATIC_ATTEMPTS:
+            entry.update(status='merge_blocked', summary='当前提交的合并执行次数已耗尽，尚无 GitHub 合并回执；保留原对话并继续观察新提交。')
+            save_repair(self.store, entry)
+            return
+        prompt = (
+            f"Derek authorizes automatic merge to main for proven deterministic fixes. "
+            f"Continue this SAME repair conversation, worktree and PR {pr['url']}, branch {pr['headRefName']}. "
+            f"Development repository: {self.repository}. Locate and reuse the existing worktree for this "
+            "PR branch with git worktree list; preserve its progress and other authors' commits. "
+            f"Read {Path(__file__).resolve().parents[1]}/docs/automatic-error-repair.md. "
+            f"Current-head CI and review are passing at {pr['headRefOid']}. "
+            "Inspect the complete final diff, root cause and red/green regression evidence, including CI repairs. "
+            "A deterministic fix has a confirmed failing mechanism and passing regression without competing product objectives. "
+            "For a deterministic fix, verify the PR still targets main and current checks/review still pass, "
+            f"then run gh pr merge {pr['url']} --merge --match-head-commit {pr['headRefOid']}. "
+            "Use native GitHub requirements; do not bypass them. Read back state, mergeCommit and mergedAt. "
+            "For a product/algorithm tradeoff needing evaluation, return review_required and explain the decision/eval needed. "
+            "If the head moved, conflicts or new feedback require corrections, update this same PR and return pr_updated. "
+            "For a concrete external blocker return blocked. Do not deploy or replay business actions. "
+            "Return the declared native result JSON with head_sha, deterministic_fix, regression_evidence and concrete summary.\n"
+            + json.dumps({'previous_merge_result': result, 'current_pr': pr}, ensure_ascii=False, sort_keys=True)
+        )
+        entry['pending_feedback_turn'] = {
+            'prompt': prompt, 'identity': identity, 'attempt': attempts + 1, 'feedback': feedback,
+            'result_contract': REPAIR_MERGE_CONTRACT,
+            'request_id': f"automatic-repair:{entry['source']}:{entry['source_id']}:merge:{identity}:{attempts + 1}",
+        }
+        save_repair(self.store, entry)
+        self._submit_feedback_turn(entry)
+
     def _submit_feedback_turn(self, entry: dict) -> None:
         pending = entry['pending_feedback_turn']
         turn = self.store.create_turn(entry['task_id'], user_text=pending['prompt'],
@@ -259,5 +339,7 @@ class AutomaticRepairCoordinator:
                      summary=f"当前提交有 {len(feedback['failed_checks'])} 项 CI 失败、"
                              f"{len(feedback['unresolved_threads'])} 个未解决 review、"
                              f"{len(feedback['commented_reviews'])} 条 review 正文；已自动续接原对话。")
+        if self.store.get_turn_result_contract(turn.id) == REPAIR_MERGE_CONTRACT:
+            entry.update(status='merging', summary='CI / review 已通过；同一 Agent 正在核对确定性修复证据并合并到 main。')
         del entry['pending_feedback_turn']
         save_repair(self.store, entry)

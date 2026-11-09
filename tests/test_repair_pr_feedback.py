@@ -1,3 +1,5 @@
+import pytest
+
 from app.automatic_repair import AutomaticRepairCoordinator
 from app.automatic_repair_store import get_repair, save_repair
 from tests.test_automatic_repair_gate import coordinator, finish, store as store
@@ -9,6 +11,7 @@ def snapshot(*, head="abc", checks=None, threads=None, reviews=None, state="OPEN
         headRefOid=head,
         headRefName="codex/repair-errors-1",
         state=state,
+        baseRefName="main",
         reviewDecision="",
         checks=checks or [],
         threads=threads or [],
@@ -50,6 +53,15 @@ def poll(store, tmp_path, data):
     ).run_once()
 
 
+def complete_merge_review(store, identity):
+    import json
+    entry = get_repair(store, "errors", identity)
+    finish(store, entry["turn_ids"][-1], json.dumps(dict(
+        outcome="review_required", head_sha="abc", summary="Product tradeoff needs evaluation",
+        deterministic_fix=False, regression_evidence=[],
+    )))
+
+
 def test_ci_failure_resumes_same_conversation_and_deduplicates_restart(store, tmp_path):
     identity, before = attached(store, tmp_path)
     data = snapshot(checks=[failed_check()])
@@ -89,8 +101,8 @@ def test_pending_waits_then_failure_and_new_commit_are_observed(store, tmp_path)
         tmp_path,
         snapshot(head="def", checks=[dict(failed_check(), conclusion="SUCCESS")]),
     )
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
-    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 2
+    assert get_repair(store, "errors", identity)["status"] == "merging"
+    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 3
     assert not store.get_error(identity).resolved_at
 
 
@@ -126,14 +138,16 @@ def test_unresolved_review_with_green_ci_resumes_and_resolved_review_passes(
         tmp_path,
         snapshot(checks=[good], threads=[dict(thread, isResolved=True)]),
     )
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
+    assert get_repair(store, "errors", identity)["status"] == "merging"
 
 
 def test_green_pr_remains_watched_for_new_review(store, tmp_path):
     identity, _ = attached(store, tmp_path)
     good = dict(failed_check(), conclusion="SUCCESS")
     poll(store, tmp_path, snapshot(checks=[good]))
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
+    assert get_repair(store, "errors", identity)["status"] == "merging"
+    complete_merge_review(store, identity)
+    poll(store, tmp_path, snapshot(checks=[good]))
     review = dict(
         id="review1",
         state="CHANGES_REQUESTED",
@@ -397,7 +411,9 @@ def test_commented_review_body_requires_explicit_handling_receipt(store, tmp_pat
         ),
     )
     poll(store, tmp_path, data)
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
+    assert get_repair(store, "errors", identity)["status"] == "merging"
+    complete_merge_review(store, identity)
+    poll(store, tmp_path, data)
     poll(
         store,
         tmp_path,
@@ -406,7 +422,7 @@ def test_commented_review_body_requires_explicit_handling_receipt(store, tmp_pat
             reviews=[dict(review, body="Additional finding", updatedAt="tomorrow")],
         ),
     )
-    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 3
+    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 4
 
 
 def test_earlier_commented_body_is_not_hidden_by_later_approval():
@@ -476,3 +492,70 @@ def test_invalid_result_gets_format_feedback_in_same_conversation(store, tmp_pat
     prompt = store.get_turn(latest["turn_ids"][-1]).user_text
     assert "json_invalid" in prompt
     assert "remaining_work" in prompt
+
+
+@pytest.mark.parametrize('latest_state', ['queued', 'running', 'completed', 'failed'])
+def test_actual_turn_state_yields_finished_repair_to_older_ready_pr(store, tmp_path, latest_state):
+    import time
+    older, old_entry = attached(store, tmp_path)
+    old_entry.update(status='awaiting_checks', next_readback_at=time.time() + 300)
+    save_repair(store, old_entry)
+    newer, _ = attached(store, tmp_path)
+    poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    newer_entry = get_repair(store, 'errors', newer)
+    if latest_state == 'running':
+        assert store.claim_next_turn(owner='test', lease_seconds=300).id == newer_entry['turn_ids'][-1]
+    elif latest_state in {'completed', 'failed'}:
+        finish(store, newer_entry['turn_ids'][-1], status=latest_state)
+    old_entry['next_readback_at'] = 0
+    save_repair(store, old_entry)
+    poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    assert len(get_repair(store, 'errors', older)['turn_ids']) == (2 if latest_state in {'completed', 'failed'} else 1)
+    assert get_repair(store, 'errors', newer)['turn_ids'] == newer_entry['turn_ids']
+
+
+def test_uncheckpointed_queued_intent_still_occupies_single_repair_slot(store, tmp_path, monkeypatch):
+    import time
+    import app.automatic_repair as module
+    older, old_entry = attached(store, tmp_path)
+    old_entry.update(status='awaiting_checks', next_readback_at=time.time() + 300)
+    save_repair(store, old_entry)
+    newer, newer_entry = attached(store, tmp_path)
+    real_save = module.save_repair
+    calls = 0
+    def crash_after_creation(*args):
+        nonlocal calls
+        calls += 1
+        if calls == 2:
+            raise RuntimeError('checkpoint interrupted')
+        return real_save(*args)
+    monkeypatch.setattr(module, 'save_repair', crash_after_creation)
+    with pytest.raises(RuntimeError, match='checkpoint interrupted'):
+        poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    monkeypatch.setattr(module, 'save_repair', real_save)
+    pending = get_repair(store, 'errors', newer)
+    pending['next_readback_at'] = time.time() + 60
+    save_repair(store, pending)
+    old_entry['next_readback_at'] = 0
+    save_repair(store, old_entry)
+    poll(store, tmp_path, snapshot(checks=[failed_check()]))
+    assert get_repair(store, 'errors', older)['turn_ids'] == old_entry['turn_ids']
+    assert len(store.list_turns(newer_entry['task_id'])) == 2
+
+
+def test_existing_conversation_order_is_independent_of_source_id_counters(store, tmp_path, monkeypatch):
+    import app.automatic_repair as module
+    older = store.create_task(title="older reply repair", runtime_kind="codex")
+    newer = store.create_task(title="newer error repair", runtime_kind="codex")
+    entries = [
+        dict(source="reply_attempts", source_id=900001, task_id=older.id,
+             status="awaiting_checks", turn_ids=[]),
+        dict(source="errors", source_id=1, task_id=newer.id,
+             status="running", turn_ids=[]),
+    ]
+    monkeypatch.setattr(module, "list_repairs", lambda unused: entries)
+    watcher = coordinator(store, tmp_path)
+    selected = []
+    monkeypatch.setattr(watcher, "_advance", selected.append)
+    watcher.run_once()
+    assert selected == [entries[0]]

@@ -165,3 +165,104 @@ def test_recovered_audit_checks_same_bound_callback_assertion(callback_fixture, 
     result = runner._execute_claimed(task, context, run=run, rendered_rules="Review", force_new_session=False)
     assert result.result.feedback.candidate_field_assertions[0].value == prepared_body()
     assert store.get_agent_run(result.run_id).status == "completed"
+
+
+@pytest.mark.parametrize("recover", [False, True])
+def test_runtime_codec_uses_exact_candidate_bound_audit_inspection(callback_fixture, monkeypatch, recover):
+    from app.audit_agent import audit_result_contains_sensitive_value
+    from app.agent_turn_runner import (_encode_runtime_domain_result, _decode_runtime_domain_result,
+                                      recover_completed_runtime_domain_result)
+    from app.store import AgentRole
+    from tests.runtime_route_env import claude_api_env
+    from app.agent_runtime_config import load_runtime_config
+
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", BASE)
+    store, task, parent, context, _, _ = callback_setup(callback_fixture)
+    result = review_for(context.candidate)
+    def inspect(value):
+        return audit_result_contains_sensitive_value(value, context.candidate)
+    original = result.model_dump(mode="json")
+    if recover:
+        config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+                                      **claude_api_env("synthetic-key")})
+        route = config.routes[0]
+        run = store.claim_agent_run(task.id, task.execution_generation, role="audit",
+            proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
+            operation_id=context.operation_id, owner="codec-audit").run
+        attempt = store.claim_agent_runtime_attempt(run.id, route.name, route.runtime_kind.value,
+                                                   route.credential_mode.value, route.model)
+        monkeypatch.setattr("app.agent_turn_runner.read_native_result_stream", lambda *a: "native result")
+        decoded = recover_completed_runtime_domain_result(
+            attempt.model_copy(update={"result_schema_id": "schema-v1"}), run, schema_id="schema-v1",
+            parse_result=lambda raw: result, result_contains_sensitive_value=inspect)
+    else:
+        encoded = _encode_runtime_domain_result(schema_id="schema-v1", role=AgentRole.AUDIT,
+            result=result, result_contains_sensitive_value=inspect)
+        decoded = _decode_runtime_domain_result(encoded, schema_id="schema-v1", role=AgentRole.AUDIT,
+            result_contains_sensitive_value=inspect).result
+    assert decoded.model_dump(mode="json") == original
+
+
+@pytest.mark.parametrize("field", ["summary", "assertion"])
+def test_runtime_bound_inspection_keeps_rejecting_real_sensitive_values(monkeypatch, field):
+    from app.audit_agent import audit_result_contains_sensitive_value
+    from app.agent_turn_runner import _encode_runtime_domain_result
+    from app.store import AgentRole
+
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", BASE)
+    candidate = candidate_with_body(prepared_body() if field == "summary" else "access_token=synthetic-secret")
+    result = review_for(candidate)
+    if field == "summary":
+        result = result.model_copy(update={"summary": "access_token=synthetic-secret"})
+    with pytest.raises(ValueError, match="contains_sensitive_value"):
+        _encode_runtime_domain_result(schema_id="schema-v1", role=AgentRole.AUDIT, result=result,
+            result_contains_sensitive_value=lambda value: audit_result_contains_sensitive_value(value, candidate))
+
+
+def test_fresh_native_audit_persists_bound_callback(callback_fixture, monkeypatch, tmp_path):
+    from app import native_trajectory
+    from app.audit_agent import audit_result_contains_sensitive_value
+    from app.agent_turn_runner import AgentTurnProcess
+    from app.agent_runtime_config import load_runtime_config
+    from app.claude_runtime_adapter import ClaudeRuntimeAdapter
+    from app.process_runner import ProcessRunResult
+    from tests.runtime_route_env import claude_api_env
+
+    monkeypatch.setenv("CEO_FEEDBACK_SPIKE_VERCEL_BASE_URL", BASE)
+    store, task, parent, context, _, _ = callback_setup(callback_fixture)
+    result = review_for(context.candidate)
+    run = store.claim_agent_run(task.id, task.execution_generation, role="audit",
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=parent.id,
+        operation_id=context.operation_id, owner="codec-audit").run
+    config = load_runtime_config({"CEO_AGENT_RUNTIME_ROUTES": "claude_api",
+                                  **claude_api_env("synthetic-key")})
+    route = config.routes[0]
+    sid = "native-bound-callback-audit"
+    text = json.dumps(result.model_dump(mode="json"))
+    events = [
+        {"type": "system", "subtype": "init", "session_id": sid},
+        {"type": "assistant", "session_id": sid, "message": {
+            "role": "assistant", "content": [{"type": "text", "text": text}]}},
+        {"type": "result", "subtype": "success", "is_error": False, "session_id": sid, "result": text},
+    ]
+    native = tmp_path / "native.jsonl"
+    native.touch()
+    monkeypatch.setattr(native_trajectory, "claude_session_path", lambda *a, **k: native)
+    def executor(command, *, on_stdout_line, **kwargs):
+        native.write_text(json.dumps(events[1]) + "\n")
+        for event in events:
+            on_stdout_line(json.dumps(event))
+        return ProcessRunResult(0, "\n".join(map(json.dumps, events)), "")
+    process = AgentTurnProcess(store=store, task=task, workspace=tmp_path, owner="codec-audit",
+        executor=executor, runtime_config=config, forced_runtime_route=route,
+        claude_adapter=ClaudeRuntimeAdapter(workspace=tmp_path, config=config,
+                                           claude_bin="claude-test", service_mcp_servers=()))
+    completed = process.execute(run=run, prompt="Review exact candidate", session_id=None,
+        developer_instructions="Review current candidate", configure_command=lambda cmd: None,
+        parse_result=lambda raw: result,
+        result_contains_sensitive_value=lambda value: audit_result_contains_sensitive_value(value, context.candidate))
+    assert completed.result == result
+    assert store.get_agent_run(run.id).status == "completed"
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert attempt.status == "completed"
+    assert json.loads(store.get_agent_run(run.id).adopted_result_json) == result.model_dump(mode="json")

@@ -182,6 +182,9 @@ def claude_consumer_output_schema(purpose="general") -> dict[str, object]:
     definitions = schema.pop("$defs")
     wire = definitions[schema.pop("$ref").rsplit("/", 1)[1]]
     native = {**wire, "$defs": definitions}
+    # Claude rejects oneOf/allOf but supports anyOf: keep the canonical
+    # per-action branches so action, target and payload stay correlated.
+    native["anyOf"] = deepcopy(wire["allOf"][0]["oneOf"])
     def project(value):
         if isinstance(value, dict):
             for key in ("oneOf", "allOf", "if", "then", "else"):

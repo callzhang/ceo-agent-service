@@ -212,3 +212,14 @@ describe("workbench API", () => {
   });
 
 });
+
+it("preserves the exact native attempts when decoding a failed turn", async () => {
+  const attempts = [{ id: 403275, runtime: "claude_cli", status: "failed", failure_code: "runtime_executor_failed", failure_class: "process", url: "/runtime-attempts/403275/trajectory" }];
+  vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(JSON.stringify({
+    id: "418744", task_id: "404271", client_request_id: "request", user_text: "Inspect",
+    status: "failed", stop_requested: false, final_text: "", error_code: "runtime_executor_failed",
+    error_detail: "执行器失败", runtime_attempts: attempts,
+    started_at: "", completed_at: "", created_at: "", updated_at: "",
+  }), { headers: { "Content-Type": "application/json" } })));
+  expect((await workbenchApi.getTurn("418744")).runtime_attempts).toEqual(attempts);
+});

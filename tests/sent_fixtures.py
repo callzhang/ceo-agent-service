@@ -32,7 +32,11 @@ def historical_sent_delivery(store, *, agent_run_id, external_action_key,
             ).fetchone()
             business_object_key = action['action_business_object_key']
             action_identity = action['action_action_identity']
-            target = None
+            target = db.execute(
+                "select target from action_receipts where action_id=? and "
+                "provider_result_json is not null order by id limit 1",
+                (existing['id'],),
+            ).fetchone()['target']
         else:
             business_object_key = run['business_object_key']
             action_identity = None

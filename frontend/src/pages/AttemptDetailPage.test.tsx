@@ -431,21 +431,20 @@ describe("AttemptDetailPage", () => {
     expect(batches[2].open).toBe(true);
   });
 
-  it("describes a readable Claude range without offering a Codex link", async () => {
+  it("opens a readable Claude range through the native trajectory entry", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {
         ...detail,
         runtime_attempts: [{
           ...detail.runtime_attempts[0],
-          runtime: "claude_cli", session_available: true, session_url: "", native_reason: "",
+          runtime: "claude_cli", session_available: true, session_url: "/runtime-attempts/72/trajectory", native_reason: "",
         }],
       },
       meta: { snapshot_at: "2026-10-10T00:00:00Z" },
     });
     renderPage();
 
-    expect(await screen.findByText("原生过程记录可读；当前页面暂不支持打开此 Runtime 的过程。")).toBeInTheDocument();
-    expect(screen.queryByRole("link", { name: "查看这一步的 Agent 记录" })).not.toBeInTheDocument();
+    expect(await screen.findByRole("link", { name: "查看这一步的 Agent 记录" })).toHaveAttribute("href", "/runtime-attempts/72/trajectory");
   });
 
   it("explains that Consumer and Audit are the two steps of one processing batch", async () => {

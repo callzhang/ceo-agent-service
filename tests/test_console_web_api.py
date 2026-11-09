@@ -121,7 +121,7 @@ def _client(
         yield client
 
 
-def test_console_attempt_detail_uses_public_id_not_physical_id(tmp_path: Path):
+def test_console_attempt_detail_resolves_public_id_and_retires_physical_url(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     with store._connect() as db:
         insert_action(db, "reply_attempts", {
@@ -141,14 +141,14 @@ def test_console_attempt_detail_uses_public_id_not_physical_id(tmp_path: Path):
         ).fetchone()[0]
 
     with _client(tmp_path, spa_enabled=True) as client:
-        public = client.get("/api/console/history/9800")
+        response = client.get("/api/console/history/9800")
         physical = client.get(f"/api/console/history/{physical_id}")
 
-    # Physical Attempt URLs were retired; the public ID is the only handle.
     assert physical_id != 9800
-    assert public.status_code == 200
-    assert public.json()["item"]["id"] == 9800
-    assert public.json()["item"]["status"]["raw"] == "skipped"
+    assert response.status_code == 200
+    assert response.json()["item"]["id"] == 9800
+    assert response.json()["item"]["status"]["raw"] == "skipped"
+    # Physical row URLs were retired (e944b6762); only the public Attempt ID resolves.
     assert physical.status_code == 404
 
 

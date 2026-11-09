@@ -23,6 +23,7 @@ const CodexSessionDetailPage = lazy(() => import("../pages/CodexPages").then((mo
 const AttemptDetailPage = lazy(() => import("../pages/AttemptDetailPage").then((module) => ({ default: module.AttemptDetailPage })));
 const BusinessDetailPage = lazy(() => import("../pages/BusinessDetailPage").then((module) => ({ default: module.BusinessDetailPage })));
 const MeetingAttemptPage = lazy(() => import("../pages/BusinessDetailPage").then((module) => ({ default: module.MeetingAttemptPage })));
+const NativeTrajectoryPage = lazy(() => import("../pages/NativeTrajectoryPage").then((module) => ({ default: module.NativeTrajectoryPage })));
 const RuntimeErrorDetailPage = lazy(() => import("../pages/RuntimeErrorDetailPage").then((module) => ({ default: module.RuntimeErrorDetailPage })));
 
 function PlaceholderPage({ title, children }: { title: string; children?: ReactNode }) {
@@ -91,6 +92,7 @@ function ConsoleRoutes() {
       <Route path="/tutorial" element={<TutorialPage />} />
       <Route path="/notifications" element={<DomainListPage title="Notifications" endpoint="/api/console/notifications" showNotificationStatus />} />
       <Route path="/codex" element={<DomainListPage title="Codex Sessions" endpoint="/api/console/codex/sessions" kind="codex" />} />
+      <Route path="/runtime-attempts/:runtimeAttemptId/trajectory" element={<NativeTrajectoryPage />} />
       <Route path="/codex/:sessionId" element={<CodexDetailRoute />} />
       <Route path="/wechat/review" element={<DomainListPage title="WeChat 待发审核" endpoint="/api/console/wechat/review" kind="wechat" />} />
       <Route path="/wechat/memory-review" element={<DomainListPage title="WeChat Memory Review" endpoint="/api/console/wechat/memory-review" kind="wechat" />} />

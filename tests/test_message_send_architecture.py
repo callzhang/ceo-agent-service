@@ -493,9 +493,11 @@ def test_dws_raw_carrier_coverage_anchors(monkeypatch) -> None:
     # Carrier message writes are preceded by a --dry-run validation call.
     commands = [command for command in commands if "--dry-run" not in command]
 
-    assert commands[0][1:3] == ["chat", "+messages-send"]
-    assert commands[1][1:3] == ["chat", "+messages-reply"]
-    assert [command[3] for command in commands[2:]] == [
+    # Chat message writes (send/reply) run a --dry-run validation before the real call.
+    assert [c[1:3] for c in commands[:4]] == [["chat", "+messages-send"]] * 2 + [["chat", "+messages-reply"]] * 2
+    assert commands[0][-1] == "--dry-run" and commands[1] == commands[0][:-1]
+    assert commands[2][-1] == "--dry-run" and commands[3] == commands[2][:-1]
+    assert [command[3] for command in commands[4:]] == [
         "send-by-bot", "send-by-bot", "send", "send",
     ]
 

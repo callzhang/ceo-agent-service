@@ -4466,3 +4466,42 @@ def test_consumer_builds_native_role_skill_config_once(store, task, context, tmp
         task, selected, proposal_revision=0, parent_agent_run_id=None,
     )
     assert_single_role_skill_build(calls, expected, executor)
+
+
+@pytest.mark.parametrize("purpose", ("general", "oa"))
+def test_claude_native_schema_keeps_action_target_payload_relationship(purpose):
+    import jsonschema
+
+    schema = claude_consumer_output_schema(purpose)
+    assert "oneOf" not in json.dumps(schema) and "allOf" not in json.dumps(schema)
+    base = {
+        "summary": "s", "reason": "r", "evidence_refs": [], "decision_options": [],
+        "risk": "low", "confidence": 1.0, "rule_coverage": 1.0,
+        "information_completeness": 1.0, "error_code": "",
+        "error_retryable": False, "error_authorization_required": False,
+    }
+    validator = jsonschema.Draft202012Validator(schema)
+    proposal = ConsumerProposal.model_validate({
+        "objective": "answer", "sourced_facts": [], "authored_judgment": "j",
+        "actions": [{
+            "description": "reply", "action_identity": "reply-1",
+            "capability": "dingtalk-chat", "operation": "reply_to_message",
+            "target": {"conversation_id": "c", "message_id": "m"},
+            "payload": {"content": "hi"},
+        }],
+    }).model_dump(mode="json")
+    plan = {**base, "action": "plan", "target": {}, "payload": proposal}
+    assert validator.is_valid(plan), list(validator.iter_errors(plan))[:1]
+    assert not validator.is_valid({
+        **plan, "target": {"conversation_id": "c", "message_id": "m"}})
+    if purpose == "oa":
+        valid = {**base, "action": "comment", "target": {"process_instance_id": "p"},
+                 "payload": {"content": "ok"}}
+        bad = {**valid, "target": {"conversation_id": "c", "message_id": "m"}}
+    else:
+        valid = {**base, "action": "reply",
+                 "target": {"conversation_id": "c", "message_id": "m"},
+                 "payload": {"content": "ok"}}
+        bad = {**valid, "target": {"conversation_id": "c", "reply_to_message_id": "m"}}
+    assert validator.is_valid(valid), list(validator.iter_errors(valid))[:1]
+    assert not validator.is_valid(bad)

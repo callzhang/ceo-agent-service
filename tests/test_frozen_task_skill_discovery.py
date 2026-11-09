@@ -161,7 +161,7 @@ def test_read_task_skill_native_pages_reconstruct_full_unicode_body(role, tmp_pa
     assert pages[-1].endswith("FINAL REQUIRED SECTION")
 
 
-@pytest.mark.parametrize("offset,max_chars", [(-1, 100), (True, 100), (0, 0), (0, 8001), (0, True)])
+@pytest.mark.parametrize("offset,max_chars", [(-1, 100), (True, 100), (0, 0), (0, 4001), (0, 8000), (0, True)])
 def test_read_task_skill_rejects_invalid_page_intervals(tmp_path, monkeypatch, offset, max_chars):
     monkeypatch.setattr("app.agent_cli._current_task_generation", lambda *_: "first")
     server = build_role_server("consumer", task_id=1, db_path=tmp_path / "unused.sqlite3", execution_generation="first")
@@ -283,8 +283,19 @@ def test_frozen_discovery_keeps_task_lookup_without_repeating_read_procedure():
         frozen_names=("ceo-calendar-invite",),
     )
     assert "agent_cli.read_task_skill(name)" in prompt
+    assert "one page per tool turn" in prompt
+    assert "Do not concatenate" in prompt
     assert "Task-frozen." in prompt
     assert "agent_cli.read_skill(name=...)" in prompt
     assert "Reuse complete content already loaded in this session" not in prompt
     assert "Otherwise read the exact frozen content" not in prompt
     assert "before deciding or reviewing" not in prompt
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_frozen_page_bounds_and_visible_delivery_are_in_native_tool_contract(role):
+    tool = next(t for t in asyncio.run(build_role_server(role).list_tools())
+                if t.name == "read_task_skill")
+    assert tool.inputSchema["properties"]["max_chars"]["maximum"] == 4000
+    assert "one page per tool turn" in tool.description
+    assert "Do not concatenate" in tool.description

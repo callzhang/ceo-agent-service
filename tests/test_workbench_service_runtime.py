@@ -178,3 +178,26 @@ def test_workbench_does_not_override_requested_output_format(tmp_path: Path):
     assert 'ordinary text' not in instructions
     assert 'requested output format' in instructions
     assert routed.calls[0]['prompt'] == request.prompt
+
+
+def test_routed_failure_preserves_specific_failure_code(tmp_path: Path):
+    from app.agent_runtime_contracts import RuntimeFailureClass
+    from app.agent_runtime_router import RoutedCodexExecutionError
+
+    class FailedExecution:
+        def execute(self, **kwargs):
+            raise RoutedCodexExecutionError(
+                'runtime_execution_failed', 'no_next_route',
+                failure_class=RuntimeFailureClass.TRANSPORT,
+                failure_code='codex_total_timeout',
+            )
+
+    runtime = ServiceWorkbenchRuntime(
+        workspace=tmp_path, routed_execution_factory=lambda **_: FailedExecution(),
+    )
+    request = RuntimeRequest(
+        turn_id='2', conversation_id='1', workspace=tmp_path, prompt='Inspect',
+    )
+    result = runtime.wait(runtime.start(request, on_event=lambda _: None))
+    assert result.status == 'failed'
+    assert result.error_code == 'codex_total_timeout'

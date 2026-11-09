@@ -152,7 +152,7 @@ def _conversation_label(attempt: Any) -> str:
     return _CONVERSATION_LABELS.get(channel, "会话")
 
 
-def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]:
+def _agent_sessions(attempt: Any, agent_runs: list[Any], runtime_attempts: list[dict[str, Any]] | None = None) -> list[dict[str, Any]]:
     """Return each role's readable transcript.
 
     The Attempt row stores a single session id, which is the last role that
@@ -163,11 +163,16 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
     """
     from app.codex_history import find_codex_session_path
 
-    sessions: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    sessions: list[dict[str, Any]] = [
+        {"role": item["role"], "label": _AGENT_ROLE_LABELS.get(item["role"], "Agent session"),
+         "session_id": item["session_id"], "url": item["session_url"]}
+        for item in runtime_attempts or [] if item["session_url"]
+    ]
+    linked_runs = {item["run_id"] for item in runtime_attempts or [] if item["session_url"]}
+    seen: set[str] = {item["session_id"] for item in sessions}
     candidates = [
         (_run_role(run), str(getattr(run, "codex_session_id", "") or ""))
-        for run in agent_runs
+        for run in agent_runs if run.id not in linked_runs
     ]
     candidates.append(("", str(getattr(attempt, "codex_session_id", "") or "")))
     for role, session_id in candidates:
@@ -189,6 +194,7 @@ def _agent_sessions(attempt: Any, agent_runs: list[Any]) -> list[dict[str, Any]]
 
 
 def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
+    from app.native_trajectory_view import trajectory_url
     from app.native_trajectory import (
         _native_records,
         claude_session_path,
@@ -220,6 +226,8 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
             )
             result.append(
                 {
+                    "id": item.id,
+                    "session_id": session_id,
                     "role": normalize_display_value(role),
                     "run_id": int(getattr(run, "id", 0) or 0),
                     "execution_generation": normalize_display_value(
@@ -233,8 +241,7 @@ def _runtime_payload(agent_runs: list[Any], store: Any) -> list[dict[str, Any]]:
                         getattr(item, "finished_at", "")
                     ),
                     "session_url": (
-                        f"/codex/{quote(session_id, safe='')}"
-                        if runtime_kind == "codex_cli" and native_available else ""
+                        trajectory_url(item.id) if session_id else ""
                     ),
                     "proposal_revision": int(getattr(run, "proposal_revision", 0) or 0),
                     "turn_attempt": int(getattr(run, "turn_attempt", 0) or 0),
@@ -1095,6 +1102,8 @@ def build_attempt_detail(
               if display_reviewed is not None and run.id == display_reviewed["audit_run_id"]), None)
         if current_generation_changed else terminal_run
     )
+    from app.web_api.native_trajectory import run_trajectory_links
+    historical_links = run_trajectory_links(store, historical_attempt.agent_run_id)
     historical_record = None
     if current_generation_changed:
         historical_record = {
@@ -1103,8 +1112,7 @@ def build_attempt_detail(
             "error": historical_attempt.send_error,
             "resolution": _stored_json(historical_attempt.resolution, historical_attempt.resolution),
             "session_url": (
-                f"/codex/{quote(historical_attempt.codex_session_id, safe='')}"
-                if historical_attempt.codex_session_id else ""
+                historical_links[0]["url"] if historical_links else (f"/codex/{quote(historical_attempt.codex_session_id, safe='')}" if historical_attempt.codex_session_id else "")
             ),
         }
     current_stop_execution = (
@@ -1139,7 +1147,7 @@ def build_attempt_detail(
     runtime_attempts = _runtime_payload(display_runs, store)
     agent_sessions = _agent_sessions(
         attempt.model_copy(update={"codex_session_id": ""}) if current_generation_changed else attempt,
-        display_runs,
+        display_runs, runtime_attempts,
     )
     feedback_token = _feedback_token_for_sent_reply(sent_reply)
     feedback_events = store.list_feedback_events_for_tokens([feedback_token]).get(feedback_token, [])

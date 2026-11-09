@@ -35,6 +35,7 @@ function RuntimeErrorDetailContent({ errorId }: { errorId: string }) {
 
   const resolvedAt = displayValue(item?.resolved_at);
   const resolution = displayValue(item?.resolution);
+  const trajectories = (item?.runtime_attempts || []) as Array<{ id: number; url: string; runtime: string; status: string }>;
 
   return (
     <ConsolePageLayout title="Service error" actions={<><SnapshotBadge timestamp={snapshot} /><Link className="secondary-button" to="/attention">返回 Attention</Link></>}>
@@ -51,6 +52,9 @@ function RuntimeErrorDetailContent({ errorId }: { errorId: string }) {
             {resolvedAt !== "未提供" && <div><dt>解决时间</dt><dd>{resolvedAt}</dd></div>}
             {resolution !== "未提供" && <div><dt>解决说明</dt><dd>{resolution}</dd></div>}
           </dl>
+          <section aria-label="关联原生轨迹"><h3>关联原生轨迹</h3>
+            {trajectories.length ? <nav className="trajectory-attempt-links">{trajectories.map((entry) => <Link key={entry.id} to={entry.url}>#{entry.id} · {entry.runtime} · {entry.status}</Link>)}</nav> : <p className="muted">这条服务错误没有关联的 Agent 原生调用记录。</p>}
+          </section>
           <details>
             <summary>Runtime details</summary>
             <pre className="technical-details">{JSON.stringify(item.runtime || {}, null, 2)}</pre>
