@@ -136,6 +136,7 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
         turn_attempt=0,
     )
     runtime_attempt = SimpleNamespace(
+        id=91,
         session_id="missing-session",
         attempt_number=1,
         created_at="2026-09-15 09:00:00",
@@ -160,6 +161,8 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
     payload = _runtime_payload([run], store)
 
     assert payload[0]["session_available"] is False
+    assert payload[0]["id"] == 91
+    assert payload[0]["session_url"] == "/runtime-attempts/91/trajectory"
     assert payload[0]["run_status"] == "completed"
     assert payload[0]["status"] == "completed"
 

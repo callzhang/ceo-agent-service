@@ -151,12 +151,12 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id, task_id, run_id, result = seed(store, native_home=isolated_native_home)
     original_native = native_path(store, run_id).read_bytes()
-    # The quality gate only counts needs_human results bound to a current
-    # needs_human task; this obsolete (done) task is never counted.
-    assert invalid_count(store) == 0
+    # The queue projection retains this unresolved question until retirement,
+    # even though the original task and run have finished.
+    assert invalid_count(store) == 1
     preview = retire_rule_question(store, attempt_id, authority=AUTHORITY)
     assert preview["applied"] is False
-    assert invalid_count(store) == 0
+    assert invalid_count(store) == 1
     assert store.get_reply_attempt(attempt_id).resolved_at == ""
     receipt = retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert receipt["applied"] is True
