@@ -6,7 +6,7 @@ from hashlib import sha256
 import json
 from typing import ClassVar, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, JsonValue, model_validator
+from pydantic import BaseModel, ConfigDict, Field, JsonValue, ValidationInfo, field_validator, model_validator
 
 
 class _Strict(BaseModel):
@@ -140,13 +140,21 @@ class ConsumerPurposeOutput(_Strict):
         _purpose_schema(schema, cls)
         return schema
 
+    @field_validator('target', 'payload')
+    @classmethod
+    def validate_action_fields(cls, value, info: ValidationInfo):
+        definition = action_contracts(cls.purpose).get(info.data.get('action'))
+        if definition is not None:
+            target_model, payload_model, _, _ = definition
+            field_model = {'target': target_model, 'payload': payload_model}[info.field_name]
+            field_model.model_validate(value)
+        return value
+
     @model_validator(mode='after')
     def validate_action(self):
         definition = action_contracts(self.purpose).get(self.action)
         if definition is None:
             raise ValueError(f'action {self.action!r} is not available for {self.purpose}')
-        definition[0].model_validate(self.target)
-        definition[1].model_validate(self.payload)
         if any(not ref.strip() for ref in self.evidence_refs):
             raise ValueError('evidence references must be nonempty')
         if self.action == 'retry' and not self.evidence_refs:

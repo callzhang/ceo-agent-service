@@ -57,6 +57,7 @@ from app.codex_capacity import (
     is_codex_capacity_exhausted,
 )
 from app.codex_failure import (
+    CODEX_LOGIN_REQUIRED,
     CODEX_PROVIDER_AUTH_FAILED,
     CODEX_PROVIDER_OVERLOADED,
     CODEX_PROVIDER_UNAVAILABLE,
@@ -264,10 +265,15 @@ class _DecodedRuntimeDomainResult:
     result: ConsumerAgentResult | AuditAgentResult
 
 
+def _typed_result_contains_sensitive_value(result: ConsumerAgentResult | AuditAgentResult) -> bool:
+    return _contains_sensitive_value(result.model_dump(mode="json"))
+
+
 def recover_completed_runtime_domain_result(
     attempt: AgentRuntimeAttempt, run: AgentRun, *, schema_id: str,
     friday_adapter: FridayRuntimeAdapter | None = None,
     parse_result: Callable[[str], ConsumerAgentResult | AuditAgentResult] | None = None,
+    result_contains_sensitive_value: Callable[[ConsumerAgentResult | AuditAgentResult], bool] = _typed_result_contains_sensitive_value,
 ) -> ConsumerAgentResult | AuditAgentResult:
     """Revalidate a completed turn using its runtime-owned transcript."""
     from app.agent_wire_contracts import parse_consumer_agent_wire_result
@@ -296,9 +302,11 @@ def recover_completed_runtime_domain_result(
         return parsed
     envelope = _encode_runtime_domain_result(
         schema_id=schema_id, role=run.role, result=parsed,
+        result_contains_sensitive_value=result_contains_sensitive_value,
     )
     return _decode_runtime_domain_result(
         envelope, schema_id=schema_id, role=run.role,
+        result_contains_sensitive_value=result_contains_sensitive_value,
     ).result
 
 
@@ -346,6 +354,7 @@ def _encode_runtime_domain_result(
     role: AgentRole,
     result: ConsumerAgentResult | AuditAgentResult,
     result_reference_run_id: int | None = None,
+    result_contains_sensitive_value: Callable[[ConsumerAgentResult | AuditAgentResult], bool] = _typed_result_contains_sensitive_value,
 ) -> str:
     envelope = {
         "schema_id": schema_id,
@@ -355,6 +364,8 @@ def _encode_runtime_domain_result(
     if result_reference_run_id is None:
         projected_result = _project_runtime_domain_result(result)
         _reject_runtime_document_fields(projected_result)
+        if result_contains_sensitive_value(result):
+            raise ValueError("runtime_result_envelope_contains_sensitive_value")
         envelope["result"] = projected_result
     else:
         if (
@@ -374,7 +385,7 @@ def _encode_runtime_domain_result(
             "agent_run_id": result_reference_run_id,
             "result_sha256": hashlib.sha256(domain_text.encode("utf-8")).hexdigest(),
         }
-    if _contains_sensitive_value(envelope):
+    if _contains_sensitive_value({key: value for key, value in envelope.items() if key != "result"}):
         raise ValueError("runtime_result_envelope_contains_sensitive_value")
     encoded = json.dumps(envelope, ensure_ascii=False, separators=(",", ":"))
     try:
@@ -395,6 +406,7 @@ def _decode_runtime_domain_result(
     role: AgentRole,
     referenced_agent_run_id: int | None = None,
     referenced_result_json: str = "",
+    result_contains_sensitive_value: Callable[[ConsumerAgentResult | AuditAgentResult], bool] = _typed_result_contains_sensitive_value,
 ) -> _DecodedRuntimeDomainResult:
     try:
         if len(encoded.encode("utf-8")) > _RUNTIME_DOMAIN_RESULT_CODEC_MAX_BYTES:
@@ -417,7 +429,7 @@ def _decode_runtime_domain_result(
         or type(envelope.get("version")) is not int
         or envelope.get("version") != _RUNTIME_DOMAIN_RESULT_CODEC_VERSION
         or envelope.get("role") != role.value
-        or _contains_sensitive_value(envelope)
+        or _contains_sensitive_value({key: value for key, value in envelope.items() if key != "result"})
         or contains_local_runtime_leak(encoded)
     ):
         raise ValueError("runtime_result_envelope_invalid")
@@ -448,6 +460,8 @@ def _decode_runtime_domain_result(
     try:
         result = model.model_validate(result_value)
         if "result" in envelope:
+            if result_contains_sensitive_value(result):
+                raise ValueError("runtime_result_envelope_contains_sensitive_value")
             projected_result = _project_runtime_domain_result(result)
             _reject_runtime_document_fields(projected_result)
             if projected_result != envelope["result"]:
@@ -482,6 +496,8 @@ class AgentTurnRunResult(Generic[ResultT]):
 
 def _process_failure_code(process: ProcessRunResult) -> str:
     code = classify_codex_process_failure(process.stdout, process.stderr)
+    if code == CODEX_LOGIN_REQUIRED:
+        return f"{code}: native Codex login must be renewed"
     if code == CODEX_PROVIDER_AUTH_FAILED:
         return f"{code}: native Codex CLI authentication is unavailable"
     if code == CODEX_PROVIDER_UNAVAILABLE:
@@ -560,7 +576,7 @@ def _agent_process_error_code(exc: Exception) -> str:
     explicit_code = getattr(exc, "code", "")
     if isinstance(explicit_code, str) and explicit_code.startswith("runtime_"):
         return explicit_code
-    if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
+    if code.startswith((CODEX_PROVIDER_AUTH_FAILED, CODEX_LOGIN_REQUIRED)):
         return code
     if code in {
         CODEX_PROVIDER_UNAVAILABLE,
@@ -764,7 +780,7 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
 
 
 def _is_terminal_codex_auth_failure(code: str) -> bool:
-    return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
+    return code.startswith((CODEX_PROVIDER_AUTH_FAILED, CODEX_LOGIN_REQUIRED))
 
 
 def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:
@@ -1123,6 +1139,7 @@ class AgentTurnProcess(Generic[ResultT]):
                         ),
                         friday_adapter=self.friday_adapter,
                         parse_result=lambda raw: parse_result_for_route(raw, route),
+                        result_contains_sensitive_value=sensitive_result,
                     ))
                 except ValueError as exc:
                     raise CompletedRuntimeResultBlockedError(
@@ -1618,6 +1635,18 @@ class AgentTurnProcess(Generic[ResultT]):
                     cast(ConsumerAgentResult | AuditAgentResult, result),
                     allow_configured_feedback_links=True,
                 )
+            if getattr(result, "outcome") not in {ConsumerOutcome.FAILED, AuditOutcome.FAILED}:
+                durable_consumer_result = run.role is AgentRole.CONSUMER
+                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
+                runtime_result_envelope_json = (
+                    _encode_runtime_domain_result(
+                        schema_id=runtime_result_schema_id, role=run.role,
+                        result=cast(ConsumerAgentResult | AuditAgentResult, result),
+                        result_reference_run_id=run.id if durable_consumer_result else None,
+                        result_contains_sensitive_value=sensitive_result,
+                    ) if route.runtime_kind is RuntimeKind.CLAUDE_CLI or durable_consumer_result
+                    else json.dumps({"schema_id": runtime_result_schema_id})
+                )
         except _RecoveredCompletedRuntimeResult:
             pass
         except CompletedRuntimeResultBlockedError:
@@ -1749,18 +1778,12 @@ class AgentTurnProcess(Generic[ResultT]):
                 native_session = pending_claude_session_id if is_claude else observed_session_id
                 native_end = count_claude_session_lines(native_session) if is_claude else session_transcript_end
                 native_reference = f"claude_session:{native_session}" if is_claude else attempt_transcript_reference
-                durable_consumer_result = run.role is AgentRole.CONSUMER
-                runtime_result_schema_id = result_schema_id_for(route.runtime_kind)
                 self.store.complete_agent_runtime_attempt(
                     active_attempt.id, native_session, native_reference,
                     attempt_transcript_start, native_end,
                     owner=self.owner,
                     result_schema_id=runtime_result_schema_id,
-                    result_envelope_json=_encode_runtime_domain_result(
-                        schema_id=runtime_result_schema_id, role=run.role,
-                        result=cast(ConsumerAgentResult | AuditAgentResult, result),
-                        result_reference_run_id=run.id if durable_consumer_result else None,
-                    ) if is_claude or durable_consumer_result else json.dumps({"schema_id": runtime_result_schema_id}),
+                    result_envelope_json=runtime_result_envelope_json,
                     conversation_id=self.task.conversation_id if durable_consumer_result else "",
                     route_name=route.name,
                     conversation_contract_hash=session_contract_hash_for_route(route),

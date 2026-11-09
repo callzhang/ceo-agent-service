@@ -745,6 +745,30 @@ def test_raise_for_process_failure_attaches_diagnostics_to_runtime_error():
     )
 
 
+def test_consumer_result_correction_keeps_payload_path_without_rejected_values() -> None:
+    from app.agent_result import ResultParseError
+    from app.agent_turn_runner import _result_parse_error_detail
+    from app.agent_wire_contracts import parse_consumer_agent_wire_result
+
+    value = {
+        'action': 'approve', 'reason': 'Reviewed',
+        'target': {'process_instance_id': 'p', 'task_id': 't'},
+        'payload': {'task_id': 'private-value-not-for-feedback'},
+        'evidence_refs': [], 'summary': 'Reviewed', 'risk': 'low',
+        'confidence': 1.0, 'rule_coverage': 1.0, 'information_completeness': 1.0,
+    }
+    stream = json.dumps({'type': 'item.completed', 'item': {
+        'type': 'agent_message', 'text': json.dumps(value),
+    }})
+    with pytest.raises(ResultParseError) as raised:
+        parse_consumer_agent_wire_result(stream, purpose='oa')
+
+    detail = _result_parse_error_detail(raised.value)
+    assert 'payload.remark: Field required' in detail
+    assert 'payload.task_id: Extra inputs are not permitted' in detail
+    assert 'private-value-not-for-feedback' not in detail
+
+
 def test_a_result_correction_names_what_the_contract_says_is_wrong() -> None:
     """Task 384711: two retries were told only `result: value_error`.
 

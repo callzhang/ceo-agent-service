@@ -63,26 +63,25 @@ requested information found in the meeting evidence.
 - Produce only the decision, context, actions, and open questions needed by the
   current audience. A meeting summary is not a substitute for acting on clear
   tasks.
-- Choose audiences using actual relevant discussion, the complete current
-  roster, stable identities, current responsibilities, and the specific
-  disclosure purpose. Titles, HR roles, and private chat are not authorization.
-  Send one message when the same verified audience is appropriate for all
-  content; split only when different content needs different audiences.
-  Use existing action proposals for the group and explicitly verified private
-  recipients. Never send a private split or fallback to the current principal
-  or a verified self alias. An unreadable or unsendable group does not authorize
-  a different audience. Missing evidence remains a real dependency failure.
-- Layoff, workforce reduction and personnel optimization plans are sensitive even
-  without individual names or counts. Their existence, progress, timing, lists,
-  handover and replacement arrangements must not enter a business group unless
-  every current member is independently authorized for that exact content.
-  Verify the complete roster, stable identities and actual disclosure permission,
-  including nonparticipants; business relevance, past discussion, HR or management
-  titles and attendee overlap do not establish permission. Member matching uses
-  precision (matched reference participants / complete group members, 3/N), never
-  attendee recall (3/3); precision is discovery evidence, never authorization.
-  Unknown permission excludes the sensitive section, including hints in questions
-  and task mentions; keep it unresolved if no authorized recipient is established.
+- Send ordinary meeting information to the appropriate business group. Separate
+  sensitive information into a private summary, even for an HR group or a group
+  whose members match the attendees. Keep sensitive details and indirect hints
+  out of the ordinary group title, body, questions and task mentions.
+- Select the private recipient from stable source identities for the specific
+  sensitive content. Record participation in that discussion, responsibility
+  for the decision or its follow-up as recipient evidence. Titles, HR roles,
+  and private chat alone are not authorization. The principal can be explicitly
+  selected when the evidence supports them; never choose them automatically.
+  Ordinary business direct-message fallback still goes to another attendee.
+- Preserve sensitive conclusions and actions in the private summary. Omitting
+  them and recording a gap does not complete the meeting. If the recipient or
+  private summary is unresolved, use the existing feedback and revision flow;
+  do not approve omission or guess a recipient.
+- Layoff and personnel optimization plans, personnel evaluations, compensation
+  and other personnel-sensitive information belong in this private summary;
+  removing names or counts does not make the information ordinary group content.
+- If the meeting has only sensitive conclusions or actions, deliver the private
+  summary alone; do not send an empty group message or classify it as no content.
 - Ordinary ownership, delivery progress, project risk, and business results
   remain business content even when a person is named.
 - Place every participant mention adjacent to that person's concrete task,

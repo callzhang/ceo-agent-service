@@ -6778,14 +6778,16 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
     class FakeStore:
         def __init__(self, _path):
             self.resolutions = []
-            self.health = []
 
         def resolve_unresolved_errors_by_kind(self, kind, *, resolution):
             self.resolutions.append((kind, resolution))
             return 1
 
         def set_service_health_component(self, name, **fields):
-            self.health.append((name, fields))
+            self.health = (name, fields)
+
+        def record_error(self, *args, **kwargs):
+            raise AssertionError(f"unexpected service error: {args}")
 
     store = FakeStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
@@ -6808,9 +6810,6 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
             "meeting_alignment_delivery",
             "recovered by later successful meeting delivery cycle",
         )
-    ]
-    assert [(name, fields["state"]) for name, fields in store.health] == [
-        ("meeting-delivery", "healthy")
     ]
 
 

@@ -105,28 +105,29 @@ function eventCategory(event: CodexSessionEvent) {
   return "context";
 }
 
-export function SessionTimeline({ events, terminal = false }: { events: CodexSessionEvent[]; terminal?: boolean }) {
+export function SessionTimeline({ events, terminal = false, compact = false }: { events: CodexSessionEvent[]; terminal?: boolean; compact?: boolean }) {
   const [filter, setFilter] = useState("all");
   const [query, setQuery] = useState("");
   const rows = useMemo(() => timelineRows(events), [events]);
   const categories = [["all", "全部"], ["assistant", "Agent 输出"], ["tools", "工具调用"], ["user", "任务输入"], ["context", "上下文"]];
   const search = query.trim().toLocaleLowerCase();
   const visible = rows.map((row, index) => ({ ...row, index })).filter(({ event, output }) => {
+    if (compact && eventCategory(event) !== "tools") return false;
     if (filter !== "all" && eventCategory(event) !== filter) return false;
     const content = [event.title, event.kind === "reasoning" ? "" : event.body, event.trace?.name, event.trace?.input, event.trace?.output, output?.body, output?.trace?.output].join("\n");
     return !search || content.toLocaleLowerCase().includes(search);
   });
   if (!events.length) return <section className="console-card page-state">本次没有可展示的执行事件。</section>;
-  return <section className="console-card codex-session-timeline" aria-label="Agent 执行时间线">
-    <div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序展示已加载的轨迹；工具输入与返回合并阅读，长内容可展开。</p></div><span>{rows.length} 条记录</span></div>
+  return <section className={`console-card codex-session-timeline${compact ? " trajectory-compact" : ""}`} aria-label="Agent 执行时间线">
+    {!compact && <><div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序展示已加载的轨迹；工具输入与返回合并阅读，长内容可展开。</p></div><span>{rows.length} 条记录</span></div>
     <div className="trajectory-toolbar">
       <div className="trajectory-filters" role="group" aria-label="轨迹类型">{categories.map(([value, label]) => <button key={value} type="button" aria-pressed={filter === value} onClick={() => setFilter(value)}>{label}<span>{value === "all" ? rows.length : rows.filter(({ event }) => eventCategory(event) === value).length}</span></button>)}</div>
       <div className="trajectory-search"><input type="search" aria-label="搜索轨迹" placeholder="搜索工具、输入或返回内容…" value={query} onChange={(event) => setQuery(event.target.value)} /><span role="status">显示 {visible.length} / {rows.length} 条记录</span></div>
-    </div>
-    {!visible.length && <p className="page-state">没有匹配的轨迹记录。<button type="button" className="secondary-button" onClick={() => { setFilter("all"); setQuery(""); }}>清除筛选</button></p>}
+    </div></>}
+    {!compact && !visible.length && <p className="page-state">没有匹配的轨迹记录。<button type="button" className="secondary-button" onClick={() => { setFilter("all"); setQuery(""); }}>清除筛选</button></p>}
     <ol>{visible.map(({ event, output, index }) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
       <div className="codex-session-event-rail"><span aria-hidden="true" /><small>#{index + 1}</small><time dateTime={event.timestamp}>{displayEventTime(event.timestamp)}</time></div>
-      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} terminal={terminal} /> : <><header><span>{event.kind === "tool_output" ? "未配对的工具返回" : eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>{event.kind === "tool_output" ? <pre className="trajectory-orphan-output">{event.trace?.output ?? event.body ?? "未记录内容"}</pre> : <SessionMarkdown event={event} />}</>}</article>
+      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} terminal={terminal} /> : <><header><span>{event.kind === "tool_output" ? "未配对的工具返回" : eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>{event.kind === "tool_output" ? <TrajectoryContent text={event.trace?.output ?? event.body ?? "未记录内容"} plain /> : <SessionMarkdown event={event} />}</>}</article>
     </li>)}</ol>
   </section>;
 }

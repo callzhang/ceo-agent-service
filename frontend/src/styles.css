@@ -2164,3 +2164,31 @@ h1, h2, h3, p { margin-top: 0; }
 .trajectory-attempt-links a { padding: 6px 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--accent); font-size: .78rem; text-decoration: none; overflow-wrap: anywhere; }
 .trajectory-attempt-links a[aria-current="page"] { background: var(--accent-soft); border-color: var(--accent); font-weight: 750; }
 .trajectory-loading { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 12px; }
+
+.execution-result-preview { display: block; margin-top: 7px; white-space: pre-wrap; overflow-wrap: anywhere; color: var(--ink-soft); font: .75rem/1.5 ui-monospace, "SFMono-Regular", Menlo, monospace; font-weight: 400; }
+.execution-result-preview > span { margin-right: 8px; color: var(--accent); font: .68rem/1.5 system-ui, sans-serif; }
+.execution-preview { white-space: pre-wrap; overflow-wrap: anywhere; }
+.native-attempt-compact { margin: 14px 0; }
+.native-attempt-compact > .console-card { padding: 10px 12px; margin-bottom: 8px; }
+.native-attempt-compact .task-overview-meta { font-size: .75rem; }
+.native-attempt-compact > section > p { margin: 6px 0 0; font-size: .72rem; color: var(--ink-soft); }
+.trajectory-compact { border: 0; background: transparent; }
+.trajectory-compact .codex-session-event { grid-template-columns: minmax(0, 1fr); }
+.trajectory-compact .codex-session-event-rail { display: none; }
+.trajectory-compact .codex-session-event article { min-width: 0; }
+
+.native-tools-heading { color: var(--ink); font-size: .8rem; font-weight: 650; }
+.native-service-events { padding-top: 12px; border-top: 1px solid var(--line); color: var(--ink-soft); font-size: .72rem; }
+.execution-result-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 5; overflow: hidden; }
+.execution-preview { display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 3; overflow: hidden; }
+
+.trajectory-json-fields { display: grid; gap: 12px; margin: 0; }
+.trajectory-json-fields > div { display: grid; grid-template-columns: minmax(100px, .25fr) minmax(0, 1fr); gap: 10px 18px; padding: 10px 0; border-bottom: 1px solid var(--line); }
+.trajectory-json-fields dt { color: var(--ink-soft); font: .75rem/1.6 ui-monospace, "SFMono-Regular", Menlo, monospace; overflow-wrap: anywhere; }
+.trajectory-json-fields dd { min-width: 0; margin: 0; overflow-wrap: anywhere; }
+.trajectory-json-fields dd > .assistant-markdown > :first-child { margin-top: 0; }
+.trajectory-json-fields dd > .assistant-markdown > :last-child { margin-bottom: 0; }
+.trajectory-json-fields dd > ul { margin: 0; padding-left: 20px; }
+.trajectory-json-fields dd > ul > li > .assistant-markdown > p { margin: 4px 0; }
+.trajectory-json-source { display: inline-block; margin-top: 12px; color: var(--accent); font-size: .72rem; }
+@media (max-width: 680px) { .trajectory-json-fields > div { grid-template-columns: minmax(0, 1fr); gap: 5px; } }

@@ -503,3 +503,52 @@ def test_terminal_cache_release_follows_commit_and_rollback_keeps_live_observati
     assert key in native_events._live_payloads
     store.complete_turn(turn.id, status="failed", error_code="runtime_failure", owner="worker")
     assert key not in native_events._live_payloads
+
+
+def test_failed_turn_projects_saved_native_failure_without_rewriting_history(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / 'failed.sqlite3')
+    task = store.create_task(title='Native failure', runtime_kind='codex')
+    turn = store.create_turn(task.id, user_text='Inspect', client_request_id='failure-1')
+    store.claim_next_turn(owner='worker', lease_seconds=60)
+    store.complete_turn(
+        turn.id, status='failed', error_code='runtime_execution_failed',
+        error_detail='Runtime execution could not be completed.', owner='worker',
+    )
+    with store._connect() as db:
+        attempt_id = insert_runtime_attempt_row(
+            db, {'workload_kind': 'workbench', 'workload_key': turn.id,
+                 'runtime_kind': 'claude_cli', 'status': 'failed',
+                 'route_name': 'test-route', 'credential_mode': 'oauth', 'model': 'test',
+                 'attempt_number': 1, 'failure_class': 'transport',
+                 'failure_code': 'claude_idle_timeout', 'session_id': 'saved-session'},
+        )['id']
+    persisted = store.get_turn(turn.id)
+    assert 'claude_idle_timeout' in persisted.error_detail
+    assert 'claude_cli' in persisted.error_detail
+    assert persisted.runtime_attempts[0].url == f'/runtime-attempts/{attempt_id}/trajectory'
+    with store._connect() as db:
+        row = db.execute('select error_code,error_detail from workbench_turns where task_id=?', (int(turn.id),)).fetchone()
+    assert row['error_code'] == 'runtime_execution_failed'
+    assert row['error_detail'] == 'Runtime execution could not be completed.'
+
+
+def test_native_failure_does_not_replace_distinct_terminal_error(tmp_path: Path):
+    store = WorkbenchStore(tmp_path / 'terminal.sqlite3')
+    task = store.create_task(title='Native failure', runtime_kind='codex')
+    turn = store.create_turn(task.id, user_text='Inspect', client_request_id='terminal-1')
+    store.claim_next_turn(owner='worker', lease_seconds=60)
+    store.complete_turn(
+        turn.id, status='failed', error_code='executor_submit_failed',
+        error_detail='The executor could not schedule the continuation.', owner='worker',
+    )
+    with store._connect() as db:
+        insert_runtime_attempt_row(db, {
+            'workload_kind': 'workbench', 'workload_key': turn.id, 'attempt_number': 1,
+            'runtime_kind': 'codex_cli', 'route_name': 'test', 'credential_mode': 'oauth',
+            'model': 'test', 'status': 'failed', 'failure_class': 'transport',
+            'failure_code': 'codex_total_timeout',
+        })
+    persisted = store.get_turn(turn.id)
+    assert persisted.error_code == 'executor_submit_failed'
+    assert persisted.error_detail.startswith('The executor could not schedule the continuation.')
+    assert 'codex_total_timeout' in persisted.error_detail

@@ -136,13 +136,13 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
         turn_attempt=0,
     )
     runtime_attempt = SimpleNamespace(
-        id=34,
+        id=91,
         session_id="missing-session",
         attempt_number=1,
         created_at="2026-09-15 09:00:00",
         finished_at="2026-09-15 09:01:00",
         route_name="codex",
-        runtime_kind="codex_cli",
+        runtime_kind="codex",
         credential_mode="oauth",
         model="gpt-test",
         status="completed",
@@ -154,14 +154,15 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
     )
     store = SimpleNamespace(list_agent_runtime_attempts_for_runs=lambda _run_ids: {12: [runtime_attempt]})
     monkeypatch.setattr(
-        "app.native_trajectory.find_codex_session_path",
+        "app.codex_history.find_codex_session_path",
         lambda _session_id: None,
     )
 
     payload = _runtime_payload([run], store)
 
     assert payload[0]["session_available"] is False
-    assert payload[0]["id"] == 34
+    assert payload[0]["id"] == 91
+    assert payload[0]["session_url"] == "/runtime-attempts/91/trajectory"
     assert payload[0]["run_status"] == "completed"
     assert payload[0]["status"] == "completed"
 

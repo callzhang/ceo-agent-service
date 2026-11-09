@@ -1455,6 +1455,85 @@ def test_consumer_terminal_result_slot_failure_rolls_back_and_store_retry_is_ato
     ) == "claude-session"
 
 
+@pytest.mark.parametrize('role', [AgentRole.CONSUMER, AgentRole.AUDIT])
+@pytest.mark.parametrize('rejection', [
+    'runtime_result_envelope_contains_sensitive_value',
+    'runtime_result_envelope_summary_invalid',
+])
+def test_result_codec_rejection_closes_finished_runtime_and_parent(
+    tmp_path, monkeypatch, role, rejection,
+):
+    from app import native_trajectory
+    from app.repository_updater import in_flight_work
+
+    store = AutoReplyStore(tmp_path / 'turns.sqlite3')
+    task = _task(store)
+    run = (_claim_consumer(store, task).run if role is AgentRole.CONSUMER
+           else _claim_audit(store, task))
+    config = load_runtime_config({
+        'CEO_AGENT_RUNTIME_ROUTES': 'claude_api',
+        **claude_api_env('test-claude-secret'),
+    })
+    route = config.routes[0]
+    value = (_consumer_wire_result(action='no_action', summary='Reviewed')
+             if role is AgentRole.CONSUMER else {
+                 'outcome': 'approve', 'summary': 'Reviewed', 'risk': 'low',
+                 'confidence': 1.0, 'rule_coverage': 1.0,
+                 'information_completeness': 1.0, 'error_code': '',
+                 'error_retryable': False, 'error_authorization_required': False,
+             })
+    text = json.dumps(value)
+    sid = 'finished-before-codec-rejection'
+    events = [
+        {'type': 'system', 'subtype': 'init', 'session_id': sid},
+        {'type': 'assistant', 'session_id': sid, 'message': {
+            'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}},
+        {'type': 'result', 'subtype': 'success', 'is_error': False,
+         'session_id': sid, 'result': text},
+    ]
+    native = tmp_path / 'native.jsonl'
+    native.touch()
+    monkeypatch.setattr(native_trajectory, 'claude_session_path', lambda *a, **k: native)
+    process_finished = []
+
+    def executor(command, *, on_stdout_line, **kwargs):
+        native.write_text(json.dumps(events[1]) + '\n')
+        for event in events:
+            on_stdout_line(json.dumps(event))
+        process_finished.append(True)
+        return ProcessRunResult(0, '\n'.join(map(json.dumps, events)), '')
+
+    def reject_encoding(**kwargs):
+        assert process_finished == [True]
+        raise ValueError(rejection)
+
+    monkeypatch.setattr('app.agent_turn_runner._encode_runtime_domain_result', reject_encoding)
+    process = AgentTurnProcess(
+        store=store, task=task, workspace=tmp_path, owner=role.value,
+        executor=executor, runtime_config=config, forced_runtime_route=route,
+        claude_adapter=ClaudeRuntimeAdapter(
+            workspace=tmp_path, config=config, claude_bin='claude-test',
+            service_mcp_servers=(),
+        ),
+    )
+    parser = (parse_consumer_agent_wire_result if role is AgentRole.CONSUMER
+              else lambda raw: parse_audit_agent_wire_result(
+                  raw, proposal_revision=0, candidate_digest='0' * 64))
+    with pytest.raises(ValueError, match=rejection):
+        process.execute(
+            run=run, prompt='Review current source', session_id=None,
+            developer_instructions='Return the exact schema',
+            configure_command=lambda command: None, parse_result=parser,
+        )
+
+    parent = store.get_agent_run(run.id, load_events=False)
+    [attempt] = store.list_agent_runtime_attempts(run.id)
+    assert parent.status == 'failed'
+    assert rejection in json.loads(parent.structured_error_json)['detail']
+    assert attempt.status == 'failed'
+    assert in_flight_work(store.path) == 0
+
+
 def test_failed_claude_audit_result_remains_an_ordinary_retryable_run(tmp_path):
     """Retired recovery modes are ordinary failed runs with retry metadata."""
     store = AutoReplyStore(tmp_path / "turns.sqlite3")

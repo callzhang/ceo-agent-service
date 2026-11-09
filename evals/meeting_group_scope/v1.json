@@ -1,0 +1,367 @@
+{
+  "version": 1,
+  "baseline_ref": "7e620f123c8f2cd6ed3a05ce3f85401d7c242485",
+  "settings": {
+    "model": "sonnet",
+    "reasoning_effort": "high",
+    "timeout_seconds_per_call": 180,
+    "runtime": "claude_cli"
+  },
+  "participants": [
+    {
+      "name": "Principal",
+      "user_id": "principal",
+      "open_dingtalk_id": "p"
+    },
+    {
+      "name": "Morgan",
+      "user_id": "manager",
+      "open_dingtalk_id": "m"
+    },
+    {
+      "name": "Casey",
+      "user_id": "casey",
+      "open_dingtalk_id": "c"
+    }
+  ],
+  "cases": [
+    {
+      "id": "reported_wrong_specialist",
+      "summary": "The department weekly confirmed the manual overseas offer process, flexible attendance and moving the training questionnaire to the internal learning platform. Next: prepare the social-insurance plan, reorganize office equipment and demonstrate the training platform. No individual personnel evaluations or restricted information.",
+      "groups": [
+        {
+          "conversation_id": "recruiting",
+          "title": "People recruiting",
+          "member_count": 3,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "s"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ],
+          "prior_same_task_target": true,
+          "prior_same_task_evidence": [
+            "Previous candidate selected this group because it discusses people and hiring."
+          ]
+        },
+        {
+          "conversation_id": "department",
+          "title": "People department",
+          "member_count": 8,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "c",
+            "a",
+            "b",
+            "d",
+            "e",
+            "f"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ]
+        }
+      ],
+      "candidate_group": "recruiting",
+      "expected_audit": "return",
+      "expected_planner_group": "department",
+      "attendee_evidence": "transcript",
+      "attendee_roster_complete": false,
+      "title": "People weekly"
+    },
+    {
+      "id": "larger_correct_department",
+      "summary": "The department weekly confirmed the manual overseas offer process, flexible attendance and moving the training questionnaire to the internal learning platform. Next: prepare the social-insurance plan, reorganize office equipment and demonstrate the training platform. No individual personnel evaluations or restricted information.",
+      "groups": [
+        {
+          "conversation_id": "department",
+          "title": "People department",
+          "member_count": 8,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "c",
+            "a",
+            "b",
+            "d",
+            "e",
+            "f"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ]
+        },
+        {
+          "conversation_id": "recruiting",
+          "title": "People recruiting",
+          "member_count": 3,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "s"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ],
+          "prior_same_task_target": true,
+          "prior_same_task_evidence": [
+            "Previous candidate selected this group because it discusses people and hiring."
+          ]
+        }
+      ],
+      "candidate_group": "department",
+      "expected_audit": "approve",
+      "expected_planner_group": "department",
+      "attendee_evidence": "transcript",
+      "attendee_roster_complete": false,
+      "title": "People weekly"
+    },
+    {
+      "id": "complete_roster_larger_group",
+      "summary": "The department weekly confirmed the manual overseas offer process, flexible attendance and moving the training questionnaire to the internal learning platform. Next: prepare the social-insurance plan, reorganize office equipment and demonstrate the training platform. No individual personnel evaluations or restricted information.",
+      "groups": [
+        {
+          "conversation_id": "department",
+          "title": "People department",
+          "member_count": 8,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "c",
+            "a",
+            "b",
+            "d",
+            "e",
+            "f"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ]
+        },
+        {
+          "conversation_id": "recruiting",
+          "title": "People recruiting",
+          "member_count": 3,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "s"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ],
+          "prior_same_task_target": true,
+          "prior_same_task_evidence": [
+            "Previous candidate selected this group because it discusses people and hiring."
+          ]
+        }
+      ],
+      "candidate_group": "department",
+      "expected_audit": "approve",
+      "expected_planner_group": "department",
+      "attendee_evidence": "calendar",
+      "attendee_roster_complete": true,
+      "title": "People weekly"
+    },
+    {
+      "id": "specialist_meeting_uses_specialist_group",
+      "summary": "The meeting confirmed the Head of People role profile. Morgan will revise the hiring profile and arrange candidate interviews. No other department operations were discussed.",
+      "groups": [
+        {
+          "conversation_id": "recruiting",
+          "title": "People recruiting",
+          "member_count": 3,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "s"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ],
+          "prior_same_task_target": true,
+          "prior_same_task_evidence": [
+            "Previous candidate selected this group because it discusses people and hiring."
+          ]
+        },
+        {
+          "conversation_id": "department",
+          "title": "People department",
+          "member_count": 8,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "c",
+            "a",
+            "b",
+            "d",
+            "e",
+            "f"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ]
+        }
+      ],
+      "candidate_group": "recruiting",
+      "expected_audit": "approve",
+      "expected_planner_group": "recruiting",
+      "attendee_evidence": "transcript",
+      "attendee_roster_complete": false,
+      "title": "People weekly"
+    },
+    {
+      "id": "same_project_different_topics",
+      "summary": "The Orion customer pilot agreed Casey will deliver an acceptance-sampling checklist and Morgan will confirm the delivery date.",
+      "groups": [
+        {
+          "conversation_id": "orion",
+          "title": "Orion delivery",
+          "member_count": 4,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "c",
+            "x"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Morgan and Casey coordinate all Orion delivery here. Recent conversation concerns annotation statistics for the same Orion pilot, not sampling.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ]
+        }
+      ],
+      "candidate_group": "orion",
+      "expected_audit": "approve",
+      "expected_planner_group": "orion",
+      "attendee_evidence": "transcript",
+      "attendee_roster_complete": false,
+      "title": "Orion delivery review"
+    },
+    {
+      "id": "carried_target_does_not_own_office_work",
+      "summary": "The department agreed Casey will coordinate office equipment and Morgan will prepare the training-platform rollout. No hiring decisions were discussed.",
+      "groups": [
+        {
+          "conversation_id": "recruiting",
+          "title": "People recruiting",
+          "member_count": 3,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "s"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ],
+          "prior_same_task_target": true,
+          "prior_same_task_evidence": [
+            "Previous candidate selected this group because it discusses people and hiring."
+          ]
+        },
+        {
+          "conversation_id": "department",
+          "title": "People department",
+          "member_count": 8,
+          "member_open_dingtalk_ids": [
+            "p",
+            "m",
+            "c",
+            "a",
+            "b",
+            "d",
+            "e",
+            "f"
+          ],
+          "member_roster_complete": true,
+          "history_read_status": "read",
+          "topic_discussion_evidence": [
+            {
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
+              "create_time": "",
+              "shared_topic_terms": 0,
+              "topic_match_score": 0
+            }
+          ]
+        }
+      ],
+      "candidate_group": "recruiting",
+      "expected_audit": "return",
+      "expected_planner_group": "department",
+      "attendee_evidence": "transcript",
+      "attendee_roster_complete": false,
+      "title": "People weekly"
+    }
+  ]
+}

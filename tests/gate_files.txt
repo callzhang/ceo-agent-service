@@ -259,6 +259,7 @@ tests/test_history_unsubscribe_skip_retry.py
 tests/test_message_triage_skill.py
 tests/test_audit_rules.py
 tests/test_workbench_service_runtime.py
+tests/test_workbench_native_events.py
 tests/test_chrome_cookie_snapshot.py
 tests/test_action_followup_sync_storage.py
 tests/test_okr_weekly_native_maintenance.py
@@ -456,9 +457,11 @@ tests/test_minutes_summary_retry.py
 tests/test_minutes_recovery_agent.py
 
 tests/test_automatic_repair_gate.py
+tests/test_automatic_repair_merge.py
 tests/test_repair_pr_feedback.py
 tests/test_claude_fixed_schema_delivery.py
 tests/test_workbench_result_contract.py
 tests/test_native_claude_structured_output.py
 
 tests/test_native_trajectory_view.py
+tests/test_stalled_reply_recovery.py

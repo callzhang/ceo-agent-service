@@ -563,6 +563,21 @@ def test_zero_exit_provider_errors_are_classified_for_fallback(
     assert failure.route_pause_required is True
 
 
+def test_invalid_refresh_token_error_code_pauses_route_for_login(adapter):
+    stderr = (
+        "ERROR codex_login::auth::manager: Failed to refresh token status=401 "
+        "Unauthorized detail=TokenErrorDetail { error_code: Some(\"invalid_refresh_token\"), "
+        "error_message: Some(\"Could not validate your refresh token. Please try signing in again.\"), .. }"
+    )
+
+    failure = adapter.classify_failure(stderr=stderr, stdout="", returncode=1)
+
+    assert failure.code == "codex_login_required"
+    assert failure.failure_class.value == "authentication"
+    assert failure.failover_permitted is True
+    assert failure.route_pause_required is True
+
+
 def test_terminal_success_never_authorizes_failure_actions(adapter):
     failure = adapter.classify_failure(
         stderr="workspace is out of credits",

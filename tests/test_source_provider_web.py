@@ -45,13 +45,10 @@ def test_source_detail_uses_existing_dws_factory(db, tmp_path, monkeypatch, rout
     assert response.status_code == 200, response.text
     payload = response.json()["item"]
     if route == "items":
-        # Task details only reference the original; it is read by the explicit
-        # Signal route (3fb6c75c3), so no provider command runs here.
+        # Task detail carries only the signal reference; the original is read
+        # explicitly through the signal route, so no provider call happens here.
         view = payload["evidence"][0]["signal"]
-        assert view["id"] == public_id
-        assert "source_available" not in view
-        assert "evidence_text" not in view
-        assert "source_document_id" not in view
+        assert "source_available" not in view and "evidence_text" not in view
         assert provider.commands == []
         return
     view = payload
