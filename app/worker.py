@@ -76,7 +76,10 @@ from app.codex_runner import (
     recover_native_codex_auth_failures,
     selected_codex_model_provider,
 )
-from app.codex_failure import is_codex_provider_auth_error
+from app.codex_failure import (
+    is_codex_login_required_error,
+    is_codex_provider_auth_error,
+)
 from app.codex_capacity import (
     CODEX_CAPACITY_EXHAUSTED_MESSAGE,
     CODEX_PROVIDER_CAPACITY_EXHAUSTED,
@@ -292,18 +295,6 @@ LARK_DOC_URL_PATTERN = re.compile(
 )
 
 
-def _is_codex_login_required_error(reason: str) -> bool:
-    normalized = reason.lower()
-    return (
-        "failed to refresh token" in normalized
-        and (
-            "session has ended" in normalized
-            or "invalid refresh token" in normalized
-            or "invalid_refresh_token" in normalized
-        )
-    ) or "token_invalidated" in normalized
-
-
 def _is_codex_provider_auth_error(reason: str) -> bool:
     return is_codex_provider_auth_error(reason)
 
@@ -377,7 +368,7 @@ def _normalize_codex_stop_error_reason(reason: str) -> str:
         return reason
     if _is_codex_provider_auth_error(reason):
         return _codex_provider_auth_error(reason)
-    if _is_codex_login_required_error(reason):
+    if is_codex_login_required_error(reason):
         return f"{CODEX_LOGIN_REQUIRED_PREFIX}: {reason}"
     if _is_codex_provider_transport_error(reason):
         return _codex_provider_transport_error(reason)

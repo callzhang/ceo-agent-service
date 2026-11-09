@@ -6786,6 +6786,9 @@ def test_meeting_delivery_loop_resolves_service_error_after_successful_cycle(
         def set_service_health_component(self, name, **fields):
             self.health = (name, fields)
 
+        def record_error(self, *args, **kwargs):
+            raise AssertionError(f"unexpected service error: {args}")
+
     store = FakeStore(tmp_path / "worker.sqlite3")
     monkeypatch.setattr(cli, "AutoReplyStore", lambda _path: store)
     monkeypatch.setattr(cli, "_create_meeting_dws", lambda _settings: object())

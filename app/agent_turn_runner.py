@@ -57,6 +57,7 @@ from app.codex_capacity import (
     is_codex_capacity_exhausted,
 )
 from app.codex_failure import (
+    CODEX_LOGIN_REQUIRED,
     CODEX_PROVIDER_AUTH_FAILED,
     CODEX_PROVIDER_OVERLOADED,
     CODEX_PROVIDER_UNAVAILABLE,
@@ -495,6 +496,8 @@ class AgentTurnRunResult(Generic[ResultT]):
 
 def _process_failure_code(process: ProcessRunResult) -> str:
     code = classify_codex_process_failure(process.stdout, process.stderr)
+    if code == CODEX_LOGIN_REQUIRED:
+        return f"{code}: native Codex login must be renewed"
     if code == CODEX_PROVIDER_AUTH_FAILED:
         return f"{code}: native Codex CLI authentication is unavailable"
     if code == CODEX_PROVIDER_UNAVAILABLE:
@@ -573,7 +576,7 @@ def _agent_process_error_code(exc: Exception) -> str:
     explicit_code = getattr(exc, "code", "")
     if isinstance(explicit_code, str) and explicit_code.startswith("runtime_"):
         return explicit_code
-    if code.startswith(CODEX_PROVIDER_AUTH_FAILED):
+    if code.startswith((CODEX_PROVIDER_AUTH_FAILED, CODEX_LOGIN_REQUIRED)):
         return code
     if code in {
         CODEX_PROVIDER_UNAVAILABLE,
@@ -777,7 +780,7 @@ def _result_parse_error_detail(exc: ResultParseError) -> str:
 
 
 def _is_terminal_codex_auth_failure(code: str) -> bool:
-    return code.startswith(CODEX_PROVIDER_AUTH_FAILED)
+    return code.startswith((CODEX_PROVIDER_AUTH_FAILED, CODEX_LOGIN_REQUIRED))
 
 
 def _claude_input_contract(*, prompt: str, developer_instructions: str) -> str:

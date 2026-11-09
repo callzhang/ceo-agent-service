@@ -152,6 +152,7 @@ def test_console_attempt_detail_resolves_public_id_and_retires_physical_url(tmp_
     assert physical.status_code == 404
 
 
+
 def test_console_client_restores_settings_environment_after_close(tmp_path: Path):
     updates = {
         "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",
@@ -3596,8 +3597,6 @@ def test_old_principal_supersession_does_not_describe_current_pending_task(tmp_p
 
 
 def test_reply_memory_queue_reads_current_action_schema_and_its_own_events(tmp_path):
-    from app.action_storage import insert_action
-
     path = tmp_path / "reply-memory-queue.sqlite3"
     store = AutoReplyStore(path)
     EmailStore(path)
