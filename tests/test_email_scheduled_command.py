@@ -1,4 +1,5 @@
 import json
+import errno
 import socket
 import sqlite3
 from hashlib import sha256
@@ -109,6 +110,10 @@ def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
     (
         (socket.gaierror("temporary DNS failure"), 3, True),
         (TimeoutError("provider timed out"), 3, True),
+        (OSError(errno.ENETUNREACH, "Network is unreachable"), 3, True),
+        (OSError(errno.EHOSTUNREACH, "No route to host"), 3, True),
+        (OSError(errno.ENETDOWN, "Network is down"), 3, True),
+        (OSError(errno.EACCES, "Permission denied"), 1, False),
         (ConnectionError("IMAP login failed: invalid credentials"), 1, False),
         (ConnectionError("email IMAP credential is unavailable"), 1, False),
         (ValueError("invalid local scan state"), 1, False),
