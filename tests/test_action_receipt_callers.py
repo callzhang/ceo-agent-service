@@ -150,7 +150,7 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     )
     with store._connect() as db:
         before = db.execute(
-            "select id,action_operation,action_action_identity,action_parameters_json,action_prepared_at "
+            "select id,action_operation,action_action_identity,action_prepared_receipt_id,action_prepared_at "
             "from actions where id=?", (sent.id,),
         ).fetchone()
         body = db.execute(
@@ -169,7 +169,7 @@ def test_failed_audit_receipt_preserves_the_raw_recorded_provider_body(receipt_s
     assert store.get_agent_run(audit.id).status == "failed"
     with store._connect() as db:
         after = db.execute(
-            "select id,action_operation,action_action_identity,action_parameters_json "
+            "select id,action_operation,action_action_identity,action_prepared_receipt_id "
             "from actions where id=?", (sent.id,),
         ).fetchone()
         body_after = db.execute(

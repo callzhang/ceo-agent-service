@@ -48,6 +48,7 @@ def test_catalog_is_generated_from_every_canonical_capability_and_operation() ->
         ("dingtalk-chat", "send_message"),
         ("dingtalk-chat", "send_group_message"),
         ("dingtalk-chat", "send_direct_message"),
+        ("dingtalk-chat", "send_file"),
         ("dingtalk-chat", "add_message_emoji"),
         ("dingtalk-chat", "add_message_text_emotion"),
         ("dingtalk-chat", "create_message_text_emotion"),
@@ -95,7 +96,7 @@ def test_lookup_returns_shared_rules_and_only_the_exact_action_contract() -> Non
     ] == [line for line in original.splitlines() if not line.startswith("|")]
     assert "`event_id` | `response_status`" in result["contract"]
     assert (
-        "Exact event's `self_response_status` after native response"
+        "Exact event's `self_response_status` for the authenticated account"
         in result["contract"]
     )
     assert len(result["contract"]) < len(original)

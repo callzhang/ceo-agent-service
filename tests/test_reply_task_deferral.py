@@ -98,7 +98,7 @@ def _insert_retained_action_fact(db, record_type, values, *, run_id):
 def _insert_native_external_action_result(db, values, *, run_id):
     from app.action_entity_storage import create_action, append_action_receipt
     action = create_action(db, values={
-        "operation": values["operation"], "parameters_json": "{}", "status": "verified",
+        "operation": values["operation"], "status": "verified",
         "external_action_key": values["external_action_key"],
         "business_object_key": values["business_object_key"],
         "action_identity": values["action_identity"], "agent_run_id": run_id,

@@ -491,9 +491,15 @@ def test_dws_raw_carrier_coverage_anchors(monkeypatch) -> None:
     client.ding_user("user-1", "body")
     client.ding_self("body")
 
-    assert commands[0][1:3] == ["chat", "+messages-send"]
-    assert commands[1][1:3] == ["chat", "+messages-reply"]
-    assert [command[3] for command in commands[2:]] == [
+    # Each human-facing write is validated with a dry run before dispatch.
+    assert len(commands) == 8
+    assert [command[1:3] for command in commands[:4]] == [
+        ["chat", "+messages-send"], ["chat", "+messages-send"],
+        ["chat", "+messages-reply"], ["chat", "+messages-reply"],
+    ]
+    assert commands[2][commands[2].index("--ref-msg-id") + 1] == "msg-1"
+    assert commands[2][commands[2].index("--ref-sender") + 1] == "open-1"
+    assert [command[3] for command in commands[4:]] == [
         "send-by-bot", "send-by-bot", "send", "send",
     ]
 

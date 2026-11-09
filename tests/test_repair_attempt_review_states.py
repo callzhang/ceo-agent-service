@@ -30,6 +30,8 @@ def _uncertain_return(tmp_path, monkeypatch):
     monkeypatch.setattr("app.system_action_handlers.datetime", Clock)
 
     class ReturningSource(Source):
+        failed_first_readback = False
+
         def revert_oa_approval_task(self, **kwargs):
             self.calls.append(kwargs)
             self.returned = True
@@ -38,6 +40,15 @@ def _uncertain_return(tmp_path, monkeypatch):
             self.destination["create_time"] = (event + timedelta(seconds=1)).isoformat()
             Clock.offset = timedelta(seconds=4)
             return {"success": True, "dingOpenErrcode": 0, "result": True}
+
+        def read_oa_process_instance_openapi(self, process_id):
+            # Preserve a real uncertain state for the recovery tests: the
+            # dispatch is accepted, but the first post-dispatch read is
+            # unavailable. A later explicit recovery can then verify it.
+            if self.returned and not self.failed_first_readback:
+                self.failed_first_readback = True
+                return {"errcode": 503, "message": "temporary readback outage"}
+            return super().read_oa_process_instance_openapi(process_id)
 
     store, task, context = setup(tmp_path)
     source = ReturningSource()

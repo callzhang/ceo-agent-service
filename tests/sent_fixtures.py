@@ -27,12 +27,12 @@ def historical_sent_delivery(store, *, agent_run_id, external_action_key,
             trigger_message_id = existing['trigger_message_id']
             reply_text = existing['reply_text']
             action = db.execute(
-                "select action_business_object_key,action_action_identity,action_parameters_json "
+                "select action_business_object_key,action_action_identity "
                 "from actions where id=? and record_type='action'", (existing['id'],),
             ).fetchone()
             business_object_key = action['action_business_object_key']
             action_identity = action['action_action_identity']
-            target = action['action_parameters_json']
+            target = existing['target']
         else:
             business_object_key = run['business_object_key']
             action_identity = None

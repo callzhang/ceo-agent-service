@@ -531,7 +531,10 @@ class SystemExecutor:
             input_invalid = outcome.status == "confirmed_no_effect" and outcome.provider_result.get("pre_action_failure") is True
             if not input_invalid:
                 self.store.record_candidate_action_outcome(execution_id, self.owner, index, outcome.status, outcome.provider_result)
-            if outcome.status == "uncertain":
+            if (outcome.status == "uncertain"
+                and action.capability == "dingtalk-oa"
+                and action.operation == "revert_task"
+                and outcome.provider_result.get("reason") == "oa_return_readback_pending"):
                 attempts = self.store.list_candidate_action_attempts(execution_id)
                 attempt = next((item for item in attempts if item.get("action_index") == index), None)
                 if attempt is not None:

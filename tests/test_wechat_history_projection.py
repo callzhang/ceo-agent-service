@@ -76,7 +76,9 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
                 "reply_text": "Yes.", "status": "sent",
             })
         original_deliveries = [tuple(row) for row in db.execute(WECHAT_DELIVERIES)]
-        original_tasks = [tuple(row) for row in db.execute("select * from tasks")]
+        # Recording a failed reply attempt now atomically queues its automatic
+        # repair turn. The history read must leave the source task untouched.
+        original_task = tuple(db.execute("select * from tasks where id=?", (task.id,)).fetchone())
         original_attempts = [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")]
 
     with _client(tmp_path) as client:
@@ -101,7 +103,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     assert sum(series.values()) == 1
     with store._connect() as db:
         assert [tuple(row) for row in db.execute(WECHAT_DELIVERIES)] == original_deliveries
-        assert [tuple(row) for row in db.execute("select * from tasks")] == original_tasks
+        assert tuple(db.execute("select * from tasks where id=?", (task.id,)).fetchone()) == original_task
         assert [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")] == original_attempts
 
 
