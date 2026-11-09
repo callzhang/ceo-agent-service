@@ -2096,10 +2096,20 @@ def _insert_action(db: sqlite3.Connection, record_type: str, values: dict, *, ig
         if field in SOURCE_COLUMNS[record_type]
     }
     payload.update({field: value for field, value in values.items() if field in PAYLOAD_FIELDS[record_type]})
-    fields = [field for field in (REFERENCES | DELIVERY_REFERENCES | (EXECUTION_REFERENCES if execution_owner else {})) if field in _kind_references(record_type, execution_owner=execution_owner)]
+    used_references = _kind_references(record_type, execution_owner=execution_owner)
+    physical_fields = {row[1] for row in db.execute("pragma main.table_xinfo(actions)") if row[6] == 0}
+    # One declared table uses stable INSERT columns across its record kinds.
+    # Keep missing required columns in the SQL so SQLite still rejects them.
+    fields = [field for field in (REFERENCES | DELIVERY_REFERENCES | EXECUTION_REFERENCES)
+              if field in physical_fields or field in used_references]
     arguments = [ACTION_RECORD_TYPES.code(record_type), _action_payload(
         db, record_type, payload, layout=layout)]
-    arguments += [(action_physical_id(db, EXECUTION_ALIAS, values.get(field)) if execution_owner and field == 'execution_id' else _parent_id(db, field, values.get(field))) for field in fields]
+    arguments += [
+        (action_physical_id(db, EXECUTION_ALIAS, values.get(field))
+         if execution_owner and field == 'execution_id' else _parent_id(db, field, values.get(field)))
+        if field in used_references else None
+        for field in fields
+    ]
     public_id = (tuple(values.get(field) for field in POSTFIX_IDENTITY_FIELDS)
                  if record_type in POSTFIX_ACTION_TYPES else
                  (values.get("sent_reply_id"), values.get("agent_run_id")) if record_type == "sent_reply_observers"
