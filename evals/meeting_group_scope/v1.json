@@ -2,9 +2,10 @@
   "version": 1,
   "baseline_ref": "7e620f123c8f2cd6ed3a05ce3f85401d7c242485",
   "settings": {
-    "model": "gpt-6-luna",
+    "model": "sonnet",
     "reasoning_effort": "high",
-    "timeout_seconds_per_call": 180
+    "timeout_seconds_per_call": 180,
+    "runtime": "claude_cli"
   },
   "participants": [
     {
@@ -41,7 +42,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Recruiting the Head of People: discuss the role profile and candidate interviews here. This is the specialist hiring committee, not the HR department operations group.",
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -70,7 +71,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Department weekly: onboarding systems, social-insurance plan, office equipment, training platform and attendance arrangements are coordinated here by Morgan and Casey.",
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -82,7 +83,8 @@
       "expected_audit": "return",
       "expected_planner_group": "department",
       "attendee_evidence": "transcript",
-      "attendee_roster_complete": false
+      "attendee_roster_complete": false,
+      "title": "People weekly"
     },
     {
       "id": "larger_correct_department",
@@ -106,7 +108,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Department weekly: onboarding systems, social-insurance plan, office equipment, training platform and attendance arrangements are coordinated here by Morgan and Casey.",
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -126,7 +128,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Recruiting the Head of People: discuss the role profile and candidate interviews here. This is the specialist hiring committee, not the HR department operations group.",
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -142,7 +144,8 @@
       "expected_audit": "approve",
       "expected_planner_group": "department",
       "attendee_evidence": "transcript",
-      "attendee_roster_complete": false
+      "attendee_roster_complete": false,
+      "title": "People weekly"
     },
     {
       "id": "complete_roster_larger_group",
@@ -166,7 +169,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Department weekly: onboarding systems, social-insurance plan, office equipment, training platform and attendance arrangements are coordinated here by Morgan and Casey.",
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -186,7 +189,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Recruiting the Head of People: discuss the role profile and candidate interviews here. This is the specialist hiring committee, not the HR department operations group.",
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -202,7 +205,8 @@
       "expected_audit": "approve",
       "expected_planner_group": "department",
       "attendee_evidence": "calendar",
-      "attendee_roster_complete": true
+      "attendee_roster_complete": true,
+      "title": "People weekly"
     },
     {
       "id": "specialist_meeting_uses_specialist_group",
@@ -221,7 +225,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Recruiting the Head of People: discuss the role profile and candidate interviews here. This is the specialist hiring committee, not the HR department operations group.",
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -250,7 +254,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Department weekly: onboarding systems, social-insurance plan, office equipment, training platform and attendance arrangements are coordinated here by Morgan and Casey.",
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -262,7 +266,8 @@
       "expected_audit": "approve",
       "expected_planner_group": "recruiting",
       "attendee_evidence": "transcript",
-      "attendee_roster_complete": false
+      "attendee_roster_complete": false,
+      "title": "People weekly"
     },
     {
       "id": "same_project_different_topics",
@@ -294,7 +299,8 @@
       "expected_audit": "approve",
       "expected_planner_group": "orion",
       "attendee_evidence": "transcript",
-      "attendee_roster_complete": false
+      "attendee_roster_complete": false,
+      "title": "Orion delivery review"
     },
     {
       "id": "carried_target_does_not_own_office_work",
@@ -313,7 +319,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Recruiting the Head of People: discuss the role profile and candidate interviews here. This is the specialist hiring committee, not the HR department operations group.",
+              "text": "Head of People role profile: Morgan and the committee discussed the role profile and interview schedule. Use the agreed prompt to generate the hiring profile.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -342,7 +348,7 @@
           "history_read_status": "read",
           "topic_discussion_evidence": [
             {
-              "text": "Department weekly: onboarding systems, social-insurance plan, office equipment, training platform and attendance arrangements are coordinated here by Morgan and Casey.",
+              "text": "Morgan asked Casey to coordinate the employee role-transition plan and department work. The group also coordinates quarterly review completion, professional training and internal operations.",
               "create_time": "",
               "shared_topic_terms": 0,
               "topic_match_score": 0
@@ -354,7 +360,8 @@
       "expected_audit": "return",
       "expected_planner_group": "department",
       "attendee_evidence": "transcript",
-      "attendee_roster_complete": false
+      "attendee_roster_complete": false,
+      "title": "People weekly"
     }
   ]
 }

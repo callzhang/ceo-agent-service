@@ -55,7 +55,7 @@ MEETING_BUSINESS_GROUP_SCOPE = (
     "A group for the same project or customer may cover different discussion topics; "
     "an incomplete attendee roster is recorded as a gap and exact attendee/group "
     "equality is not required. Group size, overlap and discovery rank cannot replace "
-    "the actual work relationship."
+    "the actual work relationship. "
 )
 MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT = 200
 MEETING_RUNTIME_CAPABILITIES = frozenset(
