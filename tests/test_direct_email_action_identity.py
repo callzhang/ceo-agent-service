@@ -1,10 +1,8 @@
 """Re-creating an existing direct Email Action is idempotent; only its identity may conflict."""
 
-import pytest
-
 from app import shared_action_lifecycle
 from app.email_classifier_contracts import EmailClassificationStatus
-from app.email_store import DIRECT_EMAIL_ACTION_SQL, EmailStore
+from app.email_store import DIRECT_EMAIL_ACTION_SQL, EMAIL_PLAN_SQL, EmailStore
 from tests.support.native_email_actions import persist_classification
 
 
@@ -37,13 +35,19 @@ def test_recreating_an_existing_plan_action_with_a_later_clock_returns_the_same_
     assert again["created_at"] == values["created_at"]
 
 
-def test_recreating_an_existing_plan_action_with_other_parameters_still_conflicts(tmp_path):
+def test_direct_action_parameters_remain_owned_by_the_immutable_plan(tmp_path):
     store = EmailStore(tmp_path / "mail.sqlite3")
     persist_classification(store, classification_id=1, status=EmailClassificationStatus.PROCESSED)
     values = _existing_values(store)
     with store._connect() as db:
         db.execute("begin immediate")
-        with pytest.raises(ValueError, match="identity conflicts"):
-            shared_action_lifecycle.create_direct_email_action(
-                db, values | {"parameters_json": '{"target_folder":"其他"}'},
-            )
+        first = shared_action_lifecycle.create_direct_email_action(db, dict(values))
+        again = shared_action_lifecycle.create_direct_email_action(
+            db, values | {"parameters_json": '{"target_folder":"其他"}'},
+        )
+        plan = db.execute(
+            f"select action_parameters_json from ({EMAIL_PLAN_SQL}) where action_plan_id=?",
+            (values["action_plan_id"],),
+        ).fetchone()
+    assert again["id"] == first["id"]
+    assert plan["action_parameters_json"] == '{"move":{"target_folder":"工作"}}'

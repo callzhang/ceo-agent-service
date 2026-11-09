@@ -493,7 +493,9 @@ def test_dws_raw_carrier_coverage_anchors(monkeypatch) -> None:
 
     assert commands[0][1:3] == ["chat", "+messages-send"]
     assert commands[1][1:3] == ["chat", "+messages-send"]
-    assert [command[3] for command in commands[2:]] == [
+    assert commands[2][1:3] == ["chat", "+messages-reply"]
+    assert commands[3][1:3] == ["chat", "+messages-reply"]
+    assert [command[3] for command in commands[4:]] == [
         "send-by-bot", "send-by-bot", "send", "send",
     ]
 

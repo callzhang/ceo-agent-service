@@ -44,8 +44,15 @@ def test_source_detail_uses_existing_dws_factory(db, tmp_path, monkeypatch, rout
         response = client.get(f"/api/console/tasks/{route}/{public_id if route == 'signals' else 43}")
     assert response.status_code == 200, response.text
     payload = response.json()["item"]
-    view = payload if route == "signals" else payload["evidence"][0]["signal"]
-    assert view["source_available"] is True
-    assert view["evidence_text"] == item.evidence_text
-    assert "source_document_id" not in view
-    assert len(provider.commands) == 1
+    if route == "signals":
+        assert payload["source_available"] is True
+        assert payload["evidence_text"] == item.evidence_text
+        assert "source_document_id" not in payload
+        assert len(provider.commands) == 1
+    else:
+        signal_view = payload["evidence"][0]["signal"]
+        assert signal_view["id"] == public_id
+        assert signal_view["source_ref"] == item.source_ref
+        assert "evidence_text" not in signal_view
+        assert "source_available" not in signal_view
+        assert provider.commands == []
