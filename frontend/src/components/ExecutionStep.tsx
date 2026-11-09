@@ -38,6 +38,23 @@ function detailText(value: unknown): string {
   return typeof encoded === "string" ? encoded : String(value);
 }
 
+function commandText(value: unknown): string {
+  return Array.isArray(value) ? value.map((arg) => JSON.stringify(arg)).join(" ") : exactText(value);
+}
+
+function previewText(value: unknown): string {
+  let readable = value;
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      const content = Array.isArray(parsed) ? parsed : parsed?.content;
+      if (Array.isArray(content) && content.length && content.every((part) => typeof part?.text === "string")) readable = content.map((part) => part.text).join("\n");
+    } catch { /* Preview plain text; expanded evidence remains exact. */ }
+  }
+  const text = detailText(readable);
+  return text.length > 240 ? `${text.slice(0, 120)}\n…\n${text.slice(-120)}` : text;
+}
+
 function durationLabel(startedAt?: string, completedAt?: string): string {
   if (!startedAt || !completedAt) return "";
   const start = parseWorkbenchTimestamp(startedAt);
@@ -64,7 +81,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
     : sessionTrace
       ? exactText(payload.name, "工具调用")
       : whiteBox
-      ? exactText(payload.kind === "command" ? payload.command : payload.name, exactText(payload.name, "工具调用"))
+      ? (payload.kind === "command" ? commandText(payload.command) : exactText(payload.name)) || exactText(payload.name, "工具调用")
       : executionName(payload.tool);
   const rawSummary = payload.summary ?? payload.change;
   const summary = displayText(
@@ -81,12 +98,15 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
     try { previewInput = JSON.parse(input); } catch { /* Raw command text. */ }
   }
   const inputRecord = previewInput && typeof previewInput === "object" ? previewInput as Record<string, unknown> : null;
-  const preview = payload.kind === "command" ? "" : exactText(inputRecord?.cmd ?? inputRecord?.command ?? inputRecord?.path ?? (typeof input === "string" ? input : ""));
+  const previewValue = inputRecord?.cmd ?? inputRecord?.command ?? inputRecord?.path ?? input;
+  const preview = payload.kind === "command" || previewValue === undefined ? "" : previewText(previewValue);
+  const result = payload.output ?? payload.result;
+  const resultPreview = result === undefined ? "" : previewText(result);
   return (
     <details className={`execution-step execution-${failed ? "failed" : completed ? "completed" : aborted ? "aborted" : "running"}`}>
       <summary>
         <Icon aria-hidden="true" size={16} />
-        <span className="execution-name" title={name}>{name}{preview && <small className="execution-preview" title={preview}>{preview}</small>}</span>
+        <span className="execution-name" title={name}>{name}{preview && <small className="execution-preview" title={preview}>{preview}</small>}{resultPreview && <small className="execution-result-preview"><span>返回</span>{resultPreview}</small>}</span>
         <span className="execution-state" role="status">{stateLabel}{duration && <small className="execution-duration">{duration}</small>}</span>
         <ChevronRight className="execution-chevron" aria-hidden="true" size={15} />
       </summary>
@@ -103,7 +123,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
               </>
             ) : payload.kind === "command" ? (
               <>
-                <div><dt>命令</dt><dd><code>{exactText(payload.command, "未提供")}</code></dd></div>
+                <div><dt>命令</dt><dd><code>{commandText(payload.command) || "未提供"}</code></dd></div>
                 {typeof payload.cwd === "string" && <div><dt>工作目录</dt><dd><code>{exactText(payload.cwd)}</code></dd></div>}
                 {typeof payload.exit_code === "number" && <div><dt>退出码</dt><dd>{payload.exit_code}</dd></div>}
               </>

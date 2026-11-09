@@ -5,17 +5,44 @@ import { describe, expect, it } from "vitest";
 import { ExecutionStep } from "./ExecutionStep";
 
 describe("ExecutionStep", () => {
+  it("shows native text-block return previews without changing exact JSON evidence", () => {
+    const output = '[{"type":"input_text","text":"35 passed"}]';
+    render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "exec", input: "pytest", output }} />);
+    expect(document.querySelector(".execution-step > summary")).toHaveTextContent("35 passed");
+    expect(document.querySelector(".execution-result-preview")).not.toHaveTextContent("input_text");
+    expect(screen.getByText(output, { selector: "pre" })).toBeInTheDocument();
+  });
+  it("bounds the closed preview while retaining exact full evidence", async () => {
+    const output = "start\n" + "x".repeat(1000) + "\nend";
+    render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "shell", input: "pytest", output }} />);
+    expect(document.querySelector(".execution-result-preview")?.textContent?.length).toBeLessThan(380);
+    expect(document.querySelector(".execution-result-preview")).toHaveTextContent("start");
+    expect(document.querySelector(".execution-result-preview")).toHaveTextContent("end");
+    await userEvent.click(screen.getByText("pytest", { selector: "small" }));
+    expect(screen.getByText(output, { selector: "pre", normalizer: (value) => value })).toBeVisible();
+  });
+  it("shows array commands and output in the closed summary", () => {
+    render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "command", command: ["/bin/zsh", "-lc", "pytest tests/example.py"], output: "3 passed" }} />);
+    expect(document.querySelector(".execution-step")).not.toHaveAttribute("open");
+    expect(document.querySelector(".execution-step > summary")).toHaveTextContent("pytest tests/example.py");
+    expect(document.querySelector(".execution-step > summary")).toHaveTextContent("3 passed");
+  });
+  it("previews arbitrary tool arguments and results", () => {
+    render(<ExecutionStep kind="tool" status="failed" payload={{ kind: "trace", name: "Read", input: '{"file_path":"/repo/app.py"}', output: "source not found" }} />);
+    expect(document.querySelector(".execution-step > summary")).toHaveTextContent("/repo/app.py");
+    expect(document.querySelector(".execution-step > summary")).toHaveTextContent("source not found");
+  });
   it("keeps string tool evidence exact rather than reserializing JSON numbers", () => {
     render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "shell", input: '{"message_id":9007199254740993}', output: "1e400" }} />);
     expect(screen.getByText('{"message_id":9007199254740993}', { selector: "pre" })).toBeInTheDocument();
-    expect(screen.getByText("1e400")).toBeInTheDocument();
+    expect(screen.getByText("1e400", { selector: "pre" })).toBeInTheDocument();
   });
   it("previews the command and opens input/output before optional technical metadata", async () => {
     render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "shell", input: { cmd: "pytest tests/test_example.py" }, output: "3 passed", tool_call_id: "exact-call" }} />);
     const preview = screen.getByText("pytest tests/test_example.py");
     expect(preview).toBeVisible();
     await userEvent.click(preview);
-    expect(screen.getByText("3 passed")).toBeVisible();
+    expect(screen.getByText("3 passed", { selector: "pre" })).toBeVisible();
     const technical = screen.getByText("调用详情").closest("details");
     expect(technical).not.toHaveAttribute("open");
     await userEvent.click(screen.getByText("调用详情"));
@@ -51,7 +78,7 @@ describe("ExecutionStep", () => {
 
     expect(screen.getAllByText("rg --files frontend/src")).toHaveLength(2);
     expect(screen.getByText("/Users/derek/Documents/Projects/ceo-agent-service")).toBeInTheDocument();
-    expect(screen.getByText(/frontend\/src\/app\.tsx/)).toBeInTheDocument();
+    expect(screen.getByText(/frontend\/src\/app\.tsx/, { selector: "pre" })).toBeInTheDocument();
     expect(screen.getByText(/"type": "command_execution"/)).toBeInTheDocument();
     expect(screen.getByText("2.0 秒")).toBeInTheDocument();
     expect(screen.getByText("tool-call-1")).toBeInTheDocument();
@@ -79,8 +106,8 @@ describe("ExecutionStep", () => {
     );
 
     expect(screen.getByText("codex_apps.google_calendar.search_events")).toBeInTheDocument();
-    expect(screen.getByText(/"calendars": \[/)).toBeInTheDocument();
-    expect(screen.getByText(/"structuredContent"/)).toBeInTheDocument();
+    expect(screen.getByText(/"calendars": \[/, { selector: "pre" })).toBeInTheDocument();
+    expect(screen.getByText(/"structuredContent"/, { selector: "pre" })).toBeInTheDocument();
   });
 
   it("renders a session trace with separate tool identity, input and output", () => {
@@ -103,7 +130,7 @@ describe("ExecutionStep", () => {
     expect(screen.getByText("输入")).toBeInTheDocument();
     expect(screen.getAllByText(/rg --files app/)).toHaveLength(2);
     expect(screen.getByText("输出")).toBeInTheDocument();
-    expect(screen.getByText(/app\/codex_history\.py/)).toBeInTheDocument();
+    expect(screen.getByText(/app\/codex_history\.py/, { selector: "pre" })).toBeInTheDocument();
   });
 
   it("truthfully marks historical generic tool events as incomplete", () => {

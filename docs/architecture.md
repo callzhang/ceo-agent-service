@@ -2507,7 +2507,7 @@ Friday 通过现有 CLI 身份的只读 operation 与 thread trace API 读取，
 
 Attempt 的处理／审计步骤、历史代记录、Task 历史、Meeting 详情和有已保存关联的服务错误都提供原生入口。服务错误只沿原触发身份 → Reply Attempt 保存的 Run → 同代运行关系展示关联调用，不把同一 Task 的其他输入运行猜作当前错误；没有 Agent 调用关系的服务错误明确说明。无 runtime attempt 的已有历史 Codex 会话链接继续保留。
 
-工作台长任务输入和长文本保留短预览，完整正文可展开；终态结构化结果先展示 `summary`，完整 JSON（包括其他字段）仍可展开读取。共用工具卡以名称、命令预览、状态和耗时为摘要，展开后优先展示参数／输入和结果／输出，调用身份、时间和原始 provider 事件放在二级详情。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
+工作台长任务输入和长文本保留短预览，完整正文可展开；终态结构化结果先展示 `summary`，完整 JSON（包括其他字段）仍可展开读取。共用工具卡默认显示实际名称、命令或参数预览、返回内容的首尾预览、状态和耗时；命令参数数组保持可读，展开后保留完整输入与返回，调用身份、时间和原始 provider 事件放在二级详情。终态工作台对话按每个已保存的 runtime_attempt 直接复用原生轨迹读取器，独立按调用 ID 配对工具开始与返回，不再依赖跨运行环境的 SQLite 工具事件数量。对话内只展示工具，任务输入和最终答复沿用原位置；完整轨迹页仍可查看上下文和中间输出。每次调用先读取一页，可继续加载全部剩余页，只有全部读完才将未返回工具标记中止；源缺失时按调用显示不可用原因。执行中的对话保留实时事件流。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
 
 Runtime result persistence and native-result recovery use the same typed-result sensitive-value validator supplied by the calling Agent. Audit therefore retains its existing exact candidate-bound exception for configured service-generated feedback links; original assertion bytes remain unchanged. Envelope metadata, result size, document fields, authored prose and unrelated credentials retain their existing checks.
 
