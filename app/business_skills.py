@@ -528,7 +528,9 @@ def render_task_skill_discovery(
         if frozen:
             instructions.append(
                 "Task-frozen reads: `agent_cli.read_task_skill(name)`. "
-                "Follow next_offset until null to read the complete frozen Skill."
+                "Read one page per tool turn; follow next_offset until null. "
+                "In CodeMode print that page's content text and end the exec call. "
+                "Do not concatenate pages or batch Skill bodies into one output."
             )
         instructions.append(
             "Other Skill reads: `agent_cli.read_skill(name=...)`. "

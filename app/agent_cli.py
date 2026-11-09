@@ -2522,18 +2522,22 @@ def build_role_server(
     )
 
     def read_task_skill(
-        name: str, offset: int = 0, max_chars: int = 4000,
+        name: str, offset: int = 0,
+        max_chars: Annotated[int, Field(ge=1, le=4000)] = 4000,
     ) -> dict[str, object]:
         """Read one bounded page of a selected Skill frozen in this task input.
 
-        Start at offset 0 and follow next_offset until null to read the entire
-        Skill. Read pages individually rather than batching long Skill bodies.
+        Read one page per tool turn, starting at 0 and following next_offset
+        until null. Each page must reach the model before requesting the next.
+        In CodeMode print that page's content text and end the exec call.
+        Do not concatenate pages or batch Skill bodies into one exec output:
+        that recreates truncation even though each MCP response is bounded.
         sha256 identifies the complete immutable body, not the page. This lookup
-        never rereads an installed Skill file. max_chars must be 1 through 8000.
+        never rereads an installed Skill file. max_chars must be 1 through 4000.
         """
         if (
             type(offset) is not int or offset < 0
-            or type(max_chars) is not int or not 1 <= max_chars <= 8000
+            or type(max_chars) is not int or not 1 <= max_chars <= 4000
         ):
             raise ValueError("invalid task Skill read interval")
         item = _read_bound_task_skill(db_path, task_id, artifact_generation, name)

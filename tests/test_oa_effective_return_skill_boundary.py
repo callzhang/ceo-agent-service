@@ -10,12 +10,12 @@ def _candidate() -> ConsumerAgentResult:
         "proposal": {
             "objective": "Review this org-structure request",
             "actions": [{
-                "description": "Reject after three effective returns for the same gap",
+                "description": "Reject on the verified substantive criterion",
                 "action_identity": "oa-reject",
                 "capability": "dingtalk-oa",
                 "operation": "reject",
                 "target": {"process_instance_id": "process-1", "task_id": "task-1"},
-                "payload": {"remark": "同一实质缺口经过三次有效退回仍未解决，按规则拒绝。"},
+                "payload": {"remark": "当前可读证据不满足适用的实质标准，按规则拒绝。"},
             }],
             "sourced_facts": [],
             "authored_judgment": "The source evidence and Skill support the decision.",
@@ -31,7 +31,7 @@ def _candidate() -> ConsumerAgentResult:
     })
 
 
-def test_same_gap_threshold_is_reviewed_under_skill_without_extra_audit_wire_gate() -> None:
+def test_substantive_refusal_is_reviewed_under_skill_without_extra_audit_wire_gate() -> None:
     candidate = _candidate()
     result = AuditAgentResult.model_validate({
         "outcome": "approve",
