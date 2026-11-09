@@ -76,9 +76,6 @@ class RecordingSystemDws:
     def verify_message_send_result(self, result):
         return {"state": "sent", "message_id": result["message_id"]}
 
-    def get_current_user_id(self):
-        return "user-1"
-
     def respond_calendar_event(self, event_id: str, response: str):
         self.responses.append((event_id, response))
         self.calendar_status = response
