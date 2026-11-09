@@ -32,7 +32,10 @@ describe("workbench dark color contract", () => {
   });
 
   it("keeps scheduled-task surfaces and controls free of light-only color literals", () => {
-    const scheduledStyles = workbenchStyles.slice(workbenchStyles.indexOf(".scheduled-tasks-page"));
+    const scheduledStylesStart = workbenchStyles.indexOf(".scheduled-tasks-page");
+    const scheduledStylesEnd = workbenchStyles.indexOf(".skill-search-form", scheduledStylesStart);
+    expect(scheduledStylesEnd).toBeGreaterThan(scheduledStylesStart);
+    const scheduledStyles = workbenchStyles.slice(scheduledStylesStart, scheduledStylesEnd);
     expect(scheduledStyles).not.toMatch(/(?:background|color|border-color):\s*(?:white|#[0-9a-f]{3,8})\b/i);
   });
 
