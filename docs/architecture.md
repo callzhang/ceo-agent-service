@@ -2447,7 +2447,10 @@ The transport validates the native terminal/session evidence and returns its
 text before the common role parser validates the business result. A result
 format error retains the existing typed error and field locations, so the next
 bounded role attempt receives `Result Correction` instead of an undifferentiated
-process failure. The canonical schema, attempt ceiling, Audit decisions and
+process failure. Action-specific Consumer target and payload contracts validate
+at their enclosing fields, preserving full paths such as `payload.remark` and
+`payload.actions.0.payload` in that correction. Error details contain contract
+messages and locations, never rejected input values. The canonical schema, attempt ceiling, Audit decisions and
 System execution/receipt rules are unchanged.
 
 Fixed Consumer action model declarations reuse their generated JSON schema;
