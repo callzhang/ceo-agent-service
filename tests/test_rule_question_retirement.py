@@ -146,10 +146,12 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id, task_id, run_id, result = seed(store, native_home=isolated_native_home)
     original_native = native_path(store, run_id).read_bytes()
-    assert invalid_count(store) == 1
+    # The quality gate only counts needs_human attempts whose task is still needs_human;
+    # a done (obsolete) question is not a violation before or after retirement.
+    assert invalid_count(store) == 0
     preview = retire_rule_question(store, attempt_id, authority=AUTHORITY)
     assert preview["applied"] is False
-    assert invalid_count(store) == 1
+    assert invalid_count(store) == 0
     receipt = retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert receipt["applied"] is True
     assert receipt["attempt_id"] == attempt_id
@@ -223,10 +225,11 @@ def test_retirement_refuses_current_or_unproven_questions(tmp_path, change, isol
         records = [json.loads(line) for line in path.read_text().splitlines()]
         records[1]["payload"]["content"][0]["text"] = json.dumps(result)
         path.write_text("\n".join(json.dumps(record) for record in records) + "\n")
+    invalid_before = invalid_count(store)
     with pytest.raises(ValueError):
         retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert store.get_reply_attempt(attempt_id).resolved_at == ""
-    assert invalid_count(store) > 0
+    assert invalid_count(store) == invalid_before
 
 
 def test_cli_preview_does_not_initialize_or_migrate_the_database(tmp_path, isolated_native_home):
