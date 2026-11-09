@@ -136,6 +136,7 @@ def test_runtime_payload_marks_a_missing_session_unavailable(monkeypatch):
         turn_attempt=0,
     )
     runtime_attempt = SimpleNamespace(
+        id=34,
         session_id="missing-session",
         attempt_number=1,
         created_at="2026-09-15 09:00:00",

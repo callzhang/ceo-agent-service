@@ -42,9 +42,17 @@ def test_source_detail_uses_existing_dws_factory(db, tmp_path, monkeypatch, rout
         feedback_backlog_factory=lambda: [], attention_rows_factory=lambda: [], dws_factory=lambda: provider)
     with TestClient(app) as client:
         response = client.get(f"/api/console/tasks/{route}/{public_id if route == 'signals' else 43}")
-    assert response.status_code == 200, response.text
-    payload = response.json()["item"]
-    view = payload if route == "signals" else payload["evidence"][0]["signal"]
+        assert response.status_code == 200, response.text
+        payload = response.json()["item"]
+        if route == "items":
+            # Task detail carries only source references; the original is read on demand.
+            reference = payload["evidence"][0]["signal"]
+            assert not {"evidence_text", "source_available", "source_unavailable_reason"} & reference.keys()
+            assert provider.commands == []
+            response = client.get(f"/api/console/tasks/signals/{reference['id']}")
+            assert response.status_code == 200, response.text
+            payload = response.json()["item"]
+    view = payload
     assert view["source_available"] is True
     assert view["evidence_text"] == item.evidence_text
     assert "source_document_id" not in view
