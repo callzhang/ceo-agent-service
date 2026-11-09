@@ -6,7 +6,7 @@ from app.email_canonical_storage import email_classification_projection
 from app.email_classifier_agent import AgentClassificationResult
 from app.email_classifier_contracts import EmailProviderLocator
 from app.email_classifier_scan import AgentScanContext
-from app.email_store import EmailStore
+from app.email_store import DIRECT_EMAIL_ACTION_SQL, EmailStore
 from app.email_training_labeler import LabelCandidate, label_candidate, select_candidates
 
 
@@ -162,8 +162,7 @@ def test_a_certain_label_is_persisted_without_any_mailbox_action(tmp_path):
     assert persisted["action_plan"]["actions"] == []
     with sqlite3.connect(database) as db:
         assert db.execute(
-            "select count(*) from actions where record_type='action' "
-            "and action_classification_id is not null"
+            f"select count(*) from ({DIRECT_EMAIL_ACTION_SQL}) where classification_id is not null"
         ).fetchone()[0] == 0
         assert db.execute(
             "select count(*) from tasks where kind='email_classification'"

@@ -1,4 +1,7 @@
+import hashlib
+
 from app.store import AutoReplyStore
+from app.task_console_actions import candidate_action_body
 from tests.test_console_web_api import _client
 from tests.support.business_task_seed import seed_task
 
@@ -20,7 +23,14 @@ def test_ignoring_a_candidate_cancels_it_with_a_human_signal_and_restoring_reope
         signal = next(row["signal"] for row in task["evidence"] if row["role"] == "correction")
         assert signal["source_type"] == "console"
         assert signal["author_kind"] == "human"
-        assert "整理访谈问题清单" in signal["evidence_text"]
+        persisted_signal = store.get_business_task_signal(signal["id"])
+        assert persisted_signal is not None
+        expected_body = candidate_action_body(
+            signal["author_name"], "ignore", "整理访谈问题清单"
+        )
+        assert persisted_signal.source.body_sha256 == hashlib.sha256(
+            expected_body.encode("utf-8")
+        ).hexdigest()
         assert [event["event_type"] for event in task["events"]][-1] == "status_changed"
 
         back = client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "restore"})

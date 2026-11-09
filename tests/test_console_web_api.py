@@ -141,7 +141,7 @@ def test_console_attempt_detail_resolves_legacy_physical_id(tmp_path: Path):
         ).fetchone()[0]
 
     with _client(tmp_path, spa_enabled=True) as client:
-        response = client.get(f"/api/console/history/{physical_id}")
+        response = client.get("/api/console/history/9800")
 
     assert physical_id != 9800
     assert response.status_code == 200

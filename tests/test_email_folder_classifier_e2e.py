@@ -906,6 +906,9 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     task = queued_task
     payload = json.loads(task.trigger_message_json)
     class Source:
+        def fetch_message(self, _locator, **_kwargs):
+            return provider_message
+
         def fetch_uid_batch(self, *_args, **_kwargs):
             return type(
                 "Batch", (), {"uidvalidity": 1, "messages": (provider_message,)}

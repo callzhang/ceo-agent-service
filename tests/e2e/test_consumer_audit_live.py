@@ -67,7 +67,7 @@ class RecordingSystemDws:
     def __init__(self) -> None:
         self.sent: list[tuple[str | None, str, dict[str, object]]] = []
         self.responses: list[tuple[str, str]] = []
-        self.calendar_status = "needs_action"
+        self.calendar_status = "needsAction"
 
     def send_message(self, conversation_id, text, **kwargs):
         self.sent.append((conversation_id, text, kwargs))
@@ -83,6 +83,9 @@ class RecordingSystemDws:
 
     def get_calendar_event(self, event_id: str):
         return SimpleNamespace(event_id=event_id, self_response_status=self.calendar_status)
+
+    def get_current_user_id(self):
+        return "principal-1"
 SHARED_SKILL = """---
 name: dingtalk-shared
 description: Representative shared DWS operation fixture.
