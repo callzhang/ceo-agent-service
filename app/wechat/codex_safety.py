@@ -45,6 +45,7 @@ AGENT_CLI_READ_TOOLS = (
     "read_spreadsheet",
     "read_dingtalk_document",
     "read_dingtalk_document_full",
+    "read_dingtalk_document_image",
     "read_dingtalk_document_info",
     "read_dingtalk_document_permissions",
     "read_dingtalk_drive_info",
