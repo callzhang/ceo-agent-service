@@ -1514,6 +1514,59 @@ def test_get_resource_download_url_keeps_file_when_dws_reports_secondary_error(
     assert payload == {"localPath": str(output_path)}
 
 
+def _stub_download_output(monkeypatch, output_path, fake_run):
+    class TemporaryFile:
+        name = str(output_path)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, tb):
+            return False
+
+    monkeypatch.setattr(
+        dws_client.tempfile, "NamedTemporaryFile", lambda **_: TemporaryFile()
+    )
+    monkeypatch.setattr(DwsClient, "_run_cli_process", staticmethod(fake_run))
+
+
+def test_get_resource_download_url_keeps_file_when_dws_hangs_after_writing(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "message-image"
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        output_path.write_bytes(b"valid image bytes")
+        raise subprocess.TimeoutExpired(command, 45)
+
+    _stub_download_output(monkeypatch, output_path, fake_run)
+
+    payload = DwsClient(dws_bin="dws").get_resource_download_url(
+        "cid-1", "msg-1", "@img-token-1", "mediaId"
+    )
+
+    assert payload == {"localPath": str(output_path)}
+
+
+def test_get_resource_download_url_timeout_without_file_raises_and_leaves_nothing(
+    tmp_path, monkeypatch
+):
+    output_path = tmp_path / "message-image"
+
+    def fake_run(command, **kwargs):
+        del kwargs
+        raise subprocess.TimeoutExpired(command, 45)
+
+    _stub_download_output(monkeypatch, output_path, fake_run)
+
+    with pytest.raises(subprocess.TimeoutExpired):
+        DwsClient(dws_bin="dws").get_resource_download_url(
+            "cid-1", "msg-1", "@img-token-1", "mediaId"
+        )
+    assert not output_path.exists()
+
+
 def test_download_robot_message_file_command_uses_official_download_api(monkeypatch):
     monkeypatch.setenv("CEO_DING_ROBOT_CODE", "ding-robot-1")
     client = DwsClient(dws_bin="dws")
