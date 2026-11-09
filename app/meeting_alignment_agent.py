@@ -27,6 +27,7 @@ from app.meeting_alignment_models import (
     MeetingSource,
     meeting_alignment_rule_for_message,
     meeting_business_direct_recipient,
+    meeting_source_direct_recipient,
     render_meeting_alignment_cross_field_rules,
 )
 from app.prompt import work_profile_instruction
@@ -56,6 +57,22 @@ MEETING_BUSINESS_GROUP_SCOPE = (
     "an incomplete attendee roster is recorded as a gap and exact attendee/group "
     "equality is not required. Group size, overlap and discovery rank cannot replace "
     "the actual work relationship. "
+)
+MEETING_SENSITIVE_PRIVATE_SCOPE = (
+    "Ordinary meeting information goes to the appropriate business group; sensitive information "
+    "goes in a separate sensitive_private_message, even for an HR group or matching attendees. "
+    "Do not omit sensitive conclusions or actions and call the ordinary summary complete. "
+    "Select a source-identified individual for the specific sensitive content and record concrete "
+    "recipient_evidence: participation in that sensitive discussion, responsibility for its "
+    "decision, or the related follow-up can establish the disclosure purpose. A title alone "
+    "does not establish that purpose. The principal may be the explicitly selected sensitive recipient "
+    "when this evidence supports them; do not select them automatically or search by name. "
+    "If sensitive conclusions or actions are present but the private summary or its recipient "
+    "evidence is missing, return the candidate for a separate private summary and recipient evidence. "
+    "When only sensitive content exists, action=send, target=null, final_message empty, mention_names=[]; "
+    "send only sensitive_private_message, without a group placeholder or skip_no_content. "
+    "An unresolved recipient is an unresolved delivery, never approval of omission; use the existing "
+    "feedback and revision flow without guessing a recipient. "
 )
 MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT = 200
 MEETING_RUNTIME_CAPABILITIES = frozenset(
@@ -240,7 +257,7 @@ class MeetingAlignmentAgent:
             "完整接收对象、披露权限、内容与受众是否匹配，以及敏感信息是否被不当披露。"
             "若会议原文明确把后续工作分配给精确收件人，该分配本身是分享完成该任务所需信息的依据；"
             "候选仅限简要转达该工作和必要会议结论时，不要求另有逐字‘请发送给他’的指示。"
-            "不能据此扩大到无关或敏感内容，职位本身也不构成授权。"
+            "不能据此扩大到与该工作无关的内容；敏感内容须另按本次会议敏感私聊规则核验，职位本身也不构成授权。"
             "不执行工具、不联系任何人、不改写候选。只有候选内容和精确收件目标均有证据支持"
             "且适合发送时才能 approve；证据不足或存在实质问题时必须 return 或 reject。"
             "outcome=return 时，feedback 必须包含"
@@ -255,17 +272,14 @@ class MeetingAlignmentAgent:
             + "会议总结中的人员敏感内容必须始终从业务群正文和标题中拆出；即使目标群是 HR 群或参会人匹配度高，也不得把敏感详情放入群消息。普通业务群选群根据群讨论和参会人成员匹配，不逐一核实成员对普通业务内容的披露授权。\n"
             + "Meeting summaries always separate personnel-sensitive content from the business group message. "
             + "Never include sensitive details or indirect hints in the group body or title, even when the group is HR-only or attendee matching is high. "
-            + "Prefer the business group selected from relevant group discussion and attendee-member matching for the sanitized ordinary summary. If complete discovery finds no suitable group, send it by direct message to one source-identified meeting attendee; when there is only one attendee other than the principal, use that attendee, otherwise prefer the attendee most relevant to the discussion. Bind the target to that attendee's stable source user_id and never choose the principal. Do not require an explicit owner assignment for the recipient. Do not review each group member's individual disclosure authorization for ordinary business content. "
+            + "Prefer the business group selected from relevant group discussion and attendee-member matching for the sanitized ordinary summary. If complete discovery finds no suitable group, send it by direct message to one source-identified meeting attendee; when there is only one attendee other than the principal, use that attendee, otherwise prefer the attendee most relevant to the discussion. The ordinary direct target may be any source-identified attendee other than the principal. Bind the target to that attendee's stable source user_id and never choose the principal. do not require an explicit owner assignment for the recipient. Do not review each group member's individual disclosure authorization for ordinary business content. "
             + MEETING_BUSINESS_GROUP_SCOPE
             + "The group's recent topics need not repeat this meeting's topic (a project group that discussed annotation statistics fits a meeting about acceptance sampling for the same project). "
             + "If you return the target, name the better candidate from the supplied candidates and say why; do not return only to say the proof is missing. "
-            + "Put sensitive details only in sensitive_private_message, addressed to an explicitly matched person whose current responsibility and authorization for that exact content are evidenced. "
-            + "If no such person is established, omit the sensitive details and record the unresolved gap in audit_summary; do not merge them into the group message or use the principal as fallback. "
-            + "For an ordinary business summary with no suitable group after complete discovery, a direct target may be any source-identified attendee other than the principal; prefer the attendee most relevant to the discussion, but do not require an explicit owner assignment. Verify the stable attendee user_id. "
-            + "When sensitive details appear in the meeting source but the private message is missing, approve only when the gap is explicitly recorded and those details are absent from the group title and body."
+            + MEETING_SENSITIVE_PRIVATE_SCOPE
             + "\n\n"
             "候选 action 为 skip_interview 或 skip_no_content 时，候选是“不发送”的决定：只在会议来源确实支持该原因"
-            "（确为面试；去掉敏感内容后确实没有可共享的实质信息）时 approve；若会议有可共享的业务结论或行动，return 并要求发送。\n\n"
+            "（确为面试；确实没有普通或敏感的实质信息）时 approve；若会议有普通或敏感结论或行动，return 并要求按相应渠道发送。\n\n"
             "## Read-only source and candidate\n"
             + json.dumps(evidence, ensure_ascii=False, separators=(",", ":"))
         )
@@ -559,18 +573,19 @@ def build_meeting_alignment_prompt(
     )
     target_contract = f"""会议默认须生成并发送一条会议总结（action=send）。只有两种例外，均不发送，Derek 另行处理或无需处理：
 - 面试（候选人面试、招聘面谈）：action=skip_interview，面试由 Derek 单独处理。
-- 没有可共享的信息量：去掉人员敏感内容后没有实质结论、事项或行动，只剩空泛概述时，action=skip_no_content，不要发一条空话。
+- 没有可共享的信息量：整场会议没有普通或敏感的实质结论、事项或行动，只剩空泛概述时，action=skip_no_content，不要发一条空话。
 不发送时 final_message 为空串、target 为 null、mention_names 为空数组、sensitive_private_message 为 null，原因写入 audit_summary。
 {MEETING_BUSINESS_GROUP_SCOPE}
 - 业务内容返回 audience_scope=business，优先选择经过核验的业务群（target.kind=group）。如果完整搜索后没有合适业务群，从来源明确的参会人中选择一人，以 target.kind=direct 发送单聊；若只有一位非当前用户参会人则发给该人，多人时优先选与讨论最相关者，不要求会议明确指派其负责决定或行动。direct_user_id 必须是来源中稳定匹配的参会人 user_id，不能是当前用户。不得因为没有合适群而返回 no_action。使用 DWS 做群发现，以实际内容、业务目的和披露范围选择群；人数和群名称不决定群受众。
 - 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
 - 对每个可能的群，核对群内讨论是否涉及同一工作线、行动承接情况，以及参会人与完整群成员的准确匹配。普通业务内容不要求逐一证明群成员的披露授权；普通业务群选群不逐一核实成员披露授权，无需为每个成员单独判断是否适合接收普通业务总结。为每个有效候选写清候选群的来源、业务承接关系、成员匹配和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群。讨论摘录没有时间戳、群是否可发送（服务在投递时核验）都不是选群条件。
-- 在 audit_summary 写清实际内容、近期群讨论、业务承接依据和参会人成员匹配；缺少实质受众证据时明确记录缺口，不猜测接收人。普通业务单聊和敏感私聊都只能显式选择来源中稳定 user_id 唯一匹配的参会人，且不得是 current_user_id 或其已核验别名。不得按姓名模糊搜索目标，也不得从发言人推断组织者；群不可发送时按参会人规则重新选择，不私发给组织者兜底。
+- 在 audit_summary 写清实际内容、近期群讨论、业务承接依据和参会人成员匹配；缺少实质受众证据时明确记录缺口，不猜测接收人。普通业务单聊和敏感私聊都只能显式选择来源中稳定 user_id 唯一匹配的参会人；普通业务单聊不得选择 current_user_id 或其已核验别名，敏感私聊按下述独立规则选择。不得按姓名模糊搜索目标，也不得从发言人推断组织者；群不可发送时按参会人规则重新选择，不私发给组织者兜底。
 - prior_sent_count 只表示同名会议的历史投递次数，不证明本次业务承接或人员匹配，不得仅凭历史投递选群。
 - topic_discussion_evidence 是群内近期消息与本次会议摘要的词项交集线索，必须阅读其具体内容和业务负责人，再判断是否承接本次议题。人员匹配只看 member_precision=匹配参会人数/完整群成员数（3/N），不得使用参会人召回率（3/3）；参考参会名单不完整时保留缺口。准确率不证明业务归属；群成员多不代表更合适。优先选择讨论过同一工作线、负责本次行动且参会人匹配度较高的群。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
-- 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示，并放入独立 sensitive_private_message；即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息。敏感信息按具体内容发给职责和披露授权均有实时证据的个人；没有合适且已授权的个人时不发送该部分并记录未解决缺口，缺少披露授权不能用私聊兜底。HR 职务不是自动披露授权，私信不天然安全。
-- sensitive_private_message.target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，禁止 current_user_id 及其已核验别名。recipient_evidence 必须记录实时身份、当前职务职责及实际内容的披露授权。接收人无法核验时记录缺口，不得按姓名猜测，不得私聊本人兜底。
+- 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示，并放入独立 sensitive_private_message；即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息。
+- sensitive_private_message.target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，recipient_evidence 写明具体敏感内容与收件人的参与、决定或后续工作关系。
+{MEETING_SENSITIVE_PRIVATE_SCOPE}
 - 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
 - 没有实质观点分歧但有可共享的结论、已确认事项或下一步时，仍须发送简短总结；不得因议题平稳而跳过。"""
 
@@ -641,8 +656,8 @@ def build_meeting_alignment_prompt(
 
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
-- action=send 时，final_message、trigger_reasons、audience_scope 和明确 target 必须完整，并遵守内容优先于参会人数的目标合同；skip_interview / skip_no_content 见目标合同。
-- 没有人员敏感内容时 sensitive_private_message 必须为 null；只要存在人员敏感内容，就必须生成已脱敏的 final_message 和独立 sensitive_private_message，不因业务群成员与敏感内容相关而合并。缺少披露授权时不得用私聊兜底。
+- action=send 时 trigger_reasons、audience_scope 必须完整，遵守内容优先于参会人数的目标合同。有普通内容时 final_message 与明确 target 必须完整；仅敏感内容时 target=null、final_message 为空、mention_names=[]，仅 sensitive_private_message 承载私聊目标和正文。skip_interview / skip_no_content 见目标合同。
+- 没有人员敏感内容时 sensitive_private_message 必须为 null；只要存在人员敏感内容，就必须生成独立 sensitive_private_message；同时有普通信息才生成已脱敏的 final_message，不因业务群成员与敏感内容相关而合并。缺少敏感私聊或收件人依据时继续反馈修订，不能省略后通过。
 
 {render_meeting_alignment_cross_field_rules()}
 
@@ -869,10 +884,10 @@ def _validate_source_aware_target(
     if decision.action != "send":
         return
     target = decision.target
-    if target is None:
+    if target is None and decision.sensitive_private_message is None:
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")
     if decision.audience_scope == "business":
-        if target.kind == "direct":
+        if target is not None and target.kind == "direct":
             if not decision.audit_summary.strip():
                 raise MeetingAlignmentTargetError(
                     "business direct target requires a recipient rationale"
@@ -883,12 +898,12 @@ def _validate_source_aware_target(
                 )
             except ValueError as exc:
                 raise MeetingAlignmentTargetError(str(exc)) from exc
-        elif target.kind != "group":
+        elif target is not None and target.kind != "group":
             raise MeetingAlignmentTargetError("business summary requires a verified audience")
         private_message = decision.sensitive_private_message
         if private_message is not None:
             try:
-                meeting_business_direct_recipient(
+                meeting_source_direct_recipient(
                     source, private_message.target, participant_only=True
                 )
             except ValueError as exc:

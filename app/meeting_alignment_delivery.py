@@ -16,6 +16,7 @@ from app.meeting_alignment_models import (
     MeetingSource,
     SensitivePrivateMessage,
     meeting_business_direct_recipient,
+    meeting_source_direct_recipient,
 )
 from app.service_message_sender import ServiceMessageSender
 
@@ -148,12 +149,12 @@ def deliver_meeting_alignment(
     direct_user_id = ""
     direct_open_dingtalk_id = ""
     target_title = source.title
-    if target is None:
+    if target is None and decision.sensitive_private_message is None:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
     private_message = decision.sensitive_private_message
     if private_message is not None:
         try:
-            meeting_business_direct_recipient(
+            meeting_source_direct_recipient(
                 source, private_message.target, participant_only=True
             )
         except ValueError as exc:
@@ -162,7 +163,7 @@ def deliver_meeting_alignment(
             not evidence.strip() for evidence in private_message.recipient_evidence
         ):
             raise MeetingDeliveryError("sensitive private target requires recipient evidence")
-    if decision.audience_scope == "business":
+    if decision.audience_scope == "business" and target is not None:
         if target.kind not in {"group", "direct"}:
             raise MeetingDeliveryError(
                 "business delivery requires an explicit verified audience"
@@ -178,7 +179,7 @@ def deliver_meeting_alignment(
                 )
             except ValueError as exc:
                 raise MeetingDeliveryError(str(exc)) from exc
-    else:
+    elif decision.audience_scope != "business":
         if target.kind != "direct":
             raise MeetingDeliveryError("personal delivery requires a direct target")
         if (
@@ -191,6 +192,29 @@ def deliver_meeting_alignment(
                 "two-person roster"
             )
 
+    if target is None:
+        if not delivery_key.strip():
+            raise ValueError("meeting delivery key is required")
+        sensitive_body = meeting_followup_message(decision, source, final_message=private_message.message)
+        try:
+            prepared = message_sender.prepare_meeting_alignment(
+                delivery_key=f"{delivery_key}:sensitive", body=sensitive_body,
+                original_text=source.summary, target_kind="user",
+                target_id=private_message.target.direct_user_id,
+            )
+        except ValueError as exc:
+            raise MeetingDeliveryError(str(exc)) from exc
+        if not _prepared_content_matches(prepared, sensitive_body):
+            raise MeetingDeliveryError("prepared sensitive body does not match the original content")
+        private_delivery = _deliver_sensitive_private_message(
+            private_message, decision, source, message_sender=message_sender, prepared=prepared,
+        )
+        return MeetingDeliveryResult(
+            target_kind="direct", target_id=private_delivery.target_id,
+            target_title=private_delivery.target_title, resolved_mentions=[],
+            unresolved_mention_names=[], send_result=private_delivery.send_result,
+            message_text=private_delivery.message_text, sensitive_private_delivery=private_delivery,
+        )
     if target.kind == "group":
         if (
             not target.candidates
@@ -427,7 +451,7 @@ def _deliver_sensitive_private_message(
         return None
     target = private_message.target
     try:
-        recipient = meeting_business_direct_recipient(
+        recipient = meeting_source_direct_recipient(
             source, target, participant_only=True
         )
     except ValueError as exc:

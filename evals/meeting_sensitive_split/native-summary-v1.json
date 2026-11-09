@@ -1,0 +1,178 @@
+{
+  "manifest_sha256": "d136b1f0eb4b4b0ef31cb02c81710e2e76bc3c4bf5adaa9becacc8be45ba0abd",
+  "harness_sha256": "5341587003ab1f35630e8e3ecd7f71053ededda70dc1f36ce2c126498e8d70ad",
+  "settings": {
+    "model": "sonnet",
+    "reasoning_effort": "high",
+    "timeout_seconds_per_call": 180,
+    "runtime": "claude_cli"
+  },
+  "external_effects": "none; synthetic facts; tools and MCP disabled",
+  "local_raw_sha256": "f1a09c7d602c9462dd0c48a07d70212bfd3b97dddbd21892a030f9656aa7fe47",
+  "baseline": {
+    "ref": "8834a9ffefd1b09c0d206c63bd6dc71114fccc72",
+    "passed": 3,
+    "total": 8,
+    "cases": [
+      {
+        "id": "mixed_principal",
+        "planner": {
+          "contract_ok": true,
+          "passed": false,
+          "prompt_sha256": "9d8143926d648c42274c8f083e6ce5cdd45e96d56e1227f5ecf870d350700489",
+          "native_ok": true,
+          "action": "send",
+          "group": "atlas",
+          "private_user": null
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": false,
+          "prompt_sha256": "f59dc757dcc595ccadac5901fcd9fbdcb27d879cab3e68391892362fc4b7df04",
+          "native_ok": true,
+          "outcome": "return"
+        }
+      },
+      {
+        "id": "omitted_private_with_gap",
+        "planner": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "f9d2dce95ac2d9e533dd3fe821322c39e8f7ab6eb4627baeabf3662d668bf731",
+          "native_ok": true,
+          "action": "send",
+          "group": "atlas",
+          "private_user": "manager"
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": false,
+          "prompt_sha256": "7834dec0bf2023ad14025f56187a1f9505407eb43bd6b9fcce3d6bd42c9c9e7c",
+          "native_ok": true,
+          "outcome": "approve"
+        }
+      },
+      {
+        "id": "sensitive_only",
+        "planner": {
+          "contract_ok": true,
+          "passed": false,
+          "prompt_sha256": "c3247633396069c5f7647bd214f93de6cef5bddf3a54ad78f99ac16bc72e408a",
+          "native_ok": true,
+          "action": "skip_no_content",
+          "group": null,
+          "private_user": null
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": false,
+          "prompt_sha256": "b042ee2f21a9df8b23b9e96cd068409dee4cfb5fb743df9db1b15ec77192a38b",
+          "native_ok": true,
+          "outcome": "approve"
+        }
+      },
+      {
+        "id": "ordinary_control",
+        "planner": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "c1898feb5a9e5585d656a2198f63167408fee35feab31717cd022f06d34984d1",
+          "native_ok": true,
+          "action": "send",
+          "group": "atlas",
+          "private_user": null
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "2cf810ffc530c86ac2d199d6a88cb9994da9d4c90bb1521fbc8646655bb61878",
+          "native_ok": true,
+          "outcome": "approve"
+        }
+      }
+    ]
+  },
+  "candidate": {
+    "ref": "dd4987a12390a3fc868bffcd68ce67fe2768daab",
+    "passed": 8,
+    "total": 8,
+    "cases": [
+      {
+        "id": "mixed_principal",
+        "planner": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "2458467b1bdf4a88c4f99b46e5b76dbbfe9c299ce5f7e5a6b2e6ea85df306fe3",
+          "native_ok": true,
+          "action": "send",
+          "group": "atlas",
+          "private_user": "principal"
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "08138cdabe57edd65eb5d2ed439bae9bffa9a75e880d4576a825b7a6b5b67666",
+          "native_ok": true,
+          "outcome": "approve"
+        }
+      },
+      {
+        "id": "omitted_private_with_gap",
+        "planner": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "1de80970f98ce1d8b98ec307e79d0f986a2237df879a5739d7f905e6c4aba35c",
+          "native_ok": true,
+          "action": "send",
+          "group": "atlas",
+          "private_user": "manager"
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "ad5a8a4ed0f43ba575ff5adbd065096960dc1930d0382eed41ccf8040ffc5667",
+          "native_ok": true,
+          "outcome": "return"
+        }
+      },
+      {
+        "id": "sensitive_only",
+        "planner": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "731c46f4b207910d3a6f0cac7722e9281caf2e690d48d49b4f5ad996099698a6",
+          "native_ok": true,
+          "action": "send",
+          "group": null,
+          "private_user": "principal"
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "4913bc37c4dbf0d571bd77c8fbf2a7a867e354ef3428e1f423e06e9490cf3c4e",
+          "native_ok": true,
+          "outcome": "return"
+        }
+      },
+      {
+        "id": "ordinary_control",
+        "planner": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "74a5f1bec707966f9091e98a87a5c1c88311f7438ea898ee5f7ff5c30d5a8bcc",
+          "native_ok": true,
+          "action": "send",
+          "group": "atlas",
+          "private_user": null
+        },
+        "audit": {
+          "contract_ok": true,
+          "passed": true,
+          "prompt_sha256": "bea5a35ea91d2faf3042c47feb78d4c94de0c110fc9cf6cee078d1bf4fb72b94",
+          "native_ok": true,
+          "outcome": "approve"
+        }
+      }
+    ]
+  }
+}

@@ -810,8 +810,8 @@ def test_business_summary_direct_delivery_to_meeting_attendee():
     assert dws.search_queries == []
 
 
-@pytest.mark.parametrize("private", [False, True])
-def test_delivery_rejects_principal_before_any_send(private):
+def test_delivery_rejects_principal_as_ordinary_fallback_before_any_send():
+    private = False
     payload = send_decision(mention_names=[]).model_dump()
     target = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "u-derek",
@@ -935,6 +935,11 @@ def test_delivery_identity_and_evidence_gates_run_before_any_send(private, probl
     if problem == "missing_evidence" and private:
         decision = decision.model_copy(update={"sensitive_private_message": decision.sensitive_private_message.model_copy(update={"recipient_evidence": []})})
     dws = FakeDws()
+    if private and problem == "alias":
+        result = deliver_meeting_alignment(decision, source, dws)
+        assert result.sensitive_private_delivery.target_id == 'u-a'
+        assert len(dws.sent) == 2
+        return
     with pytest.raises(MeetingDeliveryError):
         deliver_meeting_alignment(decision, source, dws)
     assert dws.sent == []
@@ -1529,3 +1534,42 @@ def test_followup_header_prints_a_utc_meeting_in_beijing_time():
     )
 
     assert "*时间：2026-09-24 08:00-08:59*" in header
+
+
+def test_group_and_sensitive_principal_private_are_both_delivered():
+    payload = send_decision(mention_names=[]).model_dump()
+    payload['final_message'] = 'Ordinary meeting conclusions.'
+    payload['sensitive_private_message'] = {
+        'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-derek',
+                   'title': 'Derek', 'candidates': []},
+        'message': 'Restricted meeting conclusions.', 'reason': 'Different audience.',
+        'recipient_evidence': ['Derek took part in this sensitive discussion and owns the decision.'],
+    }
+    dws = FakeDws()
+    result = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
+    assert result.sensitive_private_delivery.target_id == 'u-derek'
+    assert len(dws.sent) == 2
+    assert dws.sent[0]['conversation_id'] == 'cid-first'
+    assert 'Restricted meeting conclusions.' not in dws.sent[0]['text']
+    assert dws.sent[1]['user_id'] == 'u-derek'
+    assert 'Restricted meeting conclusions.' in dws.sent[1]['text']
+
+
+def test_sensitive_only_meeting_sends_one_private_message_without_group_placeholder():
+    payload = send_decision(mention_names=[]).model_dump()
+    payload.update(target=None, final_message='', sensitive_private_message={
+        'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-derek',
+                   'title': 'Derek', 'candidates': []},
+        'message': 'Restricted decision only.', 'reason': 'No ordinary business content.',
+        'recipient_evidence': ['Derek made this restricted decision.'],
+    })
+    dws = FakeDws()
+    result = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
+    assert len(dws.sent) == 1
+    assert dws.sent[0]['user_id'] == 'u-derek'
+    assert result.target_kind == 'direct'
+    assert result.sensitive_private_delivery.target_id == 'u-derek'
+    assert 'Restricted decision only.' in result.message_text
+    repeated = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
+    assert len(dws.sent) == 1
+    assert repeated.sensitive_private_delivery.send_result == result.sensitive_private_delivery.send_result
