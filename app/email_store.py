@@ -10826,7 +10826,6 @@ class EmailStore:
     ) -> dict[str, Any] | None:
         if action.action_type not in {EmailAction.FLAG_IMPORTANT, EmailAction.MARK_READ}:
             return None
-<<<<<<< Updated upstream
         current = db.execute(
             f"""
             select a.action_id, a.action_plan_id, a.action_type, a.status,
@@ -10863,45 +10862,6 @@ class EmailStore:
             """,
             (action.classification_id, action.locator.stable_message_identity),
         ).fetchall()
-=======
-        with self._connect() as db:
-            current = db.execute(
-                f"""
-                select a.action_id, a.action_plan_id, a.action_type, a.status,
-                       c.account_id, c.stable_message_identity,
-                       m.sender, m.subject, m.received_at
-                from ({DIRECT_EMAIL_ACTION_SQL}) a
-                join ({EMAIL_CLASSIFICATION_SQL}) c on c.id=a.classification_id
-                join ({EMAIL_MESSAGE_SQL}) m
-                  on m.account_id=c.account_id
-                 and m.stable_message_identity=c.stable_message_identity
-                where a.action_id=? and a.classification_id=?
-                  and a.action_plan_id=c.current_action_plan_id
-                  and a.status='processing'
-                """,
-                (action.action_id, action.classification_id),
-            ).fetchone()
-            if (
-                current is None
-                or current["action_type"] != action.action_type.value
-                or current["account_id"] != action.account_id
-                or current["stable_message_identity"]
-                != action.locator.stable_message_identity
-            ):
-                return None
-            moves = db.execute(
-                f"""
-                select action_id, provider_result_id
-                from ({DIRECT_EMAIL_ACTION_SQL})
-                where classification_id=? and action_type='move'
-                  and status='done'
-                  and provider_operation='reconciled_dws_readback'
-                  and provider_target=?
-                order by attempt_count desc
-                """,
-                (action.classification_id, action.locator.stable_message_identity),
-            ).fetchall()
->>>>>>> Stashed changes
         if len(moves) != 1:
             return None
         parameters = _json_load(moves[0]["parameters_json"], field="parameters_json", expected_type=dict)
