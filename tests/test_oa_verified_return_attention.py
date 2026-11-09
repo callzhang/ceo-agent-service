@@ -95,7 +95,7 @@ def _verified_return(store, task, context, monkeypatch):
     result = SystemExecutor(store, dws=source).execute(
         task, candidate["id"], review["id"], context=context
     )
-    assert result.error.code == "external_action_uncertain"
+    assert result.outcome == "executed", result.model_dump(mode="json")
     attempt_id = store.record_reply_attempt(
         conversation_id=task.conversation_id,
         conversation_title=task.conversation_title,

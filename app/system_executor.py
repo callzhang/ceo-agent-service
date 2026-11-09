@@ -531,6 +531,29 @@ class SystemExecutor:
             input_invalid = outcome.status == "confirmed_no_effect" and outcome.provider_result.get("pre_action_failure") is True
             if not input_invalid:
                 self.store.record_candidate_action_outcome(execution_id, self.owner, index, outcome.status, outcome.provider_result)
+            if (outcome.status == "uncertain"
+                and action.capability == "dingtalk-oa"
+                and action.operation == "revert_task"
+                and outcome.provider_result.get("reason") == "oa_return_readback_pending"):
+                attempts = self.store.list_candidate_action_attempts(execution_id)
+                attempt = next((item for item in attempts if item.get("action_index") == index), None)
+                if attempt is not None:
+                    try:
+                        readback = handler.reconcile(
+                            action, action_key=action_key,
+                            candidate={**row, "action_attempt": attempt},
+                        )
+                    except Exception:
+                        readback = None
+                    if readback is not None and readback.status == "verified":
+                        self.store.record_candidate_external_action(
+                            execution_id, self.owner, index, action_key,
+                            action.operation, action.target, readback.provider_result,
+                        )
+                        self._project_completed_message(action, action_key, row, current_task)
+                        completed.append(action.action_identity)
+                        receipt_refs.append({"action_identity": action.action_identity, "external_action_key": action_key})
+                        continue
             if outcome.status == "confirmed_no_effect" and outcome.provider_result.get("pre_action_failure") is True:
                 code, status = "external_action_input_invalid", "failed"
             elif outcome.status == "confirmed_no_effect":

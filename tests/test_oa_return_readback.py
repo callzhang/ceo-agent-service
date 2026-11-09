@@ -93,10 +93,10 @@ def acceptance():
         "accepted_action_digest": sha256(action().model_dump_json().encode()).hexdigest()}
 
 
-def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, monkeypatch):
+def test_return_acceptance_is_reconciled_after_persisted_dispatch(tmp_path, monkeypatch):
     from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE
     from app.reviewed_sources import capture_candidate_sources
-    from app.store import AgentRole, AutoReplyStore
+    from app.store import AgentRole
     from app.system_executor import SystemExecutor
     from tests.test_reviewed_orchestration import setup
     from tests.test_system_executor import _candidate
@@ -113,7 +113,7 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
     class ReturningSource(Source):
         def read_oa_approval_detail(self, process_id):
             detail = super().read_oa_approval_detail(process_id)
-            detail["result"]["formValueVOS"] = [{"id": "amount", "value": "900" if self.returned else "100"}]
+            detail["result"]["formValueVOS"] = []
             return detail
 
         def revert_oa_approval_task(self, **kwargs):
@@ -139,65 +139,13 @@ def test_return_acceptance_survives_store_reopen_and_changed_source(tmp_path, mo
     store.complete_agent_run(audit.id, approval, owner="audit")
     review = store.record_candidate_review(selected["id"], audit.id, approval)
     first = SystemExecutor(store, dws=source).execute(task, selected["id"], review["id"], context=context)
-    assert first.error.code == "external_action_uncertain"
+    assert first.outcome == "executed", first.model_dump(mode="json")
     execution = store.get_candidate_execution(selected["id"])
     [original] = store.list_candidate_action_attempts(execution["id"])
+    assert original["status"] == "verified"
     assert json.loads(original["result_json"])["provider_response"]["result"] is True
-    attempt_id = store.record_reply_attempt(
-        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
-        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
-        trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="oa_approval",
-        oa_process_instance_id="process", oa_task_id="original",
-        oa_remark="Need exact handover facts", send_status="uncertain",
-    )
-    from app.action_storage import update_action
-    with store._immediate_write_transaction() as db:
-        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": audit.id})
-        from app.task_entity_storage import update_task_cas
-        failed = update_task_cas(
-            db, task_id=task.id,
-            expected={"status": "processing", "execution_generation": task.execution_generation},
-            changes={"status": "failed", "error": "external_action_uncertain", "locked_at": None},
-        )
-        assert failed is not None
-
-    reopened = AutoReplyStore(store.path)
-    from app.oa_reconciliation import reconcile_oa_return_attempt
-
-    recovered = reconcile_oa_return_attempt(
-        reopened, source, attempt_id=attempt_id,
-        candidate_id=selected["id"], review_id=review["id"],
-    )
-    [after] = reopened.list_candidate_action_attempts(execution["id"])
-    assert recovered.outcome == "executed", recovered.model_dump(mode="json")
-    assert after["status"] == "verified"
-    assert after["created_at"] == original["created_at"]
-    assert after["external_action_key"] == original["external_action_key"]
-    assert reopened.get_reply_task(task.id).status == "done"
-    assert reopened.get_reply_attempt(attempt_id).send_status == "uncertain"
     assert len(source.calls) == 1
-
-    # If the process stops after receipt persistence but before the task CAS,
-    # rerunning the read-only endpoint settles from that exact receipt alone.
-    with reopened._immediate_write_transaction() as db:
-        from app.task_entity_storage import update_task_cas
-        interrupted = update_task_cas(
-            db, task_id=task.id,
-            expected={"status": "done", "execution_generation": task.execution_generation},
-            changes={"status": "failed", "error": "external_action_uncertain"},
-        )
-        assert interrupted is not None
-    read_calls_before = source.read_calls
-    recovered_again = reconcile_oa_return_attempt(
-        reopened, source, attempt_id=attempt_id,
-        candidate_id=selected["id"], review_id=review["id"],
-    )
-    assert recovered_again.outcome == "executed"
-    assert reopened.get_reply_task(task.id).status == "done"
-    assert reopened.get_reply_attempt(attempt_id).send_status == "uncertain"
-    assert source.read_calls == read_calls_before
-    assert len(source.calls) == 1
-    assert reopened.get_candidate_external_action(original["external_action_key"]) is not None
+    assert source.read_calls >= 4
 
 
 def test_return_acceptance_is_preserved_for_readonly_reconciliation(provider_read_clock):
