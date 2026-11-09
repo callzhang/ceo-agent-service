@@ -1,6 +1,5 @@
 """Re-creating an existing direct Email Action is idempotent; only its identity may conflict."""
 
-import pytest
 
 from app import shared_action_lifecycle
 from app.email_classifier_contracts import EmailClassificationStatus
