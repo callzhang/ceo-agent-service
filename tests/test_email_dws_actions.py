@@ -4,14 +4,20 @@ from app.email_store import StoredEmailAction, StoredEmailLocator
 from app import email_worker
 from hashlib import sha256
 import json
+<<<<<<< Updated upstream
 import pytest
+=======
+>>>>>>> Stashed changes
 
 
 CONTEXT = {
     "move_action_id": "111699",
     "message_id": "DzzzzzzNJ0u",
     "folder_id": 167,
+<<<<<<< Updated upstream
     "target_folder": "法务",
+=======
+>>>>>>> Stashed changes
     "receipt_digest": "",
     "account_id": "dingtalk_primary",
     "stable_message_identity": "dingtalk_primary:message-id:<junhe@example.com>",

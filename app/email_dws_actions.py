@@ -176,6 +176,25 @@ class DwsVerifiedMoveActionExecutor:
             ).encode("utf-8")
         ).hexdigest()
         return proof == self.context["receipt_digest"]
+<<<<<<< Updated upstream
+=======
+
+    def _important_tag_id(self) -> str:
+        result = self.dws.run_json([
+            self.dws.dws_bin, "mail", "tag", "list",
+            "--email", self.mailbox, "--format", "json",
+        ])
+        tags = result.get("tags", result.get("items", [])) if isinstance(result, dict) else result
+        if not isinstance(tags, list):
+            raise ValueError("DWS tag list is incomplete")
+        matches = [
+            str(tag.get("id")) for tag in tags
+            if isinstance(tag, dict) and tag.get("name") == "重要" and str(tag.get("id") or "").isdigit()
+        ]
+        if len(matches) != 1:
+            raise ValueError("DWS important tag is missing or ambiguous")
+        return matches[0]
+>>>>>>> Stashed changes
 
     @staticmethod
     def _require_success(result: Any) -> None:
