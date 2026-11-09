@@ -495,3 +495,76 @@ def test_oa_first_page_preserves_real_download_error(kind, monkeypatch):
             "process_instance_id": "process-denied", "file_id": "file-denied",
             "file_name": "receipts.pdf", "page_number": 1,
         }, convert_result=True))
+
+
+def test_both_roles_read_embedded_document_image_by_resource_id(
+    monkeypatch, tmp_path,
+):
+    download_url = "https://alidocs2.oss-cn-zhangjiakou.aliyuncs.com/res/a/img/x.jpeg?Expires=1"
+
+    class FakeDws:
+        def document_media_download_url(self, node_id, resource_id):
+            assert (node_id, resource_id) == ("doc-node", "resource-1")
+            return download_url
+
+    class Response:
+        status = 200
+        headers = {"Content-Type": "image/jpeg", "Content-Length": "8"}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_args):
+            return None
+
+        def read(self, _size):
+            return b"jpegdata"
+
+        def geturl(self):
+            return download_url
+
+    class Opener:
+        def open(self, request, timeout):
+            assert request.full_url == download_url
+            assert timeout == 15
+            return Response()
+
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: FakeDws())
+    monkeypatch.setattr(agent_cli, "build_opener", lambda *_handlers: Opener())
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    monkeypatch.setattr(agent_cli.tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(agent_cli, "read_text_file", lambda path: {
+        "format": "image", "ocr_required": True,
+        "ocr_input_base64": "fixture-image", "ocr_mime_type": "image/jpeg",
+        "path": path,
+    })
+
+    for role in ("consumer", "audit"):
+        tool = agent_cli.build_role_server(role)._tool_manager.get_tool(
+            "read_dingtalk_document_image"
+        )
+        response = asyncio.run(tool.run({
+            "node_id": "doc-node", "resource_id": "resource-1",
+        }, convert_result=True))
+        payload = json.loads(response[0][0].text)
+        assert payload["node_id"] == "doc-node"
+        assert payload["resource_id"] == "resource-1"
+        assert payload["ocr_required"] is True
+        assert payload["sha256"] == hashlib.sha256(b"jpegdata").hexdigest()
+
+
+def test_document_image_rejects_download_url_outside_document_storage(
+    monkeypatch,
+):
+    class FakeDws:
+        def document_media_download_url(self, node_id, resource_id):
+            return "https://attacker.example/x.jpeg"
+
+    monkeypatch.setattr("app.dws_client.DwsClient", lambda: FakeDws())
+    tool = agent_cli.build_role_server("audit")._tool_manager.get_tool(
+        "read_dingtalk_document_image"
+    )
+    with pytest.raises(ToolError, match="document_image_url_invalid"):
+        asyncio.run(tool.run({
+            "node_id": "doc-node", "resource_id": "resource-1",
+        }, convert_result=True))

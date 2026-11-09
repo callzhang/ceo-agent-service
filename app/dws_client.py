@@ -3117,6 +3117,19 @@ class DwsClient:
                     raise DwsError("drive download exceeds byte limit")
                 return content
 
+    def document_media_download_url(self, node_id: str, resource_id: str) -> str:
+        """Resolve a temporary download URL for one image or attachment in an online document."""
+        if not node_id.strip() or not resource_id.strip():
+            raise ValueError("document media identity is required")
+        payload = self.run_json([
+            self.dws_bin, "doc", "media", "download",
+            "--node", node_id, "--resource-id", resource_id, "--format", "json",
+        ])
+        url = payload.get("downloadUrl") if isinstance(payload, dict) else None
+        if not isinstance(url, str) or not url:
+            raise DwsError("document media download URL missing")
+        return url
+
     def list_minutes(
         self,
         *,

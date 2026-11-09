@@ -1016,6 +1016,83 @@ def _download_dingtalk_oa_comment_image(
         raise
 
 
+def _download_dingtalk_document_image(
+    *,
+    node_id: str,
+    resource_id: str,
+    download_url: str,
+    material_root: Path,
+) -> dict[str, object]:
+    """Read one image embedded in an online DingTalk document into bounded OCR input."""
+    try:
+        parsed = urlsplit(download_url)
+        port = parsed.port
+    except ValueError as exc:
+        raise AgentReadOnlyViolationError("document_image_url_invalid") from exc
+    if (
+        parsed.scheme != "https"
+        or not (parsed.hostname or "").endswith(".aliyuncs.com")
+        or parsed.username is not None
+        or parsed.password is not None
+        or port not in (None, 443)
+    ):
+        raise AgentReadOnlyViolationError("document_image_url_invalid")
+
+    class RejectRedirects(HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            return None
+
+    material_root.mkdir(parents=True, exist_ok=True)
+    request = Request(download_url, headers={"User-Agent": "ceo-agent-service"})
+    try:
+        with build_opener(RejectRedirects()).open(request, timeout=15) as response:
+            if response.status != 200:
+                raise AgentReadOnlyViolationError(f"document_image_http_{response.status}")
+            content_type = response.headers.get("Content-Type", "").split(";", 1)[0].lower()
+            if not content_type.startswith("image/"):
+                raise AgentReadOnlyViolationError("document_image_content_type_invalid")
+            declared_size = response.headers.get("Content-Length")
+            if declared_size:
+                try:
+                    declared_bytes = int(declared_size)
+                except ValueError as exc:
+                    raise AgentReadOnlyViolationError(
+                        "document_image_content_length_invalid"
+                    ) from exc
+                if declared_bytes > MAX_OA_COMMENT_IMAGE_BYTES:
+                    raise AgentReadOnlyViolationError("document_image_file_too_large")
+            contents = response.read(MAX_OA_COMMENT_IMAGE_BYTES + 1)
+    except HTTPError as exc:
+        raise AgentReadOnlyViolationError(f"document_image_http_{exc.code}") from exc
+    except OSError as exc:
+        raise AgentReadOnlyViolationError("document_image_download_failed") from exc
+    if len(contents) > MAX_OA_COMMENT_IMAGE_BYTES:
+        raise AgentReadOnlyViolationError("document_image_file_too_large")
+
+    suffix = mimetypes.guess_extension(content_type) or ".img"
+    digest = hashlib.sha256(contents).hexdigest()
+    with tempfile.NamedTemporaryFile(
+        mode="wb", prefix=digest[:12] + "-", suffix=suffix,
+        dir=material_root, delete=False,
+    ) as material_file:
+        material_file.write(contents)
+        material_path = Path(material_file.name)
+    try:
+        result = {
+            "node_id": node_id,
+            "resource_id": resource_id,
+            "file_name": material_path.name,
+            **read_text_file(str(material_path)),
+            "sha256": digest,
+        }
+        if len(to_json(result, indent=2)) > MAX_MCP_MATERIAL_RESPONSE_BYTES:
+            raise AgentReadOnlyViolationError("document_image_response_too_large")
+        return result
+    except BaseException:
+        material_path.unlink()
+        raise
+
+
 def _read_xlsx_workbook(
     workbook: zipfile.ZipFile,
     *,
@@ -2408,6 +2485,34 @@ def build_role_server(
     bound.add_tool(
         read_dingtalk_oa_form_image,
         name="read_dingtalk_oa_form_image",
+        annotations=read,
+    )
+
+    def read_dingtalk_document_image(node_id: str, resource_id: str) -> dict[str, object]:
+        """Read an image embedded in an online DingTalk document.
+
+        Use when read_dingtalk_document or read_dingtalk_document_full shows an
+        image block whose body was not returned. node_id is the document node
+        and resource_id is the image resource ID from the document content or
+        its media list. Do not pass that ID to the Drive tools: it is not a
+        Drive node. Returns bounded OCR input for ai_services.ocr_document.
+        """
+        nonlocal drive_material_directory
+        from app.dws_client import DwsClient
+        if not node_id.strip() or not resource_id.strip():
+            raise AgentReadOnlyViolationError("document_image_identity_required")
+        download_url = DwsClient().document_media_download_url(node_id, resource_id)
+        if drive_material_directory is None:
+            drive_material_directory = tempfile.TemporaryDirectory(prefix="oa-review-")
+            atexit.register(drive_material_directory.cleanup)
+        return _download_dingtalk_document_image(
+            node_id=node_id, resource_id=resource_id, download_url=download_url,
+            material_root=Path(drive_material_directory.name),
+        )
+
+    bound.add_tool(
+        read_dingtalk_document_image,
+        name="read_dingtalk_document_image",
         annotations=read,
     )
 

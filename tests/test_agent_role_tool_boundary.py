@@ -405,7 +405,7 @@ def test_agent_cli_role_catalogue_excludes_controlled_effects() -> None:
         "read_dingtalk_oa_records", "read_dingtalk_oa_tasks",
         "read_dingtalk_oa_comment_attachment",
         "read_dingtalk_oa_comment_image",
-        "read_dingtalk_oa_form_image",
+        "read_dingtalk_oa_form_image", "read_dingtalk_document_image",
         "read_dingtalk_oa_revert_activities", "search_dingtalk_documents",
         "read_dingtalk_document_info", "read_dingtalk_document_permissions",
         "read_dingtalk_drive_info", "read_dingtalk_drive_file",
