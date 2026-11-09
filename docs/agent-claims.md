@@ -52,7 +52,6 @@ reverts committed work they did not author.
    anything conflicts. Every other use of stash stays forbidden.
 
 ## Current claims
-| codex-mina-meeting-audience-20261109 | isolated /tmp/ceo-mina-meeting-20261109: app/meeting_alignment_agent.py; scripts/eval_meeting_group_scope.py; evals/meeting_group_scope; scoped meeting tests; docs/architecture.md; docs/runtime-mechanism.md; docs/archive/records/mina-meeting-audience-20261109.md | Derek requested investigate Mina meeting distribution feedback, retain business groups and correct whole-summary business ownership (Derek selected this scope), validate and deploy, then reply Mina. No historical resend, exact-roster rule, sensitive-DM change or unrelated policy changes. | 2026-11-09 active |
 
 
 

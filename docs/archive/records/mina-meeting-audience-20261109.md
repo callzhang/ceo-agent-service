@@ -1,7 +1,7 @@
 # Mina meeting distribution investigation — 2026-11-09
 
 Status: Derek selected retaining business-group distribution and correcting wrong-group
-ownership judgment. Focused tests pass; paired native evaluation and release pending.
+ownership judgment. Focused tests and paired native evaluation complete; release pending.
 No historical meeting delivery has been replayed.
 
 ## Expected and observed
@@ -67,3 +67,32 @@ compare_group_purpose` failed before the change (1 failed, 108 deselected).
 Focused verification: meeting agent/models/delivery/audience evaluation tests
 passed (263 passed in 4.51s). Native frozen comparison is recorded separately
 under `evals/meeting_group_scope/`. No post-release natural outcome is claimed.
+
+## Fixed comparison and limitations
+
+`evals/meeting_group_scope/v1.json` freezes six synthetic cases and independent
+meeting titles. Baseline and candidate use native Claude `sonnet`, high effort,
+tools disabled and the actual Meeting native output schemas. Both achieved
+12/12 target/outcome/schema checks. Manual review of all outputs found all
+substantive source conclusions preserved, and both Audit returns named the
+better department group with actionable revisions. This sample does not
+demonstrate superiority; it verifies no selection regression on these cases.
+Both versions sometimes make unsupported statements about absent owners,
+deadlines or disagreements from a sparse synthetic summary; this is a recorded
+content limitation, not repaired or counted as an improvement here.
+
+An early harness run was interrupted for a validator/title defect and is not
+acceptance evidence. A second complete-calendar frozen rationale was corrected;
+only the two affected native Audit invocations were rerun. Twenty-two unchanged
+invocations were reused only by identical prompt SHA-256 and model settings.
+The corrected canonical artifact records both prompt and harness hashes.
+The optional complete real-source model replay was rejected by automatic
+approval review for sensitive-data egress and was not executed. The diagnosis
+uses the already recorded original planner/Audit trajectories, not a new replay.
+
+Verification also passed: 249 workflow/source/documentation tests; 114 agent and
+audience tests after the evaluator regression; 113 deployment-drain/delivery/
+audience tests. Ruff and diff checks pass. GitHub full-suite failures in
+`test_action_receipt_callers` and `test_rule_question_retirement` reproduce
+locally in files and owning implementation unchanged from baseline; unrelated
+frontend CSS tests also fail. No gate or assertions are relaxed for this PR.
