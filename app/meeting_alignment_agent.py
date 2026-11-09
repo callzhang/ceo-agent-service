@@ -44,6 +44,19 @@ MEETING_ALIGNMENT_AUDIT_SCHEMA_PATH = (
     / "schemas"
     / "meeting_alignment_audit.schema.json"
 )
+MEETING_BUSINESS_GROUP_SCOPE = (
+    "Select a business group whose actual purpose and concrete work encompass the "
+    "whole ordinary summary. A shared department, role or topic alone does not "
+    "establish that relationship: a specialist group need not own the department's "
+    "other work. Compare the supplied candidates' actual discussion, action owners "
+    "and full rosters, including any previously selected group; its prior rationale "
+    "is a claim to recheck, not established ownership. Do not drop supported meeting "
+    "conclusions to fit a narrower group when another candidate owns the whole work. "
+    "A group for the same project or customer may cover different discussion topics; "
+    "an incomplete attendee roster is recorded as a gap and exact attendee/group "
+    "equality is not required. Group size, overlap and discovery rank cannot replace "
+    "the actual work relationship."
+)
 MEETING_ALIGNMENT_AUDIT_EVENT_LIMIT = 200
 MEETING_RUNTIME_CAPABILITIES = frozenset(
     {
@@ -243,7 +256,7 @@ class MeetingAlignmentAgent:
             + "Meeting summaries always separate personnel-sensitive content from the business group message. "
             + "Never include sensitive details or indirect hints in the group body or title, even when the group is HR-only or attendee matching is high. "
             + "Prefer the business group selected from relevant group discussion and attendee-member matching for the sanitized ordinary summary. If complete discovery finds no suitable group, send it by direct message to one source-identified meeting attendee; when there is only one attendee other than the principal, use that attendee, otherwise prefer the attendee most relevant to the discussion. Bind the target to that attendee's stable source user_id and never choose the principal. Do not require an explicit owner assignment for the recipient. Do not review each group member's individual disclosure authorization for ordinary business content. "
-            + "A group whose discussion covers the same project or customer and whose complete roster is readable is acceptable even when the attendee list is too incomplete to match; record that gap in audit_summary instead of rejecting. "
+            + MEETING_BUSINESS_GROUP_SCOPE
             + "The group's recent topics need not repeat this meeting's topic (a project group that discussed annotation statistics fits a meeting about acceptance sampling for the same project). "
             + "If you return the target, name the better candidate from the supplied candidates and say why; do not return only to say the proof is missing. "
             + "Put sensitive details only in sensitive_private_message, addressed to an explicitly matched person whose current responsibility and authorization for that exact content are evidenced. "
@@ -544,10 +557,11 @@ def build_meeting_alignment_prompt(
     source_json = json.dumps(
         source.model_dump(mode="json"), ensure_ascii=False, separators=(",", ":")
     )
-    target_contract = """会议默认须生成并发送一条会议总结（action=send）。只有两种例外，均不发送，Derek 另行处理或无需处理：
+    target_contract = f"""会议默认须生成并发送一条会议总结（action=send）。只有两种例外，均不发送，Derek 另行处理或无需处理：
 - 面试（候选人面试、招聘面谈）：action=skip_interview，面试由 Derek 单独处理。
 - 没有可共享的信息量：去掉人员敏感内容后没有实质结论、事项或行动，只剩空泛概述时，action=skip_no_content，不要发一条空话。
 不发送时 final_message 为空串、target 为 null、mention_names 为空数组、sensitive_private_message 为 null，原因写入 audit_summary。
+{MEETING_BUSINESS_GROUP_SCOPE}
 - 业务内容返回 audience_scope=business，优先选择经过核验的业务群（target.kind=group）。如果完整搜索后没有合适业务群，从来源明确的参会人中选择一人，以 target.kind=direct 发送单聊；若只有一位非当前用户参会人则发给该人，多人时优先选与讨论最相关者，不要求会议明确指派其负责决定或行动。direct_user_id 必须是来源中稳定匹配的参会人 user_id，不能是当前用户。不得因为没有合适群而返回 no_action。使用 DWS 做群发现，以实际内容、业务目的和披露范围选择群；人数和群名称不决定群受众。
 - 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
 - 对每个可能的群，核对群内讨论是否涉及同一工作线、行动承接情况，以及参会人与完整群成员的准确匹配。普通业务内容不要求逐一证明群成员的披露授权；普通业务群选群不逐一核实成员披露授权，无需为每个成员单独判断是否适合接收普通业务总结。为每个有效候选写清候选群的来源、业务承接关系、成员匹配和受众证据；排除仅名称相似、成员重合但业务不符的群。多个合理群按本次议题和行动的实际归属排序，不按群规模或搜索顺序决定。不得为完成发送而选择宽泛群。讨论摘录没有时间戳、群是否可发送（服务在投递时核验）都不是选群条件。

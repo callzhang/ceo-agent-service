@@ -1888,3 +1888,19 @@ def test_audit_prompt_explains_how_to_review_a_decision_not_to_send():
     )
 
     assert "候选是“不发送”的决定" in routed.calls[0]["prompt"]
+
+
+def test_planner_and_audit_compare_group_purpose_with_whole_meeting_summary():
+    decision = MeetingAlignmentDecision.model_validate(valid_send_decision())
+    routed = FakeRoutedMeetingExecution(_audit_result_json())
+    agent = MeetingAlignmentAgent(MeetingAlignmentCodexRunner(routed_execution=routed))
+    planner_prompt = build_meeting_alignment_prompt(
+        source(), work_profile="", work_profile_source="test"
+    )
+    agent.audit(source(), decision, run_id=9)
+    for prompt in (planner_prompt, routed.calls[0]["prompt"]):
+        assert "actual purpose and concrete work" in prompt
+        assert "whole ordinary summary" in prompt
+        assert "Do not drop supported meeting conclusions to fit a narrower group" in prompt
+        assert "previously selected group" in prompt
+        assert "exact attendee/group equality is not required" in prompt
