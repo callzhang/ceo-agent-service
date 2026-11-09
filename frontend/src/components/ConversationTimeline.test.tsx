@@ -72,8 +72,8 @@ describe("ConversationTimeline", () => {
     const inputToggle = screen.getByText(/展开任务输入/);
     expect(inputToggle.closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("已更新 PR，等待 CI。")).toBeVisible();
-    await userEvent.click(screen.getByText("查看完整 JSON"));
-    expect(screen.getByText(/"remaining_work":/)).toBeVisible();
+    expect(screen.getByText("remaining_work")).toBeVisible();
+    expect(screen.getByText("观察检查")).toBeVisible();
   });
   it("uses the exact stable assistant item key contract", () => {
     expect(assistantTurnKey(turn)).toBe("turn:turn-1:assistant");
