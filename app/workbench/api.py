@@ -33,6 +33,7 @@ from app.workbench.models import (
     WorkbenchEvent,
     WorkbenchTask,
     WorkbenchTurn,
+    WorkbenchRuntimeAttempt,
 )
 from app.workbench.runtime import RuntimeRegistry
 from app.workbench.store import WorkbenchConflictError, WorkbenchStore
@@ -102,6 +103,7 @@ class PublicTurn(_StrictModel):
     final_text: str
     error_code: str
     error_detail: str
+    runtime_attempts: list[WorkbenchRuntimeAttempt] = Field(default_factory=list)
     started_at: str
     completed_at: str
     created_at: str

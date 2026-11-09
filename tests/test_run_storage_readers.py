@@ -14,7 +14,7 @@ def db():
     connection.execute('''create table runtime_attempts (
         id integer primary key, parent_id integer, workload_kind text, workload_key text,
         runtime_kind text, session_id text, transcript_start integer, transcript_end integer,
-        status text
+        status text, failure_class text not null default '', failure_code text not null default ''
     )''')
     from app.run_entity_definitions import TABLES
 

@@ -1,0 +1,967 @@
+{
+  "manifest_sha256": "1af6b52b3999b31bb9e2f70a354bdb9d1d7ab45841fbc5ce5a2b1bfe736f3d5a",
+  "harness_sha256": "700808532616ad4a79697f0730767d28fe32af9101ed8dbcef60abc80a182940",
+  "settings": {
+    "model": "sonnet",
+    "reasoning_effort": "high",
+    "timeout_seconds_per_call": 180,
+    "runtime": "claude_cli"
+  },
+  "external_effects": "none; synthetic facts; tools disabled",
+  "baseline": {
+    "ref": "7e620f123c8f2cd6ed3a05ce3f85401d7c242485",
+    "cases": [
+      {
+        "id": "reported_wrong_specialist",
+        "expected_audit": "return",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "群内近期讨论涉及部门工作协调、季度考核完成、专业培训和内部运营,与本次周会的培训平台、考勤、办公设备等工作线一致。",
+                      "完整成员名册可读(8人),参会人 Principal、Morgan、Casey 均在群内,成员匹配度 3/8;参会名单不完整,存在缺口。",
+                      "Morgan 曾在该群布置部门工作协调,说明该群是部门日常工作的业务承接群。"
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**已确认事项**\n\n- 海外 offer 流程:继续按人工流程执行。\n- 考勤:采用弹性考勤。\n- 培训问卷:迁移至内部学习平台。\n\n**后续行动**\n\n- 准备社保方案。\n- 整理办公设备。\n- 演示培训平台。\n\n**待补充**\n\n以上后续行动会上未指定负责人和完成时间,请部门内尽快认领并补充。",
+              "sensitive_private_message": null,
+              "audit_summary": "会议为部门周会,内容为海外 offer 人工流程、弹性考勤、培训问卷迁移至内部学习平台,以及社保方案、办公设备整理、培训平台演示等后续事项。会议明确无个人人员评价或受限信息,也不涉及裁员、减员等组织层面敏感内容,属普通业务内容,无敏感私聊。会上无实质分歧,触发类型为 meeting_summary。选群:'People department'(department)近期讨论涵盖部门工作协调、季度考核、专业培训和内部运营,与本次工作线吻合;完整名册 8 人,参会人 Principal、Morgan、Casey 均在其中(3/8)。排除 'People recruiting'(recruiting):该群讨论的是 Head of People 岗位画像和面试安排,与本次议题业务不符,仅因成员少而匹配率高,不作为选群依据。缺口:参会名单不完整(attendee_roster_complete=false),后续行动未指定负责人,故不做真实 @,mention_names 为空。discussion 摘录无时间戳,不作为选群条件;发送状态由投递服务核验。",
+              "risk": "low",
+              "confidence": 0.85,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.7
+            },
+            "tool_item_types": [],
+            "session_id": "ad0a1be8-0dd7-49c0-9e38-e6b24ccf8df0",
+            "error": "success"
+          },
+          "prompt_sha256": "d9d783f0b7865659e560e8e2247dda64617c25745841561186bde90d3c823129",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "return",
+              "summary": "候选正文与会议来源一致,是不含敏感信息的普通业务内容,正文本身可以发送。问题出在目标群:所选 \"People recruiting\"(recruiting)与本次会议的工作线不匹配,群成员也不覆盖参会人。该群只有 p、m、s 三名成员,缺少参会人 Casey(c)。群内讨论的是 Head of People 岗位画像和面试安排,属于招聘事务,与部门周会的海外 offer 流程、弹性考勤、培训问卷迁移、社保方案、办公设备和培训平台演示无关。候选写的\"相关工作线\"证据,以及\"此前同任务目标\"的理由(只因涉及人和招聘),都不成立。更合适的候选是 \"People department\"(department):成员名单完整,包含全部三名参会人 p、m、c;讨论涵盖部门工作、专业培训和内部运营,并有 Morgan 安排 Casey 协调部门工作的记录,与本次周会匹配。遗留缺口:参会名单不完整(attendee_roster_complete=false),无法确认是否还有其他参会人。这一缺口应写入 audit_summary,但它本身不构成拒绝理由。会议来源没有人员敏感内容,所以不需要拆分私信。",
+              "feedback": {
+                "rule": "群目标必须与会议工作线匹配,并以参会人成员匹配度作为选群依据;所选群的讨论和成员需覆盖本次会议内容与参会人。",
+                "observation": "目标群 recruiting(People recruiting)只有 p、m、s 三名成员,缺少参会人 Casey(c)。群内讨论的是 Head of People 岗位画像和面试安排,与本次部门周会的内容(海外 offer 流程、弹性考勤、培训问卷迁移、社保方案、办公设备、培训平台演示)无关。候选 audit_summary 称该群'讨论相关部门工作',与群内证据不符;'此前同任务目标'也不构成选群依据。department(People department)的成员名单完整,包含 p、m、c 三名参会人,讨论覆盖部门工作、培训和内部运营。",
+                "requested_revision": "把 target 改为 conversation_id=department(People department),并同步更新 target.candidates 里的证据,写明:成员名单完整,覆盖参会人 p、m、c,群讨论涵盖部门工作与培训。正文可保持不变,仍为不含敏感信息的普通业务摘要。在 audit_summary 里如实记录:参会名单不完整,无法确认是否还有其他参会人。同时删除或修正'recruiting 群讨论相关部门工作'的说法。"
+              }
+            },
+            "tool_item_types": [],
+            "session_id": "72543f25-3e30-4c1a-bf94-eaddd09e5929",
+            "error": "success"
+          },
+          "prompt_sha256": "42f911006379b63be67be8b3034dd604cc55f3aa7cdfc05068061f7e08c881d0",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "larger_correct_department",
+        "expected_audit": "approve",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "完整成员名册已读取(8人),参会人 Principal(p)、Morgan(m)、Casey(c) 均在群内,成员匹配 3/8。",
+                      "群内近期讨论涵盖季度考核完成、专业培训和内部运营,与本次会议的培训问卷迁移、办公设备整理、考勤等事项属于同一工作线。",
+                      "本次会议是部门周会,群名和群讨论范围都是部门级业务协同,与会议受众一致。"
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n- 海外 offer 流程:确认继续采用人工流程。\n- 考勤:确认实行弹性考勤。\n- 培训问卷:确认迁移到内部学习平台。\n\n**后续行动**\n\n- 准备社保方案。\n- 整理办公设备。\n- 演示培训平台。\n\n以上事项会上未指定具体负责人和完成时间,请各事项承接人在群内认领,并同步预计完成时间。",
+              "sensitive_private_message": null,
+              "audit_summary": "实际内容:部门周会确认了海外 offer 人工流程、弹性考勤、培训问卷迁移到内部学习平台,后续事项为社保方案、办公设备整理和培训平台演示。会议摘要明确说明不含个人人员评价或受限信息,属普通业务内容,无需拆分敏感私聊。选群:department 群(8人,名册完整)近期讨论涉及季度考核、专业培训和内部运营,与本次会议属同一工作线,参会人 3/8 匹配,选为目标。recruiting 群(3人)讨论的是 Head of People 岗位画像和面试安排,业务不符;它只是因为上次同类任务选过而入选,历史投递不证明承接关系,故排除。department 群中有一条关于员工岗位过渡的协调讨论,与本次会议内容无关,消息正文未涉及。缺口:参会名单来自转写,不完整(attendee_roster_complete=false),后续行动没有明确负责人,所以没有真实 @,只在正文提示认领。会议没有出现观点分歧,也没有 Principal 观点被遗漏的情况,因此只使用 meeting_summary。",
+              "risk": "low",
+              "confidence": 0.88,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.75
+            },
+            "tool_item_types": [],
+            "session_id": "f7a5ddc3-0914-4159-8120-9abb63dd6c67",
+            "error": "success"
+          },
+          "prompt_sha256": "191d9c259494d0619b0d642fd47bb27161540c8a813d2423eb81a603d63b9c8b",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "The candidate matches the meeting source. The message repeats the summary's conclusions: the manual overseas offer process, flexible attendance, moving the training questionnaire to the internal learning platform, and the next steps (social-insurance plan, office equipment, training platform demo). The meeting source contains no personnel-sensitive content, such as layoffs, evaluations, compensation or candidate conclusions. The message body and title carry none and give no hint of any. The \"People department\" group is a suitable audience. Its roster is complete and readable (8 members), and it includes all three identified attendees (principal, Morgan, Casey). Its discussion covers department work, so it fits this department weekly. The \"People recruiting\" group is narrower, is tied to a role-profile and interview topic, and is a weaker fit. The attendee list is not confirmed complete, so the people carrying out the next steps cannot be fully matched to the roster. I record this as an unresolved gap, not a reason to reject. The group's earlier role-transition discussion is not in the candidate and was not used. There is no sensitive private message, and the source needs none.",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "fa3aa5da-277c-468e-b8f6-68a3145ada08",
+            "error": "success"
+          },
+          "prompt_sha256": "c319cb8d6d7b37a340b461b753bcec02548383d6f31e729f05b29694445006d9",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "complete_roster_larger_group",
+        "expected_audit": "approve",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "Complete current roster is readable (8 members) and includes all three attendees (Principal, Morgan, Casey); member precision 3/8.",
+                      "Group history was read; it covers department work coordination, quarterly review completion, professional training and internal operations, which matches the training questionnaire/platform and internal-operations items in this department weekly.",
+                      "Meeting is a department weekly with department-wide ordinary business content, so the department group is the natural business owner."
+                    ]
+                  },
+                  {
+                    "conversation_id": "recruiting",
+                    "title": "People recruiting",
+                    "evidence": [
+                      "Roster complete (3 members) and includes 2 of 3 attendees (Principal, Morgan); member precision 2/3.",
+                      "Group discussion is limited to the Head of People role profile and interview schedule, which does not cover the weekly's training, attendance, social-insurance or office-equipment items; ranked lower. Prior selection for the same task is not evidence of business ownership."
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n- 海外 offer 流程:确认继续采用人工流程。\n- 考勤:确认实行弹性考勤。\n- 培训问卷:确认迁移至内部学习平台。\n\n**后续行动**\n\n- 准备社保方案。\n- 整理办公设备。\n- 演示培训平台。\n\n以上事项会上未指定具体负责人和完成时间,请各事项承接人在群内认领并同步预计时间。\n\n**说明**\n\n本次会议未出现观点分歧,以上均为已确认事项和下一步。",
+              "sensitive_private_message": null,
+              "audit_summary": "Action: send a short meeting_summary; no substantive disagreement (single-speaker summary, no objections or competing views), so no aligned/unresolved topics. Content is ordinary business: manual overseas offer process, flexible attendance, moving the training questionnaire to the internal learning platform, and next steps (social-insurance plan, office equipment, training platform demo). The meeting states there are no individual personnel evaluations or restricted information, and no layoff/workforce-reduction content, so no sensitive private message. Audience: the 'department' group (complete 8-member roster, history read) includes all three attendees (3/8 precision) and its discussion covers department coordination, professional training and internal operations, matching this work line. The group history also contains an employee role-transition coordination item; it is unrelated to this meeting's content and nothing about it appears in the message. 'recruiting' (3 members, 2/3 attendees) discusses only the Head of People role profile and interview schedule, so it is a weaker business fit; the prior same-task selection is not treated as evidence. Gap: the meeting did not assign owners or dates for the next steps, so no @ mentions were made; the message asks owners to claim items in the group. Group member-level disclosure authorization is not required for this ordinary business content; send status is checked at delivery.",
+              "risk": "low",
+              "confidence": 0.85,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.75
+            },
+            "tool_item_types": [],
+            "session_id": "e5e01725-fef3-43b5-ac57-4be5be8839c8",
+            "error": "success"
+          },
+          "prompt_sha256": "0d46e8347b2b2b6f3b4b26e0ea872fbfc7d6d57d089e257fe26a1e3f685f2ada",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "会议来源（Morgan 的发言和会议总结）支持候选内容：海外 offer 人工流程、弹性考勤、培训问卷迁移到内部学习平台，以及后续的社保方案、办公设备整理和培训平台演示。这些都是普通业务内容。来源里没有个人评价、裁员、薪酬或其他人事敏感信息，所以不需要拆出私信，群消息正文和标题也没有间接暗示。目标群 \"People department\"（department）的成员名单完整可读，包含全部三位参会人（principal、Morgan、Casey），共 8 人，匹配度 3/8。该群讨论部门工作、季度评审、专业培训和内部运营，与会议主题属于同一工作线。\"People recruiting\" 群只有 3 人，缺少 Casey，讨论的是 Head of People 岗位画像和面试安排，与本次会议不是同一工作线，所以选 department 更合适。日历参会名单完整，没有未解决的缺口。群成员匹配度只作发现证据，不构成披露授权；这里的内容是普通业务内容，不需要逐个核实成员授权。",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "b2bf5954-fa41-4404-b9a7-ea03c72d7f36",
+            "error": "success"
+          },
+          "prompt_sha256": "5e1dd3aefe997312e5d32e2a2dc32b08ffa2c9032b61c30ff9c7afb4dbd6ef36",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "specialist_meeting_uses_specialist_group",
+        "expected_audit": "approve",
+        "expected_planner_group": "recruiting",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [
+                "Morgan"
+              ],
+              "target": {
+                "kind": "group",
+                "conversation_id": "recruiting",
+                "direct_user_id": "",
+                "title": "People recruiting",
+                "candidates": [
+                  {
+                    "conversation_id": "recruiting",
+                    "title": "People recruiting",
+                    "evidence": [
+                      "The group's recent discussion covers the same work line: the Head of People role profile and the interview schedule.",
+                      "The complete roster is readable (3 members: p, m, s). Matched meeting participants are Principal (p) and Morgan (m), so member precision is 2/3.",
+                      "Morgan, who owns the follow-up actions (revising the hiring profile and arranging candidate interviews), is a member of the group.",
+                      "The content is ordinary business: role profile confirmation, hiring profile revision and interview scheduling. It contains no candidate conclusions or other personnel-sensitive details."
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n- 本次会议确认了 Head of People 的岗位画像。\n\n**后续行动**\n\n- @Morgan 负责修订招聘画像,并安排候选人面试。\n\n本次会议未讨论其他部门运营事项。",
+              "sensitive_private_message": null,
+              "audit_summary": "The meeting confirmed the Head of People role profile. Morgan will revise the hiring profile and arrange candidate interviews. There was no substantive disagreement, so this is a concise summary. This is not an interview, and it has shareable content, so action=send.\n\nAudience: I chose the 'People recruiting' group (recruiting). Its recent discussion covers the Head of People role profile and the interview schedule, which is the same work line. Morgan, who owns the actions, is a member. The complete roster is readable, with 3 members and 2 matched participants (Principal and Morgan), so member precision is 2/3.\n\nExcluded: 'People department' (department). Its discussion is about an employee role-transition plan, quarterly reviews, training and internal operations, and the meeting said no other department operations were discussed. The group is broad, and its role-transition topic could touch personnel-sensitive content, so it was not chosen.\n\nGap: attendee_roster_complete=false. Casey attended but is not in the recruiting group, and group member s is not matched to any listed attendee. I recorded this as an unresolved gap, not a reason to reject the group. The content has no personnel-sensitive details, so there is no private message.",
+              "risk": "low",
+              "confidence": 0.85,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.75
+            },
+            "tool_item_types": [],
+            "session_id": "88662fb7-9ff3-4b5c-8f24-019927032979",
+            "error": "success"
+          },
+          "prompt_sha256": "a81474af10005431ae38b53d62eb795f9077d1b1c7c0678ab872e39d5d7ea0c5",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "Approve. The message text matches the meeting source: the Head of People role profile was confirmed, and Morgan will revise the hiring profile and arrange candidate interviews. It has no layoff, evaluation, compensation, retention or candidate-conclusion content, and the meeting source has no other sensitive details to split out. The \"People recruiting\" group (3 members, complete roster readable) has discussion on the same work line: the Head of People role profile and interview schedule, with Morgan. Morgan, the action owner, and the principal are both members. The roster check found one member, \"s\", who isn't a listed attendee; the rules don't require per-member authorization for ordinary business content. The \"People department\" group is a weaker fit, because its discussion is about role-transition planning and general department operations. Gaps: the attendee roster is incomplete (the source marks it as such), and Casey isn't in the selected group. Neither blocks sending ordinary business content. The generic title \"Work review\" is acceptable.",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "e41e480e-0beb-4c11-a3a6-d0672a7d7108",
+            "error": "success"
+          },
+          "prompt_sha256": "00473a941aade9639617ed9ea927e79b0db75120c6c1b6fbf02daa94fa86d7bd",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "same_project_different_topics",
+        "expected_audit": "approve",
+        "expected_planner_group": "orion",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [
+                "Casey",
+                "Morgan"
+              ],
+              "target": {
+                "kind": "group",
+                "conversation_id": "orion",
+                "direct_user_id": "",
+                "title": "Orion delivery",
+                "candidates": [
+                  {
+                    "conversation_id": "orion",
+                    "title": "Orion delivery",
+                    "evidence": [
+                      "Group discussion states Morgan and Casey coordinate all Orion delivery there, matching the owners of this meeting's actions.",
+                      "Complete roster read (4 members: p, m, c, x); the 3 known attendees (Principal, Morgan, Casey) all match, member precision 3/4.",
+                      "Recent discussion concerns annotation statistics for the same Orion pilot rather than sampling, so it is the same project and delivery line but a different sub-topic."
+                    ]
+                  }
+                ]
+              },
+              "message_title": "Orion delivery review",
+              "final_message": "**结论**\n\nOrion 客户试点已确认两项下一步,会上没有出现分歧。\n\n**后续行动**\n\n- @Casey 负责交付验收抽样清单(acceptance-sampling checklist)。\n- @Morgan 负责确认交付日期。",
+              "sensitive_private_message": null,
+              "audit_summary": "Content: ordinary business summary with no personnel-sensitive material, no substantive disagreement. It records two confirmed actions: Casey delivers the acceptance-sampling checklist, and Morgan confirms the delivery date. Group evidence: the Orion delivery group (orion) says Morgan and Casey coordinate all Orion delivery there, so it is the business owner of this work line. The complete roster was read (4 members). The three known attendees all match (3/4), and the fourth member (x) is not in the source attendee list. Recent group discussion covers annotation statistics for the same Orion pilot, not sampling. It is the same project and delivery line, and I do not treat the different sub-topic as a different work line. Gap: attendee_roster_complete=false, transcript has a single utterance with no timestamps, and discussion timestamps are empty. Neither blocks ordinary business content. Per-member disclosure authorization is not required for this ordinary content. Delivery send status is checked by the service at send time. Both mentioned people are attendees with explicit ownership of the actions.",
+              "risk": "low",
+              "confidence": 0.78,
+              "rule_coverage": 0.85,
+              "information_completeness": 0.7
+            },
+            "tool_item_types": [],
+            "session_id": "7b673e7d-60e4-4b02-8496-56d20da42c09",
+            "error": "success"
+          },
+          "prompt_sha256": "595a488fa18a87e6f6f22ac04405aa2a3c10bd6bd15e3580b0c44d1b2f7a3d59",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "The candidate is accurate and suitable to send. The final message restates the meeting summary and transcript line: Casey will deliver the acceptance-sampling checklist, and Morgan will confirm the delivery date. It contains nothing personnel-sensitive, and the source has no sensitive content that needs a private message. The target group \"Orion delivery\" (conversation_id orion) has a complete, readable roster of p, m, c and x. All three known attendees (Principal, Morgan, Casey) are members. Group discussion says Morgan and Casey coordinate all Orion delivery there, and recent talk about annotation statistics is for the same Orion pilot. That makes it the business owner of this work line, even though the recent topic isn't sampling. Gap: the attendee roster is marked incomplete, so other attendees can't be matched to the group. This is recorded and doesn't block approval. Member \"x\" is unidentified, but ordinary business content doesn't need per-member authorization. The audit_summary's wording \"related department work\" is loose, but the evidence supports the same Orion pilot work line.",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "fa743dd0-8403-42f3-88ed-bee1158b4728",
+            "error": "success"
+          },
+          "prompt_sha256": "c010b215024e1c690ea1c480bc9e9fdacb4b3ec25395f1377bb07d31db88bcbc",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "carried_target_does_not_own_office_work",
+        "expected_audit": "return",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [
+                "Casey",
+                "Morgan"
+              ],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "群内近期讨论涉及部门工作协调、专业培训和内部运营,与本次会议的办公设备协调、培训平台上线属同一工作线。",
+                      "Morgan 此前在该群向 Casey 安排部门工作协调,Casey 与 Morgan 均是本次行动负责人且在群成员中。",
+                      "完整成员名册可读(8人),三位已知参会人 Principal、Morgan、Casey 均在群内,member_precision=3/8。"
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n本次会议未出现观点分歧,部门已确认以下两项分工。\n\n**后续行动**\n\n- @Casey 负责协调办公设备相关事项。\n- @Morgan 负责准备培训平台的上线工作。",
+              "sensitive_private_message": null,
+              "audit_summary": "会议内容仅为普通业务分工:Casey 协调办公设备、Morgan 准备培训平台上线;会议明确未讨论招聘决策,无人员敏感内容,sensitive_private_message 为 null。无实质分歧,仅触发 meeting_summary。选群:People department(department)——群内近期讨论涉及部门工作、专业培训、内部运营,并有 Morgan 向 Casey 安排部门工作的记录,与本次行动工作线一致;完整名册 8 人可读,三位已知参会人均在内(member_precision 3/8)。排除 People recruiting(recruiting):仅 3 人,讨论的是岗位画像与面试安排,而本次会议明确未涉及招聘,仅名称相近、业务不符。缺口:attendee_roster_complete=false,参会名单可能不完整;群讨论摘录无时间戳,群是否可发送由投递服务核验。Casey 与 Morgan 均为参会人,且会议中明确由其负责,故可 @。该群内另有与角色调整相关的讨论,本消息未引用也未暗示。",
+              "risk": "low",
+              "confidence": 0.82,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.75
+            },
+            "tool_item_types": [],
+            "session_id": "7ba1074d-354e-4ee2-a27a-cc4aeb31fea3",
+            "error": "success"
+          },
+          "prompt_sha256": "bff0a43421e7c1e38a401e96be2942893c7f2a9d69ad629af4c630c1ebd4d178",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "return",
+              "summary": "消息内容本身属于普通业务内容,事实与会议来源一致,也不含人员敏感信息。但目标群 \"People recruiting\" 与这次会议的工作线不匹配,所以退回修改目标。该群成员是 p、m、s,不含被分配办公设备协调任务的 Casey(c),还有一位身份不明的成员 s。该群近期讨论只涉及 Head of People 岗位画像和面试安排,与办公设备协调、培训平台上线无关。候选选它的依据只是\"讨论人员和招聘\",这不是有效的选群依据。另一个候选 \"People department\" 更合适:它的完整名单可读,包含全部三位已知参会人(p、m、c),讨论涉及 Morgan 给 Casey 分配部门工作、专业培训和内部运营,与本次会议的工作线一致。遗留缺口:参会名单不完整(attendee_roster_complete=false),无法核对其余参会人是否在群内,这条只作记录,不是拒绝理由。会议中没有人员敏感内容,所以不需要单独的私信。",
+              "feedback": {
+                "rule": "受众匹配:普通业务总结应发往讨论内容覆盖同一工作线、完整名单可读、且与参会人成员匹配度高的业务群;不能仅凭群名或主题关键词(人员、招聘)选群。",
+                "observation": "目标群 'People recruiting'(p、m、s)的讨论是 Head of People 岗位画像和面试安排,与本次会议的办公设备协调、培训平台上线无关。该群不含被分配办公设备任务的 Casey(c),还含一位身份不明的成员 s,所以这些后续工作的承担人看不到消息。候选 'People department'(p、m、c 加另外 5 人,名单完整)覆盖所有已知参会人,近期讨论涉及部门工作分配、专业培训和内部运营,与本次会议的工作线吻合。",
+                "requested_revision": "把目标改为 conversation_id=department(People department),并在该群的 evidence 中写明:完整名单可读、包含 p/m/c 三位参会人、讨论覆盖部门工作和培训。正文可保持现有的普通业务内容。audit_summary 里继续记录参会名单不完整这一缺口,并删去'选群因为讨论人员和招聘'这类理由。"
+              }
+            },
+            "tool_item_types": [],
+            "session_id": "ac358926-8174-47ce-b8b2-702386381162",
+            "error": "success"
+          },
+          "prompt_sha256": "e9b6bc931659507dd9da798d02eaf6fa6dcf7307cafdf8152cb904f1b8a14f38",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      }
+    ],
+    "passed": 12
+  },
+  "candidate": {
+    "ref": "029c64b83da3be9a76d9ff9ab09c37e6c3e1af1b",
+    "cases": [
+      {
+        "id": "reported_wrong_specialist",
+        "expected_audit": "return",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "群内近期讨论涉及 Morgan 请 Casey 协调部门工作,并协调季度考核、专业培训和内部运营,与本次部门周会的多条工作线(培训平台、办公设备、部门流程)相符。",
+                      "完整成员名册 8 人(p, m, c, a, b, d, e, f),参会人 Principal、Morgan、Casey 均在其中,member_precision 为 3/8;参会名单不完整(transcript 来源),此处记为缺口。",
+                      "本次内容覆盖海外 offer 流程、弹性考勤、培训问卷迁移、社保方案和办公设备整理,属部门整体事务,该群业务范围能够覆盖全部内容。"
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n- 海外 offer 流程:继续沿用人工流程。\n- 考勤:采用弹性考勤。\n- 培训问卷:迁移到内部学习平台。\n\n**后续行动**\n\n- 准备社保方案。\n- 整理办公设备。\n- 演示培训平台。\n\n以上事项会议中未指定具体负责人和时间,请群内相关同事自行认领并同步进展。",
+              "sensitive_private_message": null,
+              "audit_summary": "实际内容为部门周会的普通业务结论和后续事项(海外 offer 人工流程、弹性考勤、培训问卷迁移、社保方案、办公设备、培训平台演示),不含个人评价、绩效、薪酬、去留、候选人结论、裁员或其他人员敏感信息,无需拆分私聊。会议中未出现观点分歧,也没有 Derek 观点需要还原,所以只触发 meeting_summary。群选择:People department(8 人,名册完整)的近期讨论涉及部门工作协调、季度考核、专业培训和内部运营,覆盖本次全部议题。People recruiting(3 人)只讨论招聘和岗位画像,只能承接海外 offer 一项,不覆盖培训平台、考勤、社保和办公设备,因此不选;其 prior_same_task_target 只是历史声明,已复核不成立。成员匹配:参会人 Principal、Morgan、Casey 均在 People department 名册内(3/8)。缺口:参会名单不完整(transcript 来源);会议未指定行动负责人,所以不设 @;两个群的讨论摘录均无时间戳。发送状态由服务在投递时核验。",
+              "risk": "low",
+              "confidence": 0.82,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.7
+            },
+            "tool_item_types": [],
+            "session_id": "3bb8d06b-a2d4-40ac-97cb-7707d5009726",
+            "error": "success"
+          },
+          "prompt_sha256": "6a2123aea455226994c59245c214e249e709acf646cef16c2f095e664d788856",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "return",
+              "summary": "消息内容属于普通业务内容,事实与会议来源一致,没有人员敏感信息。问题出在目标群。\"People recruiting\"(recruiting)只讨论 Head of People 的岗位画像和面试安排,不覆盖这次会议的全部结论,包括社保方案、办公设备整理、培训平台演示和弹性考勤。该群成员是 p、m、s,不含参会人 Casey,且 s 身份未知。候选依据的是上一次选群的理由\"讨论人员和招聘\",这只是待复核的说法,不能证明该群负责整场会议的工作。\"People department\"(department)的成员是 p、m、c 加另外 5 人,名册完整,涵盖全部三位已知参会人。该群讨论部门工作、季度考核、专业培训和内部运营,更能承接整个摘要。参会名单不完整(attendee_roster_complete=false)是未决缺口,但不影响本次判断。会议来源中没有敏感人员内容,所以不需要拆分私信。",
+              "feedback": {
+                "rule": "普通业务群应按群的实际用途和具体工作是否覆盖整个摘要来选择,并结合参会人与群成员的匹配度;上一次选群的理由只是待复核的说法,不能代替实际的工作关系。",
+                "observation": "目标群 recruiting(People recruiting)只讨论 Head of People 岗位画像和面试安排,与本次部门周会的结论(海外 offer 手工流程、弹性考勤、培训问卷迁移、社保方案、办公设备整理、培训平台演示)没有直接的工作关系。群成员 p、m、s 不含参会人 Casey,s 的身份也无法确认。候选的依据只是上一次选群的理由,即讨论人员和招聘,而不是该群负责这些工作。备选群 department(People department,8 人,名册完整)包含 p、m、c,讨论部门工作、季度考核、专业培训和内部运营,覆盖全部摘要内容。",
+                "requested_revision": "把发送目标改为 conversation_id=department(People department),并同步修改 target.candidates 的证据,说明该群的讨论涵盖部门工作、培训和内部运营,名册完整且包含已知参会人 p、m、c。final_message 保持现有的普通业务内容,不要加入任何人员敏感信息。audit_summary 中保留参会名单不完整这一缺口的记录。"
+              }
+            },
+            "tool_item_types": [],
+            "session_id": "492aa225-723c-4ec7-a0dc-9001a2356279",
+            "error": "success"
+          },
+          "prompt_sha256": "898106b791e6f7f3444056e06b168f008266868d0fdd991aca209220e382fac3",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "larger_correct_department",
+        "expected_audit": "approve",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "The group coordinates department work, quarterly review completion, professional training and internal operations, which covers every item in this summary (overseas offer process, attendance, training platform, social insurance, office equipment).",
+                      "Recent discussion: Morgan asked Casey to coordinate department work; Morgan and Casey are both meeting attendees.",
+                      "Full roster is readable (8 members); the three known attendees (Principal, Morgan, Casey) are all in the roster, member_precision 3/8."
+                    ]
+                  },
+                  {
+                    "conversation_id": "recruiting",
+                    "title": "People recruiting",
+                    "evidence": [
+                      "Covers only the hiring role profile and interview schedule; it does not own attendance, training, social insurance or office equipment.",
+                      "Roster of 3 includes Principal and Morgan (2/3), but high overlap does not establish ownership of the whole summary.",
+                      "Kept as a fallback candidate only; the earlier selection rationale (people and hiring) is too narrow."
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n- 海外 offer 流程：确认继续采用人工流程。\n- 考勤：确认实行弹性考勤。\n- 培训问卷：确认迁移到内部学习平台。\n\n**后续行动**\n\n- 准备社保方案。\n- 整理办公设备。\n- 演示培训平台。\n\n会上未指定以上事项的具体负责人和完成时间，请部门内按各自工作分工认领，并在群内同步。",
+              "sensitive_private_message": null,
+              "audit_summary": "Action: send an ordinary business summary. The content has no substantive disagreement and no personnel-sensitive content (the source states there are no individual evaluations or restricted information), so the trigger is meeting_summary only. Group choice: People department (department) is selected. Its discussion covers department work, quarterly review completion, professional training and internal operations, which spans all the summary items. Morgan and Casey, who attended, were also named in its recent discussion. Its roster is complete at 8 members, with the three known attendees matching, member_precision 3/8. People recruiting (recruiting) was excluded: it only covers the hiring role profile and interview schedule, so it does not own the whole summary. The prior_same_task_target claim for it was rechecked and rejected as too narrow, even though its 2/3 attendee overlap is higher. Gaps: the attendee roster is incomplete (transcript evidence, only three participants), and the action owners cannot be matched to the roster because the meeting named none. Thus no @ mentions are used. The department excerpt mentions a role-transition plan coordination; it is not part of the meeting content and was not included. Per-member authorization is not required for ordinary business content, and the send status is checked by the service at delivery.",
+              "risk": "low",
+              "confidence": 0.82,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.75
+            },
+            "tool_item_types": [],
+            "session_id": "df1b5e76-0594-4bdd-8c5b-82b7f2f8c532",
+            "error": "success"
+          },
+          "prompt_sha256": "14ab4aab425df26527ee647c913f0867ccf393eb00faf4908a85d1b7d252a076",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "批准发送到 \"People department\" 群。会议是部门周会,内容只有普通业务结论:海外 offer 手动流程、弹性考勤、培训问卷迁移到内部学习平台,以及后续的社保方案、办公设备整理、培训平台演示。会议原文没有个人人事评价或受限信息,所以不需要拆分私信。群消息正文和标题都没有敏感内容或间接暗示。正文与会议总结一致,没有添加原文以外的事实。该群完整名册可读(8 人),包含三位已识别参会者 p、m、c。群内讨论涉及部门工作、培训、内部运营和季度考核,覆盖整个会议摘要的工作线。\"People recruiting\" 群(3 人)只讨论 Head of People 岗位画像和面试安排,不覆盖考勤、培训、社保、办公设备等内容,上一轮选它的理由只是\"涉及人和招聘\",不足以作为归属依据,所以不选。未解决的缺口:会议参会名册不完整(attendee_roster_complete=false),无法确认所有参会人是否都在群内。按规则只记录该缺口,不阻止发送。该群讨论里提到的角色调整协调工作不属于本次会议内容,候选也没有引用。",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "507cd2bb-efe0-4c36-a391-fc6ec572ce07",
+            "error": "success"
+          },
+          "prompt_sha256": "0d4ac4a165a64cafde18cbe679d59650a74d1c7423022718ebcd5aea321a1a06",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "complete_roster_larger_group",
+        "expected_audit": "approve",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "完整群成员 8 人,名册完整;三位参会人(Principal、Morgan、Casey)均在群内,member_precision 为 3/8。",
+                      "群内讨论涵盖部门日常工作协调、季度考核完成、专业培训和内部运营,覆盖本次周会的全部议题:海外 offer 流程、弹性考勤、培训问卷迁移、社保方案、办公设备整理、培训平台演示。",
+                      "群内有 Morgan 请 Casey 协调部门工作的记录,说明 Morgan 和 Casey 在该工作线上有承接关系。该记录涉及人员调整,本消息不引用。"
+                    ]
+                  },
+                  {
+                    "conversation_id": "recruiting",
+                    "title": "People recruiting",
+                    "evidence": [
+                      "完整群成员 3 人,参会人 Principal、Morgan 在群内(2/3),另有一位非参会成员。",
+                      "群内讨论只涉及 Head of People 岗位画像和面试安排,仅覆盖海外 offer 流程一项,不覆盖考勤、培训、社保和办公设备等议题。",
+                      "该群是上一次候选任务选中的目标,但历史选择只是待复核的说法,不能证明承接关系,因此排在部门群之后。"
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n- 海外 offer 继续采用人工流程。\n- 考勤采用弹性方式。\n- 培训问卷迁移到内部学习平台。\n\n**后续行动**\n\n- 准备社保方案。\n- 整理办公设备。\n- 演示培训平台。\n\n以上事项会上均已确认,没有分歧。会上未指定各项行动的具体负责人和完成时间,请部门内按分工认领并补充时间节点。",
+              "sensitive_private_message": null,
+              "audit_summary": "实际内容:部门周会的常规业务总结,包含海外 offer 流程、弹性考勤、培训问卷迁移、社保方案、办公设备整理和培训平台演示。会议材料明确说明没有个人人事评价或受限信息,所以没有敏感私聊。会议中没有实质观点分歧,因此只触发 meeting_summary。选群依据:People department 群的实际职责覆盖本次全部议题,完整成员 8 人且名册完整,三位参会人均在群内,member_precision 为 3/8,日历参会名册完整。People recruiting 群只覆盖招聘相关内容,成员 3 人(2/3),不能承接完整总结,已排除。部门群内另有一条涉及人员调整的历史讨论,本消息和标题没有引用或暗示。缺口:群内讨论摘录没有时间戳;会议没有指定行动负责人,所以不做真实 @;发送状态由服务在投递时核验。",
+              "risk": "low",
+              "confidence": 0.85,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.8
+            },
+            "tool_item_types": [],
+            "session_id": "94c6ab40-f7c7-493b-b311-560f0f1a6274",
+            "error": "success"
+          },
+          "prompt_sha256": "a71b62d44ed3a0fd55d07fbf21281080a495b4ede5149500d243a27545ccbc29",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "批准发送到 People department 群。会议来源(日历,名单完整)里的参会人是 Principal、Morgan、Casey,三人都在该群的完整 8 人名单中。该群的讨论涵盖季度评估、专业培训和内部运营,能覆盖整份摘要:海外 offer 流程、弹性考勤、培训问卷迁移、社保方案、办公设备整理、培训平台演示。候选正文与会议摘要一致,没有个人评价、裁员、薪酬等人员敏感内容,标题和正文里也没有间接暗示。People recruiting 群只有 3 人,讨论的是招聘岗位画像和面试安排,覆盖不了培训、考勤、社保、办公设备等内容。它之前被选中只是因为涉及人和招聘,这个理由不成立。按规则不逐个核实成员对普通业务内容的披露授权。会议里没有其他需要单独私发的敏感内容,因此不需要拆分私信。未解决的缺口:无。",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "04ca1fbf-dea2-4d28-83bc-fcacdefab65a",
+            "error": "success"
+          },
+          "prompt_sha256": "76c3daf2f1d07d7356aeecd3f081b54ea296add89e64399880faa7da2ce7f481",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "specialist_meeting_uses_specialist_group",
+        "expected_audit": "approve",
+        "expected_planner_group": "recruiting",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [
+                "Morgan"
+              ],
+              "target": {
+                "kind": "group",
+                "conversation_id": "recruiting",
+                "direct_user_id": "",
+                "title": "People recruiting",
+                "candidates": [
+                  {
+                    "conversation_id": "recruiting",
+                    "title": "People recruiting",
+                    "evidence": [
+                      "群内近期讨论涉及 Head of People 岗位画像和面试安排,与本次会议结论和行动项属同一工作线。",
+                      "Morgan 既是本次会议中负责修订招聘画像、安排候选人面试的行动人,也是该群成员和岗位画像讨论的参与者。",
+                      "完整成员名单可读,共 3 人(p、m、s)。参会人 Principal(p)和 Morgan(m)在群内,member_precision 为 2/3。Casey(c)不在群内。参会名单不完整,该缺口已记录。"
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n会议确认了 Head of People 的岗位画像。\n\n**后续行动**\n\n- @Morgan 修订招聘画像,并安排候选人面试。\n\n本次会议未讨论部门其他日常运营事项。",
+              "sensitive_private_message": null,
+              "audit_summary": "实际内容:确认 Head of People 岗位画像,Morgan 负责修订招聘画像并安排候选人面试。会议没有讨论部门其他运营工作。这是普通业务内容,不含人员评价、候选人结论、薪酬、去留、裁员或减员等敏感信息,所以 sensitive_private_message 为 null。会议本身是岗位画像的工作会,不是面试,不适用 skip_interview。选群依据:recruiting 群(People recruiting)近期讨论 Head of People 岗位画像和面试安排,与本次工作线一致,完整成员 3 人(p、m、s),参会人 p 和 m 在内,member_precision 为 2/3。People department 群共 8 人,讨论的是员工岗位调整、季度考核、培训和内部运营,与本次会议结论无承接关系,排除。成员数量和历史投递记录不作为选群依据。已知缺口:参会名单为转写推断且不完整,Casey 不在 recruiting 群内,群成员 s 不是已知参会人,群讨论摘录没有时间戳。这些缺口不影响普通业务内容的发送。会议没有出现分歧,所以只触发 meeting_summary。",
+              "risk": "low",
+              "confidence": 0.88,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.75
+            },
+            "tool_item_types": [],
+            "session_id": "ce37131d-bbee-4db7-af5d-cb9852762704",
+            "error": "success"
+          },
+          "prompt_sha256": "369add619d5270ebcb783b29880b122eae14c631a230b1db6df46ce0c3cc7fcc",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "批准发送到\"People recruiting\"群(recruiting)。会议来源只支持两点:确认了 Head of People 岗位画像,以及 Morgan 将修订招聘画像并安排候选人面试。候选正文与来源一致,没有增加事实,也没有薪酬、绩效、候选人结论、裁员或人员调整等敏感内容,属于普通业务内容。这不是面试会议,有可共享的业务结论和行动,所以不应跳过发送。recruiting 群的完整成员名单可读(p、m、s),其中包含主持人 Principal 和负责人 Morgan。群内讨论正是 Head of People 岗位画像、面试安排和招聘画像生成,覆盖本次会议的全部内容。People department 群虽然包含 Casey,但它的讨论是员工角色调整计划、季度考核和内部运营,与本次内容没有对应关系。会议原文也明确说没有讨论其他部门运营,所以该群不更合适。遗留缺口:会议参会名单不完整(attendee_roster_complete=false);参会人 Casey 不在 recruiting 群;群成员 s 无法与来源参会人对应。这些缺口已记录,不影响普通业务内容的发送。会议来源中没有敏感人员内容,因此不需要私信。",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "d5c1c5f5-8e04-4146-b6e0-1533a00cca0f",
+            "error": "success"
+          },
+          "prompt_sha256": "2101dffeedc6e984603f078dc0a3d53e368b3fce67cfecd2cb30229c0f60cad6",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "same_project_different_topics",
+        "expected_audit": "approve",
+        "expected_planner_group": "orion",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [
+                "Casey",
+                "Morgan"
+              ],
+              "target": {
+                "kind": "group",
+                "conversation_id": "orion",
+                "direct_user_id": "",
+                "title": "Orion delivery",
+                "candidates": [
+                  {
+                    "conversation_id": "orion",
+                    "title": "Orion delivery",
+                    "evidence": [
+                      "Group discussion states that Morgan and Casey coordinate all Orion delivery in this group, which matches the owners of both action items from this meeting.",
+                      "Recent messages cover annotation statistics for the same Orion pilot. The topic differs (not sampling), but the work line and customer pilot are the same, so this is not a mismatch.",
+                      "Full roster is readable (4 members: p, m, c, x). Three meeting attendees (Principal, Morgan, Casey) are all in the roster, so member precision is 3/4.",
+                      "The one roster member who did not attend (x) is unidentified. That is recorded as a gap, and it does not block ordinary business content."
+                    ]
+                  }
+                ]
+              },
+              "message_title": "Orion delivery review",
+              "final_message": "**结论**\n\nOrion 客户试点已确认两项交付事项。\n\n**后续行动**\n\n- @Casey:交付验收抽样清单(acceptance-sampling checklist)。\n- @Morgan:确认交付日期。\n\n会议未记录这两项的具体截止时间。",
+              "sensitive_private_message": null,
+              "audit_summary": "Content: ordinary business summary of the Orion customer pilot. Casey owns the acceptance-sampling checklist and Morgan owns confirming the delivery date. There was no substantive disagreement, so this is a plain meeting_summary, and no personnel-sensitive content is present. Group check: the only supplied candidate, Orion delivery, is stated to be where Morgan and Casey coordinate all Orion delivery, which is the same work line and the same action owners. Its recent discussion is about annotation statistics for the same pilot rather than sampling; that is a different topic within one project, which the contract allows. Members: Principal, Morgan and Casey are all in the 4-person roster (member precision 3/4), and the roster is complete and readable. Gaps: the attendee list comes from the transcript and is incomplete, so other attendees may be missing. The fourth group member (open id x) is unidentified. Discussion excerpts have no timestamps and the matched-term score is 0. Neither is a selection condition for ordinary business content. Delivery send status is checked by the service at send time. Risk is low: the content is ordinary and the group is the stated delivery coordination venue.",
+              "risk": "low",
+              "confidence": 0.8,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.65
+            },
+            "tool_item_types": [],
+            "session_id": "d0095777-b168-4f5d-ba05-c8cb552e3339",
+            "error": "success"
+          },
+          "prompt_sha256": "138e7f48898d5bf5def817ed2cfec835b68bd69274ad95148bba4423584d33a8",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "approve",
+              "summary": "会议内容是普通业务信息:Casey 交付验收抽样清单,Morgan 确认交付日期。内容与转录和会议摘要一致,不含人员敏感信息,也没有遗漏敏感私信。目标群\"Orion delivery\"(conversation_id: orion)的完整名单可读,成员为 p、m、c、x,包含主持人、Morgan 和 Casey。群讨论明确写明 Morgan 和 Casey 在此协调 Orion 的全部交付工作,所以该群确实负责这条工作线。群里近期讨论的是同一 Orion 试点的标注统计,不是抽样,但同项目的不同话题不影响选群。没有其他候选群。已知缺口:会议参会名单不完整(attendee_roster_complete=false),群成员 x 对不上任何已知参会人。按规则这只记录为缺口,不构成驳回理由。",
+              "feedback": null
+            },
+            "tool_item_types": [],
+            "session_id": "03707101-5b0a-4ea1-821e-4effb4823583",
+            "error": "success"
+          },
+          "prompt_sha256": "377774282886610a8025a31b91a18efb78e80af36c3118350dde7f527efd5296",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      },
+      {
+        "id": "carried_target_does_not_own_office_work",
+        "expected_audit": "return",
+        "expected_planner_group": "department",
+        "planner": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "action": "send",
+              "audience_scope": "business",
+              "trigger_reasons": [
+                "meeting_summary"
+              ],
+              "topics": [],
+              "derek_viewpoint": null,
+              "key_questions": [],
+              "mention_names": [
+                "Casey",
+                "Morgan"
+              ],
+              "target": {
+                "kind": "group",
+                "conversation_id": "department",
+                "direct_user_id": "",
+                "title": "People department",
+                "candidates": [
+                  {
+                    "conversation_id": "department",
+                    "title": "People department",
+                    "evidence": [
+                      "Group discussion covers department work, internal operations, professional training and coordination by Casey, which matches the office equipment and training-platform rollout actions.",
+                      "Full roster is readable (8 members); 3 known attendees (Principal, Morgan, Casey) are all members, member precision 3/8.",
+                      "Attendee roster is incomplete (transcript-based), recorded as a gap."
+                    ]
+                  },
+                  {
+                    "conversation_id": "recruiting",
+                    "title": "People recruiting",
+                    "evidence": [
+                      "Discussion is about the Head of People role profile and interview schedule; the meeting explicitly had no hiring decisions.",
+                      "Casey, who carries one of the actions, is not a member (3 members, 2/3 attendee overlap); excluded as a non-matching work line."
+                    ]
+                  }
+                ]
+              },
+              "message_title": "People weekly",
+              "final_message": "**结论**\n\n部门周会已确认两项分工,本次未讨论招聘相关决定。\n\n**后续行动**\n\n- @Casey 负责统筹办公设备相关事项。\n- @Morgan 负责准备培训平台的上线推进工作。",
+              "sensitive_private_message": null,
+              "audit_summary": "Content: ordinary business summary with two ownership items (Casey: office equipment coordination; Morgan: training-platform rollout prep); no disagreement; no hiring decisions; no personnel-sensitive content. Group selection: the 'People department' group (8 members, roster complete) discusses department work, internal operations and professional training with Casey coordinating, so it encompasses both actions. 3 known attendees (Principal, Morgan, Casey) are all members (member precision 3/8). The 'People recruiting' group was rejected: its discussion is the Head of People role profile and interview scheduling, it does not cover office equipment or training rollout, and Casey is not a member; the prior selection rationale (people/hiring) was rechecked and not accepted. The group discussion excerpts have no timestamps and an earlier excerpt mentions an employee role-transition plan; none of that was included. Gap: attendee roster is incomplete (transcript evidence only), so other attendees may be unmatched. Send status is checked by the service at delivery.",
+              "risk": "low",
+              "confidence": 0.85,
+              "rule_coverage": 0.9,
+              "information_completeness": 0.7
+            },
+            "tool_item_types": [],
+            "session_id": "80d90d8f-460f-4774-89ea-be4910c64d3e",
+            "error": "success"
+          },
+          "prompt_sha256": "8dc8af8ac85c9ed40c0888c1ad1848b3b2e1da0225c94bb9980272e95fe8d30a",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        },
+        "audit": {
+          "native": {
+            "ok": true,
+            "exit_code": 0,
+            "result": {
+              "outcome": "return",
+              "summary": "消息内容是普通业务信息,事实准确,没有敏感信息,也没有招聘决策,这部分没有问题。问题在目标群:\"People recruiting\"(recruiting)不是这项工作的业务归属群。该群只有 3 名成员(p、m、s),不含被分配办公设备协调的 Casey(c)。它的讨论围绕 Head of People 岗位画像和面试安排,与办公设备协调、培训平台上线无关。上一轮选它的理由只是\"讨论人员和招聘\",这只是同属 People 主题,不能证明工作关系。\"People department\"(department)更合适:它有完整的 8 人名册,包含 p、m、c。它的讨论涉及部门工作协调、专业培训和内部运营,覆盖了本次会议的两项结论。会议名单不完整(attendee_roster_complete=false),这一点作为缺口记录,本身不是退回的理由。",
+              "feedback": {
+                "rule": "普通业务群选择:所选群的实际用途和具体工作必须覆盖整个普通总结,不能只因部门或主题相同就选;应对比候选群的讨论、行动负责人和完整名册。",
+                "observation": "候选目标 recruiting(People recruiting)只有 p、m、s 三名成员,不含被分配协调办公设备的 Casey(c)。其讨论仅涉及 Head of People 岗位画像和面试安排,与办公设备协调、培训平台上线无关。上一轮选它的理由是\"讨论人员和招聘\",这只是主题上的关联,不是工作归属。供选的 department(People department,8 人,含 p、m、c)讨论部门工作协调、专业培训和内部运营,覆盖本次会议的两项结论(Casey 协调办公设备、Morgan 准备培训平台上线),且 Casey 在群内。",
+                "requested_revision": "把目标改为 department(People department),消息正文和标题可保持不变。audit_summary 不要再把 recruiting 的理由写成\"讨论相关部门工作\",应改为说明 department 的工作范围和成员包含 Casey 和 Morgan,并继续把参会名单不完整记为缺口。"
+              }
+            },
+            "tool_item_types": [],
+            "session_id": "75f836e6-df0e-4f12-b354-7370efa5033b",
+            "error": "success"
+          },
+          "prompt_sha256": "071f0bca83ad207e51e8ee6230979dce892c58bcb74b71c828a7e8cd7ec4e243",
+          "contract_ok": true,
+          "passed": true,
+          "content_review": "Reviewed: supported summary conclusions preserved; Audit returns name the better group and revision. See manual_content_review limitation."
+        }
+      }
+    ],
+    "passed": 12
+  },
+  "candidate_data_correction": {
+    "reused_identical_prompt_invocations": 22,
+    "corrected_candidate_invocations": 2,
+    "description": "Correct complete-calendar frozen Audit rationale only; unchanged source/model/settings/prompt-hash results reused exactly. Interrupted invalid harness evidence excluded."
+  },
+  "manual_content_review": {
+    "scope": "All 12 planner bodies and 12 Audit outputs from the fixed six-case comparison; corrected complete-roster Audit results supersede the invalid frozen rationale.",
+    "supported_conclusions_preserved": true,
+    "return_names_better_candidate_and_actionable_revision": true,
+    "limitation": "Both refs sometimes infer no assigned owners/deadlines or no disagreement from a summary that is silent. These unsupported additions are not repaired here and are not counted as a content-quality improvement.",
+    "conclusion": "Baseline 12/12 and candidate 12/12 on selection/outcome and schema. No measured superiority or natural post-release outcome is demonstrated by this sample. The explicit scope correction is grounded in the independently observed original wrong-group decision and approved user requirement."
+  }
+}

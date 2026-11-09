@@ -21,7 +21,7 @@ describe("CodexSessionDetailPage", () => {
       { kind: "tool_output", trace: { call_id: "repeat", output: "second-output" } },
     ] }, meta: { snapshot_at: "" } });
     const { container } = render(<MemoryRouter initialEntries={["/codex/test"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
-    await screen.findByText("second-output");
+    await screen.findByText("second-output", { selector: "pre" });
     const cards = container.querySelectorAll(".execution-step");
     expect(cards).toHaveLength(2);
     expect(cards[0]).toHaveTextContent('{"id":9007199254740993}');

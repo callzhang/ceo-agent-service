@@ -42,13 +42,15 @@ LOCAL_SSO_CONFIRM_PROCESS_SECONDS = 40
 HEADLESS_SOURCE_TIMEOUT_SECONDS = 220
 HEADLESS_SOURCE_SHUTDOWN_SECONDS = 5
 LOCAL_SSO_CURRENT_PAGE = ".app-page.app-page-curr"
+LOCAL_SSO_ACCOUNT_PAGE = f"{LOCAL_SSO_CURRENT_PAGE}.third-part-login-page"
+LOCAL_SSO_QR_PAGE = f"{LOCAL_SSO_CURRENT_PAGE}.app-qr-login-page"
 LOCAL_SSO_DIRECT_BUTTON = (
-    ".module-confirm > .module-confirm-button.base-comp-button-type-primary"
+    f"{LOCAL_SSO_CURRENT_PAGE} .module-confirm > .module-confirm-button.base-comp-button-type-primary"
     ":not(.base-comp-button-disabled)"
 )
 LOCAL_SSO_ACCOUNT_AVATAR = f"{LOCAL_SSO_CURRENT_PAGE} .module-qrcode-user-avatar"
 LOCAL_SSO_CORP_ITEM = f"{LOCAL_SSO_CURRENT_PAGE} .module-corp-sel-listitem"
-LOCAL_SSO_QR_TAB = ".flex-box-tab-content [role=tab]"
+LOCAL_SSO_QR_TAB = '.dtm-segment[role="tablist"] [role="tab"][aria-selected="false"]'
 LOCAL_SSO_CORP_NAME = "北京星尘纪元智能科技有限公司"
 OKR_REQUEST_NUDGE = """() => { try {
     if (location.hash.indexOf('okr') < 0) { location.hash = '#/okr/personal'; }
@@ -163,9 +165,11 @@ def _attempt_local_dingtalk_sso(page) -> bool:
     """Use the logged-in desktop DingTalk account to recover the web session."""
     if not _is_dingtalk_login_url(getattr(page, "url", "")):
         return False
-    qr_tab = page.locator(LOCAL_SSO_QR_TAB).filter(has_text="扫码登录").first
-    if qr_tab.is_visible():
-        qr_tab.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+    qr_page = page.locator(LOCAL_SSO_QR_PAGE)
+    if page.locator(LOCAL_SSO_ACCOUNT_PAGE).is_visible():
+        page.locator(LOCAL_SSO_QR_TAB).click(timeout=LOCAL_SSO_TIMEOUT_MS)
+        qr_page.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+    if qr_page.is_visible():
         avatar = page.locator(LOCAL_SSO_ACCOUNT_AVATAR).first
         avatar.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
         avatar.click(timeout=LOCAL_SSO_TIMEOUT_MS)

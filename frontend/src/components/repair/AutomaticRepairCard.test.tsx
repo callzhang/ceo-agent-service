@@ -8,7 +8,7 @@ it('shows real conversation and PR links without claiming deployed', () => {
   render(<MemoryRouter><AutomaticRepairCard repair={{ status: 'pr_created', summary: 'PR 已创建', conversation_url: '/?task=12', pr_url: 'https://github.com/example/service/pull/7', turn_count: 2 }} /></MemoryRouter>);
   expect(screen.getByRole('link', { name: '查看修复对话' })).toHaveAttribute('href', '/?task=12');
   expect(screen.getByRole('link', { name: '查看 PR' })).toHaveAttribute('href', 'https://github.com/example/service/pull/7');
-  expect(screen.getByText(/PR 创建不代表已合并/)).toBeInTheDocument();
+  expect(screen.getByText(/确定性修复在检查和 review 通过后/)).toBeInTheDocument();
 });
 it('shows queued and exhausted repair states', () => {
   const view = render(<MemoryRouter><AutomaticRepairCard repair={{ status: 'queued', summary: '', conversation_url: '', pr_url: '', turn_count: 0 }} /></MemoryRouter>);
@@ -29,4 +29,13 @@ it('shows CI and review progress in the existing repair card', () => {
   view.rerender(<MemoryRouter><AutomaticRepairCard repair={{ status: 'checks_passed', summary: '当前提交已通过；继续监听反馈', conversation_url: '/?task=12', pr_url: 'https://github.com/example/service/pull/7', turn_count: 3 }} /></MemoryRouter>);
   expect(screen.getByRole('heading', { name: '自动修复 · CI / review 已通过' })).toBeInTheDocument();
   expect(screen.getByRole('link', { name: '查看修复对话' })).toHaveAttribute('href', '/?task=12');
+});
+
+
+it('shows the confirmed merge commit and preserves both source links', () => {
+  render(<MemoryRouter><AutomaticRepairCard repair={{ status: 'merged', summary: 'GitHub 已确认合并到 main', conversation_url: '/?task=12', pr_url: 'https://github.com/example/service/pull/7', turn_count: 4, merge_commit: 'verified-merge-sha', merged_at: '2026-11-09T09:00:00Z' }} /></MemoryRouter>);
+  expect(screen.getByRole('heading', { name: '自动修复 · 修复已合并到 main' })).toBeInTheDocument();
+  expect(screen.getByText('verified-merge-sha')).toBeInTheDocument();
+  expect(screen.getByRole('link', { name: '查看 PR' })).toHaveAttribute('href', 'https://github.com/example/service/pull/7');
+  expect(screen.getByText(/部署和原业务结果分别保留/)).toBeInTheDocument();
 });

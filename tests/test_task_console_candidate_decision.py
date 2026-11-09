@@ -1,3 +1,4 @@
+import json
 from app.store import AutoReplyStore
 from tests.test_console_web_api import _client
 from tests.support.business_task_seed import seed_task
@@ -20,11 +21,11 @@ def test_ignoring_a_candidate_cancels_it_with_a_human_signal_and_restoring_reope
         signal = next(row["signal"] for row in task["evidence"] if row["role"] == "correction")
         assert signal["source_type"] == "console"
         assert signal["author_kind"] == "human"
+        # Task detail carries only the reference; the original is an explicit read.
+        original = client.get(f"/api/console/tasks/signals/{signal['id']}").json()["item"]
+        assert "整理访谈问题清单" in original["evidence_text"]
         assert "evidence_text" not in signal
-        signal_detail = client.get(f"/api/console/tasks/signals/{signal['id']}")
-        assert signal_detail.status_code == 200
-        assert signal_detail.json()["item"]["source_available"] is True
-        assert "整理访谈问题清单" in signal_detail.json()["item"]["evidence_text"]
+        assert json.loads(signal["context_json"]) == {"action": "ignore"}
         assert [event["event_type"] for event in task["events"]][-1] == "status_changed"
 
         back = client.post(f"/api/console/tasks/items/{task_id}/candidate-decision", json={"action": "restore"})

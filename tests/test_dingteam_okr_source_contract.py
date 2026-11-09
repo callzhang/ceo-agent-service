@@ -88,3 +88,105 @@ def test_okr_browser_preserves_existing_session_through_shared_launcher(source, 
 
     assert calls == [(playwright, profile, {"initialize_from_snapshot": False})]
     assert closed == [True]
+
+
+@pytest.fixture(scope="module")
+def sso_chrome():
+    from playwright.sync_api import Error, sync_playwright
+
+    with sync_playwright() as playwright:
+        try:
+            browser = playwright.chromium.launch(channel="chrome", headless=True)
+        except Error:
+            pytest.skip("Chrome is unavailable for the local SSO DOM regression")
+        try:
+            yield browser
+        finally:
+            browser.close()
+
+
+def sso_pages(body):
+    """Old screens remain visible underneath the active screen, as in native SSO."""
+    return (
+        "<style>.app-page{position:absolute;inset:0;background:white}"
+        ".app-page-curr{z-index:2}</style><output id='events'></output>"
+        + "<div class='app-page'>" + body.replace("current", "old") + "</div>"
+        + "<div class='app-page app-page-curr'>" + body + "</div>"
+    )
+
+
+def test_direct_sso_ignores_earlier_button_on_old_page(source, sso_chrome, monkeypatch):
+    monkeypatch.setattr(source.browser, "ENTRY_URL", "about:blank", raising=False)
+    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 500)
+    monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
+    page = sso_chrome.new_page()
+    try:
+        page.set_content(sso_pages(
+            "<div class='module-confirm'><div class='module-confirm-button "
+            "base-comp-button-type-primary' "
+            "onclick=\"document.querySelector('#events').textContent+='current,'\">"
+            "Log In</div></div>"
+        ))
+
+        source._submit_local_dingtalk_account(page)
+
+        assert page.locator("#events").text_content() == "current,"
+    finally:
+        page.close()
+
+
+@pytest.mark.parametrize("initial_mode", ["account", "qr"])
+@pytest.mark.parametrize("labels", [("Account", "QR Code"), ("账号", "扫码登录")])
+def test_qr_sso_uses_shared_tabs_and_current_panes(source, sso_chrome, monkeypatch, initial_mode, labels):
+    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 1000)
+    monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
+    monkeypatch.setattr(source, "LOCAL_SSO_CORP_NAME", "Synthetic Corp")
+    confirmations = []
+    page = sso_chrome.new_page()
+
+    def confirm_native():
+        confirmations.append(True)
+        page.evaluate("document.querySelector('#qr').classList.remove('app-page-curr');"
+                      "document.querySelector('#corp').classList.add('app-page-curr')")
+
+    monkeypatch.setattr(source, "_confirm_local_dingtalk_login", confirm_native)
+    account_label, qr_label = labels
+    account_active = " app-page-curr" if initial_mode == "account" else ""
+    qr_active = " app-page-curr" if initial_mode == "qr" else ""
+    html = (
+        "<style>.app-page{display:none}.app-page-curr{display:block}</style>"
+        "<output id='events'></output>"
+        "<div class='dtm-segment' role='tablist'>"
+        f"<button role='tab' aria-selected='{str(initial_mode == 'account').lower()}' "
+        "onclick=\"document.querySelector('#events').textContent+='wrong-account,'\">"
+        + account_label + "</button>"
+        f"<button role='tab' aria-selected='{str(initial_mode == 'qr').lower()}' "
+        "onclick=\"document.querySelector('#events').textContent+='qr,';"
+        "document.querySelector('#account').classList.remove('app-page-curr');"
+        "document.querySelector('#qr').classList.add('app-page-curr');"
+        "this.setAttribute('aria-selected','true');"
+        "this.previousElementSibling.setAttribute('aria-selected','false')\">"
+        + qr_label + "</button></div>"
+        f"<div id='account' class='app-page third-part-login-page{account_active}'>Account methods</div>"
+        f"<div id='qr' class='app-page app-qr-login-page{qr_active}'>"
+        "<button class='module-qrcode-user-avatar' "
+        "onclick=\"document.querySelector('#events').textContent+='avatar,'\">Current account</button></div>"
+        "<div id='corp' class='app-page'><button class='module-corp-sel-listitem' "
+        "onclick=\"document.querySelector('#events').textContent+='corp,'\">Synthetic Corp</button></div>"
+        "<div class='app-page'><div class='flex-box-tab-content'>"
+        "<button role='tab' onclick=\"document.querySelector('#events').textContent+='old,'\">"
+        "扫码登录</button></div></div>"
+    )
+    page.route("https://login.dingtalk.com/oauth2/test", lambda route: route.fulfill(
+        body=html, content_type="text/html; charset=utf-8",
+    ))
+    try:
+        page.goto("https://login.dingtalk.com/oauth2/test")
+
+        assert source._attempt_local_dingtalk_sso(page) is True
+
+        expected = "qr,avatar,corp," if initial_mode == "account" else "avatar,corp,"
+        assert page.locator("#events").text_content() == expected
+        assert confirmations == [True]
+    finally:
+        page.close()

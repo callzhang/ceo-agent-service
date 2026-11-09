@@ -1,0 +1,45 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": [
+        "merged",
+        "pr_updated",
+        "review_required",
+        "blocked"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "head_sha": {
+      "minLength": 1,
+      "title": "Head Sha",
+      "type": "string"
+    },
+    "summary": {
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    },
+    "deterministic_fix": {
+      "title": "Deterministic Fix",
+      "type": "boolean"
+    },
+    "regression_evidence": {
+      "items": {
+        "type": "string"
+      },
+      "title": "Regression Evidence",
+      "type": "array"
+    }
+  },
+  "required": [
+    "outcome",
+    "head_sha",
+    "summary",
+    "deterministic_fix",
+    "regression_evidence"
+  ],
+  "title": "RepairMergeResult",
+  "type": "object"
+}

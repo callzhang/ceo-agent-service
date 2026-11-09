@@ -25,7 +25,8 @@ from app.native_trajectory import (
     read_native_result_stream,
 )
 from app.workbench.codex_runtime import _native_tool_failed
-from app.workbench.models import WorkbenchEvent, WorkbenchTurn
+from app.workbench.models import WorkbenchEvent, WorkbenchTurn, WorkbenchRuntimeAttempt
+from app.native_trajectory_view import trajectory_url
 
 WORKBENCH_TURN_SQL = """select cast(t.id as text) as id,cast(w.workbench_task_id as text) as task_id,
     w.client_request_id,w.task_sequence,w.user_text,t.status,w.stop_requested,w.error_code,
@@ -107,20 +108,34 @@ def terminal_cached_turn_ids(db: sqlite3.Connection, db_path: Path) -> list[str]
 
 def _attempts(db: sqlite3.Connection, turn_id: str) -> list[sqlite3.Row]:
     return db.execute(
-        "select runtime_kind,session_id,transcript_start,transcript_end,status "
+        "select id,runtime_kind,session_id,transcript_start,transcript_end,status,"
+        "failure_class,failure_code "
         "from runtime_attempts where workload_kind='workbench' and workload_key=? order by id",
         (turn_id,),
     ).fetchall()
 
 
 def hydrate_turn(db: sqlite3.Connection, turn: WorkbenchTurn) -> WorkbenchTurn:
-    if turn.status.value == "failed" and not turn.error_detail:
+    attempts = _attempts(db, turn.id)
+    turn.runtime_attempts = [WorkbenchRuntimeAttempt(
+        id=row['id'], runtime=row['runtime_kind'], status=row['status'],
+        failure_code=row['failure_code'], failure_class=row['failure_class'],
+        url=trajectory_url(row['id']),
+    ) for row in attempts]
+    if turn.status.value == "failed":
         from app.workbench.executor import _public_runtime_failure_detail
 
-        turn.error_detail = _public_runtime_failure_detail(turn.error_code or "runtime_failure")
+        if not turn.error_detail:
+            turn.error_detail = _public_runtime_failure_detail(turn.error_code or "runtime_failure")
+        if attempts and attempts[-1]['status'] == 'failed':
+            last = attempts[-1]
+            turn.error_detail = (
+                f"{turn.error_detail} "
+                f"最近原生调用 #{last['id']}：{last['runtime_kind']} · "
+                f"{last['failure_class']} · {last['failure_code']}。"
+            )
     if turn.status.value != "completed":
         return turn
-    attempts = _attempts(db, turn.id)
     raw = ""
     if attempts:
         last = attempts[-1]

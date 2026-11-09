@@ -23,7 +23,7 @@ describe("NativeTrajectoryPage", () => {
     expect(await screen.findByText("末尾输出")).toBeVisible();
     expect(screen.getByText("已完整读取本次调用范围 · 4 条原生记录")).toBeVisible();
     expect(getResource.mock.calls.map(([url]) => url)).toEqual(["/api/console/runtime-attempts/7/trajectory", "/api/console/runtime-attempts/7/trajectory?after=2", "/api/console/runtime-attempts/7/trajectory?after=3"]);
-    expect(screen.getByText("actual failure").closest("details")).toHaveClass("execution-failed");
+    expect(screen.getByText("actual failure", { selector: "pre" }).closest("details")).toHaveClass("execution-failed");
   });
   it("retains loaded evidence when later pages become unavailable", async () => {
     getResource.mockReset().mockResolvedValueOnce(response({ has_more: true, next_cursor: 2 }))

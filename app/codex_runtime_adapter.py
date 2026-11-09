@@ -21,6 +21,7 @@ from app.codex_capacity import (
     codex_provider_failure_code,
 )
 from app.codex_failure import (
+    is_codex_login_required_error,
     CODEX_PROCESS_FAILED,
     CODEX_PROVIDER_AUTH_FAILED,
     CODEX_PROVIDER_OVERLOADED,
@@ -236,7 +237,7 @@ class CodexRuntimeAdapter:
                 failover_permitted=True,
             )
         detail, structured_messages = _provider_failure_text(stdout, stderr)
-        if _is_codex_login_required_error(detail):
+        if is_codex_login_required_error(detail):
             return RuntimeFailure(
                 failure_class=RuntimeFailureClass.AUTHENTICATION,
                 code="codex_login_required",
@@ -360,14 +361,6 @@ class CodexRuntimeAdapter:
         if api_key is not None and api_key != selected_key:
             raise ValueError("API key does not match the configured runtime route")
         return selected_key
-
-
-def _is_codex_login_required_error(value: str) -> bool:
-    normalized = value.casefold()
-    return (
-        "failed to refresh token" in normalized
-        and ("session has ended" in normalized or "invalid refresh token" in normalized)
-    ) or "token_invalidated" in normalized
 
 
 def _unclassified_failure_detail(returncode: int) -> str:

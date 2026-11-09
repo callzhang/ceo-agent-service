@@ -35,9 +35,14 @@ WECHAT_DELIVERIES = f"select * from ({WECHAT_DELIVERY_SQL})"
     ],
 )
 def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
-    tmp_path, delivery_status, generation, conversation, latest_sent, expected_failed,
+    tmp_path, monkeypatch, delivery_status, generation, conversation, latest_sent, expected_failed,
     attempt_status,
 ):
+    # This test proves history reads do not mutate Tasks; the app's Workbench
+    # scheduler would otherwise turn a failed Attempt's queued repair into a
+    # workbench_turn Task mid-test (a timing-dependent write unrelated to reads).
+    monkeypatch.setattr(
+        "app.automatic_repair.AutomaticRepairCoordinator.run_once", lambda self: None)
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     store.enqueue_reply_task(
         channel="wechat", conversation_id="wechat-current", conversation_title="Morgan",
@@ -76,9 +81,7 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
                 "reply_text": "Yes.", "status": "sent",
             })
         original_deliveries = [tuple(row) for row in db.execute(WECHAT_DELIVERIES)]
-        # Recording a failed reply attempt now atomically queues its automatic
-        # repair turn. The history read must leave the source task untouched.
-        original_task = tuple(db.execute("select * from tasks where id=?", (task.id,)).fetchone())
+        original_tasks = [tuple(row) for row in db.execute("select * from tasks where kind='reply'")]
         original_attempts = [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")]
 
     with _client(tmp_path) as client:
@@ -103,7 +106,10 @@ def test_wechat_history_uses_latest_delivery_for_current_object_and_generation(
     assert sum(series.values()) == 1
     with store._connect() as db:
         assert [tuple(row) for row in db.execute(WECHAT_DELIVERIES)] == original_deliveries
-        assert tuple(db.execute("select * from tasks where id=?", (task.id,)).fetchone()) == original_task
+        # Reading a failed Attempt may only queue its automatic repair turn;
+        # the reply task itself is never changed.
+        assert [tuple(row) for row in db.execute("select * from tasks where kind='reply'")] == original_tasks
+        assert {row[0] for row in db.execute("select kind from tasks where kind<>'reply'")} <= {"workbench_turn"}
         assert [tuple(row) for row in db.execute(f"select * from ({REPLY_ATTEMPT_COMMON_SQL})")] == original_attempts
 
 
