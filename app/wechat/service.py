@@ -286,7 +286,15 @@ def process_ready_wechat_deliveries(
             scope = _scope_for_delivery(store, delivery)
             if scope is None:
                 continue
-        sender.send(delivery, scope, prepared=prepared)
+        from app.store import AgentRunLeaseLostError
+
+        try:
+            sender.send(delivery, scope, prepared=prepared)
+        except AgentRunLeaseLostError:
+            # A concurrent delivery/task transition won the persisted fence.
+            # The stale sender must stop here; the next recovery pass reconciles
+            # any uncertain external action from provider history.
+            continue
         sent += 1
     return sent
 
