@@ -201,7 +201,9 @@ def _service_browser(playwright):
     from app.service_browser import launch_service_chrome
 
     browser.PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    context = launch_service_chrome(playwright, browser.PROFILE_DIR)
+    context = launch_service_chrome(
+        playwright, browser.PROFILE_DIR, initialize_from_snapshot=False
+    )
     try:
         yield context
     finally:

@@ -5,8 +5,8 @@ Derek, 2026-09-25: the service keeps a daily copy of his Chrome cookies (see
 so a login he already has is not asked for again by each task on its own.
 
 The browser is real Chrome, always headless, on a profile directory of the
-caller's own. Before it opens, that profile receives the current cookie copy;
-whatever the task's browser writes afterwards lives and dies with the profile.
+caller's own. By default that profile receives the current cookie copy.
+Callers that maintain an existing session explicitly skip this initialization.
 """
 
 from __future__ import annotations
@@ -24,9 +24,10 @@ def launch_service_chrome(
     profile_dir: Path,
     *,
     headless: bool = True,
+    initialize_from_snapshot: bool = True,
     **kwargs: object,
 ) -> object:
-    """Open `profile_dir` in headless Chrome with the owner's cookie copy in it."""
+    """Open real headless Chrome, optionally initializing the owner's cookies."""
 
     if headless is not True:
         raise ValueError("service browsers must be headless")
@@ -34,7 +35,8 @@ def launch_service_chrome(
     launch = getattr(chromium, "launch_persistent_context", None)
     if not callable(launch):
         raise ValueError("Chromium persistent context is unavailable")
-    prepare_profile_from_snapshot(profile_dir)
+    if initialize_from_snapshot:
+        prepare_profile_from_snapshot(profile_dir)
     return launch(
         user_data_dir=str(profile_dir),
         channel="chrome",
