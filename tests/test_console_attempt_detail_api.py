@@ -240,7 +240,7 @@ def test_runtime_payload_preserves_business_status_separately(
     assert store.list_agent_runtime_attempts(run.id) == before
 
 
-def test_claude_native_range_is_readable_without_a_codex_viewer_link(
+def test_claude_native_range_has_runtime_neutral_viewer_link(
     tmp_path: Path, monkeypatch,
 ) -> None:
     from app import native_trajectory
@@ -253,7 +253,7 @@ def test_claude_native_range_is_readable_without_a_codex_viewer_link(
         proposal_revision=0, turn_attempt=0, status="completed",
     )
     attempt = SimpleNamespace(
-        runtime_kind="claude_cli", session_id="claude-session",
+        id=72, runtime_kind="claude_cli", session_id="claude-session",
         transcript_start=0, transcript_end=1, attempt_number=1,
         route_name="claude", credential_mode="local_oauth", model="test",
         status="completed", failure_code="", failover_permitted=False,
@@ -265,7 +265,7 @@ def test_claude_native_range_is_readable_without_a_codex_viewer_link(
 
     [entry] = _runtime_payload([run], store)
     assert entry["session_available"] is True
-    assert entry["session_url"] == ""
+    assert entry["session_url"] == "/runtime-attempts/72/trajectory"
     assert entry["native_reason"] == ""
 
 
@@ -1122,8 +1122,8 @@ def test_attempt_detail_reaches_every_role_transcript(
     assert set(sessions) == {"consumer", "audit"}
     # The Consumer transcript exists on disk; linking only the Attempt's own
     # session id made it unreachable from the console.
-    assert sessions["consumer"]["url"] == "/codex/session-consumer"
-    assert sessions["audit"]["url"] == "/codex/session-audit"
+    assert sessions["consumer"]["url"].startswith("/runtime-attempts/")
+    assert sessions["audit"]["url"].startswith("/runtime-attempts/")
     # The calls live in the Agent record at those URLs, not copied here.
     assert "tool_uses" not in sessions["consumer"]
     assert item["tool_uses"] == []
@@ -1142,7 +1142,7 @@ def test_missing_transcript_does_not_resurrect_copied_attempt_calls(
     _, item = build_attempt_detail(store, attempt_id)
 
     assert item is not None
-    assert item["agent_sessions"] == []
+    assert all(session["url"].startswith("/runtime-attempts/") for session in item["agent_sessions"])
     assert item["tool_uses"] == []
 
 
@@ -2252,3 +2252,53 @@ def test_email_attempt_keeps_failure_or_cached_receipt_without_inventing_page_ev
     assert actual["reused_receipt"] is result.get("reused_receipt", False)
     assert actual["error_code"] == result.get("error", {}).get("code", "")
     assert actual["operation"] == result.get("operation", "")
+
+
+def test_native_entry_opens_recorded_claude_range_and_does_not_mutate_run(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path/'native-entry.sqlite3')
+    attempt_id = _seed_email_attempt(store, with_agent_runs=True)
+    reply = store.get_reply_attempt(attempt_id)
+    native = store.list_agent_runtime_attempts(reply.agent_run_id)[0]
+    transcript = tmp_path/'claude.jsonl'
+    transcript.write_text(''.join(json.dumps({'type':'assistant','message':{'content':[{'type':'text','text':f'visible-{n}'}]}})+'\n' for n in range(59)))
+    with store._connect() as db:
+        db.execute("update runtime_attempts set runtime_kind='claude_cli',transcript_reference='claude_session:session-audit' where id=?", (native.id,))
+    monkeypatch.setattr('app.native_trajectory_view.claude_session_path',lambda _:transcript)
+    before = store.get_agent_runtime_attempt(native.id)
+    client = TestClient(create_audit_app(store.path))
+    detail = client.get(f'/api/console/history/{attempt_id}').json()['item']
+    entry = next(item for item in detail['runtime_attempts'] if item['id']==native.id)
+    assert entry['session_url'] == f'/runtime-attempts/{native.id}/trajectory'
+    result = client.get(f'/api/console/runtime-attempts/{native.id}/trajectory')
+    assert result.status_code == 200
+    page = result.json()['item']
+    assert page['available'] and not page['has_more']
+    assert page['events'][-1]['body'] == 'visible-58'
+    assert page['attempt']['runtime'] == 'claude_cli'
+    assert client.get(f'/api/console/runtime-attempts/{native.id}/trajectory?after=60').status_code==422
+    assert client.get('/api/console/runtime-attempts/9999999/trajectory').status_code==404
+    assert store.get_agent_runtime_attempt(native.id) == before
+
+
+def test_service_error_does_not_attach_other_inputs_of_same_task(tmp_path):
+    from app.web_api.native_trajectory import error_trajectory_links
+    store = AutoReplyStore(tmp_path/'error-input-identity.sqlite3')
+    identity = _seed_email_attempt(store, with_agent_runs=True)
+    run = store.get_agent_run(store.get_reply_attempt(identity).agent_run_id)
+    with store._connect() as db:
+        source = dict(db.execute('select * from task_inputs where task_id=?', (run.reply_task_id,)).fetchone())
+        source.update(id=source['id']+1000, trigger_message_id='different-trigger', input_revision_key='different')
+        names = ','.join(source)
+        marks = ','.join('?' for _ in source)
+        db.execute(f'insert into task_inputs({names}) values({marks})', tuple(source.values()))
+    assert error_trajectory_links(store, SimpleNamespace(conversation_id=CONVERSATION,message_id='different-trigger')) == []
+    assert len(error_trajectory_links(store, SimpleNamespace(conversation_id=CONVERSATION,message_id=TRIGGER))) == 2
+
+
+def test_legacy_session_entry_survives_attempt_without_new_session(monkeypatch):
+    from app.web_api.attempts import _agent_sessions
+    monkeypatch.setattr('app.codex_history.find_codex_session_path', lambda _:Path('/native/legacy.jsonl'))
+    run=SimpleNamespace(id=1,role=AgentRole.CONSUMER,codex_session_id='legacy-session')
+    sessions=_agent_sessions(SimpleNamespace(codex_session_id='legacy-session'),[run],
+                             [{'run_id':1,'session_url':'','session_id':'','role':'consumer'}])
+    assert sessions == [{'role':'consumer','label':'处理过程','session_id':'legacy-session','url':'/codex/legacy-session'}]

@@ -21,7 +21,10 @@ def test_ignoring_a_candidate_cancels_it_with_a_human_signal_and_restoring_reope
         signal = next(row["signal"] for row in task["evidence"] if row["role"] == "correction")
         assert signal["source_type"] == "console"
         assert signal["author_kind"] == "human"
-        assert "evidence_text" not in signal  # originals are read explicitly
+        # Task detail carries only the reference; the original is an explicit read.
+        original = client.get(f"/api/console/tasks/signals/{signal['id']}").json()["item"]
+        assert "整理访谈问题清单" in original["evidence_text"]
+        assert "evidence_text" not in signal
         assert json.loads(signal["context_json"]) == {"action": "ignore"}
         assert [event["event_type"] for event in task["events"]][-1] == "status_changed"
 

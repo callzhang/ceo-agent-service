@@ -39,6 +39,7 @@ export interface Turn {
   final_text: string;
   error_code: string;
   error_detail: string;
+  runtime_attempts?: { id: number; runtime: string; status: string; failure_code: string; failure_class: string; url: string }[];
   started_at: string;
   completed_at: string;
   created_at: string;

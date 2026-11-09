@@ -15,7 +15,6 @@ from app.store import NATIVE_AGENT_RUN_SQL as AGENT_RUN_SQL
 from app.run_entity_storage import create_run
 from app.action_storage import insert_action, update_action
 from app.audit_web import _reply_attempt_queue_snapshot, handle_rerun_attempt_post
-from app.quality_gate import scan_hourly_quality
 from app.store import AutoReplyStore
 from app.state_definitions import state_projection
 from app.web_api.attempts import build_attempt_detail
@@ -98,8 +97,14 @@ def seed(store, *, native_home):
 
 
 def invalid_count(store):
-    return sum(i.count for i in scan_hourly_quality(store.path).violations
-               if i.code == "invalid_needs_human_result")
+    """Unresolved needs_human Attempts still projected in the reply queue.
+
+    The hourly quality gate only flags a needs_human Attempt whose current Run's
+    Task is still needs_human; a retirable question has a finished Task, so the
+    queue projection is where an unretired old question stays visible.
+    """
+    with store._connect() as db:
+        return _reply_attempt_queue_snapshot(db)["counts"].get("needs_human", 0)
 
 
 def native_path(store, run_id):
@@ -146,10 +151,10 @@ def test_explicit_retirement_records_provenance_preserves_history_and_is_idempot
     store = AutoReplyStore(tmp_path / "state.sqlite3")
     attempt_id, task_id, run_id, result = seed(store, native_home=isolated_native_home)
     original_native = native_path(store, run_id).read_bytes()
-    assert invalid_count(store) == 0  # a done task is outside the active-task quality gate
+    assert invalid_count(store) == 1
     preview = retire_rule_question(store, attempt_id, authority=AUTHORITY)
     assert preview["applied"] is False
-    assert invalid_count(store) == 0  # a done task is outside the active-task quality gate
+    assert invalid_count(store) == 1
     receipt = retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert receipt["applied"] is True
     assert receipt["attempt_id"] == attempt_id
@@ -226,8 +231,11 @@ def test_retirement_refuses_current_or_unproven_questions(tmp_path, change, isol
     with pytest.raises(ValueError):
         retire_rule_question(store, attempt_id, authority=AUTHORITY, apply=True)
     assert store.get_reply_attempt(attempt_id).resolved_at == ""
-    # Only a task still waiting on a person is an active invalid handoff.
-    assert (invalid_count(store) > 0) == (change == "active")
+    with store._connect() as db:
+        assert db.execute(
+            "select count(*) from (" + state_projection("service_state") + ") where key=?",
+            (f"rule_question_retirement:{attempt_id}",),
+        ).fetchone()[0] == 0
 
 
 def test_cli_preview_does_not_initialize_or_migrate_the_database(tmp_path, isolated_native_home):

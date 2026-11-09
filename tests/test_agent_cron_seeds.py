@@ -2154,14 +2154,14 @@ def test_scheduled_terminal_run_uses_current_finalizer_signature(monkeypatch):
     from dataclasses import dataclass
 
     @dataclass(frozen=True)
-    class _Context:
+    class Context:
         manual_rerun: object = None
 
     @dataclass(frozen=True)
-    class _Built:
-        context: _Context
+    class Built:
+        context: Context
 
-    built = _Built(context=_Context())
+    built = Built(context=Context())
     monkeypatch.setattr(module.ScheduledAgentContext, 'from_execution_json', lambda *args, **kwargs: built)
     monkeypatch.setattr(module, 'validate_scheduled_execution_availability', lambda *_: None)
     monkeypatch.setattr(app.task_artifacts, 'cleanup_terminal_task_artifacts', lambda *_: None)

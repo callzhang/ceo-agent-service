@@ -31,7 +31,6 @@ from app.workbench.store import WorkbenchStore
 _MAX_CLAIMS = 2
 _RECOVERY_SQLITE_LOCK_RETRY_ATTEMPTS = MAX_AUTOMATIC_ATTEMPTS
 _RECOVERY_SQLITE_LOCK_RETRY_DELAY_SECONDS = 0.1
-_RUNTIME_FAILURE = "Runtime execution could not be completed."
 _KNOWN_RUNTIME_FAILURE_DETAILS = {
     "provider_output_limit": (
         "Codex provider output exceeded the 16 MiB Workbench safety limit."
@@ -51,7 +50,9 @@ _KNOWN_RUNTIME_FAILURE_DETAILS = {
 
 
 def _public_runtime_failure_detail(error_code: str) -> str:
-    return _KNOWN_RUNTIME_FAILURE_DETAILS.get(error_code, _RUNTIME_FAILURE)
+    return _KNOWN_RUNTIME_FAILURE_DETAILS.get(
+        error_code, f"运行时执行未完成（{error_code}）。"
+    )
 
 
 @dataclass

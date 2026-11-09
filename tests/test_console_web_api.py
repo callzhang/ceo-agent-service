@@ -121,6 +121,38 @@ def _client(
         yield client
 
 
+def test_console_attempt_detail_resolves_public_id_and_retires_physical_url(tmp_path: Path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    with store._connect() as db:
+        insert_action(db, "reply_attempts", {
+            "id": 9800,
+            "conversation_id": "legacy-id",
+            "conversation_title": "Legacy ID",
+            "trigger_message_id": "message",
+            "trigger_sender": "sender",
+            "trigger_text": "request",
+            "action": "reply",
+            "sensitivity_kind": "normal",
+            "send_status": "skipped",
+        })
+        physical_id = db.execute(
+            "select id from actions where record_type='reply_attempts' "
+            "and cast(legacy_key as integer)=9800"
+        ).fetchone()[0]
+
+    with _client(tmp_path, spa_enabled=True) as client:
+        response = client.get("/api/console/history/9800")
+        physical = client.get(f"/api/console/history/{physical_id}")
+
+    assert physical_id != 9800
+    assert response.status_code == 200
+    assert response.json()["item"]["id"] == 9800
+    assert response.json()["item"]["status"]["raw"] == "skipped"
+    # Physical row URLs were retired (e944b6762); only the public Attempt ID resolves.
+    assert physical.status_code == 404
+
+
+
 def test_console_client_restores_settings_environment_after_close(tmp_path: Path):
     updates = {
         "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,codex_api",

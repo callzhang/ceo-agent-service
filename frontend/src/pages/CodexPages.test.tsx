@@ -1,4 +1,5 @@
 import { render, screen } from "@testing-library/react";
+import userEvent from "@testing-library/user-event";
 import { MemoryRouter, Route, Routes } from "react-router-dom";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 
@@ -12,6 +13,39 @@ vi.mock("../api/console", () => ({
 import { CodexSessionDetailPage } from "./CodexPages";
 
 describe("CodexSessionDetailPage", () => {
+  it("pairs repeated call IDs by occurrence without losing tool returns or raw IDs", async () => {
+    getCodexSession.mockResolvedValueOnce({ item: { available: true, events: [
+      { kind: "tool_call", trace: { call_id: "repeat", name: "shell", input: "first-input" } },
+      { kind: "tool_output", trace: { call_id: "repeat", output: '{"id":9007199254740993}' } },
+      { kind: "tool_call", trace: { call_id: "repeat", name: "shell", input: "second-input" } },
+      { kind: "tool_output", trace: { call_id: "repeat", output: "second-output" } },
+    ] }, meta: { snapshot_at: "" } });
+    const { container } = render(<MemoryRouter initialEntries={["/codex/test"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
+    await screen.findByText("second-output", { selector: "pre" });
+    const cards = container.querySelectorAll(".execution-step");
+    expect(cards).toHaveLength(2);
+    expect(cards[0]).toHaveTextContent('{"id":9007199254740993}');
+    expect(cards[0]).not.toHaveTextContent("second-output");
+    expect(cards[1]).toHaveTextContent("second-output");
+  });
+  it("searches paired tool output and keeps unmatched output visible", async () => {
+    getCodexSession.mockResolvedValueOnce({ item: { available: true, events: [
+      { kind: "tool_call", title: "Tool call: shell", trace: { call_id: "one", name: "shell", input: "pwd" } },
+      { kind: "tool_output", trace: { call_id: "one", output: "matched-output-marker" } },
+      { kind: "tool_output", body: "orphan-output-marker", trace: { call_id: "missing", output: "orphan-output-marker" } },
+      { kind: "assistant", body: "最终答复" },
+    ] }, meta: { snapshot_at: "" } });
+    render(<MemoryRouter initialEntries={["/codex/test"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
+    expect(await screen.findByText("未配对的工具返回")).toBeInTheDocument();
+    const search = screen.getByRole("searchbox", { name: "搜索轨迹" });
+    await userEvent.type(search, "matched-output-marker");
+    expect(screen.getByText("显示 1 / 3 条记录")).toBeInTheDocument();
+    expect(screen.queryByText("最终答复")).not.toBeInTheDocument();
+    await userEvent.clear(search);
+    await userEvent.click(screen.getByRole("button", { name: /Agent 输出/ }));
+    expect(screen.getByText("最终答复")).toBeInTheDocument();
+    expect(screen.queryByText("未配对的工具返回")).not.toBeInTheDocument();
+  });
   beforeEach(() => {
     getCodexSession.mockResolvedValue({
       item: {

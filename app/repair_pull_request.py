@@ -62,7 +62,7 @@ class PullRequestReader:
                 "view",
                 url,
                 "--json",
-                "id,url,headRefName,headRefOid,state,reviewDecision",
+                "id,url,headRefName,headRefOid,baseRefName,state,reviewDecision,mergeCommit,mergedAt",
             ]
         )
         page = "pageInfo{hasNextPage endCursor}"

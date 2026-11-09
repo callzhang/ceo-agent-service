@@ -2982,6 +2982,53 @@ def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
     assert len(store.list_meeting_alignment_runs(job_id)) == 2
 
 
+def test_source_replay_keeps_return_feedback_after_failed_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class Runner(FakeMeetingRunner):
+        def __init__(self):
+            super().__init__(summary_decision())
+            self.prompts = []
+
+        def decide(self, *, prompt, run_id=None, compact_prompt=None):
+            self.prompts.append(prompt)
+            if len(self.prompts) > 1:
+                raise ValueError("structured output invalid")
+            return self.decision
+
+        def audit(self, *, prompt, run_id):
+            return MeetingAlignmentAuditResult(
+                outcome="return", summary="clarify assignment",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="source-supported ownership", observation="owner is uncertain",
+                    requested_revision="do not assign the disputed task without evidence",
+                ),
+            )
+
+    runner = Runner()
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(minutes=2), limit=1)
+    failed = store.get_meeting_alignment_job(job_id)
+    assert failed.status == "failed"
+    source = json.loads(failed.source_json)
+    source["refreshed"] = True
+    reopened = store.reopen_meeting_alignment_job_for_replay(
+        job_id, title=failed.title, source_json=json.dumps(source),
+        participants_json=failed.participants_json, ended_at=failed.ended_at,
+        eligible_at=failed.eligible_at,
+    )
+    assert reopened is not None and json.loads(reopened.source_json)["refreshed"]
+    assert reopened.final_message == "" and reopened.target_id == ""
+    assert set(json.loads(reopened.decision_json)) == {"_service_audit"}
+    assert json.loads(reopened.decision_json)["_service_audit"]["feedback_cycles"] == 1
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(minutes=3), limit=1)
+    assert "do not assign the disputed task without evidence" in runner.prompts[-1]
+    assert len(store.list_meeting_alignment_runs(job_id)) == 3
+    assert not dws.send_calls
+
+
 def _skip_decision(action):
     return MeetingAlignmentDecision.model_validate({
         **summary_decision().model_dump(mode="json"),
@@ -4253,3 +4300,33 @@ def test_a_rejected_target_is_kept_with_the_failure(tmp_path):
     assert job.target_id == "u-unverified"
     assert job.target_title == "Unverified"
     assert json.loads(job.decision_json)["target"]["title"] == "Unverified"
+
+
+@pytest.mark.parametrize("duplicate_on_later_page", [False, True])
+def test_exact_replay_returns_one_result_for_duplicate_native_id(tmp_path, duplicate_on_later_page):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    first = {"items": [meeting], "has_more": duplicate_on_later_page,
+             "next_token": "page-2" if duplicate_on_later_page else ""}
+    pages = {"": first}
+    if duplicate_on_later_page:
+        pages["page-2"] = {"items": [dict(meeting)], "has_more": False, "next_token": ""}
+    else:
+        first["items"].append(dict(meeting))
+    dws = FakeDws(minutes_pages=pages)
+    job_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting["taskUuid"], title="Original meeting", source_json="{}",
+        participants_json="[]", ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(), status="pending",
+    )
+    store.update_meeting_alignment_job(job_id, status="failed", error="original failure")
+
+    results = queue_recent_meeting_alignment_replay(
+        store, dws, now=NOW, limit=1, meeting_id=meeting["taskUuid"],
+    )
+
+    assert len(results) == 1
+    assert results[0]["outcome"] == "queued"
+    assert results[0]["job_id"] == job_id
+    assert dws.info_calls == [meeting["taskUuid"]]
+    assert store.get_meeting_alignment_job(job_id).status == "pending"

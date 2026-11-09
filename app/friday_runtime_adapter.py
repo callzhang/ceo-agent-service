@@ -368,6 +368,14 @@ class FridayRuntimeAdapter:
         """Read the final Artifact of an existing native Friday thread."""
         if not isinstance(thread_id, str) or not thread_id.strip():
             raise ValueError("Friday thread_id is required")
+        payload = self._read_native_resource(
+            f"{self.contract.artifacts_path()}?{urllib.parse.urlencode({'thread_id': thread_id})}",
+            timeout_seconds=timeout_seconds,
+        )
+        artifact = self.contract.select_final_artifact(payload, thread_id=thread_id)
+        return _artifact_result_text(artifact)
+
+    def _read_native_resource(self, path: str, *, timeout_seconds: float = 60.0):
         if isinstance(timeout_seconds, bool) or timeout_seconds <= 0:
             raise ValueError("timeout_seconds must be positive")
         credential = self._configured_credential()
@@ -395,16 +403,31 @@ class FridayRuntimeAdapter:
             raise FridayRuntimeError(
                 "friday_runtime_auth_failed", str(exc), retryable=False
             ) from exc
-        payload = self._request(
-            "GET",
-            f"{self.contract.artifacts_path()}?{urllib.parse.urlencode({'thread_id': thread_id})}",
-            headers=headers,
-            body=None,
+        return self._request(
+            "GET", path, headers=headers, body=None,
             deadline=time.monotonic() + timeout_seconds,
             credential=ticket or session or credential,
         )
-        artifact = self.contract.select_final_artifact(payload, thread_id=thread_id)
-        return _artifact_result_text(artifact)
+
+    def read_trajectory(self, thread_id: str, operation_id: str) -> dict:
+        """Read an existing operation's full visible trace; never create a turn."""
+        operation_data = self.contract.unwrap_success_envelope(
+            self._read_native_resource(self.contract.operation_path(urllib.parse.quote(operation_id, safe='')))
+        )
+        operation = operation_data.get('operation')
+        if (not isinstance(operation, Mapping) or operation.get('scope_type') != 'run'
+                or not operation.get('scope_id')):
+            raise FridayRuntimeContractError('Friday operation has no recorded run identity')
+        data = self.contract.unwrap_success_envelope(
+            self._read_native_resource(self.contract.trace_path(urllib.parse.quote(thread_id, safe='')))
+        )
+        if data.get('thread_id') != thread_id or not isinstance(data.get('events'), list):
+            raise FridayRuntimeContractError('Friday trace does not match the recorded thread')
+        run_id = operation['scope_id']
+        if not any(run.get('run_id') == run_id for run in data.get('runs', [])):
+            raise FridayRuntimeContractError('Friday operation run is absent from the recorded thread')
+        return {'events':[event for event in data['events']
+                          if isinstance(event, Mapping) and event.get('run_id') == run_id]}
 
     def execute(
         self,
