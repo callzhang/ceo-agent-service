@@ -11,6 +11,7 @@ def snapshot(*, head="abc", checks=None, threads=None, reviews=None, state="OPEN
         headRefOid=head,
         headRefName="codex/repair-errors-1",
         state=state,
+        baseRefName="main",
         reviewDecision="",
         checks=checks or [],
         threads=threads or [],
@@ -52,6 +53,15 @@ def poll(store, tmp_path, data):
     ).run_once()
 
 
+def complete_merge_review(store, identity):
+    import json
+    entry = get_repair(store, "errors", identity)
+    finish(store, entry["turn_ids"][-1], json.dumps(dict(
+        outcome="review_required", head_sha="abc", summary="Product tradeoff needs evaluation",
+        deterministic_fix=False, regression_evidence=[],
+    )))
+
+
 def test_ci_failure_resumes_same_conversation_and_deduplicates_restart(store, tmp_path):
     identity, before = attached(store, tmp_path)
     data = snapshot(checks=[failed_check()])
@@ -91,8 +101,8 @@ def test_pending_waits_then_failure_and_new_commit_are_observed(store, tmp_path)
         tmp_path,
         snapshot(head="def", checks=[dict(failed_check(), conclusion="SUCCESS")]),
     )
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
-    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 2
+    assert get_repair(store, "errors", identity)["status"] == "merging"
+    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 3
     assert not store.get_error(identity).resolved_at
 
 
@@ -128,14 +138,16 @@ def test_unresolved_review_with_green_ci_resumes_and_resolved_review_passes(
         tmp_path,
         snapshot(checks=[good], threads=[dict(thread, isResolved=True)]),
     )
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
+    assert get_repair(store, "errors", identity)["status"] == "merging"
 
 
 def test_green_pr_remains_watched_for_new_review(store, tmp_path):
     identity, _ = attached(store, tmp_path)
     good = dict(failed_check(), conclusion="SUCCESS")
     poll(store, tmp_path, snapshot(checks=[good]))
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
+    assert get_repair(store, "errors", identity)["status"] == "merging"
+    complete_merge_review(store, identity)
+    poll(store, tmp_path, snapshot(checks=[good]))
     review = dict(
         id="review1",
         state="CHANGES_REQUESTED",
@@ -399,7 +411,9 @@ def test_commented_review_body_requires_explicit_handling_receipt(store, tmp_pat
         ),
     )
     poll(store, tmp_path, data)
-    assert get_repair(store, "errors", identity)["status"] == "checks_passed"
+    assert get_repair(store, "errors", identity)["status"] == "merging"
+    complete_merge_review(store, identity)
+    poll(store, tmp_path, data)
     poll(
         store,
         tmp_path,
@@ -408,7 +422,7 @@ def test_commented_review_body_requires_explicit_handling_receipt(store, tmp_pat
             reviews=[dict(review, body="Additional finding", updatedAt="tomorrow")],
         ),
     )
-    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 3
+    assert len(get_repair(store, "errors", identity)["turn_ids"]) == 4
 
 
 def test_earlier_commented_body_is_not_hidden_by_later_approval():

@@ -457,6 +457,7 @@ tests/test_minutes_summary_retry.py
 tests/test_minutes_recovery_agent.py
 
 tests/test_automatic_repair_gate.py
+tests/test_automatic_repair_merge.py
 tests/test_repair_pr_feedback.py
 tests/test_claude_fixed_schema_delivery.py
 tests/test_workbench_result_contract.py
