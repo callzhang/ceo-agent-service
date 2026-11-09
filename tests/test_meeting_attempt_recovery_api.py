@@ -44,3 +44,30 @@ def test_meeting_history_rerun_refreshes_source_only_for_latest_attempt(
     assert calls[0][0].path == store.path
     assert calls[0][2:] == (1, "meeting-history-rerun")
     assert store.get_meeting_alignment_job(task_id).status == "failed"
+
+
+def test_exact_meeting_history_rerun_accepts_duplicate_native_rows(tmp_path, monkeypatch):
+    from tests.test_meeting_alignment import FakeDws, ended_meeting, NOW
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    meeting = ended_meeting()
+    task_id = store.upsert_meeting_alignment_job(
+        meeting_id=meeting["taskUuid"], title="Meeting", source_json="{}",
+        participants_json="[]", ended_at=meeting["endTimeISO"],
+        eligible_at=NOW.isoformat(), status="failed",
+    )
+    run_id = store.create_professional_run(task_id, status="failed", error="original failure")
+    dws = FakeDws(minutes_pages={"": {
+        "items": [meeting, dict(meeting)], "has_more": False, "next_token": "",
+    }})
+    monkeypatch.setattr("app.audit_web.DwsClient", lambda **_kwargs: dws)
+
+    with _client(tmp_path) as client:
+        response = client.post(f"/api/console/meeting-attempts/{run_id}/rerun")
+
+    assert response.status_code == 200
+    assert response.json()["ok"] is True
+    assert store.get_meeting_alignment_job(task_id).status == "pending"
+    assert dws.info_calls == [meeting["taskUuid"]]
+    assert store.list_meeting_alignment_runs(task_id)[0].id == run_id
+    assert store.get_meeting_alignment_run(run_id).status == "failed"

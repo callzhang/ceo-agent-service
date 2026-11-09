@@ -490,11 +490,12 @@ def queue_recent_meeting_alignment_replay(
     start = (now - discovery_lookback).isoformat()
     end = now.isoformat()
     if meeting_id is not None:
+        # A native ID names one meeting even when provider pages/buckets repeat it.
         raw_items = [
             item
             for item in _list_all_minutes(dws, start=start, end=end)
             if minutes_meeting_id(item) == meeting_id
-        ]
+        ][:1]
         if not raw_items:
             raise DwsError("requested meeting ID was not found in recent Minutes")
     else:
