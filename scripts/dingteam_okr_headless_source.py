@@ -43,12 +43,12 @@ HEADLESS_SOURCE_TIMEOUT_SECONDS = 220
 HEADLESS_SOURCE_SHUTDOWN_SECONDS = 5
 LOCAL_SSO_CURRENT_PAGE = ".app-page.app-page-curr"
 LOCAL_SSO_DIRECT_BUTTON = (
-    ".module-confirm > .module-confirm-button.base-comp-button-type-primary"
+    f"{LOCAL_SSO_CURRENT_PAGE} .module-confirm > .module-confirm-button.base-comp-button-type-primary"
     ":not(.base-comp-button-disabled)"
 )
 LOCAL_SSO_ACCOUNT_AVATAR = f"{LOCAL_SSO_CURRENT_PAGE} .module-qrcode-user-avatar"
 LOCAL_SSO_CORP_ITEM = f"{LOCAL_SSO_CURRENT_PAGE} .module-corp-sel-listitem"
-LOCAL_SSO_QR_TAB = ".flex-box-tab-content [role=tab]"
+LOCAL_SSO_QR_TAB = f"{LOCAL_SSO_CURRENT_PAGE} .flex-box-tab-content [role=tab]"
 LOCAL_SSO_CORP_NAME = "北京星尘纪元智能科技有限公司"
 OKR_REQUEST_NUDGE = """() => { try {
     if (location.hash.indexOf('okr') < 0) { location.hash = '#/okr/personal'; }
