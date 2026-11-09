@@ -3346,15 +3346,24 @@ class DwsClient:
             resource_type,
             output_path,
         )
-        result = self._run_cli_process(
-            command,
-            timeout=self.timeout_seconds + 15,
-            env=self._cli_environment(),
-            # DWS can fork during media transfer.  Keep this command in its
-            # own session so its descendants cannot escape a caller timeout
-            # and remain as orphaned CPU-bound download processes.
-            isolate_process_group=True,
-        )
+        try:
+            result = self._run_cli_process(
+                command,
+                timeout=self.timeout_seconds + 15,
+                env=self._cli_environment(),
+                # DWS can fork during media transfer.  Keep this command in its
+                # own session so its descendants cannot escape a caller timeout
+                # and remain as orphaned CPU-bound download processes.
+                isolate_process_group=True,
+            )
+        except subprocess.TimeoutExpired:
+            # dws can finish writing the file and then fail to exit.  It writes
+            # atomically, so a non-empty destination is the complete download;
+            # the caller still decodes and validates the image bytes.
+            if output_path.exists() and output_path.stat().st_size > 0:
+                return {"localPath": str(output_path)}
+            output_path.unlink(missing_ok=True)
+            raise
         # Some dws versions can write the requested resource successfully but
         # still exit non-zero while formatting the response.  The downloaded
         # bytes are the authoritative result for this operation; validate the
