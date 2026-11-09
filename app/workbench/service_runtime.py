@@ -237,7 +237,7 @@ class ServiceWorkbenchRuntime:
                 if stopped
                 else RuntimeResult(
                     status="failed",
-                    error_code=exc.code,
+                    error_code=exc.failure_code or exc.code,
                     error_detail=exc.reason,
                 )
             )

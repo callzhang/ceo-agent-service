@@ -15,6 +15,8 @@ from app.automatic_repair_contracts import (
     RepairDiagnosis,
     REPAIR_DIAGNOSIS_CONTRACT,
     REPAIR_PR_CONTRACT,
+    REPAIR_MERGE_CONTRACT,
+    RepairMergeResult,
 )
 
 
@@ -40,6 +42,7 @@ _CONTRACTS = {
     for identity, model in (
         (REPAIR_DIAGNOSIS_CONTRACT, RepairDiagnosis),
         (REPAIR_PR_CONTRACT, PRRepairResult),
+        (REPAIR_MERGE_CONTRACT, RepairMergeResult),
     )
 }
 

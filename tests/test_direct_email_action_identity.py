@@ -5,6 +5,7 @@ from app import shared_action_lifecycle
 from app.email_classifier_contracts import EmailClassificationStatus
 from app.email_store import DIRECT_EMAIL_ACTION_SQL, EmailStore
 from tests.support.native_email_actions import persist_classification
+import pytest
 
 
 def _existing_values(store):
@@ -15,7 +16,6 @@ def _existing_values(store):
         "classification_id": row["classification_id"],
         "account_id": row["account_id"],
         "action_type": row["action_type"],
-        "parameters_json": row["parameters_json"],
         "status": "pending",
         "created_at": row["created_at"],
         "updated_at": row["updated_at"],
@@ -36,7 +36,7 @@ def test_recreating_an_existing_plan_action_with_a_later_clock_returns_the_same_
     assert again["created_at"] == values["created_at"]
 
 
-def test_recreating_an_existing_plan_action_keeps_immutable_plan_parameters(tmp_path):
+def test_recreating_an_existing_plan_action_ignores_parameters_owned_by_the_plan(tmp_path):
     store = EmailStore(tmp_path / "mail.sqlite3")
     persist_classification(store, classification_id=1, status=EmailClassificationStatus.PROCESSED)
     values = _existing_values(store)
@@ -47,4 +47,17 @@ def test_recreating_an_existing_plan_action_keeps_immutable_plan_parameters(tmp_
             db, values | {"parameters_json": '{"target_folder":"其他"}'},
         )
     assert again["id"] == first["id"]
-    assert _existing_values(store)["parameters_json"] == values["parameters_json"]
+    assert "parameters_json" not in again
+
+
+def test_recreating_an_existing_plan_action_with_a_non_executable_operation_is_rejected(tmp_path):
+    store = EmailStore(tmp_path / "mail.sqlite3")
+    persist_classification(store, classification_id=1, status=EmailClassificationStatus.PROCESSED)
+    values = _existing_values(store)
+    with store._connect() as db:
+        db.execute("begin immediate")
+        shared_action_lifecycle.create_direct_email_action(db, dict(values))
+        with pytest.raises(ValueError, match="only executable direct email operations"):
+            shared_action_lifecycle.create_direct_email_action(
+                db, values | {"action_type": "email.not_in_plan"},
+            )

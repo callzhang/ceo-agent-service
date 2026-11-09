@@ -154,6 +154,17 @@ function parseTurn(value: unknown): Turn {
     final_text: stringField(value, "final_text"),
     error_code: stringField(value, "error_code"),
     error_detail: stringField(value, "error_detail"),
+    runtime_attempts: arrayField(value, "runtime_attempts").map((attempt) => {
+      if (!isRecord(attempt)) throwInvalidResponse();
+      return {
+        id: integerField(attempt, "id"),
+        runtime: stringField(attempt, "runtime"),
+        status: stringField(attempt, "status"),
+        failure_code: stringField(attempt, "failure_code"),
+        failure_class: stringField(attempt, "failure_class"),
+        url: stringField(attempt, "url"),
+      };
+    }),
     started_at: stringField(value, "started_at"),
     completed_at: stringField(value, "completed_at"),
     created_at: stringField(value, "created_at"),

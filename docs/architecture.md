@@ -127,6 +127,7 @@ Attempt History 的“需要你处理/选择处理方式”只对应当前可操
 `workbench` workload 进入统一 `RoutedCodexExecution`，与后台 Agent 共用模型路由、会话、
 runtime attempt、失败切换和 CLI 原生 `auto_review`。页面后端只把统一运行事件投影为时间线并
 维护停止请求；不得自行构造 provider 命令、启用 approval bypass，或实现第二套命令审批。
+主页面失败保留统一路由给出的具体 `failure_code`。详情按该 turn 精确关联的原生 RuntimeAttempt 展示运行环境、失败类别和错误码，并为每次调用提供原生轨迹入口；历史失败只做读取投影，不覆盖已存错误或状态。没有原生调用记录时仍展示工作台自身的错误码。未知错误码不再被统一替换为无原因的失败文案，原生 stdout/stderr 不复制到错误详情。总时限、无输出时限及自动续接预算维持现有设置。
 
 审核 Agent 只能反馈规则、观察结果和具体修改要求，不能直接改写执行 Agent 的业务正文。执行 Agent 必须基于反馈生成新 revision；原 run 不覆盖、不删除。一个任务最多允许十个内容反馈周期（Audit 的 return/reject，2026-10-26 Derek 由三次放宽；被打回是正常业务流程，不是重试），基础设施和技术失败不消耗反馈周期，技术重试另有各自的预算。反馈次数耗尽本身是自动闭环失败，不是人工决策依据。Consumer 和 Audit 必须按固定顺序对新候选应用质量门槛：`information_completeness < 0.5` 时先 ask_back；否则仅 `(risk=high 且 confidence < 0.5) 或 rule_coverage < 0.5` 才可进入 `needs_human`；其他情况按适用规则自主处理。Consumer 的新结果类型化校验会拒绝不满足门槛的 `needs_human`；Audit 在审核候选前及校验其绑定结果时独立重算同一门槛，不符合时拒绝该新候选。已持久化候选在恢复、拒绝分支比较、已审核动作执行及历史读回时按历史证据解析，不重新套用新准入门槛；这保留原始 run 与已审核决定，且不会重新执行已确认动作。历史解析不能让新模型输出绕过 Consumer/Audit 校验。Audit 必须核对新结果分类与四项分值一致；不满足门槛的人工升级不得通过。
 
@@ -172,7 +173,7 @@ KR 与正式评价人 ID；评分动作只以 `dingtang-okr/score_kr` 的精确�
 
 Consumer 形成通过/不通过判断时应使用当前 OKR 数据；截图、仓库链接或重试终态不能替代实时读取，
 读取失败时必须保留底层认证、浏览器启动或源端错误码。Dingteam OKR 只有在检查缓存 token 未过期后才复用；过期缓存进入既有串行 Chrome 刷新流程，通过 `app.service_browser.launch_service_chrome(..., initialize_from_snapshot=False)` 启动真 Chrome，保留现有 OKR 专用会话及其 Cookie 附属文件，并沿用现有本机 DingTalk SSO；不再在每次刷新前用共享快照覆盖该会话。其他调用默认仍由每日 Chrome cookie 副本初始化。仅验证有效的 token 才返回或写入缓存；登录仍失败时保留真实认证失败，不绕过认证。不得另起 bundled Chromium 或专用 CDP 资料目录。
-本机 SSO 的登录按钮、扫码切换、账号头像和组织选项统一限定在 provider 标记的当前活动页 `.app-page.app-page-curr` 内；其他登录步骤保留的 DOM 不参与选择，不能通过强制点击或移除遮挡来操作旧页控件。在当前页存在“扫码登录”标签时优先使用它、已登录账号头像和原生确认流程，再选择目标组织；只有扫码入口不存在时才尝试直接账号入口，因为页面上可见的“立即登录”也可能被遮罩挡住。组织选择器可能继续使用登录 URL；若登录过程已直接跳回 OKR 入口则按页面导航完成处理。选择器缺失或页面未进入组织/OKR 页面时，保留浏览器的实际错误，不吞掉异常并伪报通用会话过期。
+本机 SSO 的登录按钮、账号头像和组织选项限定在 provider 标记的当前活动页 `.app-page.app-page-curr` 内。扫码切换来自 provider 在页面容器外提供的共享 `tablist`：当前为 Account 页时选择唯一未选标签，等待原生扫码页 `.app-qr-login-page`；已经在扫码页时不反向切回账号页。该定位依据原生页面状态和 `aria-selected`，不匹配中英文标签或固定位置。随后沿用已登录账号头像、原生确认和目标组织；其他登录确认页继续使用其当前页账号入口。旧步骤 DOM 不参与选择，不强制点击或移除遮挡。组织选择器可能继续使用登录 URL；若登录过程已直接跳回 OKR 入口则按页面导航完成处理。选择器缺失或页面未进入组织/OKR 页面时，保留浏览器的实际错误，不吞掉异常并伪报通用会话过期。
 多个评审或维护任务同时遇到缓存过期时，headless source 只允许一个调用刷新认证；其他调用在取得刷新锁后重新读取缓存并复用结果，不能因正常刷新耗时产生并发锁错误。
 无头来源的锁最多等待 130 秒；独立 worker 的 220 秒运行上限必须小于 DWS 调用方的 240 秒上限，并为终止和回收 Chromium 进程组留出时间。不能让 worker 上限早于锁等待上限，否则正常并发刷新会被误报为来源超时。
 headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；专用浏览器会话过期必须明确报告会话需要重新登录，不能误投影为“没有该 OKR 周期”。
@@ -777,6 +778,8 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 
 ### 会议投递目标
 
+会议业务群选择核对该群的实际用途、讨论和行动负责人是否承接整条普通业务总结；同部门、同职务或话题交集不能单独证明这一关系。专项群不因名称相关就承接部门其他工作。有候选承接整场工作时，不得为沿用较窄目标而删去有依据的会议结论。前一轮目标及理由仍须与当前其他候选比较复核，不作为已证实归属。同一项目或客户的群可讨论不同议题；参会名册不完整仍记录缺口，不要求群成员与参会人完全一致。这项规则由 Planner 与独立 Audit 共同应用，不改变敏感私聊、直接收件人、投递或回执机制。
+
 确认既有主消息已送达的状态恢复会保留原准备正文和 provider 回执；当持久化决策含 `_service_audit` 时，先核对 Audit `approve` 与候选 SHA-256 绑定，再由 Meeting 决策读取器解析原候选。无效封套不恢复；未带封套的历史回执继续沿既有核验路径处理。
 
 日历仅用于确认参会名单，不决定业务内容的披露受众。会议跟进使用同一 `MESSAGE_AUDIENCE_CONTRACT`，并覆盖其通用的敏感群消息例外：业务总结优先发到
@@ -784,10 +787,10 @@ updater 正常停止服务后才备份和切换检出，重启时由既有任务
 均从群正文和标题拆出，作为独立私聊发送给身份、当前职责和披露授权均有实时证据的个人；HR 群及
 参会人高匹配度不改变此规则。明确业务私聊的稳定 `user_id` 必须唯一匹配来源参会人
 或日历证明的组织者，身份和受众理由保留在决策中；不可从逐字稿发言人推断组织者。
-群不可发送时保留失败，不能静默换成组织者或本人。私聊入口拒绝本人及已核验别名；
+群不可发送时保留失败，不能静默换成组织者或本人。普通业务单聊入口拒绝本人及已核验别名；敏感私聊可明确选择来源名册中的本人，但须有该内容的参与、决定或后续工作依据，不能自动兜底；
 职务、HR 身份和私聊本身均不构成披露授权，身份检查也不替模型证明业务理由真实。
 群标题相似、部分参会人重合或近期活跃本身不构成业务承接证据。
-裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。会议总结中的人员敏感内容始终不得进入业务群，不逐一审核群成员是否可接收敏感详情；敏感部分只可按具体内容发给经核验且有披露授权的个人，找不到时保留未解决事项。普通业务群只检查群内业务讨论和参会人成员匹配，不逐成员审查普通业务内容的披露授权；没有合适群时普通业务总结可发给相关参会人单聊，目标使用来源里的稳定身份，群是否可发送由服务投递时核验，不可发送则失败且不改投，不得为发送而选宽泛群。敏感分类和个人授权判断由 Agent 根据证据完成，不增加运行时关键词过滤或比例授权阈值。
+裁员、减员和人员优化的存在、进展、时间及执行安排本身就是人员敏感信息；没有姓名、名单或人数不构成脱敏。会议总结中的人员敏感内容始终不得进入业务群，不逐一审核群成员是否可接收敏感详情；敏感部分按具体内容发给来源身份唯一匹配的应知情个人；参与该敏感讨论、承担相关决定或后续工作可以构成依据，职务本身不够。可有依据地选择本人，不自动发给本人。缺少敏感私聊或收件人依据时，独立 Audit 退回现有反馈修订流程，不能把省略并记录缺口当作完整发送。普通业务群只检查群内业务讨论和参会人成员匹配，不逐成员审查普通业务内容的披露授权；没有合适群时普通业务总结可发给相关参会人单聊，目标使用来源里的稳定身份，群是否可发送由服务投递时核验，不可发送则失败且不改投，不得为发送而选宽泛群。敏感分类和个人授权判断由 Agent 根据证据完成，不增加运行时关键词过滤或比例授权阈值。
 找群先核对会议材料里明确提及的讨论群，再从结论、行动和负责人提炼主题，分别以原文中文
 业务词、英文术语、会议标题和核心议题查群及群内消息。预置候选或首次搜索零命中不等于穷尽；
 候选须核对近期同工作线讨论、行动承接人、受众和可发送性，并在决策中说明来源与业务承接关系。
@@ -818,6 +821,8 @@ meeting job ID 绑定模型、音频 SHA-256、分段时间和完整分块数，
 Meeting planner 生成的 `audit_summary` 只是候选字段，不是 Audit。每个候选在进入 `ready_to_send` 前必须由独立、model-only（无原生工具或 MCP）的 Audit 调用复核会议来源、群候选证据、准确收件目标、正文事实和披露范围。会议原文明确把后续工作分配给精确收件人时，该分工本身可证明向其分享完成任务所需的简要结论和必要背景；不要求另有逐字发送指示，也不能据此扩大到无关或敏感内容，职位本身不构成授权。运行器传来的 Codex JSONL 先提取最终 assistant 消息；路由器已规范化的纯 JSON 则直接解析，两种输入均执行相同结果模型校验。Audit 结果不含 digest，由服务把被审核候选的 SHA-256 写入 `_service_audit` 元数据与原候选共同保存（旧结果中模型抄写的 digest 须与之相等）；新投递与人工重排入口都要求重新验证该绑定且结果为 `approve`。没有发送回执、没有活动领取，且因候选与既有收件目标绑定冲突失败的旧任务，可由最新 Attempt 通过明确的 audit-only 恢复入口重新读取会议来源并审核原冻结候选；若上一次 Audit 为 `return`，同一入口可在用户明确请求后再次复核。入口要求精确候选 SHA-256，不重新生成或改写目标/正文，并先剥离旧审核封套再解析候选。只有同一候选的新独立 Audit `approve` 才以 CAS 重新进入原投递 worker；`return`、`reject`、Audit 错误或候选变化均保留失败，不触发发送。`return` 携带 rule/observation/requested_revision 并进入反馈修订（上限同 `MAX_CONTENT_FEEDBACK_CYCLES`），新 Consumer revision 使用独立 Meeting run 与 Audit runtime workload；达到上限仍未通过才转 `needs_human`。`reject` 转人工，缺失、无效或摘要不匹配按失败关闭，均不得产生新投递。独立 Audit 的外部依赖暂时不可用时，沿用 Meeting 原有外部依赖退避重试；无效审核结果按失败处理。旧的未审核 `ready_to_send` 记录也会在投递前失败关闭。已存在 provider 回执的只读核实与状态恢复继续沿用原有回执、正文及目标校验，不要求为既成外部效果补造审核。收件人准备绑定仍不可变；新会议投递键按规范化收件目标区分，旧键只有在已绑定目标与本次目标完全一致时才复用，避免跨目标误用回执。重跑与来源恢复仍会拦截已有准备动作；provider 回执与幂等投递保护不变。
 
 定时 Meeting 重放仅重新开启没有结果、也没有已准备钉钉外发动作的失败或 `no_action` 任务。普通、敏感和目标绑定版本的 prepared outbound 即使还没有 provider 回执，也会阻止重放；这些动作由原有投递恢复路径处理，重放不能清除后重新分析其既定动作，也不能改变已绑定收件人。精确指定 Minutes UUID 时，列表中同一 ID 的重复条目只形成一次来源刷新和恢复结果，不把已排队的恢复误报为失败。Console 可从最新失败 Meeting Attempt 显式请求重跑；入口确认 Attempt 仍是该 Task 最新运行后，按精确 Minutes UUID 只读刷新该会议的来源与参会名单，再调用同一受保护重放方法。来源不可用或任务不再符合重放条件时保持原状态。后续重新进入普通 Meeting 分析和独立 Audit，历史 Run 保持不变，不直接发送或跳过原有外发回执门禁。
+
+重开未发送的 Meeting 时清除旧候选和目标，但保留此前有效 Audit `return` 的反馈和反馈轮数，让新 Consumer 能继续处理原有争议；反馈本身不代表事实已确认，也不代替新一轮独立 Audit。
 
 Meeting planner 与 Audit 的 RuntimeAttempt 分别使用 `meeting` 和 `meeting_audit` workload kind，并以准确 Meeting Run 十进制 ID 为 key；native `parent_id` 都指向该 Run。显式迁移转换器保留新 source 的数字 `meeting_audit` key，也只在转换中处理历史 `meeting` 加 `:audit` key。重放检查读取 TaskBusinessKey 中已保存的公开投递键，以及对应的敏感和目标派生版本，确保 Task ID 重映射后仍识别已有 prepared outbound。
 
@@ -1622,8 +1627,10 @@ scope 的 token，但 keychain 里这份会被本机其他进程改写，线路�
 所有 workload（Agent turn、任务 Agent、会议、邮件分类、workbench、TODO 截止日期回填）都能路由到
 Claude。Claude 的 developer instructions 与完整输出 schema 仍由
 `app.claude_runtime_adapter.claude_input_contract` 与任务拼成同一条消息；
-Claude Consumer 另通过 CLI `--json-schema` 接收内联的兼容 wire schema，原有
-Pydantic 模型继续校验完整条件与业务规则。Audit 和其余 Claude workload 仍按既有
+Claude Consumer 另通过 CLI `--json-schema` 接收内联的兼容 wire schema：去掉
+Claude 不支持的 `oneOf`/`allOf`/`if-then`，但用 `anyOf` 保留每个 action 与其
+target/payload 的对应分支（与当前 purpose 的 canonical action 契约同源），错误的
+target 字段在原生层即被拒绝；原有 Pydantic 模型继续校验完整条件与业务规则。Audit 和其余 Claude workload 仍按既有
 单消息 schema 路径运行，不改变工具、路由或会话；
 事件流由该 adapter 的 normalizer 校验，最终消息再整理成 Codex 同形的 runtime 事件交给 workload
 的解析器，解析器不需要知道是哪条 runtime 执行的。
@@ -2223,11 +2230,13 @@ resolve the latest Attempt through the task's current execution generation and
 AgentRun identity. Meetings use their latest Meeting Attempt ID. A Task ID is
 never substituted for an Attempt ID; a record without a persisted Attempt says
 so in its expanded details. Membership, terminal states and retry policy do not change.
-Attempt detail HTML and the React detail API accept stable public Attempt IDs. For compatibility,
-if a requested number is not a public ID but is an existing `actions.id` for a
-reply Attempt, it redirects to that row's public `legacy_key`; a public-ID match
-always takes precedence. This read-only alias does not change the Attempt or its
-Failed/Attention classification.
+Attempt detail HTML and the React detail API accept stable public Attempt IDs
+only (retired 2026-10-30): a request carrying an old physical `actions.id` is
+no longer resolved or redirected to that row's public `legacy_key` and returns
+404 unless the number is itself a public Attempt ID. The historical rows and
+the `legacy_key` column are retained in the schema; the read is otherwise
+unchanged and still never changes the Attempt's Failed/Attention
+classification.
 
 ### Work Summary retry budget
 
@@ -2433,9 +2442,9 @@ A temporary exhausted PR lookup remains `awaiting_pr` and is rechecked every fif
 
 Attached open repair PRs now remain under sixty-second GitHub observation after `pr_created` and `checks_passed`. Current-head CheckRun/status failures, unresolved review threads and unhandled review bodies automatically create native turns in the same conversation/session and existing PR. Paginated evidence is head-checked; pending/absent checks wait. Durable feedback intent plus deterministic request IDs recover a created turn across crashes even if GitHub changes. Fingerprint-specific four-attempt counts survive A→B→A feedback changes; exhausted feedback stays visible and watches for new evidence. Green requires completed passing checks and resolved/handled review feedback; later feedback resumes observation. Closed PRs end monitoring. Original error state, Audit and business actions are unchanged.
 
-PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
+PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation. Green PRs now receive a bounded native merge turn in that same conversation: the Agent checks the full diff, confirmed root cause and regression evidence, and merges a deterministic fix to main with native GitHub exact-head matching after refreshing CI/review. Product tradeoffs remain review_required, external blockers merge_blocked. The coordinator records merged only from main-base MERGED plus merge commit/time readback, retaining original business state and the existing release path. Durable merge intent and per-head attempt counts reuse the existing continuation checkpoint; no new route, task kind, Audit rule or business replay is added.
 
-Automatic repair declares a durable per-turn native result contract (initial diagnosis v1 / PR correction v3), committed atomically with each Workbench turn in existing State. RuntimeRequest restores that declaration; fixed repository schemas, typed parsing, local/structured capability requirements and existing same-session validation correction apply uniformly through native CLI adapters. Commentary alone cannot complete a typed repair turn. Freeform turns retain their declared text contract; no task kind or runtime-route branch is added. Initial and PR correction intents both freeze the original prompt/request ID/contract before creation, preserving recovery when producer code changes. Task bodies do not duplicate the CLI-supplied schema.
+Automatic repair declares a durable per-turn native result contract (initial diagnosis v1 / PR correction v3 / deterministic merge v1), committed atomically with each Workbench turn in existing State. RuntimeRequest restores that declaration; fixed repository schemas, typed parsing, local/structured capability requirements and existing same-session validation correction apply uniformly through native CLI adapters. Commentary alone cannot complete a typed repair turn. Freeform turns retain their declared text contract; no task kind or runtime-route branch is added. Initial and PR correction intents both freeze the original prompt/request ID/contract before creation, preserving recovery when producer code changes. Task bodies do not duplicate the CLI-supplied schema.
 
 ### Native tool startup and typed-result correction
 
@@ -2448,8 +2457,18 @@ The transport validates the native terminal/session evidence and returns its
 text before the common role parser validates the business result. A result
 format error retains the existing typed error and field locations, so the next
 bounded role attempt receives `Result Correction` instead of an undifferentiated
-process failure. The canonical schema, attempt ceiling, Audit decisions and
+process failure. Action-specific Consumer target and payload contracts validate
+at their enclosing fields, preserving full paths such as `payload.remark` and
+`payload.actions.0.payload` in that correction. Error details contain contract
+messages and locations, never rejected input values. The canonical schema, attempt ceiling, Audit decisions and
 System execution/receipt rules are unchanged.
+
+Runtime result encoding and its existing content, shape and size checks finish
+inside the same failure-handling phase as result preparation. A rejection after
+the native process exits therefore closes both the runtime attempt and parent
+run as failed, retaining the original diagnostic; it cannot leave an apparent
+running turn blocking normal recovery or deployment. Rejected results are not
+stored as completed, and no timeout or maintenance policy changes.
 
 Fixed Consumer action model declarations reuse their generated JSON schema;
 each schema insertion receives a deep copy. The cache holds declaration data,
@@ -2496,4 +2515,13 @@ Friday 通过现有 CLI 身份的只读 operation 与 thread trace API 读取，
 
 Attempt 的处理／审计步骤、历史代记录、Task 历史、Meeting 详情和有已保存关联的服务错误都提供原生入口。服务错误只沿原触发身份 → Reply Attempt 保存的 Run → 同代运行关系展示关联调用，不把同一 Task 的其他输入运行猜作当前错误；没有 Agent 调用关系的服务错误明确说明。无 runtime attempt 的已有历史 Codex 会话链接继续保留。
 
-工作台长任务输入和长文本保留短预览，完整正文可展开；终态结构化结果先展示 `summary`，完整 JSON（包括其他字段）仍可展开读取。共用工具卡以名称、命令预览、状态和耗时为摘要，展开后优先展示参数／输入和结果／输出，调用身份、时间和原始 provider 事件放在二级详情。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
+工作台长任务输入和长文本保留短预览，完整正文可展开；终态 JSON 结果直接按字段渲染并完整展示：字符串支持 Markdown，数组显示为列表，对象逐层展开，空值与空集合显式显示；不再折叠字段或把完整结果放进代码框。按 JSON 语法树的原文位置渲染，保留字段顺序、重复键、大整数 ID 和指数写法；原始 JSON 可直接下载，原始格式不丢失。共用工具卡默认显示实际名称、命令或参数预览、返回内容的首尾预览、状态和耗时；命令参数数组保持可读，展开后保留完整输入与返回，调用身份、时间和原始 provider 事件放在二级详情。终态工作台对话按每个已保存的 runtime_attempt 直接复用原生轨迹读取器，独立按调用 ID 配对工具开始与返回，不再依赖跨运行环境的 SQLite 工具事件数量。对话内只展示工具，任务输入和最终答复沿用原位置；完整轨迹页仍可查看上下文和中间输出。每次调用先读取一页，可继续加载全部剩余页，只有全部读完才将未返回工具标记中止；源缺失时按调用显示不可用原因。执行中的对话保留实时事件流。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
+
+Runtime result persistence and native-result recovery use the same typed-result sensitive-value validator supplied by the calling Agent. Audit therefore retains its existing exact candidate-bound exception for configured service-generated feedback links; original assertion bytes remain unchanged. Envelope metadata, result size, document fields, authored prose and unrelated credentials retain their existing checks.
+
+The explicit stalled Reply Task recovery API (`POST /api/console/history/tasks/{task_id}/recover-stalled`) and `python -m app.reply_task_recovery --db <db> --task-id <id> --execution-generation <generation> --apply` share one atomic recovery transaction. They require the exact processing task/generation and the existing stale threshold for Task lock, business Run and active native runtime progress, reject persisted external actions/effects/receipts, then reuse the normal requeue transition and close only unfinished runtime records as real failures. Candidates, completed/failed history and generation are retained; the normal Consumer/Audit/System path makes the next decision. No other task is claimed and the deployment quiet gate is unchanged.
+
+Stalled recovery also refuses live dispatcher owners, unexpired or unparseable Run/runtime leases, and missing dispatcher ownership history. These checks run inside the same immediate transaction as the task/generation transition.
+
+仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_message`，不生成群占位消息，也不使用 `skip_no_content`。仅敏感私聊使用原 `:sensitive` 投递键及回执；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
+敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。

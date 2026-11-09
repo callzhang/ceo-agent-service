@@ -135,30 +135,58 @@ def test_direct_sso_ignores_earlier_button_on_old_page(source, sso_chrome, monke
         page.close()
 
 
-def test_qr_sso_uses_active_tab_avatar_and_organization(source, sso_chrome, monkeypatch):
-    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 500)
+@pytest.mark.parametrize("initial_mode", ["account", "qr"])
+@pytest.mark.parametrize("labels", [("Account", "QR Code"), ("账号", "扫码登录")])
+def test_qr_sso_uses_shared_tabs_and_current_panes(source, sso_chrome, monkeypatch, initial_mode, labels):
+    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 1000)
     monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
     monkeypatch.setattr(source, "LOCAL_SSO_CORP_NAME", "Synthetic Corp")
     confirmations = []
-    monkeypatch.setattr(source, "_confirm_local_dingtalk_login", lambda: confirmations.append(True))
     page = sso_chrome.new_page()
+
+    def confirm_native():
+        confirmations.append(True)
+        page.evaluate("document.querySelector('#qr').classList.remove('app-page-curr');"
+                      "document.querySelector('#corp').classList.add('app-page-curr')")
+
+    monkeypatch.setattr(source, "_confirm_local_dingtalk_login", confirm_native)
+    account_label, qr_label = labels
+    account_active = " app-page-curr" if initial_mode == "account" else ""
+    qr_active = " app-page-curr" if initial_mode == "qr" else ""
+    html = (
+        "<style>.app-page{display:none}.app-page-curr{display:block}</style>"
+        "<output id='events'></output>"
+        "<div class='dtm-segment' role='tablist'>"
+        f"<button role='tab' aria-selected='{str(initial_mode == 'account').lower()}' "
+        "onclick=\"document.querySelector('#events').textContent+='wrong-account,'\">"
+        + account_label + "</button>"
+        f"<button role='tab' aria-selected='{str(initial_mode == 'qr').lower()}' "
+        "onclick=\"document.querySelector('#events').textContent+='qr,';"
+        "document.querySelector('#account').classList.remove('app-page-curr');"
+        "document.querySelector('#qr').classList.add('app-page-curr');"
+        "this.setAttribute('aria-selected','true');"
+        "this.previousElementSibling.setAttribute('aria-selected','false')\">"
+        + qr_label + "</button></div>"
+        f"<div id='account' class='app-page third-part-login-page{account_active}'>Account methods</div>"
+        f"<div id='qr' class='app-page app-qr-login-page{qr_active}'>"
+        "<button class='module-qrcode-user-avatar' "
+        "onclick=\"document.querySelector('#events').textContent+='avatar,'\">Current account</button></div>"
+        "<div id='corp' class='app-page'><button class='module-corp-sel-listitem' "
+        "onclick=\"document.querySelector('#events').textContent+='corp,'\">Synthetic Corp</button></div>"
+        "<div class='app-page'><div class='flex-box-tab-content'>"
+        "<button role='tab' onclick=\"document.querySelector('#events').textContent+='old,'\">"
+        "扫码登录</button></div></div>"
+    )
     page.route("https://login.dingtalk.com/oauth2/test", lambda route: route.fulfill(
-        body=sso_pages(
-            "<div class='flex-box-tab-content'><button role='tab' "
-            "onclick=\"document.querySelector('#events').textContent+='current-tab,'\">"
-            "扫码登录</button></div>"
-            "<button class='module-qrcode-user-avatar' "
-            "onclick=\"document.querySelector('#events').textContent+='current-avatar,'\">Account</button>"
-            "<button class='module-corp-sel-listitem' "
-            "onclick=\"document.querySelector('#events').textContent+='current-corp,'\">Synthetic Corp</button>"
-        ), content_type="text/html; charset=utf-8",
+        body=html, content_type="text/html; charset=utf-8",
     ))
     try:
         page.goto("https://login.dingtalk.com/oauth2/test")
 
         assert source._attempt_local_dingtalk_sso(page) is True
 
-        assert page.locator("#events").text_content() == "current-tab,current-avatar,current-corp,"
+        expected = "qr,avatar,corp," if initial_mode == "account" else "avatar,corp,"
+        assert page.locator("#events").text_content() == expected
         assert confirmations == [True]
     finally:
         page.close()

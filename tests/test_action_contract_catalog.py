@@ -95,6 +95,10 @@ def test_lookup_returns_shared_rules_and_only_the_exact_action_contract() -> Non
         line for line in result["contract"].splitlines() if not line.startswith("|")
     ] == [line for line in original.splitlines() if not line.startswith("|")]
     assert "`event_id` | `response_status`" in result["contract"]
+    assert (
+        "Exact event's `self_response_status` for the authenticated account"
+        in result["contract"]
+    )
     assert len(result["contract"]) < len(original)
 
 

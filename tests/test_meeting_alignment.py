@@ -2982,6 +2982,53 @@ def test_meeting_audit_return_runs_bounded_feedback_revision(tmp_path):
     assert len(store.list_meeting_alignment_runs(job_id)) == 2
 
 
+def test_source_replay_keeps_return_feedback_after_failed_revision(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+
+    class Runner(FakeMeetingRunner):
+        def __init__(self):
+            super().__init__(summary_decision())
+            self.prompts = []
+
+        def decide(self, *, prompt, run_id=None, compact_prompt=None):
+            self.prompts.append(prompt)
+            if len(self.prompts) > 1:
+                raise ValueError("structured output invalid")
+            return self.decision
+
+        def audit(self, *, prompt, run_id):
+            return MeetingAlignmentAuditResult(
+                outcome="return", summary="clarify assignment",
+                feedback=MeetingAlignmentAuditFeedback(
+                    rule="source-supported ownership", observation="owner is uncertain",
+                    requested_revision="do not assign the disputed task without evidence",
+                ),
+            )
+
+    runner = Runner()
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(minutes=2), limit=1)
+    failed = store.get_meeting_alignment_job(job_id)
+    assert failed.status == "failed"
+    source = json.loads(failed.source_json)
+    source["refreshed"] = True
+    reopened = store.reopen_meeting_alignment_job_for_replay(
+        job_id, title=failed.title, source_json=json.dumps(source),
+        participants_json=failed.participants_json, ended_at=failed.ended_at,
+        eligible_at=failed.eligible_at,
+    )
+    assert reopened is not None and json.loads(reopened.source_json)["refreshed"]
+    assert reopened.final_message == "" and reopened.target_id == ""
+    assert set(json.loads(reopened.decision_json)) == {"_service_audit"}
+    assert json.loads(reopened.decision_json)["_service_audit"]["feedback_cycles"] == 1
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW + timedelta(minutes=3), limit=1)
+    assert "do not assign the disputed task without evidence" in runner.prompts[-1]
+    assert len(store.list_meeting_alignment_runs(job_id)) == 3
+    assert not dws.send_calls
+
+
 def _skip_decision(action):
     return MeetingAlignmentDecision.model_validate({
         **summary_decision().model_dump(mode="json"),
@@ -4283,3 +4330,41 @@ def test_exact_replay_returns_one_result_for_duplicate_native_id(tmp_path, dupli
     assert results[0]["job_id"] == job_id
     assert dws.info_calls == [meeting["taskUuid"]]
     assert store.get_meeting_alignment_job(job_id).status == "pending"
+
+
+@pytest.mark.parametrize("mode", ["private_only", "split", "merged"])
+def test_sensitive_summary_never_enters_calendar_description(tmp_path, monkeypatch, mode):
+    notifications = []
+    monkeypatch.setattr(meeting_alignment, "send_macos_notification", lambda **payload: notifications.append(payload))
+    ordinary = "" if mode == "private_only" else "Ordinary project decision."
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    dws = ConsumerDws()
+    job_id = seed_consumer_job(store, dws)
+    payload = consumer_send_decision().model_dump()
+    payload.update(final_message=ordinary, mention_names=[], sensitive_private_message={
+        'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-derek',
+                   'title': 'Derek', 'candidates': []},
+        'message': 'Restricted personnel decision.', 'reason': 'Private meeting content.',
+        'recipient_evidence': ['Derek took part in this restricted decision.'],
+    })
+    if not ordinary:
+        payload['target'] = None
+    elif mode == 'merged':
+        payload['target'] = {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-a',
+                             'title': 'A', 'candidates': []}
+        payload['sensitive_private_message']['target'] = dict(payload['target'])
+        payload['sensitive_private_message']['recipient_evidence'] = ['A owns this restricted follow-up.']
+    runner = FakeMeetingRunner(MeetingAlignmentDecision.model_validate(payload))
+    consume_meeting_alignment_jobs(store, dws, runner, now=NOW, limit=1)
+    result = store.get_meeting_alignment_job(job_id)
+    assert result.status == 'sent'
+    assert len(notifications) == 1
+    assert 'Restricted personnel decision.' not in notifications[0]['message']
+    assert all('Restricted personnel decision.' not in str(call) for call in dws.calendar_update_calls)
+    if not ordinary:
+        assert len(dws.send_calls) == 1
+        assert dws.calendar_update_calls == []
+        assert result.calendar_summary_status == 'skipped'
+    else:
+        assert len(dws.send_calls) == (1 if mode == "merged" else 2)
+        assert any(ordinary in str(call) for call in dws.calendar_update_calls)

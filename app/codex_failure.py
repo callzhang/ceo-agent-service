@@ -5,6 +5,7 @@ CODEX_PROVIDER_UNAVAILABLE = "codex_provider_unavailable"
 CODEX_PROVIDER_OVERLOADED = "codex_provider_overloaded"
 CODEX_PROVIDER_AUTH_FAILED = "codex_provider_auth_failed"
 CODEX_PROCESS_FAILED = "codex_process_failed"
+CODEX_LOGIN_REQUIRED = "codex_login_required"
 
 # Codex reports `server_overloaded` when the selected model is temporarily at
 # capacity. The exec JSON stream only carries the human-readable message.
@@ -50,9 +51,30 @@ def is_codex_provider_auth_error(value: str) -> bool:
     )
 
 
+def is_codex_login_required_error(value: str) -> bool:
+    """Return whether the native Codex OAuth login must be renewed by a person."""
+    detail = value.casefold()
+    refresh_failed = "failed to refresh token" in detail and any(
+        marker in detail
+        for marker in (
+            "session has ended",
+            "invalid refresh token",
+            "invalid_refresh_token",
+            "log out and sign in again",
+        )
+    )
+    return (
+        refresh_failed
+        or "token_invalidated" in detail
+        or "workspace routing discovery unauthorized (401)" in detail
+    )
+
+
 def classify_codex_process_failure(stdout: str, stderr: str) -> str:
     """Return the durable failure code for one native Codex process result."""
     detail = f"{stdout}\n{stderr}".casefold()
+    if is_codex_login_required_error(detail):
+        return CODEX_LOGIN_REQUIRED
     if is_codex_provider_auth_error(detail) or (
         "missing bearer or basic authentication" in detail
         and "/v1/responses" in detail

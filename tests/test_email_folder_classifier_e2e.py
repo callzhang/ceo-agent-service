@@ -911,8 +911,7 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
                 "Batch", (), {"uidvalidity": 1, "messages": (provider_message,)}
             )()
 
-        def fetch_message(self, _locator, *, stable_message_identity):
-            assert stable_message_identity == provider_message["stableMessageIdentity"]
+        def fetch_message(self, _locator, **_kwargs):
             return provider_message
 
         def logout(self):
@@ -962,12 +961,6 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     operation = worker_module.build_direct_email_unsubscribe_operation(
         type("Settings", (), {"db_path": store.path, "workspace": tmp_path})()
     )
-    direct_results = []
-
-    def run_direct_unsubscribe(task_id):
-        result = operation.execute(task_id)
-        direct_results.append(result)
-        return result
 
     def unexpected_agent_path(*_args, **_kwargs):
         raise AssertionError("Direct unsubscribe must use its durable ActionPlan.")
@@ -977,7 +970,7 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
         type("UnexpectedOrchestrator", (), {"process": staticmethod(unexpected_agent_path)})(),
         load_task_context=unexpected_agent_path,
         finalize_task=unexpected_agent_path,
-        direct_unsubscribe_runner=run_direct_unsubscribe,
+        direct_unsubscribe_runner=operation.execute,
         finalize_direct_unsubscribe_task=lambda claimed, result: _finalize_direct_email_unsubscribe_task(
             task_store, claimed, result
         ),
@@ -986,7 +979,7 @@ def test_real_store_training_registry_runtime_and_historical_action_integration(
     )
     terminal_task = task_store.get_reply_task(task.id)
     assert terminal_task is not None
-    assert terminal_task.status == "done", (terminal_task.error, direct_results)
+    assert terminal_task.status == "done", terminal_task.error
     lineage = task_store.list_agent_runs_for_task_generation(
         task.id, task.execution_generation
     )

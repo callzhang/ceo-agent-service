@@ -3,6 +3,9 @@ import { act, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { describe, expect, it, vi } from "vitest";
 
+const nativeResource = vi.hoisted(() => vi.fn());
+vi.mock("../api/console", async (original) => ({ ...await original<typeof import("../api/console")>(), getResource: nativeResource }));
+
 import { ArtifactList } from "./ArtifactList";
 import {
   activeTurnScrollIndex,
@@ -35,14 +38,42 @@ const timeline: Timeline = {
 };
 
 describe("ConversationTimeline", () => {
+  it.each(["unavailable", "request-error"])("keeps service counts when native source is %s", async (mode) => {
+    if (mode === "request-error") nativeResource.mockRejectedValue(new Error("读取失败"));
+    else nativeResource.mockResolvedValue({ item: { available: false, message: "原生文件已清理", attempt: { id: 9, runtime: "claude_cli", status: "failed", created_at: "", finished_at: "" }, runtime_attempts: [] } });
+    render(<ConversationTimeline timeline={{ ...timeline, turns: [{ ...turn, status: "failed", runtime_attempts: [{ id: 9, runtime: "claude_cli", status: "failed", failure_code: "", failure_class: "", url: "/runtime-attempts/9/trajectory" }] }], events: timeline.events, artifacts: [] }} activeTurnId={null} />);
+    expect(await screen.findByText(mode === "request-error" ? "读取失败" : "原生文件已清理")).toBeVisible();
+    expect(screen.getByText(/已加载服务事件：1 次工具开始，0 次工具结束/)).toBeVisible();
+    expect(document.querySelectorAll(".execution-step")).toHaveLength(0);
+  });
+  it("uses exact native calls across runtimes instead of unmatched historical tool rows", async () => {
+    nativeResource.mockReset().mockImplementation(async (url: string) => {
+      const id = url.includes("/7/") ? 7 : 8;
+      return { item: { available: true, message: "", events: [
+        { kind: "tool_call", trace: { call_id: "same-id", name: id === 7 ? "exec_command" : "Bash", input: `pytest tests/native_${id}.py` } },
+        { kind: "tool_output", trace: { call_id: "same-id", output: `${id} passed`, status: "completed" } },
+      ], has_more: false, range_start: 0, range_end: 2, read_through: 2, attempt: { id, runtime: id === 7 ? "codex_cli" : "claude_cli", status: "completed", created_at: "", finished_at: "", route: "", model: "" }, runtime_attempts: [] } };
+    });
+    const attempts = [7, 8].map((id) => ({ id, runtime: id === 7 ? "codex_cli" : "claude_cli", status: "completed", failure_code: "", failure_class: "", url: `/runtime-attempts/${id}/trajectory` }));
+    render(<ConversationTimeline timeline={{ ...timeline, turns: [{ ...turn, status: "completed", runtime_attempts: attempts }], events: [
+      { id: 2, turn_id: turn.id, sequence: 2, event_type: "tool_started", payload: { tool_call_id: "event-2", summary: "原生 Agent 记录不可用。" }, created_at: "" },
+      { id: 3, turn_id: turn.id, sequence: 3, event_type: "tool_completed", payload: { tool_call_id: "event-3", summary: "原生 Agent 记录不可用。" }, created_at: "" },
+    ], artifacts: [] }} activeTurnId={null} />);
+    expect(await screen.findByText("pytest tests/native_7.py", { selector: "small" })).toBeVisible();
+    expect(await screen.findByText("pytest tests/native_8.py", { selector: "small" })).toBeVisible();
+    expect(document.querySelectorAll(".execution-step")).toHaveLength(2);
+    expect(screen.queryByText("已中止")).not.toBeInTheDocument();
+    expect(screen.queryByText("历史事件未记录命令详情")).not.toBeInTheDocument();
+    expect(nativeResource.mock.calls.map(([url]) => url)).toEqual(["/api/console/runtime-attempts/7/trajectory", "/api/console/runtime-attempts/8/trajectory"]);
+  });
   it("collapses long repair prompts while showing structured final summaries", async () => {
     const repaired = { ...turn, status: "completed" as const, user_text: "读取轨迹并修复。".repeat(200), final_text: JSON.stringify({ summary: "已更新 PR，等待 CI。", remaining_work: ["观察检查"] }) };
     render(<ConversationTimeline timeline={{ ...timeline, turns: [repaired], events: [], artifacts: [] }} activeTurnId={null} />);
     const inputToggle = screen.getByText(/展开任务输入/);
     expect(inputToggle.closest("details")).not.toHaveAttribute("open");
     expect(screen.getByText("已更新 PR，等待 CI。")).toBeVisible();
-    await userEvent.click(screen.getByText("查看完整 JSON"));
-    expect(screen.getByText(/"remaining_work":/)).toBeVisible();
+    expect(screen.getByText("remaining_work")).toBeVisible();
+    expect(screen.getByText("观察检查")).toBeVisible();
   });
   it("uses the exact stable assistant item key contract", () => {
     expect(assistantTurnKey(turn)).toBe("turn:turn-1:assistant");
@@ -201,6 +232,21 @@ describe("ConversationTimeline", () => {
 
     expect(screen.getByText("停止前的完整文本")).toBeInTheDocument();
     expect(screen.queryByText("分页片段")).not.toBeInTheDocument();
+  });
+
+  it("links each failed turn to its exact native runtime attempts", () => {
+    const failed = {
+      ...turn, status: "failed" as const, error_detail: "运行时执行未完成（claude_idle_timeout）。",
+      runtime_attempts: [
+        { id: 12, runtime: "codex_cli", status: "failed", failure_code: "codex_total_timeout", failure_class: "transport", url: "/runtime-attempts/12/trajectory" },
+        { id: 13, runtime: "claude_cli", status: "failed", failure_code: "claude_idle_timeout", failure_class: "transport", url: "/runtime-attempts/13/trajectory" },
+      ],
+    };
+    render(<ConversationTimeline timeline={{ ...timeline, turns: [failed], events: [] }} activeTurnId={null} />);
+    expect(screen.getByRole("alert")).toHaveTextContent("claude_idle_timeout");
+    const links = within(screen.getByRole("navigation", { name: "本轮原生轨迹" }));
+    expect(links.getByRole("link", { name: /#12.*codex_cli.*codex_total_timeout/ })).toHaveAttribute("href", "/runtime-attempts/12/trajectory");
+    expect(links.getByRole("link", { name: /#13.*claude_cli.*claude_idle_timeout/ })).toHaveAttribute("href", "/runtime-attempts/13/trajectory");
   });
 
   it("shows an aborted explanation for an unmatched tool on a failed historical turn", () => {

@@ -10987,74 +10987,83 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         if not expected_execution_generation.strip():
             raise ValueError("expected_execution_generation must be non-empty")
         with self._agent_run_write_transaction(None) as (db, (_, now_text)):
-            task = task_entity_storage.get_task(db, task_id)
-            if (task is None or task["kind"] != "reply"
-                    or task["status"] not in {"processing", "pending"}
-                    or task["execution_generation"] != expected_execution_generation):
-                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
-            stale_run_error = json.dumps(
-                {
-                    "authorization_required": False,
-                    "code": "stale_agent_turn_recovery",
-                    "retryable": True,
-                },
-                separators=(",", ":"),
+            self._requeue_reply_task_in_connection(
+                db, task_id, error, expected_execution_generation=expected_execution_generation,
+                available_at=available_at, now_text=now_text,
             )
-            stale_run_ids = [int(row["id"]) for row in db.execute(
-                """
-                select agent_runs.id from runs as agent_runs
-                where agent_runs.task_id=?
-                  and agent_runs.role in ('consumer','audit')
-                  and not exists (select 1 from run_provenance p where p.run_id=agent_runs.id)
-                  and agent_runs.execution_generation=?
-                  and status='running'
-                  and ((lease_expires_at<>'' and lease_expires_at<=?)
-                       or datetime(updated_at)<=datetime(?, '-600 seconds'))
-                """,
-                (task_id, expected_execution_generation, now_text, now_text),
-            ).fetchall()]
-            db.execute(
-                """
-                update runs as agent_runs
-                set status='failed', structured_error_json=?,
-                    lease_owner='', lease_expires_at='',
-                    completed_at=?, updated_at=?
-                where agent_runs.task_id=? and agent_runs.role in ('consumer','audit')
-                  and not exists (select 1 from run_provenance p where p.run_id=agent_runs.id)
-                  and execution_generation=?
-                  and status='running'
-                  and (
-                    (lease_expires_at<>'' and lease_expires_at<=?)
-                    or datetime(updated_at)<=datetime(?, '-600 seconds')
-                  )
-                """,
-                (
-                    stale_run_error,
-                    now_text,
-                    now_text,
-                    task_id,
-                    expected_execution_generation,
-                    now_text,
-                    now_text,
-                ),
-            )
-            from app.run_entity_storage import append_run_failure
-            for run_id in stale_run_ids:
-                append_run_failure(db, run_id=run_id, phase="terminal_failure",
-                                   structured_error_json=stale_run_error, created_at=now_text)
-            parameters = dict(task["parameters"])
-            parameters["force_new_decision"] = 1
-            updated = task_entity_storage.update_task_cas(
-                db, task_id=task_id,
-                expected={"kind": "reply", "status": task["status"],
-                          "execution_generation": expected_execution_generation},
-                changes={"status": "pending", "locked_at": None,
-                         "available_at": available_at, "error": error,
-                         "updated_at": now_text},
-                parameters=parameters,
-            )
-            if updated is None:
-                raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+
+    def _requeue_reply_task_in_connection(
+        self, db: sqlite3.Connection, task_id: int, error: str, *,
+        expected_execution_generation: str, available_at: str, now_text: str,
+    ) -> None:
+        task = task_entity_storage.get_task(db, task_id)
+        if (task is None or task["kind"] != "reply"
+                or task["status"] not in {"processing", "pending"}
+                or task["execution_generation"] != expected_execution_generation):
+            raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
+        stale_run_error = json.dumps(
+            {
+                "authorization_required": False,
+                "code": "stale_agent_turn_recovery",
+                "retryable": True,
+            },
+            separators=(",", ":"),
+        )
+        stale_run_ids = [int(row["id"]) for row in db.execute(
+            """
+            select agent_runs.id from runs as agent_runs
+            where agent_runs.task_id=?
+              and agent_runs.role in ('consumer','audit')
+              and not exists (select 1 from run_provenance p where p.run_id=agent_runs.id)
+              and agent_runs.execution_generation=?
+              and status='running'
+              and ((lease_expires_at<>'' and lease_expires_at<=?)
+                   or datetime(updated_at)<=datetime(?, '-600 seconds'))
+            """,
+            (task_id, expected_execution_generation, now_text, now_text),
+        ).fetchall()]
+        db.execute(
+            """
+            update runs as agent_runs
+            set status='failed', structured_error_json=?,
+                lease_owner='', lease_expires_at='',
+                completed_at=?, updated_at=?
+            where agent_runs.task_id=? and agent_runs.role in ('consumer','audit')
+              and not exists (select 1 from run_provenance p where p.run_id=agent_runs.id)
+              and execution_generation=?
+              and status='running'
+              and (
+                (lease_expires_at<>'' and lease_expires_at<=?)
+                or datetime(updated_at)<=datetime(?, '-600 seconds')
+              )
+            """,
+            (
+                stale_run_error,
+                now_text,
+                now_text,
+                task_id,
+                expected_execution_generation,
+                now_text,
+                now_text,
+            ),
+        )
+        from app.run_entity_storage import append_run_failure
+        for run_id in stale_run_ids:
+            append_run_failure(db, run_id=run_id, phase="terminal_failure",
+                               structured_error_json=stale_run_error, created_at=now_text)
+        parameters = dict(task["parameters"])
+        parameters["force_new_decision"] = 1
+        updated = task_entity_storage.update_task_cas(
+            db, task_id=task_id,
+            expected={"kind": "reply", "status": task["status"],
+                      "execution_generation": expected_execution_generation},
+            changes={"status": "pending", "locked_at": None,
+                     "available_at": available_at, "error": error,
+                     "updated_at": now_text},
+            parameters=parameters,
+        )
+        if updated is None:
+            raise AgentRunLeaseLostError(f"reply task superseded: {task_id}")
 
     def retry_failed_reply_task(
         self,
@@ -13959,6 +13968,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         ended_at: str,
         eligible_at: str,
     ) -> MeetingAlignmentJob | None:
+        from app.meeting_alignment_models import previous_meeting_audit_feedback
         from app.task_entity_storage import get_meeting_delivery_key, get_task, update_task_cas
         with self._immediate_write_transaction() as db:
             task = get_task(db, job_id)
@@ -14018,8 +14028,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 parameters=parameters)
             if changed is None:
                 return None
-            db.execute("update task_results set decision_json='{}',target_kind='',target_id='',target_title='',mentions_json='[]',final_message='',send_result_json='{}' "
-                       "where task_id=? and result_kind='meeting_alignment'", (job_id,))
+            feedback, _ = previous_meeting_audit_feedback(current.decision_json)
+            retained_decision = (
+                json.dumps({"_service_audit": json.loads(current.decision_json)["_service_audit"]}, ensure_ascii=False)
+                if feedback is not None else "{}"
+            )
+            db.execute("update task_results set decision_json=?,target_kind='',target_id='',target_title='',mentions_json='[]',final_message='',send_result_json='{}' "
+                       "where task_id=? and result_kind='meeting_alignment'", (retained_decision, job_id))
             return self._native_meeting_alignment_job(db, job_id)
 
     def restore_confirmed_meeting_delivery(

@@ -106,6 +106,8 @@ Codex Consumer 可在 task-bound `/tmp` 工作区进行原生代码执行；Audi
 
 Codex 的运行适配器不再注入 `features.apps=false`；新建和续跑都沿用本机连接器配置，随后由角色边界决定可用范围，Audit 仍显式关闭 apps 和浏览器。配置继承不证明连接器已经安装、登录或能读取某个账号，必须以真实工具返回核实。
 
+Codex 适配器把 `Failed to refresh token` 加上 `session has ended`、`invalid refresh token` 或 CLI 实际输出的错误码 `invalid_refresh_token`（下划线写法，2026-11-08 Attempt 17030）判为 `codex_login_required`：属认证类失败，暂停该路由并允许 failover。漏判时它会落成 `runtime_unclassified`，同一路由上白白连续失败 4 个 turn。
+
 Codex Consumer 的工作工具面不是白名单（Derek 2026-10-24）：`make_role_agent_command` 对 Consumer 不再强制关闭
 `features.apps`、`features.plugins`、`features.remote_plugin`，也不再关闭 `~/.codex/config.toml` 里的其他 MCP server
 或限制它们的工具，而是沿用本机 CLI 的配置，并对这些 server 设置 `default_tools_approval_mode="approve"`
@@ -124,6 +126,8 @@ Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出
 把动态 JSON 键值条目无损还原，再交给现有严格 wire/Pydantic 解析器；OA 动作仍按原有
 action-specific target/payload 合同校验。已完成运行结果的 schema identity 绑定实际提交的 Schema
 字节，避免用旧自由格式结果恢复新原生格式运行。Consumer 的 Codex 与 Claude 原生 schema 路线不再把同一份 Pydantic wire schema 重复放进服务 Developer 文本；Friday 无原生 schema 的路线仍保留完整文本，Audit 输入不变。预览及运行快照使用同一路线装配。所有 Consumer 继续共用“不得直接发送对外消息、邮件或执行审批”的约束；解析、业务判断、审核与 SystemExecutor 外部动作流程不变。
+
+Consumer 的动作专属合同在 `target`、`payload` 各自字段上校验，嵌套错误保留完整字段路径和数组位置，例如 `payload.remark`、`payload.actions.0.payload`。既有有界重试收到这些路径与合同说明，不包含被拒绝的输入值；原生 Schema、合法输入范围及审核、执行规则不变。
 
 绑定 `dingtang-okr-review` 的 Consumer 读取当前评分详情并提交 `dingtang-okr/score_kr` 候选，不直接运行评分脚本或写入接口。该动作走现有候选、Audit 和 SystemExecutor 执行记录；服务通过
 已同步登录态的无头 Chrome 页面调用页面原生 API。只读入口返回周期、当前批次、目标、
@@ -165,7 +169,7 @@ Attempt 详情仅在当前状态要求人工决定，或该候选已有历史选
 
 Audit 返回或拒绝后，Consumer 必须提交当前阶段的完整修订候选。服务从当前编排上下文绑定 `stage_index` 与 `predecessor_review_id`，模型复述错误不会将候选误判为跨阶段或错误前置。返回反馈不会推进阶段；仅当前阶段审核通过且其动作有已验证的完成回执，后续阶段才会开放。候选的阶段、前置审核、代际及执行验证仍由服务严格校验。
 
-主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。页面 turn 使用 `workbench`
+主页面 `/` 只是同一 Service Runtime 的一个输入和展示入口。失败页保留路由的具体错误码，按本轮持久化原生调用展示失败类别和完整轨迹链接；历史读取不改写原始错误或失败状态。未关联原生调用时使用工作台自身的错误码，不复制原生 stdout/stderr。此投影不改变执行时限、自动续接或重试预算。页面 turn 使用 `workbench`
 workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime attempt、失败切换和 CLI
 原生 `auto_review`；页面不启动自己的 Codex runtime，也不定义独立审批策略。
 旧版确认记录只读，不能从页面或 API 恢复执行。
@@ -1015,7 +1019,7 @@ Reply Task。它独立于同步业务 worker，因此即使该 worker 卡在单�
 
 - 一场会议可能被分成几段录制，每段各有自己的 taskUuid。同名且相邻两段间隔不超过两小时算同一场会议（由间隔决定，不按自然日切分，跨零点的会议因此保持完整）。后到的录制并入已有任务：转写与摘要接到第一段之后，会议结束时间顺延到最后一段，任务重开并**对整场会议重新生成总结**，而不是补一段增量。此时标题标注「第二次总结」。只有发送前已保存了另一条旧消息的凭证，才会在新总结发送成功后撤回旧消息；首次发送以及同一条消息的日历备注重试都不撤回自身。provider 拒绝撤回不算会议失败。
 
-- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供来源和收件人身份核验使用，不因此决定业务收件目标。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对相关讨论、业务承接和参会人与完整群成员的匹配，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”。业务总结优先发到按相关讨论和参会人成员匹配选出的群；完整搜索后没有合适群时按「会议无合适群时的收件人」选择单聊对象。普通业务内容无需逐一核验群成员披露授权。裁员、减员、人员优化及其他人员敏感详情必须从业务群正文和标题中拆出，作为独立私信发送给身份、当前职责和该具体内容披露授权均有实时证据的个人；HR 群或高参会人匹配度不构成合并敏感内容的例外。没有经核验且获授权的个人时，不发送敏感部分并记录未解决事项，不私聊本人兜底。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
+- 会议总结在 Agent 决策前，以日历组织者的完整名称通过当前 DingTalk 组织目录解析稳定身份；只有唯一精确姓名或昵称命中才回填组织者及同名唯一参会人，供来源和收件人身份核验使用，不因此决定业务收件目标。模糊、多候选或冲突身份不回填。日历中缺少稳定 ID 的其他参会人也按同一规则做唯一姓名/昵称补全。服务用当前 DWS 群搜索格式检索会议标题和摘要正文里的业务词，再读取候选群近期讨论，把去重后的实时候选及讨论片段交给 Agent；候选仍需核对相关讨论、业务承接和参会人与完整群成员的匹配，不能仅凭群名、词项重合或参会人覆盖发送。群搜索失败或结果不完整时任务重试，不将依赖故障说成“找不到群”。业务总结优先发到按相关讨论和参会人成员匹配选出的群；完整搜索后没有合适群时按「会议无合适群时的收件人」选择单聊对象。普通业务内容无需逐一核验群成员披露授权。裁员、减员、人员优化及其他人员敏感详情必须从业务群正文和标题中拆出，作为独立私信发送给身份、当前职责和该具体内容披露授权均有实时证据的个人；HR 群或高参会人匹配度不构成合并敏感内容的例外。敏感私聊按具体内容选择来源身份唯一匹配的应知情个人，参与该敏感讨论、承担相关决定或后续工作可以构成依据，职务本身不够。本人有依据时可被明确选择，不自动兜底。缺少敏感私聊或收件人依据时由独立 Audit 退回现有反馈修订流程，不能以省略并记录缺口作为完整发送。进入投递后复用同一个持久化投递键：钉钉发送使用由该键确定的 UUID，provider 成功返回会立刻写入同一键的回执。服务重启后，恢复的 worker 先复用回执；若进程恰在 provider 接收后中断，使用相同 UUID 继续投递，provider 的重复 UUID 回应视为原投递已送达，不能产生第二条群消息。
 
 会议消息已有不可变发送回执时，恢复日历摘要先读取原事件；若描述完整包含同一冻结摘要正文，则记录
 `already_present` 并结束摘要阶段，不再写日历或重发消息。否则仍按现有标记块更新，并要求原事件读回
@@ -1028,7 +1032,7 @@ Reply Task。它独立于同步业务 worker，因此即使该 worker 卡在单�
 - 后台 WeChat 发送序列等到电脑连续无人操作满 30 秒才开始（`CEO_WECHAT_SEND_IDLE_SECONDS`，默认 30）；等待发送窗口没有 120 秒截止时间。发送 IPC 在等待期间保持连接，`SystemExecutor` 持续续租该已审核执行的 claim，避免长等待被判为失败或被另一执行者接管。操作中每次点击、每个字、按回车前都检查是否有比 Sender 自己最近一次事件更新的输入；有就立即暂停：清空未发送草稿、切回原前台应用，再重新等满 30 秒后从打开会话重来。独立的只读目标确认保留原有限等待；用户在 Console 主动触发的发送不等待也不暂停。连接不可用、发送开始后的中断和回执判定仍沿用原有失败/不确定状态规则。
 - WeChat Sender 的被动 readiness 只有在 Accessibility 树含有发送导航所需的搜索框或会话列表控件时才返回 `ready`。被动检查和发送导航都会读取应用的 `AXChildren` 与 `AXWindows`，遍历同一元素只一次。仅检测到进程或窗口不足以证明登录会话可用；窗口存在但缺少这些控件（例如 QR 登录界面）时返回 `wechat_window_unavailable`。此检查不会激活、登录或发送。
 - WeChat sender loop 在 `auto` 模式处理已审核的 `ready_to_send` 项时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须从同一当前 Task 代次、候选、Audit 和 action identity 读取已经持久化的预备正文，并逐字匹配 delivery。旧 delivery 只在审核门禁通过且最终正文相同的情况下，才可从 `wechat:{delivery_id}` 预备键恢复；不得重建正文。无法精确恢复时，重试 API 必须在重新入队前返回内部错误且不调用 Sender；这类内部错误由正式重试接口处理，不要求用户通过回复确认卡提供材料。每轮成功完成恢复检查和队列检查后，才将此前同组件错误标记为已恢复；抛出异常的轮次不会清除错误。该收口仅更新错误的恢复状态，不代表任何消息已发送；发送事实仍以 delivery 和 provider 回执为准。
-- OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限为 130 秒，worker 运行上限为 220 秒，调用方上限为 240 秒；worker 超时后会先终止并回收自己的 Chromium 进程组。认证刷新通过 `app.service_browser.launch_service_chrome(..., initialize_from_snapshot=False)` 复用现有 OKR 专用会话，不覆盖其 Cookie 或附属文件；真 Chrome、无头、钥匙串启动参数和既有本机 SSO 保持一致，不启动或清理独立的 bundled Chromium 子进程。其他调用默认仍使用每日 Chrome cookie 副本。本机 SSO 的登录、扫码切换、账号头像和组织选项仅从当前 `.app-page.app-page-curr` 选择，避免旧步骤 DOM 中更早出现的按钮被当前页面遮挡；保持原账号、组织、原生确认与超时，不强制点击或关闭当前页。
+- OKR 无头来源启动使用进程锁；并发调用者取得锁后必须再次读取共享缓存，复用前一个调用刚刷新的认证信息，不能重复启动浏览器或把正常刷新误报为锁超时。锁等待上限为 130 秒，worker 运行上限为 220 秒，调用方上限为 240 秒；worker 超时后会先终止并回收自己的 Chromium 进程组。认证刷新通过 `app.service_browser.launch_service_chrome(..., initialize_from_snapshot=False)` 复用现有 OKR 专用会话，不覆盖其 Cookie 或附属文件；真 Chrome、无头、钥匙串启动参数和既有本机 SSO 保持一致，不启动或清理独立的 bundled Chromium 子进程。其他调用默认仍使用每日 Chrome cookie 副本。本机 SSO 的登录按钮、账号头像和组织选项仅从当前 `.app-page.app-page-curr` 选择；Account 页通过容器外共享 `tablist` 的未选标签进入扫码页，等待 `.app-qr-login-page` 后继续，已在扫码页不反向切换。共享标签依据原生页面状态和 `aria-selected` 定位，不依赖本地化文案或固定索引。旧步骤 DOM 不参与选择；保持原账号、组织、原生确认与超时，不强制点击或关闭当前页。
 - OKR 共用 Skill source 模块使用 HTTPX 原生连接池复用业务 API 连接；每次请求仍显式绑定同一调用者的 headers/body，保留原无 Cookie processor 行为（含重定向）。周期、目标列表、每目标评论、每 KR 明细和进度均完整串行读取，不缓存业务数据；单阶段 30 秒、传输失败最多 3 次及 1.5/3 秒等待、worker 总计 220 秒均不变。包装器按 HTTPX 原生异常继续区分 HTTP 401 shared、其他 HTTP 状态 member、传输失败 member 与无效响应 member；不以库异常类型变化抹掉原诊断分类。服务依赖已含 httpx，共用 Skill 入口也声明相同安装要求。
 - OKR 无头来源在请求业务 API 前校验新捕获认证的有效期。专用浏览器会话过期时返回明确的 `okr_headless_session_expired` 服务错误，不得继续请求并把认证失败误报为周期不存在。
 - 个人季度不存在由共享 source 的 `MissingOkrPeriod` 类型表示：只有 provider 整数 code 0、完整且结构有效的个人季度列表及有效季度身份才能产生该结果。服务命令须指向 `scripts/dingteam_okr_headless_source.py`；旧 Skill 浏览器读取入口虽能读取已有目标，却未输出个人季度缺席收据。Codex 子进程保留服务进程的 `CEO_OKR_LIVE_SOURCE_COMMAND`，使 `agent_cli` 不会回读旧 `.env` 命令。headless wrapper 输出绑定请求 userId/periodLabel 的 `availability.status=goals_not_established`、UTC 采集时间、providerCode 0、periodsComplete true 和真实季度列表，不伪造 `processed` 空数组。认证准备、HTTP 401 和未分类共同来源失败保持 shared 技术失败；可明确归属单次成员读取的 HTTP 或格式失败使用 member 范围。错误按结构化 scope/code/detail 回到 source adapter 并抛出 `OkrLiveSourceError`，不靠错误文字猜缺目标或只用失败人数判断共享认证。依赖 wrapper 部署前必须核验本机共享 SDK 类型与打包 source 合同一致；保留共享目录无关改动。
@@ -1828,7 +1832,7 @@ Provider 明确返回 `success=false` 的主消息或敏感消息记录真实失
 部分效果、未准备主消息或敏感消息、无已有回执、无锁/活跃 dispatcher 或投递归属，且无活跃
 会议/运行时回合。已准备或已部分发送必须沿原回执恢复，不能清空重做候选。历史运行不改写。
 这些身份和归属检查不证明模型所写业务理由真实，也不代表会议已迁入通用 Consumer/Audit 引擎。
-精确指定 Minutes UUID 时，列表中同一 ID 的重复条目只形成一次来源刷新和恢复结果，不把已排队的恢复误报为失败。Console 可从最新失败 Meeting Attempt 显式请求重跑；入口确认 Attempt 仍是该 Task 最新运行后，
+精确指定 Minutes UUID 时，列表中同一 ID 的重复条目只形成一次来源刷新和恢复结果，不把已排队的恢复误报为失败。重开时清除旧发送候选，但保留有效 Audit `return` 的反馈与反馈轮数，供新 Consumer 继续修订；仍须重新进行独立 Audit。Console 可从最新失败 Meeting Attempt 显式请求重跑；入口确认 Attempt 仍是该 Task 最新运行后，
 按精确 Minutes UUID 只读刷新该会议的来源与参会名单，再调用同一受保护重放方法。来源不可用或任务
 不再符合重放条件时保持原状态。后续重新进入普通 Meeting 分析和独立 Audit，不直接发送，也不跳过
 原有外发回执门禁。
@@ -1993,7 +1997,7 @@ Attempt detail 的 System Execution 只对当前审核候选，或已有执行�
 
 会议工作人格来源引用（2026-10-14）：Meeting Alignment 每轮只取得一次实际注入的工作人格正文，来源引用为该正文的 `work_profile:sha256:<digest>`；历史来源按该引用回写，完整原生输入可重算摘要。会议结果不再被提示词要求回写本地文件路径。现有 codec 的本地路径和凭据限制不变。
 
-Meeting 的决定默认是 `send`；面试（`skip_interview`，Derek 另行单独处理）和没有可共享信息量的会议（`skip_no_content`，不发一条空话）是两种不发送的决定（Derek，2026-10-28）：它们同样经独立 Audit，通过后任务分别终止为 `skipped` 和 `no_action`，不产生任何外发动作；Audit 认为会议有可共享内容时退回，走与 `send` 相同的有界反馈修订。Meeting Alignment 的业务总结优先发到按相关群讨论和参会人成员匹配选出的群；完整搜索后没有合适群时按下文「会议无合适群时的收件人」选择单聊对象。普通业务内容不要求逐一核验群成员的披露授权。参会名单不完整、无法与群成员匹配时，只要群讨论覆盖同一项目或客户且完整成员名单可读，就可选该群，并把这一缺口记入 audit_summary，不因此拒绝（Derek，2026-10-27）。群近期讨论的主题不必与本次会议议题重合（同一项目的群即对口）；Audit 退回目标时必须从已给候选中指出更合适的群及理由，不能只说证明不足（Derek，2026-10-28）。另外，人员评价、绩效、薪酬、晋升、去留、候选人结论、健康、请假及组织层面裁员/减员/人员优化信息必须从群正文和标题拆出，作为独立私聊发送给身份、当前职责和该内容披露授权均有实时证据的个人。HR 群或高参会人匹配度不构成合并敏感内容的例外；没有授权个人时省略敏感详情并记录未解决缺口。Planner 与独立 Audit 均应用此 Meeting 专属规则，覆盖通用受众合同对敏感群消息的条件性许可。
+Meeting 的决定默认是 `send`；面试（`skip_interview`，Derek 另行单独处理）和没有可共享信息量的会议（`skip_no_content`，不发一条空话）是两种不发送的决定（Derek，2026-10-28）：它们同样经独立 Audit，通过后任务分别终止为 `skipped` 和 `no_action`，不产生任何外发动作；Audit 认为会议有可共享内容时退回，走与 `send` 相同的有界反馈修订。Meeting Alignment 的业务总结优先发到按相关群讨论和参会人成员匹配选出的群；完整搜索后没有合适群时按下文「会议无合适群时的收件人」选择单聊对象。普通业务内容不要求逐一核验群成员的披露授权。参会名单不完整、无法与群成员匹配时，只要群讨论覆盖同一项目或客户且完整成员名单可读，就可选该群，并把这一缺口记入 audit_summary，不因此拒绝（Derek，2026-10-27）。群近期讨论的主题不必与本次会议议题重合（同一项目的群即对口）；Audit 退回目标时必须从已给候选中指出更合适的群及理由，不能只说证明不足（Derek，2026-10-28）。另外，人员评价、绩效、薪酬、晋升、去留、候选人结论、健康、请假及组织层面裁员/减员/人员优化信息必须从群正文和标题拆出，作为独立私聊发送给身份、当前职责和该内容披露授权均有实时证据的个人。HR 群或高参会人匹配度不构成合并敏感内容的例外；敏感私聊收件人可根据对该敏感讨论的参与、决定或后续工作选择，来源身份必须唯一匹配；本人有依据时可以被明确选择，但不自动兜底。敏感结论或行动缺少独立私聊或收件人依据时，Audit 必须退回现有反馈修订，不能批准省略。Planner 与独立 Audit 均应用此 Meeting 专属规则，覆盖通用受众合同对敏感群消息的条件性许可。
 
 Meeting 的 Codex CLI 每轮显式设置 `project_doc_max_bytes=0`，省去 CLI 自动加载的工作区 `AGENTS.md`；服务装配的会议来源、工作人格、冻结托管 Skill、结果 Schema 与受众校验不变。非 Codex 路线不使用这个 CLI 配置。
 
@@ -2009,9 +2013,13 @@ Meeting Codex Developer 指令只保留任务特有的 DWS 群与身份只读取
 
 Claude Consumer additionally passes a compatible `ConsumerAgentWireResult` schema
 inline through native CLI `--json-schema`. This projection retains the field
-shapes and required fields but removes the wire schema's unsupported `oneOf` and
-`allOf` conditions; the unchanged Pydantic wire/business models remain the
-authoritative validator for those relationships and every result. The adapter
+shapes and required fields and removes the unsupported `oneOf`, `allOf` and
+`if/then` keywords, but re-expresses the canonical per-action branches
+(`action` const with its `target` and `payload` shapes, from `action_contracts`)
+as a top-level `anyOf`, so the native schema rejects a wrong target such as a
+`reply` with `reply_to_message_id` or a `plan` with a message target. Outcome and
+error conditions stay with the unchanged Pydantic wire/business models, which
+remain the authoritative validator for every result. The adapter
 uses the native result's JSON text through the existing event normalizer and
 parser. Audit and other Claude workloads keep their existing command; no route,
 tool, Skill, prompt rule, retry or session policy changes.
@@ -2118,6 +2126,8 @@ unavailability.
 
 ### 会议无合适群时的收件人（2026-10-28）
 
+会议业务群选择核对该群的实际用途、讨论和行动负责人是否承接整条普通业务总结；同部门、同职务或话题交集不能单独证明这一关系。专项群不因名称相关就承接部门其他工作。有候选承接整场工作时，不得为沿用较窄目标而删去有依据的会议结论。前一轮目标及理由仍须与当前其他候选比较复核，不作为已证实归属。同一项目或客户的群可讨论不同议题；参会名册不完整仍记录缺口，不要求群成员与参会人完全一致。这项规则由 Planner 与独立 Audit 共同应用，不改变敏感私聊、直接收件人、投递或回执机制。
+
 业务会议总结优先发到合适的业务群。完整搜索后没有合适群时，从来源明确的参会人中选择一人单聊；只有一位非当前用户参会人时发给该人，多人时优先选与讨论最相关者。不要求会议明确指派该人负责某项决定或行动。目标仍须绑定稳定 user_id，且不能是当前用户；敏感内容继续按单独的职责和披露授权规则处理。
 
 对这类既有 `needs_human` Meeting，按精确 meeting ID 走 `replay-recent-meetings` 刷新当前听记与日历来源，再进入正常 Consumer 和独立 Audit。该入口保留原 Runs，并在任务锁、活动运行、投递 claim、已准备消息或外部回执存在时拒绝重开。
@@ -2203,9 +2213,9 @@ The repair Agent reads the exact source/trajectory, uses an isolated development
 
 Attached open repair PRs now remain under sixty-second GitHub observation after `pr_created` and `checks_passed`. Current-head CheckRun/status failures, unresolved review threads and unhandled review bodies automatically create native turns in the same conversation/session and existing PR. Paginated evidence is head-checked; pending/absent checks wait. Durable feedback intent plus deterministic request IDs recover a created turn across crashes even if GitHub changes. Fingerprint-specific four-attempt counts survive A→B→A feedback changes; exhausted feedback stays visible and watches for new evidence. Green requires completed passing checks and resolved/handled review feedback; later feedback resumes observation. Closed PRs end monitoring. Original error state, Audit and business actions are unchanged.
 
-PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation.
+PR continuation carries the previous typed result plus explicit remaining work (or typed format errors), alongside the remaining current-head GitHub facts. Its fingerprint also includes the actual result JSON Schema, preserving the four-attempt bound per feedback/contract without resetting old counts. Workbench honors the task-requested final output format; it no longer overrides JSON requests with a generic ordinary-text instruction. Provider-session changes during native route fallback do not create a new Workbench conversation. Green PRs now receive a bounded native merge turn in that same conversation: the Agent checks the full diff, confirmed root cause and regression evidence, and merges a deterministic fix to main with native GitHub exact-head matching after refreshing CI/review. Product tradeoffs remain review_required, external blockers merge_blocked. The coordinator records merged only from main-base MERGED plus merge commit/time readback, retaining original business state and the existing release path. Durable merge intent and per-head attempt counts reuse the existing continuation checkpoint; no new route, task kind, Audit rule or business replay is added.
 
-Automatic repair declares a durable per-turn native result contract (initial diagnosis v1 / PR correction v3), committed atomically with each Workbench turn in existing State. RuntimeRequest restores that declaration; fixed repository schemas, typed parsing, local/structured capability requirements and existing same-session validation correction apply uniformly through native CLI adapters. Commentary alone cannot complete a typed repair turn. Freeform turns retain their declared text contract; no task kind or runtime-route branch is added. Initial and PR correction intents both freeze the original prompt/request ID/contract before creation, preserving recovery when producer code changes. Task bodies do not duplicate the CLI-supplied schema.
+Automatic repair declares a durable per-turn native result contract (initial diagnosis v1 / PR correction v3 / deterministic merge v1), committed atomically with each Workbench turn in existing State. RuntimeRequest restores that declaration; fixed repository schemas, typed parsing, local/structured capability requirements and existing same-session validation correction apply uniformly through native CLI adapters. Commentary alone cannot complete a typed repair turn. Freeform turns retain their declared text contract; no task kind or runtime-route branch is added. Initial and PR correction intents both freeze the original prompt/request ID/contract before creation, preserving recovery when producer code changes. Task bodies do not duplicate the CLI-supplied schema.
 
 ### Declared MCP module launch and result error propagation
 
@@ -2221,6 +2231,8 @@ its safe field diagnostics and `codex_result_invalid` classification feed the
 next role attempt's existing correction prompt. Invalid fields remain rejected,
 transport/session failures retain their own handler, and the shared four-attempt
 ceiling is unchanged. No Audit policy or business replay is introduced.
+
+原生进程结束后的结果编码及既有内容、结构、大小校验仍处于同一个异常处理阶段。编码被拒绝时，原生运行和父运行立即按原错误记录为失败，不能遗留 `running` 阻塞恢复或部署；不将被拒绝结果记为完成，也不改变超时或维护门禁。
 
 ### Repeated action schema construction
 
@@ -2273,4 +2285,15 @@ Friday 通过现有 CLI 身份的只读 operation 与 thread trace API 读取，
 
 Attempt 的处理／审计步骤、历史代记录、Task 历史、Meeting 详情和有已保存关联的服务错误都提供原生入口。服务错误只沿原触发身份 → Reply Attempt 保存的 Run → 同代运行关系展示关联调用，不把同一 Task 的其他输入运行猜作当前错误；没有 Agent 调用关系的服务错误明确说明。无 runtime attempt 的已有历史 Codex 会话链接继续保留。
 
-工作台长任务输入和长文本保留短预览，完整正文可展开；终态结构化结果先展示 `summary`，完整 JSON（包括其他字段）仍可展开读取。共用工具卡以名称、命令预览、状态和耗时为摘要，展开后优先展示参数／输入和结果／输出，调用身份、时间和原始 provider 事件放在二级详情。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
+工作台长任务输入和长文本保留短预览，完整正文可展开；终态 JSON 结果直接按字段渲染并完整展示：字符串支持 Markdown，数组显示为列表，对象逐层展开，空值与空集合显式显示；不再折叠字段或把完整结果放进代码框。按 JSON 语法树的原文位置渲染，保留字段顺序、重复键、大整数 ID 和指数写法；原始 JSON 可直接下载，原始格式不丢失。共用工具卡默认显示实际名称、命令或参数预览、返回内容的首尾预览、状态和耗时；命令参数数组保持可读，展开后保留完整输入与返回，调用身份、时间和原始 provider 事件放在二级详情。终态工作台对话按每个已保存的 runtime_attempt 直接复用原生轨迹读取器，独立按调用 ID 配对工具开始与返回，不再依赖跨运行环境的 SQLite 工具事件数量。对话内只展示工具，任务输入和最终答复沿用原位置；完整轨迹页仍可查看上下文和中间输出。每次调用先读取一页，可继续加载全部剩余页，只有全部读完才将未返回工具标记中止；源缺失时按调用显示不可用原因。执行中的对话保留实时事件流。轨迹页在已加载事件范围内提供类型筛选和全文搜索（包括已配对工具返回），保留原序号和时间；未配对返回独立展示。轨迹读取不更改任务状态、结果合同、路由、审核、发送或恢复流程。
+
+结果保存与原生结果恢复复用调用方既有的类型化敏感值校验；Audit 对精确绑定候选的系统反馈后缀使用同一既有规则，不改写结果正文。正文凭据、非绑定链接、大小和文档字段检查保持不变。
+
+按任务恢复停滞运行：History 的 `recover-stalled` POST 与 `app.reply_task_recovery` CLI 复用同一事务，必须明确 Task ID 和当前执行代次。沿用既有停滞阈值，Task 锁、Run、活动原生调用仍有近期推进时拒绝；存在外部动作、执行意图或回执时拒绝。通过后复用正常 requeue，未结束的运行记录真实失败、Task 回到 pending，保留候选和历史，再经原 Consumer→Audit→System 处理；不领取其他任务，不跳过部署静默门禁。
+
+Stalled recovery also refuses live dispatcher owners, unexpired or unparseable Run/runtime leases, and missing dispatcher ownership history. These checks run inside the same immediate transaction as the task/generation transition.
+
+会议敏感私聊（2026-11-09）：普通信息进合适业务群，敏感信息独立私发。身份校验共用精确来源身份解析；普通业务无群单聊仍排除本人，敏感私聊不再一律排除本人。独立私聊沿用原投递键及回执，群成功而私聊失败时只重试私聊；两条投递都完成后才返回完整发送结果。不新增任务状态、敏感词运行时分类或历史会议重发。
+
+仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_message`，不生成群占位消息，也不使用 `skip_no_content`。仅敏感私聊使用原 `:sensitive` 投递键及回执；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
+敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。

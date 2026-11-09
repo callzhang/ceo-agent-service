@@ -77,7 +77,7 @@ class RecordingSystemDws:
         return {"state": "sent", "message_id": result["message_id"]}
 
     def get_current_user_id(self):
-        return "principal-1"
+        return "user-1"
 
     def respond_calendar_event(self, event_id: str, response: str):
         self.responses.append((event_id, response))
@@ -345,7 +345,7 @@ class CalendarRunnerContractExecutor:
             "description": "Review the portfolio.",
             "comments": [],
             "linked_materials": [],
-            "self_response": "needsAction",
+            "self_response": "needs_action",
             "conflicting_accepted_events": [],
             "requested_principal_input": None,
         }
@@ -417,7 +417,7 @@ class SilentMaterialCalendarExecutor(CalendarRunnerContractExecutor):
                         "title": "Silent portfolio review",
                         "organizer": {"open_dingtalk_id": "inviter-1"},
                         "linked_materials": [self.material_url],
-                        "self_response": "needsAction",
+                        "self_response": "needs_action",
                         "conflicting_accepted_events": [],
                         "requested_principal_input": None,
                     }
