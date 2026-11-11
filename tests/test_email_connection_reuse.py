@@ -16,6 +16,23 @@ from app.sqlite_connections import _close_idle_connections
 from app.task8_storage import register_task8_functions
 
 
+def _file_descriptor_identities():
+    directory_fd = os.open("/dev/fd", os.O_RDONLY)
+    try:
+        targets = {}
+        for descriptor in os.listdir(directory_fd):
+            if not descriptor.isdigit() or int(descriptor) == directory_fd:
+                continue
+            try:
+                stat = os.fstat(int(descriptor))
+            except OSError:
+                continue
+            targets[descriptor] = (stat.st_dev, stat.st_ino, stat.st_mode, stat.st_rdev)
+        return targets
+    finally:
+        os.close(directory_fd)
+
+
 @pytest.fixture
 def store(tmp_path):
     value = EmailStore(tmp_path / "email.sqlite3")
@@ -195,19 +212,18 @@ def test_idle_reuse_keeps_file_descriptors_bounded_and_cleanup_releases_them(sto
     gc_was_enabled = gc.isenabled()
     gc.disable()
     try:
-        cold = len(os.listdir("/dev/fd"))
+        cold = _file_descriptor_identities()
         assert store.get_account("missing") is None
-        warm = len(os.listdir("/dev/fd"))
-        assert warm <= cold + 3
+        warm = _file_descriptor_identities()
+        assert len(warm) <= len(cold) + 3
         for _ in range(100):
             assert store.get_account("missing") is None
             assert store.list_accounts() == []
-        assert len(os.listdir("/dev/fd")) == warm
+        after_reuse = _file_descriptor_identities()
+        assert set(after_reuse.items()) <= set(warm.items())
         _close_idle_connections()
-        # A descriptor unrelated to the store may close concurrently (for
-        # example a finalized handle from an earlier test), so cleanup must
-        # return to at most the cold count, never above it.
-        assert len(os.listdir("/dev/fd")) <= cold
+        after_cleanup = _file_descriptor_identities()
+        assert set(after_cleanup.items()) <= set(cold.items())
     finally:
         if gc_was_enabled:
             gc.enable()
