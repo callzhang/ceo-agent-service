@@ -1712,7 +1712,6 @@ class EmailStore:
         self.path = Path(path)
         self.training_run_id = training_run_id
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        require_current_pair(self.path)
         # The path flock is non-reentrant. Store must finish before Email locks;
         # Store creates only the neutral classification parent, never EmailStore.
         AutoReplyStore(self.path)

@@ -2237,16 +2237,16 @@ def test_concurrent_first_initialization_is_transactionally_idempotent(
     tmp_path: Path,
 ):
     database = tmp_path / "concurrent-init.sqlite3"
-    ready = Barrier(2)
+    ready = Barrier(4)
 
     def initialize(_: int) -> EmailStore:
         ready.wait()
         return EmailStore(database)
 
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        stores = list(executor.map(initialize, range(2)))
+    with ThreadPoolExecutor(max_workers=4) as executor:
+        stores = list(executor.map(initialize, range(4)))
 
-    assert len(stores) == 2
+    assert len(stores) == 4
     assert len(_fetchall(database, "select * from email_schema_migrations")) == 1
     assert EmailStore(database).count_unincluded_training_examples() == 0
 
