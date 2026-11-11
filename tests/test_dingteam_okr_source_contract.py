@@ -117,7 +117,6 @@ def sso_pages(body):
 
 def test_direct_sso_ignores_earlier_button_on_old_page(source, sso_chrome, monkeypatch):
     monkeypatch.setattr(source.browser, "ENTRY_URL", "about:blank", raising=False)
-    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 500)
     monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
     page = sso_chrome.new_page()
     try:
