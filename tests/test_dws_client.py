@@ -3323,6 +3323,25 @@ def test_get_calendar_event_returns_none_for_invalid_event_id():
     assert InvalidEventIdClient().get_calendar_event("event-1") is None
 
 
+def test_get_calendar_event_returns_none_for_unretrievable_event_322000():
+    class UnretrievableEventClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+
+        def run_json(self, command: list[str]):
+            raise DwsError(
+                "dws command failed with exit code 1; "
+                "command=dws calendar event get --id event-1_1793863800000 "
+                "--format json; "
+                'code=1; stderr={"error.code": 1, "error.message": '
+                '"code: 322000, developerMessage: 322000", '
+                '"error.reason": "business_error"}',
+                code="1",
+            )
+
+    assert UnretrievableEventClient().get_calendar_event("event-1_1") is None
+
+
 def test_get_calendar_event_parses_real_nested_result_data_event():
     client = RecordingDwsClient(
         {
