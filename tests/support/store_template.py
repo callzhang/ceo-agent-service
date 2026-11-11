@@ -14,12 +14,14 @@ import gc
 import shutil
 import sqlite3
 import tempfile
+import threading
 from contextlib import closing
 from pathlib import Path
 
 _TEMPLATES: dict[str, Path] = {}
 _DIRECTORY: Path | None = None
 _BUILDING = False
+_COPY_LOCK = threading.RLock()
 
 
 def _template_directory() -> Path:
@@ -78,13 +80,15 @@ def install(store_class, kind: str, *, on_copy=lambda _path: None) -> None:
         target = Path(path)
         if not target.exists():
             _forget_live_events_of(target)
-        if not args and not target.exists() and target.parent.is_dir():
-            template = _copy_of_template(
-                kind, lambda built: _build(original, store_class, built)
-            )
-            if template is not None:
-                shutil.copyfile(template, target)
-                on_copy(target)
+        if not args and target.parent.is_dir():
+            with _COPY_LOCK:
+                if not target.exists():
+                    template = _copy_of_template(
+                        kind, lambda built: _build(original, store_class, built)
+                    )
+                    if template is not None:
+                        shutil.copyfile(template, target)
+                        on_copy(target)
         original(self, path, *args, **kwargs)
 
     store_class.__init__ = init

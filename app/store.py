@@ -1357,6 +1357,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         self._ensure_initialized()
 
     def _ensure_initialized(self) -> None:
+        require_current_pair(self.path)
         path_key = self.path.resolve()
         if self._cached_initialized_path_is_healthy(path_key):
             return
