@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-repair-errors-16260 | `tests/test_dingteam_okr_source_contract.py` SSO current-page regression only; this claim | Remove the test-only 500 ms Playwright action timeout that made the existing current-page SSO regression fail under CI browser scheduling; preserve the page-scoping assertion and production timeout. | 2026-11-12 |
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
