@@ -3305,6 +3305,24 @@ def test_get_calendar_event_returns_none_when_detail_is_unavailable():
     ]
 
 
+def test_get_calendar_event_returns_none_for_invalid_event_id():
+    class InvalidEventIdClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+
+        def run_json(self, command: list[str]):
+            raise DwsError(
+                "dws command failed with exit code 1; "
+                "command=dws calendar event get --id event-1 --format json; "
+                'code=1; stderr={"error.code": 1, "error.message": '
+                '"code: 300014, developerMessage: Invalid EventId.", '
+                '"error.reason": "business_error"}',
+                code="1",
+            )
+
+    assert InvalidEventIdClient().get_calendar_event("event-1") is None
+
+
 def test_get_calendar_event_parses_real_nested_result_data_event():
     client = RecordingDwsClient(
         {
