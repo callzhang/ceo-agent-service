@@ -2506,6 +2506,7 @@ class DwsClient:
             "success=false" in message
             or ("code: 300014" in message and "Invalid EventId" in message)
             or "code: 322000," in message
+            or '"error.message": "Event not exist."' in message
         )
 
     def minutes_permission_request_from_message(
