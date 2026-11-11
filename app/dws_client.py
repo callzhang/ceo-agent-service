@@ -2499,7 +2499,11 @@ class DwsClient:
         if exc.code not in {"1", "business_error"}:
             return False
         message = str(exc)
-        return "calendar event get" in message and "success=false" in message
+        if "calendar event get" not in message:
+            return False
+        return "success=false" in message or (
+            "code: 300014" in message and "Invalid EventId" in message
+        )
 
     def minutes_permission_request_from_message(
         self, message: DingTalkMessage
