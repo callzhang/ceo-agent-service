@@ -1919,7 +1919,7 @@ History 的主题搜索与当前状态筛选取交集：已完成动作不会因
 
 ## SQLite connection lifecycle
 
-`AutoReplyStore._connect`, `EmailStore._connect`, and mandatory pre-construction schema validation share the idle pool in `app.sqlite_connections`, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
+`AutoReplyStore._connect`, `EmailStore._connect`, and mandatory constructor-time schema validation share the idle pool in `app.sqlite_connections`, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. On first initialization, schema validation runs under the shared per-file initialization lock before any schema writes, so concurrent constructors cannot inspect a partially created database. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
 connection, and a connection is discarded rather than kept when the body
 raised, a transaction is still open, `foreign_keys` is no longer on, the
 database file was replaced, or the store's `_open_connection` differs. The
