@@ -1919,7 +1919,7 @@ History 的主题搜索与当前状态筛选取交集：已完成动作不会因
 
 ## SQLite connection lifecycle
 
-`AutoReplyStore._connect`, `EmailStore._connect`, and mandatory pre-construction schema validation share the idle pool in `app.sqlite_connections`, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
+`AutoReplyStore._connect`, `EmailStore._connect`, and mandatory constructor-time schema validation share the idle pool in `app.sqlite_connections`, keeping one idle SQLite connection per database file, opener and thread, because every new connection re-parses the whole schema. On first initialization, schema validation runs under the shared per-file initialization lock before any schema writes, so concurrent constructors cannot inspect a partially created database. Email foreign-key options have separate pool identities; initialization with foreign keys off is never returned as an ordinary connection. Nested or concurrent use in the same thread still opens its own
 connection, and a connection is discarded rather than kept when the body
 raised, a transaction is still open, `foreign_keys` is no longer on, the
 database file was replaced, or the store's `_open_connection` differs. The
@@ -1962,6 +1962,8 @@ Service Consumer turns prefer their declared `mcp__agent_cli` tools for DingTalk
 The task-bound `read_dingtalk_messages` and `read_dingtalk_messages_in_window` resolve the direct-chat counterparty from the claimed trigger's stable openDingTalkId when given that task's conversation ID. The resolver compares task generation, original message ID and conversation ID before use. The window path calls `read_complete_message_window`, so it returns `complete=true` only after the existing pagination and query-range checks; its messages must still belong to the bound conversation. The declared MCP tool set exposes reads only; Consumer shell use of `dws` is separately limited to reads by the role instructions and must not send messages or email or perform OA actions.
 
 ### 日历组织者来源字段
+
+日历短链接中的 `uniqueId` 在调用 DWS 前解开单层 Base64 包装，并保留来源提供的 recurrence 实例标识；消息正文与原始 payload 使用同一解析规则，直接 event ID 不变。
 
 日历解析继续生成原有 organizer 显示字符串，同时在 organizer_details 中保留
 provider 返回的完整组织者对象。日历事件读取、窗口读取及既有 model_dump 任务输入

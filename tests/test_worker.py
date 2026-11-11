@@ -7555,6 +7555,26 @@ def test_recurring_calendar_link_uses_instance_id_in_agent_context(
     )
 
 
+def test_raw_calendar_payload_decodes_wrapped_link_unique_id():
+    trigger = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="Friday",
+        single_chat=True,
+        sender_name="孙伟",
+        sender_open_dingtalk_id="sender-1",
+        sender_user_id="sender-user-1",
+        message_type="calendar",
+        create_time="2026-11-11 16:41:45",
+        content="日程邀请",
+        raw_payload={"uniqueId": "djUwYzZvZEFUVTU2Z3dYbjBaZVZEZz09", "recurrenceId": "1792467000000"},
+    )
+
+    assert DingTalkAutoReplyWorker._raw_calendar_event_id(trigger) == (
+        "v50c6odATU56gwXn0ZeVDg==_1792467000000"
+    )
+
+
 def test_calendar_invite_still_injects_calendar_context_before_codex(
     tmp_path: Path, monkeypatch
 ):

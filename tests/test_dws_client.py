@@ -3239,6 +3239,39 @@ def test_calendar_invite_from_message_uses_recurring_instance_id():
     assert client.commands[0][5] == "event-1_1788931800000"
 
 
+def test_calendar_invite_decodes_wrapped_link_unique_id_before_lookup():
+    client = RecordingDwsClient(
+        {
+            "success": True,
+            "result": {
+                "id": "v50c6odATU56gwXn0ZeVDg==_1792467000000",
+                "summary": "Recurring event",
+                "start": {"dateTime": "2026-11-19T10:00:00+08:00"},
+                "end": {"dateTime": "2026-11-19T10:30:00+08:00"},
+            },
+        }
+    )
+    message = DingTalkMessage(
+        open_conversation_id="cid-1",
+        open_message_id="msg-1",
+        conversation_title="吴婷",
+        single_chat=True,
+        sender_name="吴婷",
+        create_time="2026-11-11 16:41:45",
+        content=(
+            "dingtalk://dingtalkclient/action/open_mini_app?"
+            "page=pages%2Fdetail%2Findex%3FuniqueId%3D"
+            "djUwYzZvZEFUVTU2Z3dYbjBaZVZEZz09%26recurrenceId%3D1792467000000"
+        ),
+    )
+
+    event = client.calendar_invite_from_message(message)
+
+    assert event is not None
+    assert event.event_id == "v50c6odATU56gwXn0ZeVDg==_1792467000000"
+    assert client.commands[0][5] == "v50c6odATU56gwXn0ZeVDg==_1792467000000"
+
+
 def test_get_calendar_event_returns_none_when_detail_is_unavailable():
     class CalendarDetailUnavailableClient(DwsClient):
         def __init__(self):
