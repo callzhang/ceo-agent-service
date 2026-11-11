@@ -482,6 +482,8 @@ OA 通知不等于 OA 执行任务。来自 `OA审批` 的系统通知只写入
 
 会话 Agent 可以请 OA Agent 重新审阅一笔审批（Derek 2026-11-02）：例如申请人在单聊里回复“权限已开通”，而该审批 Derek 已评论、记录没有变化，扫描本来会一直跳过它。会话 Consumer 提议 `dingtalk-oa` `request_review`（目标 `process_instance_id`，参数 `reason`），经 Audit 批准后，执行器把请求记在 `service_state` 的`oa_review_request:v1:<processInstanceId>`，并立即为 `scan-oa-approvals` 建一次 manual 运行。扫描遇到待处理请求时不因“记录未变且已评论”“当天已重看”或“同一证据已技术失败”跳过，触发 ID 追加 `:r<请求摘要>`，正文附上原因和来源会话/消息，入队后把请求标为 queued。OA 任务仍只由扫描创建，沿用 OA 的 Skill、会话、Audit 和生命周期；扫描不再列为 Derek 待办的审批不会入队。
 
+DingTalk 日历改期消息恢复读取时，若只读的日程详情接口明确返回日程不存在，适配器将其作为无可用详情处理，使恢复扫描跳过该旧卡片；其他 DWS 业务错误仍按原错误路径记录。
+
 DingTalk 日程卡片改期可能原地覆盖卡片内容而不产生新消息 ID。每小时的近期消息恢复读取
 该消息当前可读内容；若它和当前 task 投影不同，且实时日程仍有效、本人仍待响应，就以新的
 `input_revision_key` 追加一条 `reply_task_inputs`，提高 `input_version`，并为同一个 task
