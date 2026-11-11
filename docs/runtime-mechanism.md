@@ -1714,6 +1714,11 @@ DWS 网关自己的 5xx 失败（stderr 里 `error.code=1`、`error.reason=http_
 对消息读取命令按上述共享上限自动重试，用尽后仍标记为可重试的外部依赖故障、不进入 Attention；
 消息发送命令没有幂等键时不重试。
 
+DWS CLI 可能以点号字段（`error.code`、`error.message`、`error.reason`）返回结构化错误。
+客户端将这组字段保留在 `DwsError.provider_error`；读取日历 event 详情时，结构化
+`business_error` 表示该详情不可用并返回 `None`，其他错误继续传播。调用方据此跳过已不存在
+或无法读取的旧 event，不把它记录成恢复扫描的服务故障。
+
 ## Runtime Context 与 Settings 渲染输入
 
 后台 Consumer/Audit 在实际 route 和角色工具配置确定后追加动态 Runtime Context；fallback

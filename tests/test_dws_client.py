@@ -3286,6 +3286,7 @@ def test_get_calendar_event_returns_none_when_detail_is_unavailable():
                 'stderr={"error.code": 1, "error.message": '
                 '"business error: success=false"}',
                 code="1",
+                provider_error={"message": "business error: success=false", "reason": "business_error"},
             )
 
     client = CalendarDetailUnavailableClient()
@@ -3318,9 +3319,34 @@ def test_get_calendar_event_returns_none_for_invalid_event_id():
                 '"code: 300014, developerMessage: Invalid EventId.", '
                 '"error.reason": "business_error"}',
                 code="1",
+                provider_error={"message": "code: 300014, developerMessage: Invalid EventId.", "reason": "business_error"},
             )
 
     assert InvalidEventIdClient().get_calendar_event("event-1") is None
+
+
+def test_get_calendar_event_treats_flat_structured_business_error_as_unavailable():
+    class CalendarEventNotFoundClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+            self.commands: list[list[str]] = []
+
+        def _run_cli_process(self, command, **kwargs):
+            self.commands.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                '{"error.code": 1, "error.message": "Event not exist.", '
+                '"error.reason": "business_error"}',
+            )
+
+    client = CalendarEventNotFoundClient()
+
+    assert client.get_calendar_event("event-1") is None
+    assert client.commands == [
+        ["dws", "calendar", "event", "get", "--id", "event-1", "--format", "json"]
+    ]
 
 
 def test_get_calendar_event_parses_real_nested_result_data_event():
@@ -3357,6 +3383,7 @@ def test_calendar_invite_from_message_returns_none_for_unavailable_event_detail(
                 'stderr={"error.code": 1, "error.message": '
                 '"business error: success=false"}',
                 code="1",
+                provider_error={"message": "business error: success=false", "reason": "business_error"},
             )
 
     message = DingTalkMessage(

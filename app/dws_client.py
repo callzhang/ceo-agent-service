@@ -2499,12 +2499,7 @@ class DwsClient:
     def _calendar_event_detail_unavailable(exc: DwsError) -> bool:
         if exc.code not in {"1", "business_error"}:
             return False
-        message = str(exc)
-        if "calendar event get" not in message:
-            return False
-        return "success=false" in message or (
-            "code: 300014" in message and "Invalid EventId" in message
-        )
+        return exc.provider_error.get("reason") == "business_error"
 
     def minutes_permission_request_from_message(
         self, message: DingTalkMessage
@@ -4481,7 +4476,13 @@ class DwsClient:
                 continue
             if not cls._is_structured_error_payload(payload):
                 continue
-            error = payload["error"]
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                error = {
+                    key.removeprefix("error."): value
+                    for key, value in payload.items()
+                    if isinstance(key, str) and key.startswith("error.")
+                }
             message = error.get("message")
             server_key = error.get("server_key")
             return {
@@ -4496,16 +4497,19 @@ class DwsClient:
         if not isinstance(payload, dict):
             return False
         error = payload.get("error")
-        if not isinstance(error, dict):
-            return False
-        return any(
+        if isinstance(error, dict) and any(
             key in error
+            for key in ("category", "code", "message", "reason", "server_error_code")
+        ):
+            return True
+        return any(
+            key in payload
             for key in (
-                "category",
-                "code",
-                "message",
-                "reason",
-                "server_error_code",
+                "error.category",
+                "error.code",
+                "error.message",
+                "error.reason",
+                "error.server_error_code",
             )
         )
 
