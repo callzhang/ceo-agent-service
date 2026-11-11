@@ -2502,8 +2502,10 @@ class DwsClient:
         message = str(exc)
         if "calendar event get" not in message:
             return False
-        return "success=false" in message or (
-            "code: 300014" in message and "Invalid EventId" in message
+        return (
+            "success=false" in message
+            or ("code: 300014" in message and "Invalid EventId" in message)
+            or "code: 322000," in message
         )
 
     def minutes_permission_request_from_message(
