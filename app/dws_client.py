@@ -2502,6 +2502,12 @@ class DwsClient:
         message = str(exc)
         if "calendar event get" not in message:
             return False
+        provider_error = exc.provider_error
+        if (
+            provider_error.get("reason") == "business_error"
+            and exc.business_message.strip().casefold() == "event not exist."
+        ):
+            return True
         return (
             "success=false" in message
             or ("code: 300014" in message and "Invalid EventId" in message)
@@ -4481,9 +4487,17 @@ class DwsClient:
                 payload = json.loads(raw_output)
             except (json.JSONDecodeError, TypeError):
                 continue
-            if not cls._is_structured_error_payload(payload):
+            if not isinstance(payload, dict):
                 continue
-            error = payload["error"]
+            error = payload.get("error")
+            if not isinstance(error, dict):
+                error = {
+                    key.removeprefix("error."): value
+                    for key, value in payload.items()
+                    if key.startswith("error.")
+                }
+            if not error:
+                continue
             message = error.get("message")
             server_key = error.get("server_key")
             return {

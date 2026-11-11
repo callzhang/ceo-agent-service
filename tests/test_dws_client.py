@@ -3305,6 +3305,30 @@ def test_get_calendar_event_returns_none_when_detail_is_unavailable():
     ]
 
 
+def test_get_calendar_event_returns_none_for_missing_event_business_error():
+    class CalendarEventMissingClient(DwsClient):
+        def __init__(self):
+            super().__init__(dws_bin="dws")
+            self.commands: list[list[str]] = []
+
+        def _run_cli_process(self, command: list[str], **_kwargs):
+            self.commands.append(command)
+            return subprocess.CompletedProcess(
+                command,
+                1,
+                "",
+                '{"error.code": 1, "error.message": "Event not exist.", '
+                '"error.reason": "business_error"}',
+            )
+
+    client = CalendarEventMissingClient()
+
+    assert client.get_calendar_event("event-1") is None
+    assert client.commands == [
+        ["dws", "calendar", "event", "get", "--id", "event-1", "--format", "json"]
+    ]
+
+
 def test_get_calendar_event_returns_none_for_invalid_event_id():
     class InvalidEventIdClient(DwsClient):
         def __init__(self):
