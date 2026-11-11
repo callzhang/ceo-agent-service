@@ -2508,8 +2508,10 @@ class DwsClient:
             and exc.business_message.strip().casefold() == "event not exist."
         ):
             return True
-        return "success=false" in message or (
-            "code: 300014" in message and "Invalid EventId" in message
+        return (
+            "success=false" in message
+            or ("code: 300014" in message and "Invalid EventId" in message)
+            or "code: 322000," in message
         )
 
     def minutes_permission_request_from_message(
