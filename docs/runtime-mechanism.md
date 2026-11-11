@@ -1963,6 +1963,8 @@ The task-bound `read_dingtalk_messages` and `read_dingtalk_messages_in_window` r
 
 ### 日历组织者来源字段
 
+日历短链接中的 `uniqueId` 在调用 DWS 前解开单层 Base64 包装，并保留来源提供的 recurrence 实例标识；消息正文与原始 payload 使用同一解析规则，直接 event ID 不变。
+
 日历解析继续生成原有 organizer 显示字符串，同时在 organizer_details 中保留
 provider 返回的完整组织者对象。日历事件读取、窗口读取及既有 model_dump 任务输入
 因此可看到原始 userId、openDingTalkId、邮箱及其他来源字段，字符串标识和嵌套值

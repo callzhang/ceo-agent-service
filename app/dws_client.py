@@ -1,3 +1,4 @@
+import base64
 import contextlib
 import hashlib
 import json
@@ -5552,12 +5553,25 @@ class DwsClient:
             recurrence_ids = values_for("recurrenceId")
             for key in keys:
                 for value in values_for(key):
+                    if key == "uniqueId":
+                        value = DwsClient.decode_calendar_link_event_id(value)
                     if key == "uniqueId" and recurrence_ids:
                         recurrence_id = recurrence_ids[0]
                         value = f"{value}_{recurrence_id}"
                     if value not in result:
                         result.append(value)
         return result
+
+    @staticmethod
+    def decode_calendar_link_event_id(value: str) -> str:
+        """Unwrap the base64-encoded event ID carried by calendar mini-app links."""
+        try:
+            decoded = base64.b64decode(value, validate=True).decode("ascii")
+        except (ValueError, UnicodeDecodeError):
+            return value
+        if base64.b64encode(decoded.encode("ascii")).decode("ascii") != value:
+            return value
+        return decoded
 
     @staticmethod
     def _parse_calendar_event(
