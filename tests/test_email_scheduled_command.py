@@ -1,6 +1,8 @@
 import json
+import errno
 import socket
 import sqlite3
+import ssl
 from hashlib import sha256
 from types import SimpleNamespace
 
@@ -109,6 +111,11 @@ def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
     (
         (socket.gaierror("temporary DNS failure"), 3, True),
         (TimeoutError("provider timed out"), 3, True),
+        (ssl.SSLEOFError("EOF occurred in violation of protocol"), 3, True),
+        (OSError(errno.EHOSTUNREACH, "No route to host"), 3, True),
+        (OSError(errno.ENETUNREACH, "Network is unreachable"), 3, True),
+        (ssl.SSLCertVerificationError("certificate verify failed"), 1, False),
+        (PermissionError(errno.EACCES, "Permission denied"), 1, False),
         (ConnectionError("IMAP login failed: invalid credentials"), 1, False),
         (ConnectionError("email IMAP credential is unavailable"), 1, False),
         (ValueError("invalid local scan state"), 1, False),

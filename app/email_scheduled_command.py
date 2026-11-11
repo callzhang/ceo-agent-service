@@ -2,9 +2,11 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import imaplib
 import socket
+import ssl
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -51,6 +53,17 @@ class TransientEmailDiscoveryError(TimeoutError):
     """All failed account scans ended in a retryable provider outage."""
 
 
+_TRANSIENT_NETWORK_ERRNOS = frozenset(
+    {
+        errno.ENETDOWN,
+        errno.ENETUNREACH,
+        errno.EHOSTDOWN,
+        errno.EHOSTUNREACH,
+        errno.ETIMEDOUT,
+    }
+)
+
+
 def _is_transient_discovery_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
     cause: BaseException | None = exc
@@ -65,6 +78,13 @@ def _is_transient_discovery_error(exc: Exception) -> bool:
                 "email imap credential is unavailable",
                 "email imap tls is required",
             })
+        if isinstance(cause, ssl.SSLCertVerificationError):
+            return False
+        if isinstance(cause, ssl.SSLError):
+            # A dropped TLS stream (e.g. EOF mid-handshake) is a transport outage.
+            return True
+        if isinstance(cause, OSError) and cause.errno in _TRANSIENT_NETWORK_ERRNOS:
+            return True
         if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
                               httpx.TimeoutException)):
             return True
