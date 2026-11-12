@@ -80,6 +80,8 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
+| codex-system-proxy-wechat-readback-20261112 | scripts/ceo-agent-service; app/service_supervisor.py; tests/test_service_supervisor.py; tests/test_hourly_dry_run_launchd.py; app/wechat_reconciliation.py; app/store.py WeChat readback settlement only; app/web_api/attempts.py WeChat settlement wording only; tests/test_wechat_failed_reconciliation.py; tests/wechat/test_store.py; docs/runtime-mechanism.md scoped sections | Implement approved macOS proxy inheritance and no-send WeChat settlement, through quiet deployment | 2026-11-12 |
+
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
