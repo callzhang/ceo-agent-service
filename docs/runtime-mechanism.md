@@ -311,7 +311,7 @@ Project/Task 结构化读取器，不回复来源；Consumer 的项目文档审�
 
 ## Runtime-managed Skill 修订与启动配置
 
-生产 launchd 启动时从 macOS SystemConfiguration 读取启用的 HTTP/HTTPS 系统代理，传给 supervisor 启动的各子进程及其原生 CLI。系统代理的域名与网段绕过列表、现有服务 `NO_PROXY` 和回环地址一并传递。未启用对应协议的代理时，该协议不继承 shell 中的旧代理；配置随服务启动读取。
+生产 launchd 启动时从 macOS SystemConfiguration 读取启用的 HTTP/HTTPS 系统代理，传给 supervisor 启动的各子进程及其原生 CLI。系统代理的域名与网段绕过列表、现有服务 `NO_PROXY` 和回环地址一并传递。未启用对应协议的代理时，该协议不继承 shell 中的旧代理；配置随服务启动读取。 原生 Codex 和 Claude 的环境白名单仅接收由服务启动明确配置的 HTTP/HTTPS 代理及绕过项。
 
 
 公司业务规则的作者源为独立私有仓库；公共发行保留通用基线模板和合成／运行契约测试。

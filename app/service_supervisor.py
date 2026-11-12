@@ -15,6 +15,10 @@ POLL_INTERVAL_SECONDS = 0.2
 SHUTDOWN_GRACE_SECONDS = 1.0
 CHILD_RESTART_DELAY_SECONDS = 1.0
 SERVICE_STARTUP_READY_ENV = "CEO_SERVICE_STARTUP_READY_FD"
+SYSTEM_PROXY_CONFIGURED_ENV = "CEO_SYSTEM_PROXY_CONFIGURED"
+SYSTEM_PROXY_ENV_KEYS = frozenset({
+    "http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy", "NO_PROXY",
+})
 
 
 def build_child_command(command: str, args: argparse.Namespace) -> list[str]:
@@ -214,6 +218,7 @@ def configure_system_proxy() -> None:
         for host in exceptions if host.strip() and host.strip() != "<local>"
     )
     os.environ["no_proxy"] = os.environ["NO_PROXY"] = ",".join(bypass)
+    os.environ[SYSTEM_PROXY_CONFIGURED_ENV] = "1"
 
 
 def build_parser() -> argparse.ArgumentParser:

@@ -65,6 +65,25 @@ def test_routes_rebuild_environment_without_ambient_credentials(
     assert all(base_env[key] == value for key, value in ambient.items())
 
 
+@pytest.mark.parametrize("route_name", ["codex_oauth", "codex_api"])
+def test_native_child_keeps_proxy_configured_by_service_startup(adapter, config, monkeypatch, route_name):
+    from app import service_supervisor
+
+    monkeypatch.setattr(
+        service_supervisor, "_macos_proxy_settings",
+        lambda: ({"http": "http://system:7897", "https": "http://system:7897"}, ("*.local",)),
+    )
+    for key in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy",
+                "NO_PROXY", "ALL_PROXY", "all_proxy", "CEO_SYSTEM_PROXY_CONFIGURED"):
+        monkeypatch.delenv(key, raising=False)
+    service_supervisor.configure_system_proxy()
+    env = adapter.build_env(route(config, route_name))
+
+    assert env["http_proxy"] == env["https_proxy"] == "http://system:7897"
+    assert env["NO_PROXY"] == "localhost,127.0.0.1,::1,.local"
+    assert "ALL_PROXY" not in env
+
+
 def test_child_environment_retains_only_reviewed_locale_keys(adapter, config, monkeypatch):
     monkeypatch.setenv("LC_TIME", "en_US.UTF-8")
     monkeypatch.setenv("LC_UNREVIEWED", "blocked")

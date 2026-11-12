@@ -36,6 +36,7 @@ from app.codex_runner import (
     resolved_codex_home,
 )
 from app.service_codex_config import service_mcp_config_options
+from app.service_supervisor import SYSTEM_PROXY_CONFIGURED_ENV, SYSTEM_PROXY_ENV_KEYS
 
 _SAFE_ENV_KEYS = {
     "CEO_OKR_LIVE_SOURCE_COMMAND",
@@ -370,10 +371,13 @@ def _unclassified_failure_detail(returncode: int) -> str:
 
 
 def _safe_child_environment(base_env: dict[str, str]) -> dict[str, str]:
+    allowed = _SAFE_ENV_KEYS | _SAFE_LOCALE_ENV_KEYS
+    if base_env.get(SYSTEM_PROXY_CONFIGURED_ENV) == "1":
+        allowed.update(SYSTEM_PROXY_ENV_KEYS)
     return {
         key: value
         for key, value in base_env.items()
-        if (key in _SAFE_ENV_KEYS or key in _SAFE_LOCALE_ENV_KEYS)
+        if key in allowed
         and not any(marker in key.upper() for marker in _CREDENTIAL_NAME_MARKERS)
     }
 
