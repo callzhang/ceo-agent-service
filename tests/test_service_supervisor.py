@@ -407,6 +407,7 @@ def test_main_supervises_email_worker(monkeypatch, tmp_path):
         db=tmp_path / "auto-reply.sqlite3",
         workspace=tmp_path / "workspace",
         corpus_dir=tmp_path / "corpus",
+        system_proxy=True,
     )
     calls = []
     monkeypatch.setattr(
@@ -425,7 +426,23 @@ def test_main_supervises_email_worker(monkeypatch, tmp_path):
         lambda command, check: calls.append(("migrate", command, check)),
     )
 
+    monkeypatch.setattr(service_supervisor.os, "environ", {
+        "ALL_PROXY": "http://stale.invalid:8080", "NO_PROXY": "dingokr.dingteam.com",
+    })
+    monkeypatch.setattr(
+        service_supervisor, "_macos_proxy_settings",
+        lambda: ({"http": "http://system:7897", "https": "http://system:7897"},
+                 ("*.local", "10.0.0.0/8", "<local>")),
+        raising=False,
+    )
+
     assert service_supervisor.main() == 0
+    assert os.environ["HTTPS_PROXY"] == "http://system:7897"
+    assert os.environ["https_proxy"] == "http://system:7897"
+    assert "ALL_PROXY" not in os.environ
+    assert set(os.environ["NO_PROXY"].split(",")) == {
+        "localhost", "127.0.0.1", "::1", ".local", "10.0.0.0/8", "dingokr.dingteam.com",
+    }
     # The env migration finishes before any child starts.
     assert calls[0] == (
         "migrate",

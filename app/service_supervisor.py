@@ -186,8 +186,39 @@ def run_supervisor(
             signal.signal(current_signal, previous_handler)
 
 
+def _macos_proxy_settings() -> tuple[dict[str, str], tuple[str, ...]]:
+    # Use the same SystemConfiguration source as macOS Python's urllib.
+    if sys.platform != "darwin":
+        return {}, ()
+    from _scproxy import _get_proxies, _get_proxy_settings
+
+    return _get_proxies(), tuple(_get_proxy_settings().get("exceptions", ()))
+
+
+def configure_system_proxy() -> None:
+    proxies, exceptions = _macos_proxy_settings()
+    for scheme in ("http", "https", "all"):
+        key = f"{scheme}_proxy"
+        for name in (key, key.upper()):
+            os.environ.pop(name, None)
+            if scheme in ("http", "https") and proxies.get(scheme):
+                os.environ[name] = proxies[scheme]
+    exceptions = (
+        "localhost", "127.0.0.1", "::1",
+        *exceptions,
+        *os.environ.get("no_proxy", "").split(","),
+        *os.environ.get("NO_PROXY", "").split(","),
+    )
+    bypass = dict.fromkeys(
+        host.strip().removeprefix("*") if host.strip().startswith("*.") else host.strip()
+        for host in exceptions if host.strip() and host.strip() != "<local>"
+    )
+    os.environ["no_proxy"] = os.environ["NO_PROXY"] = ",".join(bypass)
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="ceo-agent-service-supervisor")
+    parser.add_argument("--system-proxy", action="store_true")
     parser.add_argument("--host", required=True)
     parser.add_argument("--port", type=int, required=True)
     parser.add_argument("--db", type=Path, required=True)
@@ -202,6 +233,8 @@ def build_env_migration_command() -> list[str]:
 
 def main() -> int:
     args = build_parser().parse_args()
+    if args.system_proxy:
+        configure_system_proxy()
     # Settings written by an older release are rewritten before any child
     # reads `.env`. It runs as its own process: importing app.config here
     # would copy the file into this process's environment, and every child

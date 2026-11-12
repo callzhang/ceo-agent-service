@@ -5,7 +5,6 @@
 set -e
 service_root="${CEO_SERVICE_ROOT:-${HOME:?HOME must be set}/Services/ceo-agent-service}"
 cd "${service_root}"
-unset HTTP_PROXY HTTPS_PROXY ALL_PROXY http_proxy https_proxy all_proxy
 export PATH="${HOME}/.local/bin:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin:${PATH:-}"
 export HOME="${CEO_SERVICE_HOME:-${HOME}}"
 export PYTHONPATH="${PYTHONPATH:-.}"
@@ -22,4 +21,4 @@ export CEO_MAX_BATCHES="${CEO_MAX_BATCHES:-4}"
 export CEO_CONSUMER_WORKERS="${CEO_CONSUMER_WORKERS:-2}"
 export CEO_NOT_SEND_MESSAGE=0
 export CEO_LIVE_SEND_BLOCKERS_ACCEPTED=1
-exec "${CEO_PYTHON}" -m app.service_supervisor --host "${CEO_AUDIT_WEB_HOST:-127.0.0.1}" --port "${CEO_AUDIT_WEB_PORT:-8765}" --db "${CEO_WORKER_DB}" --workspace "${CEO_WORKSPACE}" --corpus-dir "${CEO_CORPUS_DIR}"
+exec "${CEO_PYTHON}" -m app.service_supervisor --system-proxy --host "${CEO_AUDIT_WEB_HOST:-127.0.0.1}" --port "${CEO_AUDIT_WEB_PORT:-8765}" --db "${CEO_WORKER_DB}" --workspace "${CEO_WORKSPACE}" --corpus-dir "${CEO_CORPUS_DIR}"
