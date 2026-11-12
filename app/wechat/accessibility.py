@@ -221,12 +221,14 @@ def _walk_accessibility_tree(root, children, *, max_depth: int = 12):
 
 
 def _walk_wechat_application(root, attribute):
-    """Include windows exposed separately from the application's AX children."""
+    """Traverse WeChat's AX children and windows exposed as application attributes."""
     def children(element):
         child_elements = attribute(element, "AXChildren") or []
-        if element is root:
-            return (*child_elements, *(attribute(root, "AXWindows") or []))
-        return child_elements
+        if element is not root:
+            return child_elements
+        windows = attribute(root, "AXWindows") or []
+        active_windows = (attribute(root, "AXMainWindow"), attribute(root, "AXFocusedWindow"))
+        return (*child_elements, *windows, *(window for window in active_windows if window is not None))
 
     yield from _walk_accessibility_tree(root, children)
 
@@ -733,28 +735,17 @@ class MacWechatAccessibility:
         if not pid:
             return "wechat_not_running"
         app = AXUIElementCreateApplication(pid)
-        for w in Quartz.CGWindowListCopyWindowInfo(
-            Quartz.kCGWindowListOptionAll, Quartz.kCGNullWindowID
-        ):
-            if w.get("kCGWindowOwnerPID") != pid:
-                continue
-            error, windows = AXUIElementCopyAttributeValue(app, "AXWindows", None)
-            if error == 0 and windows:
-                def attribute(element, name):
-                    error, value = AXUIElementCopyAttributeValue(
-                        element, name, None,
-                    )
-                    return value if error == 0 else None
 
-                for element in _walk_wechat_application(app, attribute):
-                    role = attribute(element, "AXRole")
-                    identifier = attribute(element, "AXIdentifier") or ""
-                    title = attribute(element, "AXTitle") or ""
-                    if (
-                        role == "AXTextArea" and "搜索" in title
-                    ) or identifier == "session_list":
-                        return "ready"
-            break
+        def attribute(element, name):
+            error, value = AXUIElementCopyAttributeValue(element, name, None)
+            return value if error == 0 else None
+
+        for element in _walk_wechat_application(app, attribute):
+            role = attribute(element, "AXRole")
+            identifier = attribute(element, "AXIdentifier") or ""
+            title = attribute(element, "AXTitle") or ""
+            if (role == "AXTextArea" and "搜索" in title) or identifier == "session_list":
+                return "ready"
         return "wechat_window_unavailable"
 
     def request_accessibility(self, *, monotonic=system_time.monotonic, open_settings=None) -> str:

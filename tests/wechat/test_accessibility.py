@@ -879,7 +879,6 @@ def test_passive_readiness_does_not_activate_wechat_when_ax_window_is_empty(
     monkeypatch,
 ):
     app = object()
-    ax_reads = iter([[], [], []])
     activated = []
     monkeypatch.setitem(
         sys.modules,
@@ -887,9 +886,8 @@ def test_passive_readiness_does_not_activate_wechat_when_ax_window_is_empty(
         SimpleNamespace(
             AXIsProcessTrusted=lambda: True,
             AXUIElementCreateApplication=lambda _pid: app,
-            AXUIElementCopyAttributeValue=lambda _app, _attribute, _unused: (
-                0,
-                next(ax_reads),
+            AXUIElementCopyAttributeValue=lambda _app, attribute, _unused: (
+                (0, []) if attribute == "AXWindows" else (1, None)
             ),
         ),
     )
@@ -953,14 +951,13 @@ def test_reactivate_switches_wechat_to_current_space(monkeypatch):
     ]
 
 
-@pytest.mark.parametrize("window_in_children", [True, False])
-def test_passive_readiness_reports_ready_when_chat_controls_are_present(monkeypatch, window_in_children):
+@pytest.mark.parametrize("window_source", ["AXChildren", "AXWindows", "AXMainWindow", "AXFocusedWindow"])
+def test_passive_readiness_reports_ready_when_chat_controls_are_present(monkeypatch, window_source):
     app = object()
     window = object()
     search = object()
     attributes = {
-        (app, "AXChildren"): [window] if window_in_children else [],
-        (app, "AXWindows"): [window],
+        (app, window_source): [window] if window_source in {"AXChildren", "AXWindows"} else window,
         (window, "AXChildren"): [search],
         (search, "AXRole"): "AXTextArea",
         (search, "AXTitle"): "搜索",
@@ -983,7 +980,7 @@ def test_passive_readiness_reports_ready_when_chat_controls_are_present(monkeypa
         SimpleNamespace(
             CGSessionCopyCurrentDictionary=lambda: {},
             CGWindowListCopyWindowInfo=lambda _options, _window_id: [
-                {"kCGWindowOwnerPID": 500}
+                *([{"kCGWindowOwnerPID": 500}] if window_source in {"AXChildren", "AXWindows"} else [])
             ],
             kCGWindowListOptionAll=1,
             kCGNullWindowID=0,
