@@ -80,8 +80,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
-| codex-email-classification-tls-eof-20261112 | app/email_worker.py classifier transport retry only; tests/test_email_worker.py classifier transport regression only; docs/runtime-mechanism.md Email classification retry contract | Verify production SSLEOFError and preserve existing certificate and authentication rejection | 2026-11-12 06:54 UTC |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
