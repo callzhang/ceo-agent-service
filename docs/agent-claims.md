@@ -7,6 +7,8 @@
 
 
 
+| codex-ceo-current-failures-20261112 | app/claude_runtime_adapter.py, app/agent_turn_runner.py, app/meeting_alignment_agent.py, app/wechat/accessibility.py, focused tests and runtime docs | Restore production Consumer schema transport and canonical meeting target display labels; preserve local validation, review and dispatch fences | 2026-11-12 |
+
 ## Current assessment implementation coordination
 
 | Owner | Files | What | Since |
