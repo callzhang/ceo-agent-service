@@ -80,8 +80,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
-| codex-native-system-proxy-20261112 | app/service_supervisor.py proxy provenance; app/codex_runtime_adapter.py child environment filter; tests/test_codex_runtime_adapter.py; tests/test_service_supervisor.py; docs/runtime-mechanism.md | Preserve verified system proxy settings through the native child environment allowlist | 2026-11-12 |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
