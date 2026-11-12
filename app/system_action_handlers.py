@@ -1158,7 +1158,7 @@ class WechatSendMessageHandler:
             })
         return self._readback_delivery(delivery, body)
 
-    def _readback_delivery(self, delivery, body: str) -> ActionOutcome:
+    def _readback_delivery(self, delivery, body: str, *, require_scope: bool = False) -> ActionOutcome:
         try:
             account, reader = self._reader_runtime()
             if account is None or account.account_id != delivery.account_id:
@@ -1177,6 +1177,15 @@ class WechatSendMessageHandler:
             return ActionOutcome("uncertain", {
                 "reason": "wechat_readback_unavailable", "exception_type": type(exc).__name__,
                 "delivery_id": delivery.id,
+            })
+        if require_scope and any(
+            message.account_id != delivery.account_id
+            or message.conversation_id != delivery.conversation_id
+            or message.conversation_type != delivery.target_type
+            for message in messages
+        ):
+            return ActionOutcome("uncertain", {
+                "reason": "wechat_readback_scope_mismatch", "delivery_id": delivery.id,
             })
         matches = [
             message for message in messages

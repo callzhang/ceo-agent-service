@@ -16320,6 +16320,57 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchall()
         return [int(row["id"]) for row in rows]
 
+    @classmethod
+    def _validate_skipped_wechat_chain(cls, db, delivery, readbacks) -> None:
+        from app.wechat_reconciliation import NO_SEND_READBACK_FIELDS
+
+        if not isinstance(readbacks, list) or not 1 <= len(readbacks) <= 11:
+            raise ValueError("missing WeChat no-send readbacks")
+        prefix = "superseded_by_newer_wechat_trigger:"
+        target_fields = ("account_id", "conversation_id", "target_type", "target_id")
+        target = tuple(delivery[field] for field in target_fields)
+        expected_task_id = int(delivery["reply_task_id"])
+        visited = set()
+        for index, readback in enumerate(readbacks):
+            if not isinstance(readback, dict) or not isinstance(readback.get("delivery_id"), int):
+                raise ValueError("invalid WeChat no-send readback")
+            current = cls._native_wechat_delivery(db, readback["delivery_id"])
+            task = cls._native_wechat_task(db, expected_task_id)
+            latest = db.execute(
+                f"select id from ({WECHAT_DELIVERY_SQL}) where reply_task_id=? "
+                "and execution_generation=? order by id desc limit 1",
+                (expected_task_id, task["execution_generation"] if task else None),
+            ).fetchone()
+            last = index == len(readbacks) - 1
+            if (expected_task_id in visited or task is None or current is None
+                    or latest is None or latest["id"] != current["id"]
+                    or int(current["reply_task_id"]) != expected_task_id
+                    or current["execution_generation"] != task["execution_generation"]
+                    or tuple(current[field] for field in target_fields) != target
+                    or current["status"] != ("skipped" if last else "superseded")
+                    or not current["action_started_at"] or not current["error"]
+                    or any(readback.get(field) != current[field] for field in NO_SEND_READBACK_FIELDS)
+                    or readback.get("reply_text_sha256")
+                       != hashlib.sha256(current["reply_text"].encode()).hexdigest()
+                    or readback.get("match_count") != 0 or readback.get("window_complete") is not True
+                    or not cls._wechat_review_approved_in_connection(db, current, task)):
+                raise ValueError("WeChat no-send readback does not match the current skipped chain")
+            reviewed_run = int(json.loads(current["evidence_json"])["standard_candidate_id"])
+            if db.execute(
+                """select 1 from action_receipts where execution_run_id=?
+                   and (status!='failed' or coalesce(dispatched_at, '')!=''
+                        or coalesce(provider_receipt_id, '')!=''
+                        or coalesce(provider_result_id, '')!='') limit 1""",
+                (reviewed_run,),
+            ).fetchone() is not None:
+                raise ValueError("WeChat no-send readback conflicts with an action receipt")
+            if not last:
+                visited.add(expected_task_id)
+                link = current["error"].removeprefix(prefix)
+                if link == current["error"] or not link.isascii() or not link.isdecimal():
+                    raise ValueError("invalid WeChat supersession link")
+                expected_task_id = int(link)
+
     def settle_failed_wechat_task_from_delivery(
         self,
         task_id: int,
@@ -16333,9 +16384,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """Settle a failed WeChat Task from a generation-bound native readback.
 
         ``done`` requires the exact sent delivery's outbound message. ``skipped``
-        requires a supersession chain that reaches a sent successor, an exact
-        readback of that successor, and a complete bounded readback with no
-        match for the obsolete body's delivery window. The failed Attempt and
+        requires complete native absence readbacks for an explicit skip (possibly
+        reached through supersession), or verified presence of a sent successor
+        and complete absence of the obsolete body. The failed Attempt and
         its action history are left intact.
         """
         if task_status not in {"done", "skipped"} or not expected_execution_generation.strip():
@@ -16387,6 +16438,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         or readback_time.astimezone(timezone.utc) < action_time.astimezone(timezone.utc)):
                     raise ValueError("sent WeChat delivery lacks an exact outbound readback")
                 settlement_reason = "verified_wechat_delivery_readback"
+            elif "no_send_readbacks" in evidence:
+                readbacks = evidence["no_send_readbacks"]
+                if (not isinstance(readbacks, list) or not readbacks
+                        or not isinstance(readbacks[0], dict)
+                        or readbacks[0].get("delivery_id") != delivery_id):
+                    raise ValueError("WeChat no-send readback does not match the root delivery")
+                self._validate_skipped_wechat_chain(db, delivery, readbacks)
+                settlement_reason = "verified_wechat_no_send_readback"
             else:
                 prefix = "superseded_by_newer_wechat_trigger:"
                 try:

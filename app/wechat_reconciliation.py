@@ -2,10 +2,46 @@
 
 from __future__ import annotations
 
+from hashlib import sha256
 from typing import Any
 
 from app.agent_contracts import parse_persisted_consumer_result
 from app.system_action_handlers import WechatSendMessageHandler
+
+
+NO_SEND_READBACK_FIELDS = (
+    "account_id", "conversation_id", "target_type", "target_id",
+    "execution_generation", "action_started_at", "status", "error",
+)
+
+
+def _settle_skipped_chain(store, handler, task, deliveries):
+    readbacks = []
+    root = deliveries[0]
+    for delivery in deliveries:
+        result = handler._readback_delivery(delivery, delivery.reply_text, require_scope=True)
+        readback = result.provider_result
+        if (result.status != "uncertain"
+                or readback.get("match_count") != 0
+                or readback.get("window_complete") is not True):
+            return {
+                "outcome": "failed", "task_id": task.id, "delivery_id": root.id,
+                "reason": "wechat_no_send_readback_unproven",
+            }
+        readbacks.append({
+            **readback,
+            "reply_text_sha256": sha256(delivery.reply_text.encode()).hexdigest(),
+            **{field: getattr(delivery, field) for field in NO_SEND_READBACK_FIELDS},
+        })
+    evidence = {"delivery_id": root.id, "no_send_readbacks": readbacks}
+    settled = store.settle_failed_wechat_task_from_delivery(
+        task.id, expected_execution_generation=task.execution_generation,
+        delivery_id=root.id, task_status="skipped", evidence=evidence,
+    )
+    return {
+        "outcome": "skipped" if settled else "failed",
+        "task_id": task.id, "delivery_id": root.id, "evidence": evidence,
+    }
 
 
 def _current_wechat_action(store: Any, task_id: int):
@@ -79,9 +115,9 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
     """Verify exact current WeChat effects and settle only their failed Task projection.
 
     This function has no Sender dependency. A sent delivery must have one exact
-    native Reader match. A superseded delivery can be skipped only when its
-    explicit successor chain ends in a sent delivery and the bounded readback
-    window proves the old body's absence and the successor's exact presence.
+    native Reader match. An explicit skip, or a supersession chain ending in
+    a skip, requires complete readback windows proving no delivery. A sent
+    successor requires its exact presence and the obsolete body's absence.
     """
     attempt = store.get_reply_attempt(attempt_id)
     if attempt is None or attempt.channel != "wechat":
@@ -100,12 +136,15 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
     if delivery.status == "sent":
         return _settle_sent_delivery(store, handler, current, review, action, delivery)
 
+    if delivery.status == "skipped":
+        return _settle_skipped_chain(store, handler, current, [delivery])
+
     if delivery.status != "superseded":
         return {"outcome": "failed", "task_id": task.id, "delivery_id": delivery.id,
                 "reason": "wechat_delivery_not_reconcilable"}
 
     root_delivery = delivery
-    chain: list[int] = [delivery.id]
+    chain = [delivery]
     for _ in range(10):
         prefix = "superseded_by_newer_wechat_trigger:"
         if not delivery.error.startswith(prefix):
@@ -127,7 +166,9 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
                 or next_delivery.conversation_id != root_delivery.conversation_id):
             return {"outcome": "failed", "task_id": task.id,
                     "reason": "wechat_superseded_target_changed"}
-        chain.append(next_delivery.id)
+        chain.append(next_delivery)
+        if next_delivery.status == "skipped":
+            return _settle_skipped_chain(store, handler, current, chain)
         if next_delivery.status == "superseded":
             delivery = next_delivery
             continue
@@ -158,7 +199,7 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
         evidence = {
             "reason": "superseded_by_newer_wechat_delivery",
             "delivery_id": root_delivery.id,
-            "successor_delivery_chain": chain,
+            "successor_delivery_chain": [item.id for item in chain],
             "successor_readback": successor_result.provider_result,
             "old_delivery_readback": root_readback.provider_result,
         }

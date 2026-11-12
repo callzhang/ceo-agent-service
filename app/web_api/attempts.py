@@ -848,6 +848,8 @@ def _reconciled_wechat_message(store: Any, attempt: Any, reply_task: Any) -> str
     if str(getattr(record, "kind", "")) == "wechat_reply_task_done_reconciled":
         return "已通过微信读回确认这条回复已发送；原执行回执保留，无需操作。"
     if str(getattr(record, "kind", "")) == "wechat_reply_task_skipped_reconciled":
+        if getattr(record, "resolution", "") == "verified_wechat_no_send_readback":
+            return "已通过微信读回确认未发送，这条旧候选已跳过；原执行记录保留。"
         return "已通过微信读回确认后续回复已发出，这条旧候选已跳过；原执行回执保留。"
     return ""
 

@@ -280,3 +280,156 @@ def test_sender_recovery_settles_sent_failed_task_only_after_exact_readback(
         assert 'out-1' in evidence.detail
         service.recover_before_sender(store, reader, account=_account())
         assert len(reader.calls) == 1
+
+
+@pytest.mark.parametrize("readback,expected", [
+    ("absent", "skipped"),
+    ("present", "failed"),
+    ("incomplete", "failed"),
+    ("wrong_scope", "failed"),
+])
+def test_failed_task_with_formally_skipped_delivery_requires_complete_no_send_readback(
+    tmp_path, monkeypatch, readback, expected,
+):
+    from app import task_entity_storage
+    from app.action_storage import update_action
+    from app.external_retry import MAX_AUTOMATIC_RETRIES
+    from tests.wechat.test_send_message_handler import _account, _setup
+
+    store, task, row, action, _handler, runner, prepared = _setup(tmp_path)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, action="send_reply", sensitivity_kind="normal",
+        send_status="pending", channel="wechat",
+    )
+    delivery_id = store.create_standard_wechat_delivery(
+        candidate_id=row["candidate_id"], review_id=row["review_id"],
+        action_identity=action.action_identity,
+    )
+    store.mark_wechat_delivery_sending(delivery_id, now="2026-10-26 19:53:52")
+    store.set_wechat_delivery_status(delivery_id, "failed", error="target_open_failed",
+                                     pre_action_failure=True)
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "retry_count": MAX_AUTOMATIC_RETRIES, "agent_run_id": row["audit_run_id"],
+        })
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"status": task.status},
+            changes={"status": "failed", "error": "external_action_failed"},
+        )
+    store.skip_exhausted_stale_wechat_delivery(
+        delivery_id, expected_execution_generation=task.execution_generation,
+        reason="stale target opening failure", inactive_before="2026-10-26 20:00:00",
+    )
+    messages = []
+    if readback == "present":
+        messages.append(_message(
+            body=prepared.final_body, conversation_id=task.conversation_id, account_id="acct-1",
+        ))
+    if readback == "incomplete":
+        messages.extend(
+            _message(body="unrelated", message_id=str(i), conversation_id=task.conversation_id,
+                     account_id="acct-1")
+            for i in range(200)
+        )
+    if readback == "wrong_scope":
+        messages.append(_message(body="unrelated", conversation_id="another"))
+    reader = _Reader(messages)
+    monkeypatch.setattr(
+        wechat_reconciliation, "WechatSendMessageHandler",
+        lambda store: WechatSendMessageHandler(
+            store, reader_factory=lambda: reader, account_factory=_account,
+            sender_factory=lambda: pytest.fail("settlement must never call Sender"),
+        ),
+    )
+
+    result = wechat_reconciliation.reconcile_failed_wechat_attempt(store, attempt_id)
+
+    assert result["outcome"] == expected
+    assert store.get_reply_task(task.id).status == expected
+    assert store.get_reply_attempt(attempt_id).send_status == "skipped"
+    assert store.get_wechat_delivery_by_id(delivery_id).status == "skipped"
+    assert not runner.calls
+    assert len(reader.calls) == 1
+
+
+def test_failed_wechat_predecessor_settles_after_its_successor_is_formally_skipped(
+    tmp_path, monkeypatch,
+):
+    from app import task_entity_storage
+    from app.action_storage import update_action
+    from app.external_retry import MAX_AUTOMATIC_RETRIES
+    from app.store import AutoReplyStore
+    from tests.wechat.support import approve_delivery, create_wechat_delivery
+    from tests.wechat.test_send_message_handler import _account
+
+    store = AutoReplyStore(tmp_path / "chain.sqlite3")
+    chain = []
+    for n in (1, 2):
+        task = store.ensure_reply_task(
+            channel="wechat", conversation_id="u9", conversation_title="Alex",
+            single_chat=True, trigger_message_id=f"trigger-{n}",
+            trigger_create_time=f"2026-10-26T19:50:0{n}+00:00",
+            trigger_sender="Alex", trigger_text=f"Question {n}",
+        )
+        attempt_id = store.record_reply_attempt(
+            conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+            trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+            trigger_text=task.trigger_text, action="send_reply", sensitivity_kind="normal",
+            send_status="pending", channel="wechat",
+        )
+        delivery_id = create_wechat_delivery(
+            store, reply_task_id=task.id, account_id="acct-1", target_type="direct",
+            target_id="u9", conversation_id="u9", reply_text=f"Answer {n}",
+        )
+        approve_delivery(store, delivery_id)
+        review = store.current_reviewed_candidate(task.id, task.execution_generation)
+        store.mark_wechat_delivery_sending(delivery_id, now=f"2026-10-26 19:53:5{n}")
+        store.set_wechat_delivery_status(
+            delivery_id, "failed", error="target_open_failed", pre_action_failure=True,
+        )
+        with store._connect() as db:
+            update_action(db, "reply_attempts", attempt_id, {
+                "retry_count": MAX_AUTOMATIC_RETRIES, "agent_run_id": review["audit_run_id"],
+            })
+            task_entity_storage.update_task_cas(
+                db, task_id=task.id, expected={"status": task.status},
+                changes={"status": "failed", "error": "external_action_failed"},
+            )
+        chain.append((task, attempt_id, delivery_id))
+    old_task, old_attempt, old_delivery = chain[0]
+    next_task, _, next_delivery = chain[1]
+    store.skip_exhausted_stale_wechat_delivery(
+        next_delivery, expected_execution_generation=next_task.execution_generation,
+        reason="stale target opening failure", inactive_before="2026-10-26 20:00:00",
+    )
+    reader = _Reader([])
+    monkeypatch.setattr(
+        wechat_reconciliation, "WechatSendMessageHandler",
+        lambda store: WechatSendMessageHandler(
+            store, reader_factory=lambda: reader, account_factory=_account,
+            sender_factory=lambda: pytest.fail("settlement must never call Sender"),
+        ),
+    )
+    settle = store.settle_failed_wechat_task_from_delivery
+
+    def reject_changed_generation(*args, **kwargs):
+        from copy import deepcopy
+
+        evidence = deepcopy(kwargs["evidence"])
+        evidence["no_send_readbacks"][1]["execution_generation"] = "changed-after-readback"
+        with pytest.raises(ValueError, match="current skipped chain"):
+            settle(*args, **{**kwargs, "evidence": evidence})
+        assert store.get_reply_task(old_task.id).status == "failed"
+        return settle(*args, **kwargs)
+
+    monkeypatch.setattr(store, "settle_failed_wechat_task_from_delivery", reject_changed_generation)
+    result = wechat_reconciliation.reconcile_failed_wechat_attempt(store, old_attempt)
+
+    assert result["outcome"] == "skipped"
+    assert store.get_reply_task(old_task.id).status == "skipped"
+    assert store.get_reply_task(next_task.id).status == "failed"
+    assert store.get_wechat_delivery_by_id(old_delivery).status == "superseded"
+    assert store.get_wechat_delivery_by_id(next_delivery).status == "skipped"
+    assert len(reader.calls) == 2

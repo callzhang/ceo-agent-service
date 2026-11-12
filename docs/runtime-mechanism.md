@@ -629,6 +629,7 @@ Audit 不得仅因 OCR/转写来源字节由已配置 AI Services 处理而额�
 微信发送前失败（`pre_action_failure=1`，已记录非空 `action_started_at`、从未真正发出）的投递，自动重试用尽后停在 `failed`，History 与重试接口都把它当作可手动重试的投递：详情显示「重试发送」，`requeue_expired_wechat_delivery_for_user` 同时接受 `skipped` 与此类 `failed`。独立 Audit 拒绝（`wechat_audit_rejected`）从未领取，没有 `action_started_at`，不在此列；重新入队后发送仍需通过原有的已批准 Audit 证据才能领取。
 
 失败微信 Attempt 的 History `POST /api/console/history/{attempt_id}/retry` 是原生读回恢复入口，不要求用户回复确认卡，也不调用 Sender。它先校验当前已审核候选、审核、执行代、动作正文和 Delivery 证据完全绑定。`sent` 仅在 Reader 从准确账号、会话和动作开始时间之后读回唯一匹配的本人消息时结算为 `done`；明确 `superseded_by_newer_wechat_trigger` 链只有在最终 successor 的已发送正文被读回、旧正文在完整有限窗口内不存在且账号/会话/目标相同后才结算为 `skipped`。无法证明时保留真实失败并返回冲突；原失败 Attempt、Run 和动作历史保持不变。
+正式 `skipped` 的投递及终点为 `skipped` 的明确替代链，也可用同一入口结算父 Task。每段都必须由微信 Reader 按原账号、会话及动作时间读出完整窗口，确认该段没有匹配的本人发送；事务内重新核对执行代、原审核、正文摘要、替代关系及不存在已派发或成功回执。只结算当前父 Task，保留 Delivery、Attempt 和已有回执。页面说明读回未发送。
 
 需要重新执行内部失败的 Attempt 时，调用 `POST /api/console/history/{attempt_id}/rerun`，由原任务流程重新读取并审核当前输入；调用该 API 不要求 Agent 让 Derek 回复聊天确认卡。它与 `/retry` 的外部动作只读对账分开：存在投递或回执时不通过 rerun 重发。
 
