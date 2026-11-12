@@ -31,6 +31,8 @@ Reply Attempt 的摘要与独立原因使用当前同一 owner 编码；相同�
 
 显式发布只支持准确 Store29.2／Email54 源到 Store30.1／Email54。直接 Email Action 的 classification、account 和当前 operation 参数由精确不可变 Plan 持有；共同 Action 不存这些重复字段。发布预检逐行比较源值及类型并拒绝不一致，逆迁从精确 Plan 还原这些字段，包括迁移后新增记录；其余 payload、身份、分配水位及 FK 异常集合保留。Action JSON 对象键顺序不是业务事实。旧29.1→29.2转换器及其专用夹具／工具随发布窗口退休，运行时初始化只接受当前声明。
 
+业务会议总结的私聊显示名由当前名册提供。仅在显示名去掉标点和空白后唯一匹配、且稳定用户 ID 一致时，Consumer 才采用名册原显示名。普通私聊与敏感附录均使用这条规则，继续由现有目标校验和独立 Audit 审核。
+
 当前 native `tasks` 表的 `kind` 合同包含九类：`reply`、`work_summary`、
 `meeting_alignment`、`okr_review`、`okr_analysis`、`workbench_turn`、
 `email_classification`、`feedback_processing` 和 `wechat_import`。Task 的生命周期

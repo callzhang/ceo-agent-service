@@ -938,6 +938,43 @@ def test_agent_accepts_business_direct_when_candidate_groups_do_not_match():
     assert decision.target is not None and decision.target.kind == "direct"
 
 
+@pytest.mark.parametrize("sensitive", [False, True])
+def test_consumer_copies_source_recipient_title_when_only_punctuation_differs(sensitive):
+    meeting = source()
+    roster_name = "Alex (Lee"
+    meeting.participants[1].name = roster_name
+    payload = summary_payload()
+    target = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": "Alex (Lee)", "candidates": [],
+    }
+    if sensitive:
+        payload["sensitive_private_message"] = {
+            "target": target, "message": "Sensitive discussion", "reason": "Owns follow-up",
+            "recipient_evidence": ["Named participant and follow-up owner"],
+        }
+    else:
+        payload["target"] = target
+    decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
+    actual = decision.sensitive_private_message.target if sensitive else decision.target
+    assert actual.title == roster_name
+    assert actual.direct_user_id == "alex"
+
+
+@pytest.mark.parametrize("other_name", ["Someone Else", "Alex (Lee)"])
+def test_consumer_keeps_conflicting_recipient_title_rejected(other_name):
+    meeting = source()
+    meeting.participants[1].name = "Alex (Lee"
+    meeting.participants[2].name = other_name
+    payload = summary_payload()
+    payload["target"] = {
+        "kind": "direct", "conversation_id": "", "direct_user_id": "alex",
+        "title": other_name, "candidates": [],
+    }
+    with pytest.raises(MeetingAlignmentTargetError, match="title must match"):
+        MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
+
+
 def test_business_direct_identity_error_is_typed_and_preserves_decision():
     target = {
         "kind": "direct",

@@ -1,5 +1,6 @@
 import hashlib
 import json
+from unicodedata import category
 from pathlib import Path
 from typing import Any, Protocol
 
@@ -21,6 +22,7 @@ from app.agent_cron.commands import ServiceCommandSkillMaterial
 from app.config import principal_display_name
 from app.external_retry import ExternalDependencyError
 from app.meeting_alignment_models import (
+    DeliveryTarget,
     MeetingAlignmentAuditFeedback,
     MeetingAlignmentAuditResult,
     MeetingAlignmentDecision,
@@ -205,6 +207,14 @@ class MeetingAlignmentAgent:
             if compact_prompt is not None:
                 options["compact_prompt"] = compact_prompt
             decision = self.codex.decide(**options)
+            if decision.action == "send" and decision.audience_scope == "business":
+                private = decision.sensitive_private_message
+                decision = decision.model_copy(update={
+                    "target": _source_display_target(source, decision.target),
+                    "sensitive_private_message": private.model_copy(update={
+                        "target": _source_display_target(source, private.target),
+                    }) if private is not None else None,
+                })
             try:
                 _validate_source_aware_target(
                     source, decision, group_candidates=group_candidates or []
@@ -873,6 +883,24 @@ def _decision_text_candidates(payload: dict[str, object]) -> list[str]:
             if isinstance(value, dict) and isinstance(value.get("text"), str):
                 candidates.append(value["text"])
     return candidates
+
+
+def _source_display_target(source: MeetingSource, target: DeliveryTarget | None) -> DeliveryTarget | None:
+    """Copy roster punctuation when the selected ID and display name identify one person."""
+    if target is None or target.kind != "direct" or not target.direct_user_id.strip():
+        return target
+
+    def without_punctuation(name: str) -> str:
+        return "".join(
+            character for character in name.casefold()
+            if not character.isspace() and not category(character).startswith("P")
+        )
+
+    display = without_punctuation(target.title)
+    roster_matches = [person for person in source.participants if without_punctuation(person.name) == display]
+    if display and len(roster_matches) == 1 and roster_matches[0].user_id.strip() == target.direct_user_id.strip():
+        return target.model_copy(update={"title": roster_matches[0].name})
+    return target
 
 
 def _validate_source_aware_target(
