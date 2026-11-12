@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import imaplib
 import socket
+import ssl
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -55,6 +56,8 @@ def _is_transient_discovery_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
     cause: BaseException | None = exc
     while cause is not None:
+        if isinstance(cause, ssl.SSLError):
+            return isinstance(cause, ssl.SSLEOFError)
         if isinstance(cause, httpx.HTTPStatusError):
             return cause.response.status_code in {500, 502, 503, 504}
         if isinstance(cause, ConnectionError):

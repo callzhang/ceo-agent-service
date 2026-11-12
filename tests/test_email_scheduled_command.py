@@ -1,5 +1,6 @@
 import json
 import socket
+import ssl
 import sqlite3
 from hashlib import sha256
 from types import SimpleNamespace
@@ -75,14 +76,18 @@ def test_email_scheduled_command_without_accounts_is_an_idempotent_noop() -> Non
     assert summary.complete
 
 
-def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
+@pytest.mark.parametrize("error", [
+    socket.gaierror("temporary DNS failure"),
+    ssl.SSLEOFError("unexpected EOF while reading"),
+])
+def test_email_discovery_retries_transient_transport_with_capped_backoff(error: Exception) -> None:
     attempts = []
     delays = []
 
     def scan_account(_account, _model):
         attempts.append(1)
         if len(attempts) < 3:
-            raise socket.gaierror("temporary DNS failure")
+            raise error
         return {"persisted_count": 1}
 
     bootstrap = SimpleNamespace(
@@ -109,6 +114,8 @@ def test_email_discovery_retries_transient_dns_with_capped_backoff() -> None:
     (
         (socket.gaierror("temporary DNS failure"), 3, True),
         (TimeoutError("provider timed out"), 3, True),
+        (ssl.SSLEOFError("unexpected EOF while reading"), 3, True),
+        (ssl.SSLCertVerificationError("certificate verify failed"), 1, False),
         (ConnectionError("IMAP login failed: invalid credentials"), 1, False),
         (ConnectionError("email IMAP credential is unavailable"), 1, False),
         (ValueError("invalid local scan state"), 1, False),
