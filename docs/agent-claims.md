@@ -80,8 +80,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
-| codex-email-discovery-tls-eof-20261112 | app/email_scheduled_command.py; tests/test_email_scheduled_command.py; docs/runtime-mechanism.md Email scan retries | Repair confirmed scheduled discovery TLS transport EOF without broadening certificate or login retry | 2026-11-12 |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
