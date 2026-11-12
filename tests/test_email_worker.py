@@ -4817,6 +4817,8 @@ def _imap_authentication_failure() -> ConnectionError:
     (
         (ValueError("invalid Agent JSON"), "failed"),
         (socket.gaierror(-2, "name resolution failed"), "pending"),
+        (ssl.SSLEOFError("unexpected EOF while reading"), "pending"),
+        (ssl.SSLCertVerificationError("certificate verify failed"), "failed"),
         (ssl.SSLError("certificate verify failed"), "failed"),
         (ConnectionError("email IMAP TLS is required"), "failed"),
         (_imap_authentication_failure(), "failed"),

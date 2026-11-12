@@ -68,7 +68,7 @@ def _email_classifier_failure_is_retryable(exc: BaseException) -> bool:
     while current is not None and id(current) not in visited:
         visited.add(id(current))
         if isinstance(current, ssl.SSLError):
-            return False
+            return isinstance(current, ssl.SSLEOFError)
         if isinstance(current, imaplib.IMAP4.error) and not isinstance(
             current, imaplib.IMAP4.abort
         ):
