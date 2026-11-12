@@ -2212,7 +2212,7 @@ def test_consumer_claude_runtime_receives_parent_execution_mode(
                     "type": "result",
                     "subtype": "success",
                     "is_error": False,
-                    "result": json.dumps(_wire_result(result)),
+                    "structured_output": {"result": _wire_result(result)},
                     "session_id": session_id,
                 }
             ),

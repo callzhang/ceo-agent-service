@@ -1257,15 +1257,16 @@ class AgentTurnProcess(Generic[ResultT]):
                 attempt_is_preclaimed = False
                 if route.runtime_kind is RuntimeKind.CLAUDE_CLI:
                     claude_adapter = self._claude_adapter()
+                    claude_schema = (
+                        claude_consumer_output_schema(consumer_purpose)
+                        if run.role is AgentRole.CONSUMER else None
+                    )
                     command = claude_adapter.build_command(
                         route=route,
                         session_id=route_session_id,
                         max_turns=CLAUDE_MAX_TURNS_PER_INVOCATION,
                         reasoning_effort=self.reasoning_effort or None,
-                        json_schema=(
-                            claude_consumer_output_schema((invocation_facts or {}).get("consumer_purpose", "general"))
-                            if run.role is AgentRole.CONSUMER else None
-                        ),
+                        json_schema=claude_schema,
                         policy=(
                             ClaudeCommandPolicy.consumer(
                                 task_id=self.task.id,
@@ -1282,6 +1283,7 @@ class AgentTurnProcess(Generic[ResultT]):
                     )
                     claude_normalizer = claude_adapter.new_event_normalizer(
                         expected_session_id=route_session_id,
+                        json_schema=claude_schema,
                     )
                     command_env = claude_adapter.build_env(route)
                 elif route.runtime_kind is RuntimeKind.FRIDAY_RUNTIME:

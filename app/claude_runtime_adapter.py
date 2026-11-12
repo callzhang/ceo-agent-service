@@ -42,6 +42,28 @@ _POLICY_SEAL = object()
 _TURN_EVENT_TYPES = frozenset({"assistant", "user", "result"})
 
 
+def _requires_result_envelope(schema: Mapping[str, object] | None) -> bool:
+    return schema is not None and any(key in schema for key in ("anyOf", "oneOf", "allOf"))
+
+
+def _native_cli_schema(schema: Mapping[str, object]) -> dict[str, object]:
+    # The CLI does not register the dialect URI. Tool input schemas also reject
+    # root unions; preserve the same schema under a single required property.
+    native = {key: value for key, value in schema.items() if key != "$schema"}
+    if not _requires_result_envelope(native):
+        return native
+    definitions = native.pop("$defs", None)
+    wrapped = {
+        "type": "object",
+        "properties": {"result": native},
+        "required": ["result"],
+        "additionalProperties": False,
+    }
+    if definitions is not None:
+        wrapped["$defs"] = definitions
+    return wrapped
+
+
 class ClaudeEventPolicyError(RuntimeError):
     """A Claude event violates the transport/session event grammar."""
 
@@ -301,10 +323,7 @@ class ClaudeRuntimeAdapter:
             tools = "Read,Glob,Grep,Bash" if selected_policy.role == "consumer" else "Read,Glob,Grep"
             command.extend(["--restricted", "--tools", tools])
         if json_schema is not None:
-            # Claude's native validator does not register the fixed schemas'
-            # dialect URI. Omit that metadata, preserving every constraint and
-            # leaving the original schema for strict local validation intact.
-            cli_schema = {key: value for key, value in json_schema.items() if key != "$schema"}
+            cli_schema = _native_cli_schema(json_schema)
             command.extend([
                 "--json-schema",
                 json.dumps(cli_schema, ensure_ascii=False, separators=(",", ":")),
@@ -340,6 +359,7 @@ class ClaudeRuntimeAdapter:
             proof_issuer=self._issue_terminal_proof,
             cleanup_owner=self._discard_owner,
             structured_output_required=json_schema is not None,
+            result_envelope=_requires_result_envelope(json_schema),
         )
 
     def parse_final_result(
@@ -569,6 +589,7 @@ class ClaudeEventNormalizer:
         proof_issuer: Callable[[object, str, str], ClaudeTerminalProof],
         cleanup_owner: Callable[[object], None],
         structured_output_required: bool = False,
+        result_envelope: bool = False,
     ) -> None:
         if (
             expected_session_id is not None
@@ -577,6 +598,7 @@ class ClaudeEventNormalizer:
             raise ValueError("expected_session_id must be normalized")
         self._expected_session_id = expected_session_id
         self._structured_output_required = structured_output_required
+        self._result_envelope = result_envelope
         self._owner = owner
         self._proof_issuer = proof_issuer
         self._cleanup_owner = cleanup_owner
@@ -672,7 +694,10 @@ class ClaudeEventNormalizer:
                     events.append(normalized)
             return tuple(events)
         if event_type == "result":
-            raw = _validated_success_result(event, structured_output_required=self._structured_output_required)
+            raw = _validated_success_result(
+                event, structured_output_required=self._structured_output_required,
+                result_envelope=self._result_envelope,
+            )
             if self._started_items:
                 raise ClaudeEventPolicyError("claude_open_tool_items")
             self._final_seen = True
@@ -799,7 +824,10 @@ def _required_string(value: object) -> str | None:
     )
 
 
-def _validated_success_result(event: dict[str, object], *, structured_output_required: bool = False) -> str:
+def _validated_success_result(
+    event: dict[str, object], *, structured_output_required: bool = False,
+    result_envelope: bool = False,
+) -> str:
     if (
         event.get("type") != "result"
         or event.get("subtype") != "success"
@@ -808,8 +836,13 @@ def _validated_success_result(event: dict[str, object], *, structured_output_req
     ):
         raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
     if 'structured_output' in event:
+        result = event['structured_output']
+        if result_envelope:
+            if not isinstance(result, dict) or set(result) != {"result"}:
+                raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete"))
+            result = result["result"]
         try:
-            return json.dumps(event['structured_output'], ensure_ascii=False, allow_nan=False, separators=(',', ':'))
+            return json.dumps(result, ensure_ascii=False, allow_nan=False, separators=(',', ':'))
         except (TypeError, ValueError) as exc:
             raise ClaudeRuntimeResultError(_result_failure("claude_result_incomplete")) from exc
     if structured_output_required or not isinstance(event.get('result'), str):

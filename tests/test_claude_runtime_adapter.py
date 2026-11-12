@@ -179,7 +179,12 @@ def test_consumer_native_schema_is_inline_and_not_added_to_audit(adapter, route)
         ),
     )
 
-    assert json.loads(consumer[consumer.index("--json-schema") + 1]) == schema
+    delivered = json.loads(consumer[consumer.index("--json-schema") + 1])
+    assert delivered["required"] == ["result"]
+    assert delivered["additionalProperties"] is False
+    assert delivered["properties"]["result"] == {key: value for key, value in schema.items() if key != "$defs"}
+    assert delivered["$defs"] == schema["$defs"]
+    assert not {"anyOf", "oneOf", "allOf"}.intersection(delivered)
     assert "--json-schema" not in audit
     assert schema["type"] == "object"
     assert "oneOf" not in schema
@@ -1367,6 +1372,27 @@ def test_native_structured_output_is_the_terminal_result(adapter):
         proof=normalizer.terminal_proof(), parser=json.loads)
     assert parsed == {'ok': True}
     assert json.loads(event['result']) == {'ok': True}
+
+
+def test_native_root_union_unwraps_structured_result_before_validation(adapter):
+    schema = {"type": "object", "anyOf": [{"required": ["ok"]}]}
+    normalizer = adapter.new_event_normalizer(json_schema=schema)
+    normalizer.normalize_event(SYSTEM_INIT)
+    event = normalizer.normalize_event({
+        **FINAL_RESULT, "structured_output": {"result": {"ok": True}},
+    })
+    assert json.loads(event["result"]) == {"ok": True}
+    assert adapter.parse_final_result(
+        normalizer=normalizer, proof=normalizer.terminal_proof(), parser=json.loads,
+    ) == {"ok": True}
+
+
+@pytest.mark.parametrize("invalid", [{"ok": True}, {"result": {}, "extra": True}])
+def test_native_root_union_rejects_invalid_transport_envelope(adapter, invalid):
+    normalizer = adapter.new_event_normalizer(json_schema={"anyOf": [{}]})
+    normalizer.normalize_event(SYSTEM_INIT)
+    with pytest.raises(ClaudeEventPolicyError, match="claude_result_incomplete"):
+        normalizer.normalize_event({**FINAL_RESULT, "structured_output": invalid})
 
 
 def test_declared_schema_requires_native_terminal_structured_output(adapter):
