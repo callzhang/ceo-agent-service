@@ -137,7 +137,11 @@ def changed_candidate_sources(candidate, context, dws, *, check_provider=True):
             actual = read_provider_source(dws, binding.provider, binding.object_ref)
         else:
             continue
+        if binding.provider == "dingtalk-doc" and isinstance(actual, dict) and isinstance(reviewed, dict):
+            # DWS assigns a new trace ID on every read of the same document.
+            actual = {key: value for key, value in actual.items() if key != "logId"}
+            reviewed = {key: value for key, value in reviewed.items() if key != "logId"}
         if actual != reviewed:
             changes.append({"provider": binding.provider, "object_ref": binding.object_ref,
-                            "reviewed_value": binding.value, "current_value": actual})
+                            "reviewed_value": reviewed, "current_value": actual})
     return changes

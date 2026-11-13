@@ -162,3 +162,38 @@ def test_native_oa_failure_envelope_preserves_original_code_and_message(payload,
     assert raised.value.code == code
     assert raised.value.server_key == "dingtalk-oa"
     assert raised.value.retryable_external_dependency is False
+
+
+@pytest.mark.parametrize(("changes", "requires_review"), [
+    ({"logId": "read-2"}, False),
+    ({"logId": "read-2", "markdown": "Updated document"}, True),
+    ({"logId": "read-2", "nodeId": "another-node"}, True),
+    ({"logId": "read-2", "success": False}, True),
+])
+def test_document_source_compares_business_fields_and_ignores_request_id(
+    tmp_path, changes, requires_review,
+):
+    _, _, context = setup(tmp_path)
+    result = candidate()
+    action = result.proposal.actions[0].model_copy(update={
+        "capability": "dingtalk-doc", "operation": "create_doc_comment",
+        "target": {"node_id": "document"},
+    })
+    result = result.model_copy(update={
+        "proposal": result.proposal.model_copy(update={"actions": (action,)}),
+    })
+
+    class Source:
+        response = {"success": True, "nodeId": "document", "title": "Project",
+                    "docUrl": "https://example.com/document", "markdown": "Original",
+                    "logId": "read-1"}
+
+        def read_doc(self, node_id):
+            assert node_id == "document"
+            return self.response.copy()
+
+    dws = Source()
+    prepared = capture_candidate_sources(result, context, dws)
+    assert prepared.source_bindings[-1].value["logId"] == "read-1"
+    dws.response = {**dws.response, **changes}
+    assert bool(changed_candidate_sources(prepared, context, dws)) is requires_review

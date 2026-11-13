@@ -46,6 +46,8 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 
 ## 运行角色
 
+钉钉文档在审核后派发前复核来源时，忽略读取响应的顶层 `logId`。它由钉钉为每次读取请求分配。文档节点身份、标题、链接、正文及其他响应字段仍逐项比较，真实变化继续触发重新审核。原始审核候选、来源快照和审核摘要保持原样。
+
 钉钉 reaction 读回的 `replyUsers[]` 是显示名/昵称，不是组织 userId。执行器通过当前目录搜索，按完整姓名或昵称唯一解析到稳定 userId 后与当前账号比较；原消息 ID 和 emoji 仍须精确匹配。无法解析或同名歧义时保持未确认。核对已有 reaction 仅调用读取，不重复添加。
 
 两角色都可通过 `read_dingtalk_group_members` 读取精确群 ID 的 DWS 真人/机器人
