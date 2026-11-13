@@ -427,6 +427,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
                     "is_error": False,
                     "session_id": session_id,
                     "result": raw_result,
+                    "structured_output": {"result": json.loads(raw_result)},
                 }
             ),
         )
@@ -523,6 +524,7 @@ def test_claude_success_uses_trusted_session_without_codex_history_and_resumes(
                         "is_error": False,
                         "session_id": session_id,
                         "result": result_text,
+                        "structured_output": {"result": json.loads(result_text)},
                     }
                 ),
             )
@@ -653,6 +655,7 @@ def test_openai_failure_falls_back_to_claude_for_consumer(tmp_path, monkeypatch)
                     "is_error": False,
                     "session_id": claude_session,
                     "result": result_json,
+                    "structured_output": {"result": json.loads(result_json)},
                 }
             ),
         )
@@ -1489,7 +1492,9 @@ def test_result_codec_rejection_closes_finished_runtime_and_parent(
         {'type': 'assistant', 'session_id': sid, 'message': {
             'role': 'assistant', 'content': [{'type': 'text', 'text': text}]}},
         {'type': 'result', 'subtype': 'success', 'is_error': False,
-         'session_id': sid, 'result': text},
+         'session_id': sid, 'result': text,
+         **({'structured_output': {'result': value}}
+            if role is AgentRole.CONSUMER else {})},
     ]
     native = tmp_path / 'native.jsonl'
     native.touch()
@@ -2370,7 +2375,7 @@ def test_typed_consumer_failure_keeps_field_feedback_for_existing_retry(tmp_path
         {"type": "assistant", "session_id": sid,
          "message": {"role": "assistant", "content": [{"type": "text", "text": raw}]}},
         {"type": "result", "subtype": "success", "is_error": False,
-         "session_id": sid, "result": raw},
+         "session_id": sid, "result": raw, "structured_output": {"result": value}},
     ]
     native = tmp_path / "native.jsonl"
     native.write_text(json.dumps(events[1]) + "\n")
