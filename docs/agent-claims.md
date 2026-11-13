@@ -80,8 +80,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
-| codex-minutes-partial-scan-20261113 | app/minutes_sync.py; app/cli.py Minutes sync condition; tests/test_minutes_sync.py; tests/test_cli.py Minutes sync regression; docs/runtime-mechanism.md Minutes partial scan | Carry listing failure through the scheduled command | 2026-11-13 |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
