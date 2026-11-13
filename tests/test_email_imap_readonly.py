@@ -2436,3 +2436,23 @@ def test_imap_system_proxy_connect_preserves_tls_and_bypass(
     assert not errors
     if scenario != "bypass":
         assert requests == [b"CONNECT imap.example.test:993 HTTP/1.1\r\n"]
+
+
+def test_scan_reports_transport_outage_separately_from_rejected_login(tmp_path) -> None:
+    def source_factory(account: Mapping[str, object]):
+        if account["account_id"] == "outage":
+            raise TimeoutError("timed out")
+        raise ConnectionError("IMAP login failed: invalid credentials")
+
+    result = scan_imap_accounts(
+        [_account("outage", "INBOX"), _account("rejected", "INBOX")],
+        source_factory,
+        FakeClassifier({}),
+        EmailStore(tmp_path / "worker.sqlite3"),
+        EmailScanConfig.cold_start(),
+    )
+
+    assert [(item.account_id, item.error_code) for item in result.accounts] == [
+        ("outage", "connection_unavailable"),
+        ("rejected", "connection_failed"),
+    ]

@@ -628,3 +628,47 @@ def test_scheduled_model_rejection_goes_to_the_agent_only_when_the_agent_would_t
         assert stored["classification_source"] == "model"
         assert stored["action_plan"] is None
         assert tasks == 0
+
+
+def _account_outcome_scan(error_code: str, attempts: list[int]):
+    from app.email_classifier_scan import (
+        EmailAccountScanResult,
+        EmailAccountsScanResult,
+    )
+
+    def scan_account(_account, _model):
+        attempts.append(1)
+        return EmailAccountsScanResult(
+            (EmailAccountScanResult(account_id="account-1", error_code=error_code),)
+        )
+
+    return scan_account
+
+
+@pytest.mark.parametrize(
+    ("error_code", "retry_count", "transient"),
+    (("connection_unavailable", 3, True), ("connection_failed", 1, False)),
+)
+def test_email_discovery_retries_reported_account_connection_outage(
+    error_code: str, retry_count: int, transient: bool
+) -> None:
+    attempts: list[int] = []
+    delays: list[float] = []
+    bootstrap = SimpleNamespace(
+        load_enabled_accounts=lambda: ({"account_id": "account-1"},),
+        load_active_model=lambda: object(),
+        scan_account=_account_outcome_scan(error_code, attempts),
+        record_health=lambda *_args: None,
+    )
+
+    with pytest.raises(
+        TimeoutError if transient else RuntimeError, match="email discovery failed"
+    ):
+        EmailMessageCheckOnceCommand(
+            SimpleNamespace(),
+            dependency_builder=lambda _settings: bootstrap,
+            sleep=delays.append,
+        )()
+
+    assert len(attempts) == retry_count
+    assert delays == ([1.0, 2.0] if transient else [])

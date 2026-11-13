@@ -4,12 +4,16 @@ from __future__ import annotations
 
 import imaplib
 import re
+import socket
 import sqlite3
+import ssl
 from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta, timezone
 from hashlib import sha256
 from types import MappingProxyType
 from typing import Callable, Mapping, Protocol, Sequence
+
+import httpx
 
 from app.email_classifier_contracts import (
     EmailAction,
@@ -703,6 +707,32 @@ class EmailFolderScanResult:
     error_code: str = ""
 
 
+CONNECTION_UNAVAILABLE = "connection_unavailable"
+
+
+def is_transient_connection_error(exc: Exception) -> bool:
+    """Distinguish transport outages from account setup and local scan defects."""
+    cause: BaseException | None = exc
+    while cause is not None:
+        if isinstance(cause, ssl.SSLError):
+            return isinstance(cause, ssl.SSLEOFError)
+        if isinstance(cause, httpx.HTTPStatusError):
+            return cause.response.status_code in {500, 502, 503, 504}
+        if isinstance(cause, ConnectionError):
+            # The readonly adapter also uses ConnectionError for login/configuration
+            # failures, which cannot be repaired by retrying the same credentials.
+            detail = str(cause).casefold()
+            return not (detail.startswith("imap login failed:") or detail in {
+                "email imap credential is unavailable",
+                "email imap tls is required",
+            })
+        if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
+                              httpx.TimeoutException)):
+            return True
+        cause = cause.__cause__
+    return False
+
+
 @dataclass(frozen=True)
 class EmailAccountScanResult:
     account_id: str
@@ -938,11 +968,15 @@ def scan_imap_accounts(
             raise ValueError("account_id must be non-empty")
         try:
             source = source_factory(account)
-        except (ConnectionError, OSError, imaplib.IMAP4.error):
+        except (ConnectionError, OSError, imaplib.IMAP4.error) as exc:
             outcomes.append(
                 EmailAccountScanResult(
                     account_id=account_id,
-                    error_code="connection_failed",
+                    error_code=(
+                        CONNECTION_UNAVAILABLE
+                        if is_transient_connection_error(exc)
+                        else "connection_failed"
+                    ),
                 )
             )
             continue

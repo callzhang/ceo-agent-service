@@ -3,19 +3,16 @@
 from __future__ import annotations
 
 import json
-import imaplib
-import socket
-import ssl
 import time
 from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 
-import httpx
-
 from app.agent_cron.commands import ServiceCommandResult
 from app.email_classifier_scan import (
+    CONNECTION_UNAVAILABLE,
+    is_transient_connection_error,
     advance_scan_progress,
     AgentScanContext,
     scan_agent_classification_batch,
@@ -50,29 +47,6 @@ DISCOVERY_NETWORK_MAX_ATTEMPTS = 3
 
 class TransientEmailDiscoveryError(TimeoutError):
     """All failed account scans ended in a retryable provider outage."""
-
-
-def _is_transient_discovery_error(exc: Exception) -> bool:
-    """Distinguish transport outages from account setup and local scan defects."""
-    cause: BaseException | None = exc
-    while cause is not None:
-        if isinstance(cause, ssl.SSLError):
-            return isinstance(cause, ssl.SSLEOFError)
-        if isinstance(cause, httpx.HTTPStatusError):
-            return cause.response.status_code in {500, 502, 503, 504}
-        if isinstance(cause, ConnectionError):
-            # The readonly adapter also uses ConnectionError for login/configuration
-            # failures, which cannot be repaired by retrying the same credentials.
-            detail = str(cause).casefold()
-            return not (detail.startswith("imap login failed:") or detail in {
-                "email imap credential is unavailable",
-                "email imap tls is required",
-            })
-        if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
-                              httpx.TimeoutException)):
-            return True
-        cause = cause.__cause__
-    return False
 
 
 @dataclass(frozen=True)
@@ -320,10 +294,18 @@ class EmailMessageCheckOnceCommand:
         def scan_with_backoff(account: Mapping[str, object], model: object) -> object:
             for attempt in range(DISCOVERY_NETWORK_MAX_ATTEMPTS):
                 try:
-                    return bootstrap.scan_account(account, model)
+                    result = bootstrap.scan_account(account, model)
+                    if any(
+                        getattr(outcome, "error_code", "") == CONNECTION_UNAVAILABLE
+                        for outcome in getattr(result, "accounts", ())
+                    ):
+                        # The scan reports a provider outage as an outcome rather
+                        # than raising it; give it the same bounded backoff.
+                        raise ConnectionError("email provider connection unavailable")
+                    return result
                 except Exception as exc:
                     if (
-                        not _is_transient_discovery_error(exc)
+                        not is_transient_connection_error(exc)
                         or attempt == DISCOVERY_NETWORK_MAX_ATTEMPTS - 1
                     ):
                         account_errors.append(exc)
@@ -344,7 +326,7 @@ class EmailMessageCheckOnceCommand:
                 close_model()
         if metrics["failures"]:
             if len(account_errors) == metrics["failures"] and all(
-                _is_transient_discovery_error(exc) for exc in account_errors
+                is_transient_connection_error(exc) for exc in account_errors
             ):
                 raise TransientEmailDiscoveryError(
                     "email discovery failed for "
