@@ -2370,7 +2370,8 @@ def test_typed_consumer_failure_keeps_field_feedback_for_existing_retry(tmp_path
         {"type": "assistant", "session_id": sid,
          "message": {"role": "assistant", "content": [{"type": "text", "text": raw}]}},
         {"type": "result", "subtype": "success", "is_error": False,
-         "session_id": sid, "result": raw},
+         "session_id": sid, "result": raw,
+         "structured_output": {"result": value}},
     ]
     native = tmp_path / "native.jsonl"
     native.write_text(json.dumps(events[1]) + "\n")
