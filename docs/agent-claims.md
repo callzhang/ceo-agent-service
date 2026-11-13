@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-dingtalk-safe-group-blocked-20261113 | `app/group_discovery.py` denial classifier; `tests/test_group_discovery.py`, `tests/test_meeting_alignment.py` denial regressions; discovery paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`; this row | Match native DingTalk `SAFE_GROUP_BLOCKED` to the existing confidentiality denial contract; keep provider error, retryable exceptions, recipient permissions and Audit unchanged. | 2026-11-13 |
+
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
