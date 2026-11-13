@@ -80,8 +80,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
-| codex-minutes-browser-cleanup-20261113 | app/minutes_console_browser.py; tests/test_minutes_login_handoff.py; docs/runtime-mechanism.md Minutes browser session cleanup | Prevent teardown navigation from masking the scheduled Minutes outcome | 2026-11-13 |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
