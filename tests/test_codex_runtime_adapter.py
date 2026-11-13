@@ -1,6 +1,7 @@
 import json
 import os
 from pathlib import Path
+from unittest.mock import patch
 
 import pytest
 
@@ -73,11 +74,14 @@ def test_native_child_keeps_proxy_configured_by_service_startup(adapter, config,
         service_supervisor, "_macos_proxy_settings",
         lambda: ({"http": "http://system:7897", "https": "http://system:7897"}, ("*.local",)),
     )
-    for key in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy",
-                "NO_PROXY", "ALL_PROXY", "all_proxy", "CEO_SYSTEM_PROXY_CONFIGURED"):
-        monkeypatch.delenv(key, raising=False)
-    service_supervisor.configure_system_proxy()
-    env = adapter.build_env(route(config, route_name))
+    # The startup helper edits os.environ directly, including previously absent
+    # keys. Keep the entire environment local to this test.
+    with patch.dict(os.environ):
+        for key in ("http_proxy", "HTTP_PROXY", "https_proxy", "HTTPS_PROXY", "no_proxy",
+                    "NO_PROXY", "ALL_PROXY", "all_proxy", "CEO_SYSTEM_PROXY_CONFIGURED"):
+            os.environ.pop(key, None)
+        service_supervisor.configure_system_proxy()
+        env = adapter.build_env(route(config, route_name))
 
     assert env["http_proxy"] == env["https_proxy"] == "http://system:7897"
     assert env["NO_PROXY"] == "localhost,127.0.0.1,::1,.local"
