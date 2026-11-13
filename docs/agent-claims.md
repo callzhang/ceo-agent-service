@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-ceo-minutes-native-asr-receipts | ASR receipt reader/coordinator and recovery instructions; Workbench native MCP call declaration and Codex adapter wiring; focused tests and runtime documentation | Approved production repair: read the actual ASR job through native MCP, consume its full structured receipt, keep exact source/job and publication checks | 2026-11-14 |
+
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
