@@ -208,12 +208,16 @@ def test_dingtalk_adapter_scopes_ids_and_messages():
     assert adapter.read_recent_group_messages(group, limit=30)[0].text_excerpt == "销售招聘进展"
 
 
+@pytest.mark.parametrize("code,message", [
+    ("1001", "该群为保密群，无法获取消息记录"),
+    ("SAFE_GROUP_BLOCKED", "Group history unavailable"),
+])
 @pytest.mark.parametrize("retryable", [False, True])
-def test_dingtalk_message_read_preserves_non_retryable_confidential_denial(retryable):
+def test_dingtalk_message_read_preserves_non_retryable_confidential_denial(code, message, retryable):
     error = DwsError(
         "confidential group read refused",
-        code="1001",
-        business_message="该群为保密群，无法获取消息记录",
+        code=code,
+        business_message=message,
         retryable_external_dependency=retryable,
         server_key="chat",
     )
@@ -231,7 +235,7 @@ def test_dingtalk_message_read_preserves_non_retryable_confidential_denial(retry
 
     if not retryable:
         assert caught.value.group == group
-        assert caught.value.code == "1001"
+        assert caught.value.code == code
         assert caught.value.reason == error.business_message
         assert caught.value.__cause__ is error
 

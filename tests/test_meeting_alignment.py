@@ -2764,8 +2764,9 @@ def test_meeting_group_discovery_failure_does_not_become_direct_fallback(tmp_pat
     assert dws.send_calls == []
 
 
+@pytest.mark.parametrize("code", ["1001", "SAFE_GROUP_BLOCKED"])
 @pytest.mark.parametrize("prior_attempts", [0, 411])
-def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path, prior_attempts):
+def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path, prior_attempts, code):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     dws.search_conversations = lambda query: [DingTalkConversation(
@@ -2776,7 +2777,7 @@ def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path,
     def fail_read(conversation, limit=50):
         raise DwsError(
             f"group={conversation.open_conversation_id} read refused",
-            code="1001",
+            code=code,
             business_message="该群为保密群，无法获取消息记录",
             server_key="chat",
         )
@@ -2799,7 +2800,7 @@ def test_confidential_group_read_denial_reaches_agent_without_fallback(tmp_path,
     assert json.loads(job.error)["kind"] == "meeting_agent"
     assert runner.prompts, job.error
     assert '"history_read_status":"denied"' in runner.prompts[0]
-    assert '"history_read_code":"1001"' in runner.prompts[0]
+    assert f'"history_read_code":"{code}"' in runner.prompts[0]
     assert "该群为保密群，无法获取消息记录" in runner.prompts[0]
     assert "live full relevant discussion" in runner.prompts[0]
     assert job.locked_at is None

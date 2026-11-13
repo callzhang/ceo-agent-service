@@ -19,9 +19,14 @@ from app.dws_client import DwsError
 def is_non_retryable_dingtalk_group_read_denial(error: Exception) -> bool:
     return (
         isinstance(error, DwsError)
-        and error.code == "1001"
-        and error.business_message.strip() == "该群为保密群，无法获取消息记录"
         and not error.retryable_external_dependency
+        and (
+            error.code == "SAFE_GROUP_BLOCKED"
+            or (
+                error.code == "1001"
+                and error.business_message.strip() == "该群为保密群，无法获取消息记录"
+            )
+        )
     )
 
 
