@@ -352,8 +352,10 @@ def signed_in_console(profile_dir: Path | None = None):
             # Session restoration must retain cookies, not reload old minute
             # URLs or grow a saved tab list on every scheduled invocation.
             try:
-                for open_page in context.pages:
-                    open_page.goto("about:blank", wait_until="domcontentloaded")
+                previous_pages = tuple(context.pages)
+                context.new_page()
+                for open_page in previous_pages:
+                    open_page.close()
             finally:
                 context.close()
 

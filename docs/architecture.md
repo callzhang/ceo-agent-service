@@ -287,7 +287,7 @@ scheduled trigger、scheduled execution、普通 reply、meeting、work summary�
 
 启动时以稳定 migration key 幂等创建默认任务，清单以 `app/agent_cron/seeds.py::seed_scheduled_tasks`
 为准（当前 14 项）。
-听记权限命令的登录页加载失败、组织选择或控制台跳转超时都会前置打开用户可见的 Chrome；组织选择和控制台跳转各限 10 秒，原运行保持失败，直至后续运行读回实际状态。
+听记权限命令的登录页加载失败、组织选择或控制台跳转超时都会前置打开用户可见的 Chrome；组织选择和控制台跳转各限 10 秒，原运行保持失败，直至后续运行读回实际状态。 关闭专用浏览器时先新建空白页，再关闭旧页；退出不在仍导航的页面上发起另一轮导航。
 `scan-meetings-once` 服务命令只发现符合条件的已结束会议，并报告新建的会议任务数。
 默认定义保留服务命令与普通 Agent 两种执行形式；以稳定 migration key 原地升级默认配置，
 保留名称、Cron、时区和用户修改。已删除的旧任务不动，服务命令通过 Console API 不可修改。新安装创建的全部

@@ -115,7 +115,7 @@ def test_copied_session_cookies_are_restored_after_native_profile_initialization
     page.url = browser.HISTORY_URL
     context = Mock()
     context.pages = [page]
-    context.new_page.side_effect = lambda: events.append('navigate') or page
+    context.new_page.side_effect = lambda: events.append('new page') or page
     context.close.side_effect = lambda: events.append('close')
     warmup = Mock()
     warmup.close.side_effect = lambda: events.append('initialized')
@@ -134,10 +134,10 @@ def test_copied_session_cookies_are_restored_after_native_profile_initialization
     with browser.signed_in_console(tmp_path) as console:
         assert console is not None
     if initialized:
-        assert events == [{'args': ['--restore-last-session']}, 'navigate', 'close']
+        assert events == [{'args': ['--restore-last-session']}, 'new page', 'new page', 'close']
         warmup.close.assert_not_called()
     else:
-        assert events == [{}, 'initialized', {'args': ['--restore-last-session']}, 'navigate', 'close']
+        assert events == [{}, 'initialized', {'args': ['--restore-last-session']}, 'new page', 'new page', 'close']
         warmup.new_page.assert_not_called()
 
 
@@ -181,3 +181,37 @@ def test_repeated_restores_save_only_blank_tabs(monkeypatch, tmp_path):
             console._page.goto(browser.TRANSCRIBE_URL.format(task_uuid='current'))
         assert saved == ['about:blank']
     assert starts[1:] == [('about:blank',), ('about:blank',)]
+
+
+def test_minutes_shutdown_does_not_navigate_a_page_that_is_already_navigating(
+    monkeypatch, tmp_path,
+):
+    from playwright.sync_api import Error
+
+    preferences = tmp_path / 'Default' / 'Preferences'
+    preferences.parent.mkdir()
+    preferences.write_text('{}')
+    page, blank = Mock(), Mock()
+    page.url = browser.HISTORY_URL
+    blank.url = 'about:blank'
+    page.goto.side_effect = [None, Error('Navigation interrupted by chrome-error://chromewebdata/')]
+    context = Mock()
+    context.pages = []
+
+    def new_page():
+        tab = (page, blank)[len(context.new_page.call_args_list) - 1]
+        context.pages.append(tab)
+        return tab
+
+    context.new_page.side_effect = new_page
+    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: nullcontext(object()))
+    monkeypatch.setattr(service_browser, 'launch_service_chrome', lambda *args, **kwargs: context)
+
+    with browser.signed_in_console(tmp_path):
+        pass
+
+    page.goto.assert_called_once()
+    page.close.assert_called_once()
+    blank.goto.assert_not_called()
+    blank.close.assert_not_called()
+    context.close.assert_called_once()
