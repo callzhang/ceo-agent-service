@@ -2505,7 +2505,8 @@ class DwsClient:
         provider_error = exc.provider_error
         if (
             provider_error.get("reason") == "business_error"
-            and exc.business_message.strip().casefold() == "event not exist."
+            and exc.business_message.strip().casefold().rstrip(".!")
+            == "event not exist"
         ):
             return True
         return (
