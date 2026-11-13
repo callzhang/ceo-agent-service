@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-13 — Claude 连接被重置归为传输失败
+
+- Claude CLI 重试耗尽后只留下 `API Error: Connection dropped (ECONNRESET)`，旧分类器不认这两个标记，记为 `claude_runtime_unclassified`（错误 #16373）。现在归为 `claude_transport_failed`（传输类，允许换路由）。新增回归用例。
+
 ## 2026-11-05 — 补充信息提交冲突后刷新 Attempt
 
 - 「提交补充信息」遇到服务端 `409`（提交版本已失效或当前状态不再允许）时，现在会重新读取 Attempt 并显示明确提示；不再把失败看成按钮无反应，也避免继续停留在过期的决策表单。提交成功但随后刷新失败时，会明确提示“已提交、但未能刷新”，不误报为提交失败。

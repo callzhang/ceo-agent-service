@@ -567,6 +567,12 @@ def test_caller_parser_failure_is_typed_and_failover_closed(adapter, normalizer)
             True,
         ),
         (
+            "API Error: Connection dropped (ECONNRESET)",
+            RuntimeFailureClass.TRANSPORT,
+            "claude_transport_failed",
+            True,
+        ),
+        (
             "session not found for resume",
             RuntimeFailureClass.SESSION,
             "claude_session_invalid",
