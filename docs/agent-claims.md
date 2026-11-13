@@ -80,7 +80,6 @@ reverts committed work they did not author.
 | --- | --- | --- | --- |
 
 
-| codex-imap-system-proxy-20261113 | app/email_imap_transport.py; tests/test_email_imap_readonly.py transport tests; docs/runtime-mechanism.md IMAP transport | Implement approved system HTTP CONNECT for shared IMAP transport and verify production | 2026-11-13 |
 
 ## Recent overlaps worth knowing
 

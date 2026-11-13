@@ -2345,3 +2345,94 @@ def test_imap_connect_login_exception_keeps_its_own_message(monkeypatch) -> None
         )
 
     assert "too many simultaneous connections" in str(excinfo.value)
+
+
+@pytest.mark.parametrize("scenario", ["tunnel", "bypass", "reject_certificate", "proxy_denied"])
+def test_imap_system_proxy_connect_preserves_tls_and_bypass(
+    scenario, tmp_path, monkeypatch,
+):
+    import ssl
+    from cryptography import x509
+    from cryptography.hazmat.primitives import hashes, serialization
+    from cryptography.hazmat.primitives.asymmetric import rsa
+    from cryptography.x509.oid import NameOID
+    from app.email_imap_transport import DeadlineIMAP4SSL
+
+    key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+    subject = x509.Name([x509.NameAttribute(NameOID.COMMON_NAME, "imap.example.test")])
+    now = datetime.now(timezone.utc)
+    cert = (
+        x509.CertificateBuilder().subject_name(subject).issuer_name(subject)
+        .public_key(key.public_key()).serial_number(x509.random_serial_number())
+        .not_valid_before(now - timedelta(minutes=1))
+        .not_valid_after(now + timedelta(days=1))
+        .add_extension(x509.SubjectAlternativeName([
+            x509.DNSName("imap.example.test"), x509.DNSName("localhost"),
+        ]), critical=False)
+        .sign(key, hashes.SHA256())
+    )
+    cert_path, key_path = tmp_path / "cert.pem", tmp_path / "key.pem"
+    cert_path.write_bytes(cert.public_bytes(serialization.Encoding.PEM))
+    key_path.write_bytes(key.private_bytes(
+        serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+        serialization.NoEncryption(),
+    ))
+    tls_server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    tls_server.load_cert_chain(cert_path, key_path)
+    target = "localhost" if scenario == "bypass" else "imap.example.test"
+    requests, errors = [], []
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen(1)
+        listener.settimeout(3)
+        port = listener.getsockname()[1]
+
+        def serve():
+            try:
+                sock, _ = listener.accept()
+                with sock:
+                    sock.settimeout(2)
+                    if scenario != "bypass":
+                        with sock.makefile("rb") as request:
+                            requests.append(request.readline())
+                            while request.readline() not in (b"\r\n", b""):
+                                pass
+                        if scenario == "proxy_denied":
+                            sock.sendall(b"HTTP/1.1 403 Forbidden\r\n\r\n")
+                            return
+                        sock.sendall(b"HTTP/1.1 200 Connection established\r\n\r\n")
+                    with tls_server.wrap_socket(sock, server_side=True) as session:
+                        session.sendall(b"* OK IMAP ready\r\n")
+                        with session.makefile("rb") as stream:
+                            tag = stream.readline().split()[0]
+                            session.sendall(b"* CAPABILITY IMAP4rev1\r\n" + tag + b" OK done\r\n")
+            except ssl.SSLError as error:
+                if scenario != "reject_certificate":
+                    errors.append(error)
+            except Exception as error:
+                errors.append(error)
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        monkeypatch.setenv("CEO_SYSTEM_PROXY_CONFIGURED", "1")
+        monkeypatch.setenv("https_proxy", f"http://127.0.0.1:{port}")
+        monkeypatch.setenv("no_proxy", "localhost,127.0.0.0/8")
+        if scenario != "reject_certificate":
+            monkeypatch.setenv("SSL_CERT_FILE", str(cert_path))
+
+        options = {"timeout": 2, "command_timeout": 2}
+        if scenario == "reject_certificate":
+            with pytest.raises(ssl.SSLCertVerificationError):
+                DeadlineIMAP4SSL(target, 993, **options)
+        elif scenario == "proxy_denied":
+            with pytest.raises(OSError, match="403"):
+                DeadlineIMAP4SSL(target, 993, **options)
+        else:
+            session = DeadlineIMAP4SSL(target, port if scenario == "bypass" else 993, **options)
+            session.shutdown()
+        thread.join(timeout=3)
+
+    assert not thread.is_alive()
+    assert not errors
+    if scenario != "bypass":
+        assert requests == [b"CONNECT imap.example.test:993 HTTP/1.1\r\n"]

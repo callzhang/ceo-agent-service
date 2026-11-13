@@ -3,13 +3,20 @@
 from __future__ import annotations
 
 from contextlib import contextmanager
+from http.client import HTTPConnection
 import imaplib
+from ipaddress import ip_address, ip_network
+import os
 import select
 import socket
 import ssl
 import threading
 import time
 from typing import Any
+from urllib.parse import urlsplit
+from urllib.request import getproxies_environment, proxy_bypass_environment
+
+from app.service_supervisor import SYSTEM_PROXY_CONFIGURED_ENV
 
 IMAP_READ_TIMEOUT_SECONDS = 90.0
 IMAP_COMMAND_TIMEOUT_SECONDS = 90.0
@@ -321,8 +328,69 @@ class _CommandDeadlineMixin:
                 self._finish_command()
 
 
+def _bypass_imap_proxy(host: str, port: int, proxies: dict[str, str]) -> bool:
+    if proxy_bypass_environment(host, proxies) or proxy_bypass_environment(f"{host}:{port}", proxies):
+        return True
+    try:
+        address = ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    for entry in proxies.get("no", "").split(","):
+        if "/" in entry:
+            try:
+                if address in ip_network(entry.strip(), strict=False):
+                    return True
+            except ValueError:
+                continue
+    return False
+
+
 class DeadlineIMAP4SSL(_CommandDeadlineMixin, imaplib.IMAP4_SSL):
     """TLS IMAP session with both idle-read and total-command deadlines."""
+
+    def __init__(self, *args: Any, ssl_context=None, **kwargs: Any) -> None:
+        if ssl_context is None:
+            ssl_context = ssl.create_default_context()
+        super().__init__(*args, ssl_context=ssl_context, **kwargs)
+
+    def _create_socket(self, timeout):
+        if os.environ.get(SYSTEM_PROXY_CONFIGURED_ENV) != "1":
+            return super()._create_socket(timeout)
+        proxies = getproxies_environment()
+        proxy = proxies.get("https")
+        if not proxy or _bypass_imap_proxy(self.host, self.port, proxies):
+            return super()._create_socket(timeout)
+        endpoint = urlsplit(proxy)
+        if (endpoint.scheme != "http" or not endpoint.hostname
+                or endpoint.username is not None or endpoint.password is not None
+                or endpoint.path not in ("", "/") or endpoint.query or endpoint.fragment):
+            raise ValueError("system IMAP proxy must be an HTTP CONNECT endpoint without credentials")
+
+        remaining = self._command_deadline - time.monotonic()
+        if remaining <= 0:
+            raise TimeoutError("IMAP connection exceeded its total deadline")
+        connect_timeout = min(timeout, remaining) if timeout is not None else remaining
+        connection = HTTPConnection(endpoint.hostname, endpoint.port, timeout=connect_timeout)
+        connection.set_tunnel(self.host, self.port)
+        raw_socket = socket.create_connection((connection.host, connection.port), connect_timeout)
+        # Attach the socket before CONNECT and TLS so the existing deadline can
+        # interrupt a stalled proxy or handshake as well as an IMAP command.
+        self.sock = connection.sock = raw_socket
+        try:
+            if self._command_deadline_expired():
+                raise TimeoutError("IMAP connection exceeded its total deadline")
+            connection._tunnel()
+            self.sock = self.ssl_context.wrap_socket(
+                raw_socket, server_hostname=self.host, do_handshake_on_connect=False,
+            )
+            if self._command_deadline_expired():
+                raise TimeoutError("IMAP connection exceeded its total deadline")
+            self.sock.do_handshake()
+            self.sock.settimeout(timeout)
+        except BaseException:
+            self.sock.close()
+            raise
+        return self.sock
 
 
 class _DeadlineIMAP4(_CommandDeadlineMixin, imaplib.IMAP4):
