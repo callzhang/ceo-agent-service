@@ -483,6 +483,7 @@ class ClaudeRuntimeAdapter:
             marker in failure_text
             for marker in (
                 "connection reset",
+                "econnreset",
                 "connection refused",
                 "network error",
                 "stream disconnected",
