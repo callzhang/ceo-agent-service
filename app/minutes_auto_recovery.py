@@ -19,7 +19,9 @@ import httpx
 
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.minutes_archive_recovery import recover_archive
-from app.minutes_recovery_agent import build_recovery_prompt, completed_asr_receipt
+from app.minutes_recovery_agent import (
+    InvalidAsrReceipt, build_recovery_prompt, completed_asr_receipt,
+)
 from app.minutes_sync import MINUTES_SYNC_SCANNER, MinutesSyncResult, _minutes_sync_lock
 from app.workbench.store import WorkbenchStore
 from app.store import AutoReplyStore
@@ -222,6 +224,7 @@ def _ensure_turn(
             recovery["task_id"],
             user_text=build_recovery_prompt(directory, service_root),
             client_request_id=f"minutes-asr:{task_uuid}:{recovery['attempt']}",
+            direct_mcp_namespaces=("mcp__ai_services",),
         )
         recovery["turn_id"] = turn.id
         recovery.setdefault("turn_ids", []).append(turn.id)
@@ -325,14 +328,19 @@ def _recover_summaries(
                     previous is not None
                     and previous.status == "completed"
                     and previous.final_text.strip()
-                    and completed_asr_receipt(
-                        wb, previous.id, existing.get("upload_job_ids", [])
-                    )
-                    is not None
                 ):
-                    _finish(store, wb, dws, archive_dir, existing)
-                    recovered.add(task_uuid)
-                    continue
+                    try:
+                        receipt = completed_asr_receipt(
+                            wb, previous.id, existing.get("upload_job_ids", [])
+                        )
+                    except InvalidAsrReceipt:
+                        if not existing.get("retry_needed"):
+                            raise
+                    else:
+                        if receipt is not None:
+                            _finish(store, wb, dws, archive_dir, existing)
+                            recovered.add(task_uuid)
+                            continue
             recovery = _ensure_turn(store, wb, dws, task_uuid, service_root, temp_root)
             while True:
                 turn = wb.get_turn(recovery["turn_id"])

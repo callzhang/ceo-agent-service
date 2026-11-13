@@ -88,6 +88,49 @@ def test_workbench_uses_shared_service_execution_and_projects_events(tmp_path: P
     ]
 
 
+def test_internal_turn_requests_native_mcp_transport(tmp_path: Path):
+    from app.workbench.store import WorkbenchStore
+
+    store = WorkbenchStore(tmp_path / "workbench.sqlite3")
+    task = store.create_task(title="Read ASR", runtime_kind="codex")
+    turn = store.create_turn(
+        task.id, user_text="Read the original ASR receipt",
+        client_request_id="native-receipt", direct_mcp_namespaces=("mcp__ai_services",),
+    )
+    ordinary = store.create_task(title="Ordinary turn", runtime_kind="codex")
+    default_turn = store.create_turn(
+        ordinary.id, user_text="Check status", client_request_id="ordinary-turn",
+    )
+    store = WorkbenchStore(store.path)
+    assert store.get_turn_direct_mcp_namespaces(default_turn.id) == ()
+    routed = _FakeRoutedExecution()
+    runtime = ServiceWorkbenchRuntime(
+        workspace=tmp_path,
+        routed_execution_factory=lambda **_kwargs: routed,
+    )
+    request = RuntimeRequest(
+        turn_id=turn.id, conversation_id=task.id, workspace=tmp_path,
+        prompt=turn.user_text,
+        direct_mcp_namespaces=store.get_turn_direct_mcp_namespaces(turn.id),
+    )
+    assert runtime.wait(runtime.start(request, on_event=lambda _: None)).status == "completed"
+    factory = routed.calls[0]["command_factory"]
+
+    class Adapter:
+        def build_command(self, **kwargs):
+            self.options = kwargs
+            return ["codex", "exec", "-"]
+
+        def build_env(self, route):
+            return {}
+
+    adapter = Adapter()
+    factory.build(adapter=adapter, route=None, prompt=request.prompt, session_id=None)
+    assert adapter.options["direct_mcp_namespaces"] == ("mcp__ai_services",)
+    assert adapter.options["approval_policy"] == "on-failure"
+    assert not adapter.options["use_approval_bypass"]
+
+
 def test_ui_event_projection_cannot_abort_shared_service_execution(tmp_path: Path):
     class ProjectionBreakingExecution(_FakeRoutedExecution):
         def execute(self, **kwargs):

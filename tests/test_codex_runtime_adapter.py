@@ -299,6 +299,22 @@ def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_pa
 
 
 @pytest.mark.parametrize("session_id", [None, "session-1"])
+def test_native_mcp_transport_is_scoped_to_the_requested_namespace(adapter, config, session_id):
+    options = dict(
+        route=route(config, "codex_oauth"), prompt="ASR", session_id=session_id,
+        image_paths=None, output_schema_path=None, use_output_schema=False,
+        approval_policy="on-failure", developer_instructions="Read the receipt.",
+        use_approval_bypass=False,
+    )
+    normal = adapter.build_command(**options)
+    direct = adapter.build_command(**options, direct_mcp_namespaces=("mcp__ai_services",))
+    i = direct.index('features.code_mode.direct_only_tool_namespaces=["mcp__ai_services"]')
+    assert direct[i - 1] == "-c"
+    assert direct[:i - 1] + direct[i + 1:] == normal
+    assert direct[-(2 if session_id else 1):] == ([session_id, "-"] if session_id else ["-"])
+
+
+@pytest.mark.parametrize("session_id", [None, "session-1"])
 @pytest.mark.parametrize("role_name", ["consumer", "audit"])
 def test_role_command_keeps_native_apps_and_existing_approval_boundary(
     adapter, config, tmp_path, monkeypatch, session_id, role_name,

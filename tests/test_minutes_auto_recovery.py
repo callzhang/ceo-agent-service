@@ -56,6 +56,7 @@ class Workbench:
             error_code="test failure",
         )
         self.turns.append(turn)
+        turn.direct_mcp_namespaces = kw.get("direct_mcp_namespaces", ())
         self.recorded = False
         return turn
 
@@ -349,6 +350,32 @@ def test_agent_completed_without_asr_can_resume_in_new_native_turn(
         temp_root=tmp_path,
     )
     assert second.failed == 0 and len(wb.turns) == 2
+
+
+def test_invalid_asr_receipt_allows_next_bounded_turn(tmp_path, monkeypatch):
+    from app import minutes_auto_recovery as auto
+    from app.minutes_recovery_agent import InvalidAsrReceipt
+
+    store, archive, path, result = setup(tmp_path)
+    wb = Workbench()
+    monkeypatch.setattr(auto, "prepare_audio", prepare)
+
+    def receipt(*args):
+        if len(wb.turns) == 1:
+            raise InvalidAsrReceipt("native ASR result is invalid JSON")
+        return asr()
+
+    monkeypatch.setattr(auto, "completed_asr_receipt", receipt)
+    options = dict(
+        archive_dir=archive, service_root=tmp_path, result=result,
+        workbench=wb, temp_root=tmp_path,
+    )
+    assert auto.recover_summaries(store, object(), **options).failed == 1
+    assert "Supplementary summary" not in path.read_text()
+    assert auto.recover_summaries(store, object(), **options).failed == 0
+    assert len(wb.turns) == 2
+    assert wb.turns[-1].direct_mcp_namespaces == ("mcp__ai_services",)
+    assert "Supplementary summary" in path.read_text()
 
 
 def test_recovery_budget_is_persisted_and_expired_audio_is_cleaned(

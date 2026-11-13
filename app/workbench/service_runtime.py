@@ -196,6 +196,7 @@ class ServiceWorkbenchRuntime:
                     image_paths=owner.request.image_paths,
                     output_schema_path=contract.schema_path if contract else None,
                     use_output_schema=contract is not None,
+                    direct_mcp_namespaces=owner.request.direct_mcp_namespaces,
                 ),
                 parser=parse_result,
                 result_codec=(RoutedResultCodec.internal_text(schema_id=contract.identity)

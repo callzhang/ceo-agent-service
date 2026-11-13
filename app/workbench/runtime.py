@@ -133,6 +133,7 @@ class RuntimeRequest:
     attachment_paths: tuple[Path, ...] = ()
     image_paths: tuple[Path, ...] = ()
     result_contract: str = ""
+    direct_mcp_namespaces: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(self, "workspace", Path(self.workspace))

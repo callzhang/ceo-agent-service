@@ -6,6 +6,10 @@ from pathlib import Path
 from typing import Any
 
 
+class InvalidAsrReceipt(ValueError):
+    """The native turn did not preserve a verifiable ASR result."""
+
+
 def build_recovery_prompt(work_dir: Path, service_root: Path) -> str:
     work = shlex.quote(str(work_dir))
     root = shlex.quote(str(service_root))
@@ -52,22 +56,22 @@ def _completed_asr_results(
             continue
         arguments = payload.get("arguments")
         if not isinstance(arguments, dict):
-            raise ValueError("native ASR call arguments unavailable")
+            raise InvalidAsrReceipt("native ASR call arguments unavailable")
         job_id = arguments.get("job_id")
         if not isinstance(job_id, str) or not job_id.strip():
-            raise ValueError("native ASR job identity unavailable")
+            raise InvalidAsrReceipt("native ASR job identity unavailable")
         if expected_job_id is not None and job_id != expected_job_id:
             continue
         result = payload.get("result")
         if isinstance(result, str):
             result = {"content": [{"type": "text", "text": result}]}
         if not isinstance(result, dict):
-            raise ValueError("native ASR result unavailable")
+            raise InvalidAsrReceipt("native ASR result unavailable")
         if "Ok" in result:
             result = result["Ok"]
-        if not isinstance(result, dict) or result.get("isError"):
-            raise ValueError("native ASR call failed")
-        data = result.get("structuredContent")
+        if not isinstance(result, dict) or result.get("isError") or result.get("is_error"):
+            raise InvalidAsrReceipt("native ASR call failed")
+        data = result.get("structured_content", result.get("structuredContent"))
         if data is None:
             content = result.get("content")
             if (
@@ -76,13 +80,13 @@ def _completed_asr_results(
                 or not isinstance(content[0], dict)
                 or content[0].get("type") != "text"
             ):
-                raise ValueError("native ASR result shape is unknown")
+                raise InvalidAsrReceipt("native ASR result shape is unknown")
             try:
                 data = json.loads(content[0]["text"])
             except (KeyError, TypeError, json.JSONDecodeError) as exc:
-                raise ValueError("native ASR result is invalid JSON") from exc
+                raise InvalidAsrReceipt("native ASR result is invalid JSON") from exc
         if not isinstance(data, dict):
-            raise ValueError("native ASR result shape is unknown")
+            raise InvalidAsrReceipt("native ASR result shape is unknown")
         if data.get("status") == "running":
             continue
         if (
@@ -92,7 +96,7 @@ def _completed_asr_results(
             or not isinstance(data.get("segments"), list)
             or not data["segments"]
         ):
-            raise ValueError("native ASR result is incomplete")
+            raise InvalidAsrReceipt("native ASR result is incomplete")
         yield job_id, data
 
 

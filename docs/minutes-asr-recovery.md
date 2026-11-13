@@ -14,6 +14,8 @@ duration to the original DWS download. The work directory contains
    summary from it. The service rechecks its original native tool receipt.
 2. Otherwise, if `upload-result.json` exists, call the configured native
    `ai_services.get_audio_transcription` MCP tool with that exact `job_id`.
+   Call it directly as a native MCP tool; do not wrap it in code execution
+   or print/serialize the full tool response through another tool.
    Poll that same job until done; do not upload again while it is running.
    Only an explicit expired/missing-job response permits replacement.
 3. For a new job call native `ai_services.create_audio_upload` (language can be
@@ -69,6 +71,11 @@ not an exactly-once upload guarantee. No business operation is replayed.
 An archive I/O interruption resumes the same completed native turn and its exact summary; it does not spend a new Agent attempt or generate a different supplement. Only an invalid/missing Agent result requires a new turn.
 
 ASR receipts are read directly from the completed turn's native runtime references with the existing unified trajectory reader. UI tool-event rows are not required; a zero-length superseded route does not hide the following valid native result.
+
+The recovery turn requests direct native transport for the AI Services namespace.
+The archive reader prefers the native structured result to its display text.
+A text-only response that was truncated is invalid evidence; it never publishes
+an archive and the next sync can use the existing bounded recovery budget.
 
 ## Durable completion after interruption
 

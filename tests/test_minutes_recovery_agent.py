@@ -53,6 +53,31 @@ def test_completed_native_receipt_returns_asr(result, monkeypatch):
     assert read_completed_asr(None, "turn-1", "job-1") == ASR
 
 
+def test_long_native_structured_receipt_does_not_parse_display_preview(monkeypatch):
+    segments = [
+        {"text": f"Segment {n}. " * 30, "start": n, "end": n + 1}
+        for n in range(644)
+    ]
+    full = {"status": "done", "text": "\n".join(s["text"] for s in segments),
+            "segments": segments}
+    preview = {"type": "text", "text": '{"text":"…285953 chars truncated'}
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events",
+        lambda *_: [event({"structured_content": full, "content": [preview]})],
+    )
+    assert read_completed_asr(None, "turn-1", "job-1") == full
+    assert read_completed_asr(None, "turn-1", "wrong-job") is None
+
+
+def test_truncated_preview_without_structured_receipt_is_rejected(monkeypatch):
+    monkeypatch.setattr(
+        "app.minutes_recovery_agent._native_events",
+        lambda *_: [event({"content": [{"type": "text", "text": '{"text":"… truncated'}]})],
+    )
+    with pytest.raises(ValueError, match="invalid JSON"):
+        read_completed_asr(None, "turn-1", "job-1")
+
+
 @pytest.mark.parametrize(
     "events",
     [

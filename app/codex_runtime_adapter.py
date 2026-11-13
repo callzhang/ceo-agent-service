@@ -91,6 +91,7 @@ def _insert_service_mcp_options(
     *,
     session_id: str | None,
     tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
+    direct_mcp_namespaces: tuple[str, ...] = (),
 ) -> None:
     """Every routed Codex invocation carries the service MCP manifest.
 
@@ -104,6 +105,11 @@ def _insert_service_mcp_options(
     command[prompt_index:prompt_index] = service_mcp_config_options(
         tool_approval_modes_by_server=tool_approval_modes_by_server
     )
+    if direct_mcp_namespaces:
+        command[prompt_index:prompt_index] = [
+            "-c", "features.code_mode.direct_only_tool_namespaces="
+            + json.dumps(direct_mcp_namespaces),
+        ]
 
 
 class CodexRuntimeAdapter:
@@ -136,6 +142,7 @@ class CodexRuntimeAdapter:
         inlined_skill_names: tuple[str, ...] = (),
         project_doc_max_bytes: int | None = None,
         tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
+        direct_mcp_namespaces: tuple[str, ...] = (),
     ) -> list[str]:
         configured_route = self._configured_route(route)
         command = self.runner.build_command(
@@ -174,6 +181,7 @@ class CodexRuntimeAdapter:
             command,
             session_id=session_id,
             tool_approval_modes_by_server=tool_approval_modes_by_server,
+            direct_mcp_namespaces=direct_mcp_namespaces,
         )
         return command
 

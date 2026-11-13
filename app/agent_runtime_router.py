@@ -187,6 +187,7 @@ class CodexCommandFactory:
     project_doc_max_bytes: int | None = None
     tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None
     model_only: bool = False
+    direct_mcp_namespaces: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if not self.developer_instructions.strip():
@@ -205,6 +206,7 @@ class CodexCommandFactory:
         project_doc_max_bytes: int | None = None,
         tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
         model_only: bool = False,
+        direct_mcp_namespaces: tuple[str, ...] = (),
     ) -> "CodexCommandFactory":
         return cls(
             developer_instructions=developer_instructions,
@@ -216,6 +218,7 @@ class CodexCommandFactory:
             project_doc_max_bytes=project_doc_max_bytes,
             tool_approval_modes_by_server=tool_approval_modes_by_server,
             model_only=model_only,
+            direct_mcp_namespaces=direct_mcp_namespaces,
         )
 
     def build(
@@ -245,6 +248,8 @@ class CodexCommandFactory:
             build_options["project_doc_max_bytes"] = self.project_doc_max_bytes
         if self.tool_approval_modes_by_server:
             build_options["tool_approval_modes_by_server"] = self.tool_approval_modes_by_server
+        if self.direct_mcp_namespaces:
+            build_options["direct_mcp_namespaces"] = self.direct_mcp_namespaces
         if skip_git_repo_check:
             build_options["skip_git_repo_check"] = True
         if self.inlined_skill_names:

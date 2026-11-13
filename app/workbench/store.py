@@ -388,6 +388,7 @@ class WorkbenchStore(AutoReplyStore):
         user_text: str,
         client_request_id: str,
         result_contract: str = "",
+        direct_mcp_namespaces: tuple[str, ...] = (),
     ) -> WorkbenchTurn:
         get_result_contract(result_contract)
         user_text = user_text.strip()
@@ -407,6 +408,7 @@ class WorkbenchStore(AutoReplyStore):
                     existing["task_id"] != task_id
                     or existing["user_text"] != user_text
                     or self._turn_result_contract(db, existing["id"]) != result_contract
+                    or self._turn_direct_mcp_namespaces(db, existing["id"]) != direct_mcp_namespaces
                 ):
                     raise WorkbenchConflictError(
                         "client_request_conflict",
@@ -450,6 +452,11 @@ class WorkbenchStore(AutoReplyStore):
                 insert_state(db, 'service_state', {
                     'key': f'workbench_result_contract:{turn_id}', 'value': result_contract,
                 })
+            if direct_mcp_namespaces:
+                insert_state(db, 'service_state', {
+                    'key': f'workbench_direct_mcp_namespaces:{turn_id}',
+                    'value': json.dumps(direct_mcp_namespaces),
+                })
             if task_sequence == 1 and task["title"] == _DEFAULT_WORKBENCH_TASK_TITLE:
                 db.execute(
                     "update workbench_tasks set title=?,updated_at=current_timestamp where id=? and title=?",
@@ -475,6 +482,18 @@ class WorkbenchStore(AutoReplyStore):
         turn_id = str(self._native_task_id(turn_id))
         with self._connect() as db:
             return self._turn_result_contract(db, turn_id)
+
+    @staticmethod
+    def _turn_direct_mcp_namespaces(db, turn_id) -> tuple[str, ...]:
+        row = db.execute(
+            f"select value from ({state_projection('service_state')}) where key=?",
+            (f'workbench_direct_mcp_namespaces:{turn_id}',),
+        ).fetchone()
+        return tuple(json.loads(row['value'])) if row is not None else ()
+
+    def get_turn_direct_mcp_namespaces(self, turn_id: str) -> tuple[str, ...]:
+        with self._connect() as db:
+            return self._turn_direct_mcp_namespaces(db, self._native_task_id(turn_id))
 
     def get_turn(self, turn_id: str) -> WorkbenchTurn | None:
         turn_id = str(self._native_task_id(turn_id))
