@@ -476,6 +476,7 @@ def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) ->
     result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记")
 
     assert result.synced == 1 and result.discovered == 1
+    assert "temporary page failure" in result.listing_error
     state = store.get_daily_scan_state(MINUTES_SYNC_SCANNER) or {}
     assert state["last_success_at"] == ""
     assert "temporary page failure" in state["last_error"]

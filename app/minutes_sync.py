@@ -84,6 +84,7 @@ class MinutesSyncResult:
     #: failure, which is exactly what made the first version of this unclear.
     skips: tuple[tuple[str, str], ...] = ()
     summary_recovery_ids: tuple[str, ...] = ()
+    listing_error: str = ""
 
     def __post_init__(self) -> None:
         accounted = (
@@ -104,6 +105,7 @@ class MinutesSyncResult:
             f"permission_pending={self.permission_pending} failed={self.failed}"
             + _detail("failures", self.failures)
             + _detail("skips", self.skips)
+            + (f" listing_error={self.listing_error}" if self.listing_error else "")
         )
 
 
@@ -744,6 +746,7 @@ def _sync_minutes_once(
         failures=tuple(failures),
         skips=tuple(skips),
         summary_recovery_ids=tuple(summary_recovery_ids),
+        listing_error=pagination_error,
     )
 
 

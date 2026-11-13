@@ -4980,6 +4980,23 @@ def test_sync_minutes_once_command_fails_when_sync_has_failed_items(
     )
 
 
+def test_sync_minutes_once_command_fails_when_listing_is_incomplete(tmp_path, monkeypatch):
+    from app.dws_client import DwsError
+
+    class UnavailableListing:
+        def list_minutes_page(self, **_kwargs):
+            raise DwsError("NETWORK_ERROR", "NETWORK_ERROR")
+
+    minutes_sync = import_module("app.minutes_sync")
+    monkeypatch.setattr(cli, "DwsClient", lambda **_kwargs: UnavailableListing())
+    monkeypatch.setattr(minutes_sync, "_sleep", lambda _seconds: None)
+
+    with pytest.raises(RuntimeError, match="listing_error=all: NETWORK_ERROR"):
+        sync_minutes_once_command(
+            WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path)
+        )
+
+
 def test_cli_does_not_import_audit_web_until_command_needs_it():
     assert cli.run_audit_web is None
 
