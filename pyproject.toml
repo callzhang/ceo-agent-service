@@ -12,7 +12,7 @@ dependencies = [
   "jieba>=0.42",
   "keyring>=25,<26",
   "markdown-it-py>=4,<5",
-  "mcp[cli]==1.28.1",
+  "mcp[cli]==1.30.0",
   "numpy>=2,<3",
   "Pillow>=11",
   "pypdf>=5.0",
