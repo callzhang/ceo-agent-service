@@ -122,10 +122,10 @@ work never goes live, so a restart no longer carries another session's
 half-written edits.
 
 Derek, 2026-10-25: `python -m app.deploy` first runs the gate suite (the files
-in `tests/gate_files.txt`, one process; `tests/conftest.py` stops it at 2 GB or at
-10 minutes of real time; measured 9 to 10 minutes on 2026-10-28 and 10-29) at the commit it is going to
+in `tests/gate_files.txt`, up to six pytest-xdist workers; `tests/conftest.py`
+stops each worker at 2 GB or 10 minutes of real time) at the commit it is going to
 install, in a throwaway clone with a clean environment, and refuses to deploy if any
-test fails or the run is stopped. There is no bypass option and no switch: the
+test fails, a worker crashes, or the run is stopped. There is no bypass option and no switch: the
 requirement is `TEST_GATE_ENABLED = True` in `app/deploy.py`. The deploy then installs exactly the commit the gate tested, even if `main` moved
 while it ran. A busy machine can make
 the run take longer; the run is stopped at 10 minutes, not extended. Add a test to the

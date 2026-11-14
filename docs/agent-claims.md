@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-release-gate-five-minutes-20261114 | app/deploy.py; tests/test_deploy_test_gate.py; tests/test_feedback_processing_e2e.py; AGENTS.md; docs/runtime-mechanism.md | Benchmark full manifest, keep fixed limits and failure semantics, use bounded parallel workers and optimize synthetic feedback population. | 2026-11-14 |
-
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 

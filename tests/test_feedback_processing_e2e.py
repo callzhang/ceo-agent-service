@@ -4,8 +4,8 @@ This fixture models the historical feedback reported for attempt #8308.  It
 uses the real local Console API and persists only the deterministic summary
 and references; no model invocation is involved in the import step.
 """
-from app.action_storage import update_action
-from app.action_feedback_storage import insert_feedback_action
+from app.action_storage import ACTION_RECORD_TYPES, _action_layout, _encoded_native_sqlite_value, update_action
+from app.action_feedback_storage import _materialize, insert_feedback_action
 import subprocess
 import time
 from pathlib import Path
@@ -398,17 +398,73 @@ def _seed_feedback_noise(
             "select coalesce(max(cast(legacy_key as integer)),0)+1 "
             "from actions where record_type='feedback_events'"
         ).fetchone()[0]
-        for index in range(count):
-            insert_feedback_action(
-                db,
-                "feedback_events",
-                {
+        kind = "feedback_events"
+        layout = _action_layout(kind)
+        defaults = dict.fromkeys(layout.fields) | _materialize(db, kind, {"received_at": received_at})
+        code = ACTION_RECORD_TYPES.code(kind)
+        rows = (
+            (
+                code, str(first_rowid + index),
+                layout.pack(defaults | {
                     "key": f"noise-{index:05d}",
                     "feedback_token": f"noise-token-{index:05d}",
-                    "received_at": received_at,
-                },
-                source_rowid=first_rowid + index,
+                }, scalar_codec=_encoded_native_sqlite_value),
             )
+            for index in range(count)
+        )
+        db.executemany(
+            "insert into main.actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
+            rows,
+        )
+
+
+def test_feedback_noise_matches_native_inserts_with_one_batch(tmp_path, monkeypatch):
+    from app.action_feedback_definitions import feedback_projection
+
+    store = AutoReplyStore(tmp_path / "feedback.sqlite3")
+    original_open = store._open_connection
+    batches = []
+
+    class RecordingConnection:
+        def __init__(self, db):
+            self.db = db
+
+        def execute(self, *args):
+            return self.db.execute(*args)
+
+        def executemany(self, sql, rows):
+            rows = list(rows)
+            batches.append(len(rows))
+            return self.db.executemany(sql, rows)
+
+    from contextlib import closing, contextmanager
+
+    @contextmanager
+    def session():
+        with closing(original_open()) as db, db:
+            yield RecordingConnection(db)
+
+    with monkeypatch.context() as patch:
+        patch.setattr(store, "_connect", session)
+        _seed_feedback_noise(store, count=3)
+
+    with store._connect() as db:
+        actual = db.execute(
+            f"select * from ({feedback_projection('feedback_events')}) order by key"
+        ).fetchall()
+        db.execute("delete from actions where record_type='feedback_events'")
+        for index, row in enumerate(actual):
+            insert_feedback_action(db, "feedback_events", {
+                "key": f"noise-{index:05d}", "feedback_token": f"noise-token-{index:05d}",
+                "received_at": "2030-01-01 00:00:00",
+                "created_at": row["created_at"], "updated_at": row["updated_at"],
+            }, source_rowid=index + 1)
+        expected = db.execute(
+            f"select * from ({feedback_projection('feedback_events')}) order by key"
+        ).fetchall()
+
+    assert [tuple(row) for row in actual] == [tuple(row) for row in expected]
+    assert batches == [3]
 
 
 def test_batch_detail_reads_exact_item_beyond_general_feedback_limit(tmp_path: Path):

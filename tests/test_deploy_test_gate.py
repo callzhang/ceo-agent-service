@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from app.deploy import TEST_GATE_ARGS, TEST_GATE_MANIFEST, require_green_suite
+from app.deploy import TEST_GATE_ARGS, TEST_GATE_MANIFEST, TEST_GATE_PARALLEL_ARGS, require_green_suite
 from tests.test_repository_updater import fixture_repo
 
 
@@ -44,8 +44,10 @@ def test_gate_passes_and_leaves_nothing_behind(tmp_path: Path):
     require_green_suite(tmp_path / "root", "a" * 40, run=run)
 
     suite = calls[-1]
-    assert suite[0][1:] == [*TEST_GATE_ARGS, "tests/test_a.py", "tests/test_b.py"]
-    assert "-n" not in suite[0]
+    assert suite[0][1:] == [*TEST_GATE_ARGS, *TEST_GATE_PARALLEL_ARGS, "tests/test_a.py", "tests/test_b.py"]
+    assert suite[0][-5:] == [
+        "-n", "6", "--max-worker-restart=0", "tests/test_a.py", "tests/test_b.py",
+    ]
     workdir = suite[1]["cwd"].parent
     assert not workdir.exists()
 

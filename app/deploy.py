@@ -198,8 +198,8 @@ def _target_matching_doc_changes(
 
 #: Derek, 2026-10-25: a deploy is refused unless the gate suite passes at the
 #: commit being deployed. There is no bypass option. The gate suite is the test
-#: files listed in tests/gate_files.txt, run in one process; tests/conftest.py
-#: ends that process at 2 GB or 10 minutes. The suite runs in a throwaway clone,
+#: files listed in tests/gate_files.txt, distributed to a fixed worker pool.
+#: tests/conftest.py ends a worker at 2 GB or 10 minutes. The suite runs in a throwaway clone,
 #: never in the production checkout, with a clean environment so it cannot reach
 #: the service database or credentials.
 TEST_GATE_MANIFEST = "tests/gate_files.txt"
@@ -208,6 +208,9 @@ TEST_GATE_ARGS = (
     "-p", "tests.support.gate_collection", "--tb=short",
     "-o", "tmp_path_retention_policy=failed",
 )
+# Use the installed pytest-xdist dependency. A worker crash fails this run,
+# including a worker terminated by the memory or time watchdog.
+TEST_GATE_PARALLEL_ARGS = ("-n", "6", "--max-worker-restart=0")
 #: Derek, 2026-10-25: on. It was off from 2026-10-25 until tests/gate_files.txt
 #: was live. A source constant on purpose: no option or environment variable.
 TEST_GATE_ENABLED = True
@@ -266,7 +269,7 @@ def require_green_suite(
         with log_path.open("wb") as log:
             try:
                 done = run(
-                    [sys.executable, *TEST_GATE_ARGS, *files], cwd=clone, env=env, stdout=log,
+                    [sys.executable, *TEST_GATE_ARGS, *TEST_GATE_PARALLEL_ARGS, *files], cwd=clone, env=env, stdout=log,
                     stderr=subprocess.STDOUT, timeout=TEST_GATE_TIMEOUT_SECONDS,
                 )
             except subprocess.TimeoutExpired:
