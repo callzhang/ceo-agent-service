@@ -54,7 +54,6 @@ reverts committed work they did not author.
 ## Current claims
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
-| codex-repair-reply_attempts-17272 | `app/wechat/codex_safety.py`; `app/consumer_agent.py`; `tests/test_agent_role_tool_boundary.py`; `tests/test_oa_ai_services_namespace.py`; `tests/test_prompt.py`; scoped OCR handoff paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md`; this claim | Fix the malformed OCR byte handoff from reply_attempts #17272 by composing the existing source-read and OCR tools in the same CodeMode call for ordinary Consumer/Audit. Keep other MCP namespaces direct-only and preserve Audit read-only/tool exclusions; do not replay or deploy. | Active: isolated worktree `.worktrees/repair-reply_attempts-17272`, branch `codex/repair-reply_attempts-17272`, based on `origin/main` 86eaacca5. Regression red before implementation; focused role/runtime tests now pass. |
 
 
 
