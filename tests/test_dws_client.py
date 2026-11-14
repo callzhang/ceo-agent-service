@@ -3239,12 +3239,12 @@ def test_calendar_invite_from_message_uses_recurring_instance_id():
     assert client.commands[0][5] == "event-1_1788931800000"
 
 
-def test_calendar_invite_decodes_wrapped_link_unique_id_before_lookup():
+def test_calendar_invite_preserves_wrapped_link_unique_id_for_lookup():
     client = RecordingDwsClient(
         {
             "success": True,
             "result": {
-                "id": "v50c6odATU56gwXn0ZeVDg==_1792467000000",
+                "id": "djUwYzZvZEFUVTU2Z3dYbjBaZVZEZz09_1792467000000",
                 "summary": "Recurring event",
                 "start": {"dateTime": "2026-11-19T10:00:00+08:00"},
                 "end": {"dateTime": "2026-11-19T10:30:00+08:00"},
@@ -3268,8 +3268,8 @@ def test_calendar_invite_decodes_wrapped_link_unique_id_before_lookup():
     event = client.calendar_invite_from_message(message)
 
     assert event is not None
-    assert event.event_id == "v50c6odATU56gwXn0ZeVDg==_1792467000000"
-    assert client.commands[0][5] == "v50c6odATU56gwXn0ZeVDg==_1792467000000"
+    assert event.event_id == "djUwYzZvZEFUVTU2Z3dYbjBaZVZEZz09_1792467000000"
+    assert client.commands[0][5] == "djUwYzZvZEFUVTU2Z3dYbjBaZVZEZz09_1792467000000"
 
 
 def test_get_calendar_event_returns_none_when_detail_is_unavailable():

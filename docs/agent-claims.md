@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-repair-reply-attempt-17182 | app/dws_client.py; app/worker.py; tests/test_dws_client.py; tests/test_worker.py; docs/runtime-mechanism.md; this row | Preserve opaque calendar-link `uniqueId` values through DWS reads; regress reply_attempts 17182 without changing audit or action policy. | Active, branch codex/repair-reply_attempts-17182 |
+
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
