@@ -101,3 +101,24 @@ def test_exited_child_drains_stdout_after_stderr_ready(monkeypatch, tmp_path, va
     assert row['transcript_end'] >= 2
     assert row['status'] == ('completed' if valid else 'failed')
     assert row['failure_code'] == ('' if valid else 'runtime_result_invalid')
+
+
+def test_early_exit_during_prompt_keeps_native_exit_and_diagnostics(monkeypatch):
+    real_popen = subprocess.Popen
+
+    def wait_for_early_exit(*args, **kwargs):
+        child = real_popen(*args, **kwargs)
+        child.wait(timeout=5)
+        return child
+
+    monkeypatch.setattr(process_runner.subprocess, "Popen", wait_for_early_exit)
+    result = process_runner.run_process_with_idle_timeout(
+        [sys.executable, "-c", 'import sys; sys.stderr.write("native startup failed"); sys.exit(17)'],
+        prompt="a real prompt",
+        env=None,
+        total_timeout_seconds=10,
+        idle_timeout_seconds=10,
+    )
+    assert result.returncode == 17
+    assert result.stderr == "native startup failed"
+    assert not result.timed_out

@@ -1,4 +1,5 @@
 import codecs
+from contextlib import suppress
 import os
 import selectors
 import signal
@@ -56,8 +57,12 @@ def run_process_with_idle_timeout(
         start_new_session=True,
     )
     assert process.stdin is not None
-    process.stdin.write(prompt.encode())
-    process.stdin.close()
+    # An early native exit can close stdin while its final diagnostics are
+    # already buffered. Continue to the normal exit and pipe-drain path.
+    with suppress(BrokenPipeError):
+        process.stdin.write(prompt.encode())
+    with suppress(BrokenPipeError):
+        process.stdin.close()
     assert process.stdout is not None
     assert process.stderr is not None
 

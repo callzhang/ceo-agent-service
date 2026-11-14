@@ -2289,6 +2289,10 @@ after the import repair. Pool sharing and test cleanup still use the same
 thread-local objects and functions; focused pool/configuration/Email regressions
 pass without changing database behavior, assertions or task state.
 
+### 原生进程提前退出
+
+原生进程在接收提示词前关闭标准输入时，执行器继续读完已有 stdout/stderr，并保留原生退出码供现有重试与失败判断使用。写入管道断开本身不覆盖原生错误或完整输出。总时限、无输出时限及业务收据校验沿用原规则。
+
 ### Native Claude structured output
 
 Claude CLI 将结构化输出声明作为工具输入。根级组合约束由必填的 `result` 字段包裹，保留其完整条件、定义和引用。收到原生结构化终态后，适配器取出唯一的 `result` 字段，原任务解析器按同一业务结构校验。
