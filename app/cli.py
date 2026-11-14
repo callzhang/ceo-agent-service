@@ -2401,7 +2401,7 @@ def sync_minutes_once_command(
         service_root=service_root(), result=result,
     )
     print(f"sync-minutes-once {result.summary()}", flush=True)
-    if result.failed or result.listing_error:
+    if result.failed or result.failures or result.listing_error:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
     return result if return_result else result.summary()
 

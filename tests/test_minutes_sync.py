@@ -1085,17 +1085,24 @@ def test_a_recording_too_short_to_matter_is_not_chased_forever(tmp_path: Path) -
     assert "short" in seen and "long" not in seen
 
 
-def test_sync_minutes_once_command_reports_pending_permissions_without_failing(tmp_path, monkeypatch):
+@pytest.mark.parametrize("summary_failed", [False, True])
+def test_sync_minutes_once_command_distinguishes_permission_wait_from_processing_error(tmp_path, monkeypatch, summary_failed):
     from app import cli
     from app.cli import WorkerSettings, sync_minutes_once_command
     from app.minutes_sync import MinutesSyncResult
 
     monkeypatch.setattr(cli, "DwsClient", lambda **_kwargs: object())
     from app import minutes_sync
-    result = MinutesSyncResult(discovered=2, synced=1, permission_pending=1)
+    result = MinutesSyncResult(
+        discovered=2, synced=1, permission_pending=1,
+        failures=(("restricted", "summary_generation_failed:DEADLINE_EXCEEDED"),)
+        if summary_failed else (),
+    )
     monkeypatch.setattr(minutes_sync, "sync_minutes_once", lambda *_args, **_kwargs: result)
 
-    assert sync_minutes_once_command(
-        WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path / "workspace"),
-        return_result=True,
-    ) == result
+    settings = WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path / "workspace")
+    if summary_failed:
+        with pytest.raises(RuntimeError, match="DEADLINE_EXCEEDED"):
+            sync_minutes_once_command(settings, return_result=True)
+    else:
+        assert sync_minutes_once_command(settings, return_result=True) == result
