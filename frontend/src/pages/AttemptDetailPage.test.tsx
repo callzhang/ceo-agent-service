@@ -1310,6 +1310,37 @@ describe("AttemptDetailPage", () => {
     expect(within(progress).getAllByText("已核验回执")).toHaveLength(1);
   });
 
+  it("shows the verified WeChat delivery above the earlier failed execution", async () => {
+    const user = userEvent.setup();
+    getAttemptDetail.mockResolvedValueOnce({
+      item: {
+        ...detail,
+        status: { ...detail.status, raw: "done", message: "已通过微信读回确认这条回复已发送。" },
+        audit_explanation: { title: "审计说明", text: "未能确认（原因：target_open_failed）" },
+        system_execution: {
+          candidate_id: 31, review_id: 41, stage_index: 0, is_current: true,
+          execution_id: 51, status: "failed", summary: "target_open_failed",
+          error: { code: "external_action_failed" }, verified_actions: 0, total_actions: 1,
+          verified_wechat_delivery: { message_id: "wx-outbound", sent_at: "2026-11-14T05:54:48Z" },
+          actions: [{ action_index: 0, action_identity: "wechat", description: "微信回复",
+            operation: "send_message", status: "failed", result: {}, receipt: null }],
+        },
+      },
+      meta: { snapshot_at: "2026-11-14T05:55:04Z" },
+    });
+    renderPage();
+
+    const progress = await screen.findByRole("region", { name: "系统执行进度" });
+    expect(within(progress).getByText("微信回复已发送并核验")).toBeVisible();
+    expect(within(progress).getByText("wx-outbound")).toBeVisible();
+    const history = within(progress).getByText("原始系统执行记录");
+    expect(within(progress).getByText(/^原始方案.*执行失败/)).not.toBeVisible();
+    expect(screen.getByText("原始审计摘要")).toBeInTheDocument();
+    await user.click(history);
+    expect(within(progress).getByText(/^原始方案.*执行失败/)).toBeVisible();
+    expect(within(progress).getByText("target_open_failed")).toBeVisible();
+  });
+
   it("does not describe an empty execution error as a problem after verified completion", async () => {
     getAttemptDetail.mockResolvedValueOnce({
       item: { ...detail, system_execution: {

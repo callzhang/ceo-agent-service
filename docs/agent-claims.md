@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-wechat-attempt-readback-20261114 | `app/web_api/attempts.py`, `tests/test_console_attempt_detail_api.py`, `frontend/src/api/attempts.ts`, `frontend/src/pages/AttemptDetailPage.tsx` and its test, `docs/runtime-mechanism.md` | Show existing verified WeChat delivery on the Attempt page while preserving original execution evidence. Read-only projection and presentation. | 2026-11-14 |
-
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 

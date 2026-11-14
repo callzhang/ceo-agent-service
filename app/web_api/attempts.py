@@ -9,6 +9,7 @@ from urllib.parse import quote
 from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
 from app.attempt_projection import terminal_oa_source_closure_is_skipped
+from app.attempt_projection import current_wechat_delivery_matches, project_attempt_status
 from app.attempt_what_happened import build_what_happened, deciding_scores, stopped_because
 from app.history_actions import (
     can_reassess_current_oa_needs_human,
@@ -830,6 +831,34 @@ def _console_command_display(record: Any) -> str:
     return " · ".join(part for part in parts if part)
 
 
+_VERIFIED_WECHAT_DELIVERY_MESSAGE = "已通过微信读回确认这条回复已发送；原执行回执保留，无需操作。"
+
+
+def _verified_wechat_delivery_payload(
+    store: Any, attempt: Any, task: Any, delivery: Any, execution: dict[str, Any],
+) -> dict[str, str] | None:
+    """Show the existing settlement only on the plan that owns the delivery."""
+    if (
+        not current_wechat_delivery_matches(attempt, task, delivery)
+        or task.status != "done"
+        or delivery.status != "sent"
+        or [action["operation"] for action in execution["actions"]] != ["send_message"]
+        or delivery.evidence.get("standard_candidate_id") != str(execution["candidate_id"])
+        or delivery.evidence.get("standard_review_id") != str(execution["review_id"])
+    ):
+        return None
+    settlement = store.get_wechat_reply_task_reconciliation(attempt.conversation_id, attempt.trigger_message_id)
+    if settlement is None or settlement.resolution != "verified_wechat_delivery_readback":
+        return None
+    evidence = _stored_json(settlement.detail, {})
+    if not isinstance(evidence, dict) or evidence.get("delivery_id") != delivery.id:
+        return None
+    readback = evidence.get("readback")
+    if not isinstance(readback, dict) or not readback.get("message_id") or not readback.get("sent_at"):
+        return None
+    return {"message_id": readback["message_id"], "sent_at": readback["sent_at"]}
+
+
 def _reconciled_wechat_message(store: Any, attempt: Any, reply_task: Any) -> str:
     """Explain a WeChat task closed by read-back although its execution record failed.
 
@@ -846,7 +875,7 @@ def _reconciled_wechat_message(store: Any, attempt: Any, reply_task: Any) -> str
     if record is None:
         return ""
     if str(getattr(record, "kind", "")) == "wechat_reply_task_done_reconciled":
-        return "已通过微信读回确认这条回复已发送；原执行回执保留，无需操作。"
+        return _VERIFIED_WECHAT_DELIVERY_MESSAGE
     if str(getattr(record, "kind", "")) == "wechat_reply_task_skipped_reconciled":
         if getattr(record, "resolution", "") == "verified_wechat_no_send_readback":
             return "已通过微信读回确认未发送，这条旧候选已跳过；原执行记录保留。"
@@ -1058,8 +1087,6 @@ def build_attempt_detail(
     # The stored Attempt row is historical.  Render the current projection
     # from the task generation's last effective run so an old pending row
     # cannot mask a later done/skipped result.
-    from app.attempt_projection import current_wechat_delivery_matches, project_attempt_status
-
     wechat_delivery = (
         store.get_wechat_delivery_for_task(reply_task.id)
         if reply_task is not None and str(attempt.channel or "") == "wechat"
@@ -1253,6 +1280,7 @@ def build_attempt_detail(
     system_execution = _system_execution_payload(
         store, display_reviewed, is_current=display_reviewed is not None and display_reviewed == current_task_reviewed,
     )
+    verified_wechat_delivery = None
     if display_reviewed is not None and display_reviewed == current_task_reviewed:
         # A previous stage's send is evidence for that stage, never completion
         # of the current reviewed question or selected plan.
@@ -1273,7 +1301,14 @@ def build_attempt_detail(
                 execution_messages.get(system_execution["status"], status_message),
             )
             if system_execution["status"] == "failed" and reply_task is not None:
-                status_message = _reconciled_wechat_message(store, attempt, reply_task) or status_message
+                verified_wechat_delivery = _verified_wechat_delivery_payload(
+                    store, attempt, reply_task, wechat_delivery, system_execution,
+                )
+                if verified_wechat_delivery is not None:
+                    system_execution["verified_wechat_delivery"] = verified_wechat_delivery
+                    status_message = _VERIFIED_WECHAT_DELIVERY_MESSAGE
+                elif reply_task.status == "skipped":
+                    status_message = _reconciled_wechat_message(store, attempt, reply_task) or status_message
     if rerun_block_reason:
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:
@@ -1332,6 +1367,13 @@ def build_attempt_detail(
     if current_generation_changed and not current_agent_runs and attempt.send_status == "failed":
         current_failure_reason = attempt.audit_summary or attempt.send_error
     what_happened = build_what_happened(display_runs, store=store, stop_reason=stop_reason)
+    if verified_wechat_delivery is not None:
+        what_happened["reached_the_outside_world"] = True
+        what_happened["external_actions"].append({
+            "what": "微信回复",
+            "at": verified_wechat_delivery["sent_at"],
+            "recorded_by": "service",
+        })
     if failed_unsubscribe:
         what_happened["open_for_human"] = False
     if current_generation_changed and display_reviewed is not None:
@@ -1346,6 +1388,11 @@ def build_attempt_detail(
         {"deciding_scores": deciding_scores(agent_runs)}
         if current_generation_changed and display_reviewed is None else what_happened
     )
+    external_effect = normalize_display_value(getattr(attention, "external_effect", "")) if attention else ""
+    if verified_wechat_delivery is not None:
+        external_effect = "已通过微信读回核验回复已发送。"
+    elif what_happened["reached_the_outside_world"] or what_happened.get("reused_external_actions"):
+        external_effect = _external_effect_sentence(what_happened)
     oa_action = oa_decision["operation"] if oa_decision is not None else attempt.oa_action
     action_pills = [{"label": _attempt_action_label_text(attempt), "status": attempt.send_status}]
     if oa_action.strip():
@@ -1420,14 +1467,7 @@ def build_attempt_detail(
                 # stock sentence ("whether the external action completed is
                 # decided by the current result and the business system") is
                 # what the page showed for a leave that was already approved.
-                "external_effect": (
-                    _external_effect_sentence(what_happened)
-                    if (
-                        what_happened["reached_the_outside_world"]
-                        or what_happened.get("reused_external_actions")
-                    )
-                    else normalize_display_value(getattr(attention, "external_effect", "")) if attention else ""
-                ),
+                "external_effect": external_effect,
                 "retry_at": normalize_display_value(getattr(attention, "retry_at", "")) if attention else "",
             },
         },

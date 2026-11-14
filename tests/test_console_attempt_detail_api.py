@@ -305,6 +305,77 @@ def test_runtime_payload_uses_batch_runtime_attempt_lookup(tmp_path: Path, monke
     assert batch_calls == [[run.id]]
 
 
+def test_attempt_detail_distinguishes_verified_wechat_delivery_from_failed_execution(tmp_path, monkeypatch):
+    from datetime import datetime, timezone
+    from app import task_entity_storage
+    from tests.wechat.support import approve_delivery, create_wechat_delivery
+
+    store = AutoReplyStore(tmp_path / "wechat-delivery.sqlite3")
+    task = store.ensure_reply_task(
+        channel="wechat", conversation_id="wx-peer", conversation_title="Alex",
+        single_chat=True, trigger_message_id="wx-trigger",
+        trigger_create_time="2026-07-28T10:00:00", trigger_sender="Alex", trigger_text="Question",
+    )
+    delivery_id = create_wechat_delivery(
+        store, reply_task_id=task.id, account_id="acct", target_type="direct",
+        target_id="wx-peer", conversation_id="wx-peer", reply_text="Answer",
+    )
+    approve_delivery(store, delivery_id)
+    reviewed = store.current_reviewed_candidate(task.id, task.execution_generation)
+    execution = store.claim_candidate_execution(reviewed["id"], reviewed["review_id"], "worker", 60)
+    store.finish_candidate_execution(
+        execution["id"], "worker", "failed", {"summary": "target_open_failed"},
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender="Alex", trigger_text="Question",
+        action="agent_run", sensitivity_kind="normal", send_status="failed", channel="wechat",
+    )
+    store.mark_wechat_delivery_sending(delivery_id)
+    store.set_wechat_delivery_status(delivery_id, "sent")
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": reviewed["audit_run_id"]})
+        assert task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"status": "pending"},
+            changes={"status": "failed", "error": "external_action_failed"},
+        )
+    client = TestClient(create_audit_app(store.path))
+    url = f"/api/console/history/{attempt_id}"
+    initial = client.get(url).json()["item"]
+    assert initial["system_execution"]["status"] == "failed"
+    assert initial["what_happened"]["reached_the_outside_world"] is False
+    assert initial["system_execution"].get("verified_wechat_delivery") is None
+
+    sent_at = datetime.now(timezone.utc).isoformat()
+    delivery = store.get_wechat_delivery_by_id(delivery_id)
+    assert store.settle_failed_wechat_task_from_delivery(
+        task.id, expected_execution_generation=task.execution_generation,
+        delivery_id=delivery_id, task_status="done",
+        evidence={"delivery_id": delivery_id, "readback": {
+            "message_id": "wx-outbound", "account_id": "acct", "conversation_id": "wx-peer",
+            "direction": "outbound", "sent_at": sent_at, "text": delivery.reply_text,
+        }},
+    )
+    item = client.get(url).json()["item"]
+    assert item["status"]["raw"] == "done"
+    assert item["system_execution"]["verified_wechat_delivery"] == {
+        "message_id": "wx-outbound", "sent_at": sent_at,
+    }
+    assert item["what_happened"]["reached_the_outside_world"] is True
+    assert item["status"]["attention"]["external_effect"] == "已通过微信读回核验回复已发送。"
+    assert item["system_execution"]["status"] == "failed"
+    assert item["system_execution"]["summary"] == "target_open_failed"
+
+    monkeypatch.setattr(
+        store, "get_wechat_delivery_for_task",
+        lambda _task_id: delivery.model_copy(update={"execution_generation": "superseded"}),
+    )
+    _, mismatched = build_attempt_detail(store, attempt_id)
+    assert mismatched["system_execution"].get("verified_wechat_delivery") is None
+    assert mismatched["what_happened"]["reached_the_outside_world"] is False
+    assert "已通过微信读回" not in mismatched["status"]["message"]
+
+
 def test_attempt_detail_does_not_promote_current_uncertain_execution_to_done(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "uncertain-current-execution.sqlite3")
     task = _consumer_result_task(store)

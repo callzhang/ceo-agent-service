@@ -129,6 +129,7 @@ export interface AttemptSystemExecution {
   status: string;
   summary: string;
   error: Record<string, unknown>;
+  verified_wechat_delivery?: { message_id: string; sent_at: string };
   verified_actions: number;
   total_actions: number;
   actions: Array<{

@@ -43,9 +43,10 @@ const executionStatusLabels: Record<string, string> = {
 function SystemExecutionProgress({ detail }: { detail: AttemptDetail }) {
   const execution = detail.system_execution;
   if (!execution) return null;
-  return <section className="console-card attempt-detail-section" aria-label="系统执行进度">
-    <h2>系统执行进度</h2>
-    <p>{execution.is_current ? "当前方案" : "历史方案"} · 第 {execution.stage_index + 1} 阶段 · {executionStatusLabels[execution.status] || execution.status}</p>
+  const delivery = execution.verified_wechat_delivery;
+  const planLabel = delivery ? "原始方案" : execution.is_current ? "当前方案" : "历史方案";
+  const executionRecord = <>
+    <p>{planLabel} · 第 {execution.stage_index + 1} 阶段 · {executionStatusLabels[execution.status] || execution.status}</p>
     <p>已核验 {execution.verified_actions} / {execution.total_actions} 项动作</p>
     {execution.summary && <p>{execution.summary}</p>}
     {Boolean(execution.error.code || execution.error.source_code) && <details><summary>执行问题详情</summary><pre>{JSON.stringify(execution.error, null, 2)}</pre></details>}
@@ -55,6 +56,17 @@ function SystemExecutionProgress({ detail }: { detail: AttemptDetail }) {
       {Object.keys(action.result).length > 0 && !action.receipt && <details><summary>动作核验详情</summary><pre>{JSON.stringify(action.result, null, 2)}</pre></details>}
       {action.receipt && <details><summary>已核验回执</summary><p>{action.receipt.external_action_key}</p><pre>{JSON.stringify(action.receipt.provider_result, null, 2)}</pre></details>}
     </li>)}</ol>
+  </>;
+  return <section className="console-card attempt-detail-section" aria-label="系统执行进度">
+    <h2>系统执行进度</h2>
+    {delivery ? <>
+      <p><strong>微信回复已发送并核验</strong></p>
+      <dl>
+        <div><dt>微信消息 ID</dt><dd>{delivery.message_id}</dd></div>
+        <div><dt>发送时间</dt><dd><time dateTime={delivery.sent_at}>{delivery.sent_at}</time></dd></div>
+      </dl>
+      <details><summary>原始系统执行记录</summary>{executionRecord}</details>
+    </> : executionRecord}
   </section>;
 }
 
@@ -131,7 +143,10 @@ function AuditExplanation({ detail }: { detail: AttemptDetail }) {
       <div><dt>审计结论</dt><dd>{conclusion}</dd></div>
       {parts.reviewerFeedback && <div><dt>人工决定</dt><dd>{parts.reviewerFeedback}</dd></div>}
       {parts.originalAmbiguity && <div><dt>原始疑点</dt><dd>{parts.originalAmbiguity}</dd></div>}
-      {parts.summary && <div><dt>审计摘要</dt><dd>{parts.summary}</dd></div>}
+      {parts.summary && <div>
+        <dt>{detail.system_execution?.verified_wechat_delivery ? "原始审计摘要" : "审计摘要"}</dt>
+        <dd>{parts.summary}</dd>
+      </div>}
     </dl>
   </section>;
 }
