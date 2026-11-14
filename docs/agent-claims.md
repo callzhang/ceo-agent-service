@@ -55,8 +55,6 @@ reverts committed work they did not author.
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
-| codex-repair-reply-attempts-17180 | `app/native_agent_output.py` Audit outcome branch schema; `app/schemas/audit_agent_native_output.schema.json`; `tests/test_native_audit_output.py`; scoped `docs/runtime-mechanism.md`; this row | Repair `reply_attempts` legacy key 17180: Codex rejected Audit output schema branches because `decision.anyOf[*].properties.outcome` had `const` but no `type`. Preserve Audit wire semantics and require provider-valid string outcome declarations. No OA action replay, runtime deployment, or business-state change. | Active; initial diagnosis confirmed against four failed native Audit attempts. |
-
 
 
 
