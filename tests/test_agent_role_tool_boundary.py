@@ -172,7 +172,14 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert "features.code_mode_only=false" not in command
         assert "features.code_mode.enabled=true" in command
         assert "features.code_mode.enabled=false" not in command
-        assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
+        direct_only = next(
+            option for option in command
+            if option.startswith("features.code_mode.direct_only_tool_namespaces=")
+        )
+        assert "mcp__agent_cli" not in direct_only
+        assert "mcp__ai_services" not in direct_only
+        assert "mcp__memory_connector" in direct_only
+        assert "mcp__xiaoqing_interview" in direct_only
         assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
         assert "mcp_servers.memory_connector.enabled=false" not in command
         assert "mcp_servers.ai_services.enabled=false" not in command
@@ -257,7 +264,7 @@ def test_oa_consumer_can_handoff_ocr_bytes_inside_code_mode(tmp_path, monkeypatc
     assert 'features.code_mode.excluded_tool_namespaces=[]' in consumer
     assert (
         'features.code_mode.direct_only_tool_namespaces='
-        '["mcp__agent_cli", "mcp__ai_services"]'
+        '["mcp__memory_connector", "mcp__xiaoqing_interview"]'
     ) in audit
     assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in audit
 
@@ -272,7 +279,7 @@ def test_oa_audit_composes_only_declared_read_and_ocr_mcp_tools(tmp_path, monkey
     make_audit_agent_command(ordinary)
     make_audit_agent_command(oa, purpose_name="oa")
 
-    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in ordinary
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__memory_connector", "mcp__xiaoqing_interview"]' in ordinary
     assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in ordinary
     assert 'features.code_mode.direct_only_tool_namespaces=["mcp__memory_connector", "mcp__xiaoqing_interview"]' in oa
     assert 'features.code_mode.excluded_tool_namespaces=["functions", "image_gen", "multi_agent_v1", "web"]' in oa
@@ -281,6 +288,27 @@ def test_oa_audit_composes_only_declared_read_and_ocr_mcp_tools(tmp_path, monkey
     assert next(option for option in ordinary if option.startswith("mcp_servers.agent_cli.enabled_tools=")) == next(
         option for option in oa if option.startswith("mcp_servers.agent_cli.enabled_tools=")
     )
+
+
+def test_service_roles_compose_source_reads_with_ocr_without_exposing_other_tools(
+    tmp_path, monkeypatch,
+) -> None:
+    home = tmp_path / "codex-home"
+    home.mkdir()
+    (home / "config.toml").write_text("", encoding="utf-8")
+    monkeypatch.setenv("CODEX_HOME", str(home))
+    consumer = _codex_command()
+    audit = _codex_command()
+
+    make_consumer_agent_command(consumer, task_workspace=str(tmp_path / "workspace"))
+    make_audit_agent_command(audit)
+
+    for command in (consumer, audit):
+        assert (
+            'features.code_mode.direct_only_tool_namespaces='
+            '["mcp__memory_connector", "mcp__xiaoqing_interview"]'
+        ) in command
+    assert 'features.code_mode.excluded_tool_namespaces=["functions"]' in audit
 
 
 def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
@@ -301,9 +329,9 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     assert "audit must use declared read tools only" in audit_normalized
     assert "must not use shell or local dws commands" in audit_normalized
     assert "ai_services.ocr_document" in audit_normalized
-    assert "call the native" in audit_normalized
-    assert "do not infer" in audit_normalized
-    assert "all_tools" in audit_normalized
+    assert "functions.exec" in audit_normalized
+    assert "same js cell" in audit_normalized
+    assert "never copy binary data into model context" in audit_normalized
 
     oa_normalized = " ".join(oa_consumer.replace("`", "").split()).lower()
     assert "functions.exec" in oa_normalized

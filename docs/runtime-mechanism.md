@@ -624,9 +624,9 @@ OA 表单附件和评论附件的 `page_number` 请求不要求同一 MCP 进程
 `read_dingtalk_oa_process_attachment` 下载后的临时文件路径由材料层显式返回，不依赖 PDF/图片/表格抽取器是否自行附带 `path`。因此表格正文已成功抽取时，两角色都能缓存该准确来源；实例 ID、文件 ID、原字节摘要、大小上限、OCR 分页和 provider 失败语义保持原样。PPTX 使用独立的压缩/解压上限，并为嵌入图片提供按阅读顺序编号的逐页读取；`page_number` 返回来源幻灯片号、原文件摘要及有界 JPEG，由原生 OCR MCP 逐页识别，不把整份大演示文稿塞入一次工具响应。
 材料读取器按 OOXML 包内结构识别 DOCX，复用解压与输出上限，按正文顺序提取段落和表格内文字并保留原文件摘要。输出注明是否截断及是否含嵌入媒体，媒体内容需要另行核对。
 
-Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。普通 Consumer 和非 OA Audit 将任务 MCP 声明为 direct-only；OA Consumer/Audit 的任务读取与 OCR 由同一个 CodeMode JS 调用衔接。角色工具选择、Audit functions 排除、沙箱和路线不变。超长直接调用结果可能被原生运行时截断，因而不能要求模型复制其中的 base64。
+Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。两角色将本轮已声明的 `mcp__agent_cli` 读取工具与 `mcp__ai_services__ocr_document` 放入同一 CodeMode JS 调用，精确传递返回字节，避免要求模型复制可能被截断或损坏的 base64。其他已配置 MCP 命名空间保持 direct-only；Audit 仍排除 functions，沙箱和路线不变。
 
-OA Consumer/Audit 处理扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里把读取结果的确切字节、MIME、页码和摘要交给 `ai_services.ocr_document`；只显示 OCR 文本及来源信息。非 OA Audit 和其他角色保持原有直接工具路径。嵌套工具目录、shell 清单和其他 Agent 的目录都不能单独证明本轮工具是否可调用；以实际调用结果判断依赖故障，继续区分审阅端读取失败和申请人缺材料。
+Consumer/Audit 处理扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里把读取结果的确切字节、MIME、页码和摘要交给 `ai_services.ocr_document`；只显示 OCR 文本及来源信息。该组合只使用本轮声明的读取与 OCR 工具，不扩大外部动作能力。嵌套工具目录、shell 清单和其他 Agent 的目录都不能单独证明本轮工具是否可调用；以实际调用结果判断依赖故障，继续区分审阅端读取失败和申请人缺材料。
 
 Audit 不得仅因 OCR/转写来源字节由已配置 AI Services 处理而额外要求人工批准；材料敏感性、任务范围、明确禁止处理要求和真实 provider 错误仍按原规则处理。此项不放宽消息或其他对外动作的审核。
 
