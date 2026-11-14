@@ -1083,3 +1083,19 @@ def test_a_recording_too_short_to_matter_is_not_chased_forever(tmp_path: Path) -
     seen = set(_cursor(store).get("archived_ids") or [])
     # The short one is not offered again; the long one still is.
     assert "short" in seen and "long" not in seen
+
+
+def test_sync_minutes_once_command_reports_pending_permissions_without_failing(tmp_path, monkeypatch):
+    from app import cli
+    from app.cli import WorkerSettings, sync_minutes_once_command
+    from app.minutes_sync import MinutesSyncResult
+
+    monkeypatch.setattr(cli, "DwsClient", lambda **_kwargs: object())
+    from app import minutes_sync
+    result = MinutesSyncResult(discovered=2, synced=1, permission_pending=1)
+    monkeypatch.setattr(minutes_sync, "sync_minutes_once", lambda *_args, **_kwargs: result)
+
+    assert sync_minutes_once_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path / "workspace"),
+        return_result=True,
+    ) == result
