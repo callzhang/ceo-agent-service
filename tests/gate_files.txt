@@ -94,6 +94,7 @@ tests/test_minutes_console_browser.py
 tests/test_minutes_login_handoff.py
 tests/test_minutes_todo_context.py
 tests/test_minutes_sync.py
+tests/test_cli.py::test_sync_minutes_once_command_reports_pending_permissions_without_failing
 tests/test_minutes_archive_recovery.py
 tests/test_native_action_entity_lifecycle.py
 tests/test_native_consumer_output.py

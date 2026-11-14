@@ -2375,20 +2375,11 @@ def scan_meeting_todos_once_command(
 def sync_minutes_once_command(
     settings: WorkerSettings, *, return_result: bool = False,
 ) -> str | object:
-    """Mirror new DingTalk AI minutes into the local archive.
+    """Archive readable DingTalk minutes and retain genuinely inaccessible items.
 
-    The normal pass is deterministic. Failed summaries use a native internal
-    recovery Agent; no messages are sent outward. A partial result
-    must fail the service command so the scheduled trigger cannot be recorded
-    as successfully dispatched while some minutes remain unsynchronized.
-
-    The pass takes no per-run item cap. The sync's durable boundary is the
-    archived set: a minute the pass does not archive drops below the newest
-    page on the next day's listing and is never offered again. Capping the
-    pass therefore does not defer work, it discards it -- which is what
-    ``CEO_MAX_BATCHES=4`` did, archiving the four newest minutes a day and
-    losing every earlier one. The listing walk already stops at the first
-    known minute, so a daily pass reads one page.
+    The scan walks every listing scope, and pending permissions carry forward.
+    Failed summaries use the internal recovery Agent. An incomplete listing
+    or processing error fails the command.
     """
     from app.minutes_sync import MINUTES_ARCHIVE_DIRECTORY, sync_minutes_once
     from app.minutes_auto_recovery import recover_summaries
@@ -2410,7 +2401,7 @@ def sync_minutes_once_command(
         service_root=service_root(), result=result,
     )
     print(f"sync-minutes-once {result.summary()}", flush=True)
-    if result.failed or result.permission_pending or result.listing_error:
+    if result.failed or result.listing_error:
         raise RuntimeError(f"sync-minutes-once incomplete: {result.summary()}")
     return result if return_result else result.summary()
 

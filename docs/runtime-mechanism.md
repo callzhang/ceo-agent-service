@@ -1147,6 +1147,7 @@ Reader 会把 WeChat 共享文章的标题、摘要和 URL 解码为文本，因
 摘要与逐字稿、写入本地归档、维护内容游标都由 `app/minutes_sync.py` 确定性完成，时长不足五分钟的
 会议直接跳过。成功运行的归档命令单行结果摘要会持久化到 scheduled run，并显示在定时任务运行记录中，包含
 `discovered`、`synced`、`skipped`、`permission_requested`、`permission_pending`、`failed` 计数及可操作的跳过明细。
+钉钉听记返回单条业务拒绝（包括结构化的 `0002 / permission not true`）时，归档保留该听记为 `permission_pending`，等待权限开放，即使详情暂时无法提供时长。已核实不足五分钟的条目仍按规则跳过。仅有待权限项时，同步命令报告待权限数量并完成本次读取；文件和已归档游标只在实际读取内容后更新。访问请求仍由独立的听记权限任务按原听记页面、可用申请对象和申请回执去重执行。登录、凭据、传输和分页故障照常报错。
 DingTalk 对无有效转写文本的摘要返回终态 `textGenerationInfo=SKIPPED/NO_VALID_TEXT` 与上游跳过的视觉摘要；同步器将其识别为空摘要，继续归档已有逐字稿。未知或不完整响应仍保留为单项失败。
 History 也显示定时触发（Derek 2026-09-25，类型「定时命令」/「定时任务」，规则见 `docs/architecture.md` 的
 「History 语义」）：任何定时任务的失败触发（之后同一任务成功过一次即为 `recovered`）、Agent 形式任务因不可用

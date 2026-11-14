@@ -32,8 +32,8 @@ MINUTES_ARCHIVE_DIRECTORY = "AI听记"
 RESTRICTED_MINUTE_MINIMUM_DURATION = timedelta(minutes=5)
 
 # How the provider refuses one minute we may not read, as opposed to a
-# credential failure that refuses every call. It uses two spellings for the
-# same refusal, both observed live on 2026-09-18 over the same listing.
+# credential failure that refuses every call. DingTalk has returned both plain
+# messages and a JSON business error for the same per-record refusal.
 MINUTES_SERVER_KEY = "minutes"
 RESTRICTED_MINUTE_MESSAGES = frozenset({"no permission", "b_permission_nopermission"})
 
@@ -388,24 +388,20 @@ def should_request_access(duration: timedelta | None) -> bool:
 
 
 def _is_restricted_minute_error(error: DwsError) -> bool:
-    """Whether this error means *this minute* is restricted to us.
-
-    The provider reports it as a business error carrying
-    ``server_key="minutes"`` and one of two spellings of the same refusal,
-    ``"no permission"`` or ``"B_PERMISSION_NoPermission"``. Both were observed
-    live on 2026-09-18 over one listing of minutes the 听记 admin backend shows
-    and the read API refuses, while every other minute in the same pass read
-    normally. Matching only the first spelling left 13 of 253 unrecognised.
-
-    ``DwsError.needs_authorization`` is deliberately not used here. It covers
-    PAT_HIGH_RISK_NO_PERMISSION, PAT_MEDIUM_RISK_NO_PERMISSION and
-    AGENT_CODE_NOT_EXISTS, which are credential-level failures affecting every
-    call. Treating those as "restricted" would mark the whole listing pending
-    the moment the credential broke.
-    """
+    """Read provider denial for a single minute, never a credential failure."""
+    if error.server_key != MINUTES_SERVER_KEY or error.needs_login or error.needs_authorization:
+        return False
+    message = error.business_message
+    if message.casefold() in RESTRICTED_MINUTE_MESSAGES:
+        return True
+    try:
+        detail = json.loads(message)
+    except json.JSONDecodeError:
+        return False
     return (
-        error.server_key == MINUTES_SERVER_KEY
-        and error.business_message.casefold() in RESTRICTED_MINUTE_MESSAGES
+        isinstance(detail, dict)
+        and detail.get("errorCode") == "0002"
+        and detail.get("errorMsg") == "permission not true"
     )
 
 
@@ -580,23 +576,24 @@ def _sync_minutes_once(
         permission_pending_ids=pending,
     )
 
-    candidates: list[str] = []
+    candidates: dict[str, dict[str, Any]] = {}
     for item in listed:
         task_uuid = _task_uuid(item)
         if task_uuid and task_uuid not in archived and task_uuid not in candidates:
-            candidates.append(task_uuid)
+            candidates[task_uuid] = item
     # A minute whose access was requested earlier is retried even once it has
     # dropped off the recent list.
     for task_uuid in sorted(pending):
         if task_uuid not in archived and task_uuid not in candidates:
-            candidates.append(task_uuid)
+            candidates[task_uuid] = {}
 
     synced = skipped = requested = still_pending = failed = 0
     failures: list[tuple[str, str]] = []
     skips: list[tuple[str, str]] = []
     summary_recovery_ids: list[str] = []
     official_recovery_transcripts: list[OfficialMinutesTranscript] = []
-    for task_uuid in candidates:
+    for task_uuid, listed_item in candidates.items():
+        basic: dict[str, Any] = {}
         transcript_error = ""
         summary_error = ""
         try:
@@ -634,20 +631,17 @@ def _sync_minutes_once(
                 continue
             if summary_error:
                 failures.append((task_uuid, summary_error[:200]))
-            duration = _read_duration_for_restricted(dws, task_uuid)
-            if not should_request_access(duration):
+            duration = _duration(basic)
+            if duration is None:
+                duration = _duration(listed_item)
+            if duration is not None and not should_request_access(duration):
                 skipped += 1
                 pending.discard(task_uuid)
+                skips.append((task_uuid, "too_short_to_archive"))
                 continue
-            # The service still sends no access request of its own. The only
-            # API for it, `dws minutes +apply-permission`, reports
-            # `requested: true, success: true` for a request its owner never
-            # receives: 85 minutes were "requested" that way on 2026-09-18 and
-            # every one of their pages still offered `Send Application`
-            # afterwards. A request is only real when the minute's page reads
-            # back `Applied, waiting for processing`, which needs a signed-in
-            # browser this command does not have. So the minute is recorded as
-            # pending and retried, and asking its owner stays a human step.
+            # The separate access task owns browser requests and their readback.
+            # Keep even a minute with no readable duration eligible for future
+            # archive passes, without requesting access from this command.
             still_pending += 1
             pending.add(task_uuid)
             continue
@@ -768,15 +762,6 @@ def _sync_minutes_once(
         listing_error=pagination_error,
         official_recovery_transcripts=tuple(official_recovery_transcripts),
     )
-
-
-def _read_duration_for_restricted(dws, task_uuid: str) -> timedelta | None:
-    """Read only the basic envelope, which may survive a restricted transcript."""
-    try:
-        basic = (dws.get_minutes_info(task_uuid) or {}).get("result") or {}
-    except DwsError:
-        return None
-    return _duration(basic)
 
 
 def archive_transcription_recovery(

@@ -4980,6 +4980,20 @@ def test_sync_minutes_once_command_fails_when_sync_has_failed_items(
     )
 
 
+def test_sync_minutes_once_command_reports_pending_permissions_without_failing(tmp_path, monkeypatch):
+    from app.minutes_sync import MinutesSyncResult
+
+    monkeypatch.setattr(cli, "DwsClient", lambda **_kwargs: object())
+    minutes_sync = import_module("app.minutes_sync")
+    result = MinutesSyncResult(discovered=2, synced=1, permission_pending=1)
+    monkeypatch.setattr(minutes_sync, "sync_minutes_once", lambda *_args, **_kwargs: result)
+
+    assert sync_minutes_once_command(
+        WorkerSettings(db_path=tmp_path / "worker.sqlite3", workspace=tmp_path / "workspace"),
+        return_result=True,
+    ) == result
+
+
 def test_sync_minutes_once_command_fails_when_listing_is_incomplete(tmp_path, monkeypatch):
     from app.dws_client import DwsError
 

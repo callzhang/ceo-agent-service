@@ -849,6 +849,40 @@ def test_both_spellings_of_the_refusal_mean_the_same_restricted_minute(
     assert _cursor(store)["permission_pending_ids"] == ["coded", "lower"]
 
 
+def test_structured_denial_without_readable_metadata_stays_pending_until_granted(tmp_path):
+    store = _store(tmp_path)
+    archive_dir = tmp_path / "AI听记"
+    dws = FakeDws(
+        [{"taskUuid": "long"}, {"taskUuid": "short", "duration": 120000}],
+        errors={
+            task_uuid: _restricted('{"errorCode":"0002","errorMsg":"permission not true"}')
+            for task_uuid in ("long", "short")
+        },
+    )
+
+    first = sync_minutes_once(store, dws, archive_dir=archive_dir)
+
+    assert first.failed == 0
+    assert first.permission_pending == first.skipped == 1
+    assert _cursor(store)["permission_pending_ids"] == ["long"]
+    assert _cursor(store)["archived_ids"] == []
+    assert list(archive_dir.rglob("*.md")) == []
+    assert dws.permission_requests == []
+
+    readable = FakeDws(
+        [], basic={"long": {"title": "评审", "startTime": 1789025858000}},
+        summary={"long": {"fullSummary": "要点"}},
+        paragraphs={"long": [{"startTime": 0, "paragraph": "内容"}]},
+    )
+    second = sync_minutes_once(store, readable, archive_dir=archive_dir)
+    assert second.synced == 1
+    assert second.permission_pending == 0
+    assert _cursor(store)["permission_pending_ids"] == []
+    assert _cursor(store)["archived_ids"] == ["long"]
+    [path] = archive_dir.rglob("*.md")
+    assert "内容" in path.read_text()
+
+
 def test_a_failure_says_which_minute_and_why() -> None:
     """`failed=19` on its own is not something anyone can act on.
 

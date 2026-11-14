@@ -104,6 +104,27 @@ def test_a_minute_already_asked_for_is_never_asked_again(tmp_path: Path) -> None
     assert _cursor(store)["requested_ids"] == ["restricted"]
 
 
+def test_structured_minutes_denial_uses_the_existing_request_once(tmp_path: Path) -> None:
+    message = '{"errorCode":"0002","errorMsg":"permission not true"}'
+    store = _store(tmp_path)
+    console = FakeConsole(_rows("restricted", "login", "wrong-service", "wrong-code"))
+    dws = FakeDws(errors={
+        "restricted": _restricted(message),
+        "login": DwsError("not authenticated", "2", business_message=message, server_key="minutes"),
+        "wrong-service": DwsError("denied", "1", business_message=message, server_key="chat"),
+        "wrong-code": _restricted(message.replace("0002", "1234")),
+    })
+
+    first = request_minutes_access(store, dws, console, now=NOW)
+    second = request_minutes_access(store, dws, console, now=NOW)
+
+    assert first.requested == 1
+    assert first.failed == second.failed == 3
+    assert second.requested == 0
+    assert console.requested == [("restricted", ACCESS_REQUEST_REASON)]
+    assert _cursor(store)["requested_ids"] == ["restricted"]
+
+
 def test_a_cleaned_minute_is_never_asked_for(tmp_path: Path) -> None:
     """Its content is gone, so approving it would grant access to nothing."""
     store = _store(tmp_path)
