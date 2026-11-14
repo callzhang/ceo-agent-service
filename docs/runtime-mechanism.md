@@ -135,6 +135,8 @@ action-specific target/payload 合同校验。已完成运行结果的 schema id
 
 Consumer 的动作专属合同在 `target`、`payload` 各自字段上校验，嵌套错误保留完整字段路径和数组位置，例如 `payload.remark`、`payload.actions.0.payload`。既有有界重试收到这些路径与合同说明，不包含被拒绝的输入值；原生 Schema、合法输入范围及审核、执行规则不变。
 
+Codex Audit 原生输出 Schema 的每个 `decision.anyOf` 分支都会为 `outcome` 同时声明字符串类型和固定值。虽然通用 JSON Schema 允许只写 `const`，Codex 的结构化输出校验要求显式 `type`；省略会在模型运行前被拒绝为无效 Schema。
+
 绑定 `dingtang-okr-review` 的 Consumer 读取当前评分详情并提交 `dingtang-okr/score_kr` 候选，不直接运行评分脚本或写入接口。该动作走现有候选、Audit 和 SystemExecutor 执行记录；服务通过
 已同步登录态的无头 Chrome 页面调用页面原生 API。只读入口返回周期、当前批次、目标、
 评价人及登录用户的评分详情；写入前核对周期列表与批次名称、详情中的周期和目标、

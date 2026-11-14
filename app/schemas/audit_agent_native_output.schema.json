@@ -51,6 +51,7 @@
           "type": "object",
           "properties": {
             "outcome": {
+              "type": "string",
               "const": "approve"
             },
             "feedback": {
@@ -67,6 +68,7 @@
           "type": "object",
           "properties": {
             "outcome": {
+              "type": "string",
               "const": "return"
             },
             "feedback": {
@@ -83,6 +85,7 @@
           "type": "object",
           "properties": {
             "outcome": {
+              "type": "string",
               "const": "reject"
             },
             "feedback": {
@@ -99,6 +102,7 @@
           "type": "object",
           "properties": {
             "outcome": {
+              "type": "string",
               "const": "failed"
             },
             "feedback": {

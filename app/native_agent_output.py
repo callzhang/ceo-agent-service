@@ -85,7 +85,7 @@ def native_output_schema(role: str = "consumer", *, purpose: str = "general") ->
             {
                 "type": "object",
                 "properties": {
-                    "outcome": {"const": outcome},
+                    "outcome": {"type": "string", "const": outcome},
                     "feedback": (
                         {"type": "null"} if feedback_type == "null"
                         else {"$ref": "#/$defs/_AuditFeedbackWire"}

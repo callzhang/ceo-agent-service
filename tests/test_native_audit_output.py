@@ -77,6 +77,14 @@ def test_audit_native_schema_is_structurally_valid_and_matches_snapshot():
     assert set(schema["properties"]) == (set(_audit("approve")) - {"outcome", "feedback"}) | {"decision"}
 
 
+def test_audit_native_decision_outcomes_declare_their_string_type():
+    decision = native_output_schema("audit")["properties"]["decision"]
+    assert all(
+        branch["properties"]["outcome"].get("type") == "string"
+        for branch in decision["anyOf"]
+    )
+
+
 @pytest.mark.parametrize("outcome", ["approve", "return", "reject", "failed"])
 def test_audit_native_schema_restores_and_uses_candidate_bound_parser(outcome):
     native = _native_audit(outcome)
