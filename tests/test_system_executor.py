@@ -999,12 +999,10 @@ def test_oa_native_detail_nested_tasks_and_integer_task_id_are_authoritative():
     assert handler.reconcile(action, action_key="key", candidate={}).status == "verified"
 
 
-def test_oa_revert_uses_exact_activity_and_confirmed_destination_readback(monkeypatch):
+def test_oa_revert_uses_exact_activity_and_confirmed_destination_readback():
     from app.system_action_handlers import OaRevertHandler
-    from tests.test_oa_return_readback import Source, action, attempt, install_provider_clock
+    from tests.test_oa_return_readback import Source, action, attempt
     dws = Source()
-    dws.clock = install_provider_clock(monkeypatch)
-    dws.clock.current = __import__("datetime").datetime.fromisoformat("2026-10-13T10:06:25.641+00:00")
     handler = OaRevertHandler(dws)
     result = handler.dispatch(action(), action_key="key", candidate=attempt())
     assert result.status == "uncertain"

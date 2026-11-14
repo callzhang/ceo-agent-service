@@ -1,13 +1,12 @@
 """Native, typed handlers for reviewed service-owned actions."""
 
 import json
-import re
-from datetime import datetime, timedelta, timezone
+from datetime import datetime, timezone
 from hashlib import sha256
 
 from app.agent_contracts import ProposedAction
 from app.dingtalk_models import DINGTALK_CALENDAR_RESPONSE_STATUSES, DingTalkConversation, DingTalkMessage
-from app.dws_client import DINGTALK_MESSAGE_TIME_ZONE, DwsError
+from app.dws_client import DwsError
 from app.service_message_sender import ServiceMessageSender, agent_message_delivery_key
 from app.system_executor import ActionOutcome
 
@@ -366,47 +365,13 @@ class OaRevertHandler(OaDecisionHandler):
             and response.get("result") is True and response.get("dingOpenErrcode") == 0)
 
     @staticmethod
-    def _utc_instant(value: object) -> datetime | None:
-        if not isinstance(value, str):
-            return None
-        try:
-            instant = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        return instant if instant.tzinfo is not None else None
-
-    @staticmethod
-    def _boundary(candidate: dict[str, object], action_key: str) -> datetime | None:
+    def _has_bound_attempt(candidate: dict[str, object], action_key: str) -> bool:
         attempt = candidate.get("action_attempt")
-        if (not isinstance(attempt, dict) or attempt.get("external_action_key") != action_key
-            or attempt.get("status") not in ("dispatched", "uncertain")):
-            return None
-        return OaRevertHandler._utc_instant(attempt.get("created_at"))
-
-    @staticmethod
-    def _event_time(value: object) -> datetime | None:
-        if isinstance(value, bool):
-            return None
-        if isinstance(value, (int, float)):
-            try:
-                return datetime.fromtimestamp(value / 1000, timezone.utc)
-            except (OverflowError, OSError, ValueError):
-                return None
-        if not isinstance(value, str):
-            return None
-        try:
-            instant = datetime.fromisoformat(value)
-        except ValueError:
-            return None
-        return instant if instant.tzinfo is not None else instant.replace(tzinfo=DINGTALK_MESSAGE_TIME_ZONE)
-
-    @staticmethod
-    def _second_precision_timestamp(value: object) -> bool:
-        """Whether DingTalk supplied a timestamp whose precision is one second."""
-        return isinstance(value, str) and re.fullmatch(
-            r"\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(?:Z|[+-]\d{2}:?\d{2})?",
-            value.strip(),
-        ) is not None
+        return (
+            isinstance(attempt, dict)
+            and attempt.get("external_action_key") == action_key
+            and attempt.get("status") in ("dispatched", "uncertain")
+        )
 
     def dispatch(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
         target_activity = action.target.get("target_activity_id")
@@ -414,7 +379,7 @@ class OaRevertHandler(OaDecisionHandler):
         remark = action.payload.get("remark")
         if not all(isinstance(value, str) and value.strip() for value in (target_activity, revert_action, remark)):
             return ActionOutcome("failed", {"reason": "oa_revert_parameters_missing"})
-        if self._boundary(candidate, action_key) is None:
+        if not self._has_bound_attempt(candidate, action_key):
             return ActionOutcome("uncertain", {"reason": "oa_return_journal_unbound"})
         if candidate["action_attempt"]["status"] == "uncertain":
             return self.reconcile(action, action_key=action_key, candidate=candidate)
@@ -429,7 +394,6 @@ class OaRevertHandler(OaDecisionHandler):
             return ActionOutcome("failed", {"reason": "oa_task_target_invalid"})
         if state != "running":
             return ActionOutcome("uncertain", {"reason": "oa_current_task_unresolved"})
-        dispatch_started_at = datetime.now(timezone.utc).isoformat()
         receipt = self.dws.revert_oa_approval_task(
             process_instance_id=action.target["process_instance_id"],
             task_id=action.target["task_id"],
@@ -440,29 +404,21 @@ class OaRevertHandler(OaDecisionHandler):
         if isinstance(receipt, dict) and (receipt.get("success") is False or receipt.get("result") is False):
             return ActionOutcome("failed", {"reason": "oa_revert_provider_rejected", "provider_response": receipt})
         # Save the response before another provider read can fail or the process stops.
-        received_at = datetime.now(timezone.utc).isoformat()
         accepted = self._accepted(receipt)
-        proof = {"reason": "oa_return_readback_pending" if accepted else "oa_return_acceptance_unconfirmed",
-            "provider_response": receipt, "dispatch_started_at": dispatch_started_at,
-            "response_received_at": received_at,
+        return ActionOutcome("uncertain", {
+            "reason": "oa_return_readback_pending" if accepted else "oa_return_acceptance_unconfirmed",
+            "provider_response": receipt,
             "dispatch_principal_user_id": str(task.get("userid") or task.get("userId") or ""),
-            "accepted_action_digest": sha256(action.model_dump_json().encode()).hexdigest()}
-        if accepted:
-            proof["accepted_at"] = received_at
-        return ActionOutcome("uncertain", proof)
+            "accepted_action_digest": sha256(action.model_dump_json().encode()).hexdigest(),
+        })
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome:
         attempt = candidate.get("action_attempt")
         prior = json.loads(attempt.get("result_json", "{}")) if isinstance(attempt, dict) else {}
         unresolved = ActionOutcome("uncertain", {**prior, "reason": "oa_return_evidence_unverified"})
-        boundary = self._boundary(candidate, action_key)
-        response = prior.get("provider_response")
         principal = self.dws.get_current_user_id()
-        dispatch_started = self._utc_instant(prior.get("dispatch_started_at"))
-        accepted_at = self._utc_instant(prior.get("accepted_at") or prior.get("response_received_at"))
-        observed_at = datetime.now(timezone.utc)
-        if (boundary is None or dispatch_started is None or accepted_at is None or not self._accepted(response)
-            or not boundary <= dispatch_started <= accepted_at <= observed_at
+        if (not self._has_bound_attempt(candidate, action_key)
+            or not self._accepted(prior.get("provider_response"))
             or not principal or prior.get("dispatch_principal_user_id") != principal
             or prior.get("accepted_action_digest") != sha256(action.model_dump_json().encode()).hexdigest()):
             return unresolved
@@ -479,124 +435,57 @@ class OaRevertHandler(OaDecisionHandler):
             or source.get("business_id") != detail["businessId"]
             or not isinstance(source.get("tasks"), list) or not isinstance(source.get("operation_records"), list)):
             return unresolved
-        native_records = self.dws.read_oa_approval_records(process_id)
-        native_result = native_records.get("result") if isinstance(native_records, dict) else None
-        precise_records = native_result.get("operationRecords") if isinstance(native_result, dict) else None
-        if (not isinstance(native_records, dict) or native_records.get("success") is not True
-            or not isinstance(precise_records, list)):
-            return unresolved
-        precise_events = []
-        for item in precise_records:
-            if not isinstance(item, dict):
-                return unresolved
-            operation_type, author = item.get("operationType"), item.get("userId")
-            instant = self._event_time(item.get("operationTime"))
-            if instant is None:
-                return unresolved
-            if operation_type == "PROCESS_CC":
-                continue
-            precise_events.append((
-                operation_type if isinstance(operation_type, str) else "",
-                author if isinstance(author, str) else "",
-                instant,
-            ))
-        old = [task for task in source["tasks"] if isinstance(task, dict)
+        source_tasks = [task for task in source["tasks"] if isinstance(task, dict)
             and str(task.get("taskid")) == action.target["task_id"]]
-        if len(old) != 1 or old[0].get("task_status") != "CANCELED":
+        if len(source_tasks) != 1 or source_tasks[0].get("task_status") != "CANCELED":
             return unresolved
-        records = []
-        event_times = []
+
+        approved_remark = action.payload["remark"]
+        matching_records = []
         for record in source["operation_records"]:
             if not isinstance(record, dict):
                 return unresolved
-            instant = self._event_time(record.get("date"))
-            if instant is None:
-                return unresolved
             operation_type = record.get("operation_type")
             author = record.get("userid")
-            if operation_type == "PROCESS_CC":
-                continue
-            if isinstance(record.get("date"), str) and instant.microsecond == 0:
-                same_second = [precise for event_type, event_author, precise in precise_events
-                    if event_type == operation_type and event_author == author
-                    and int(precise.timestamp()) == int(instant.timestamp())]
-                if len(same_second) > 1:
-                    return unresolved
-                if same_second:
-                    instant = same_second[0]
-            event_times.append(instant)
+            remark = record.get("remark")
             if isinstance(operation_type, str) and operation_type and operation_type != "REDIRECT_PROCESS":
                 continue
-            remark = record.get("remark")
             if isinstance(author, str) and author and author != principal:
                 continue
-            if isinstance(remark, str) and remark and remark != action.payload["remark"]:
+            if isinstance(remark, str) and remark and remark != approved_remark:
                 continue
-            if not dispatch_started < instant <= accepted_at:
-                continue
-            if operation_type != "REDIRECT_PROCESS" or author != principal or remark != action.payload["remark"]:
+            if operation_type != "REDIRECT_PROCESS" or author != principal or remark != approved_remark:
                 return unresolved
-            records.append((record, instant))
-        if len(records) != 1:
+            matching_records.append(record)
+        if len(matching_records) != 1:
             return unresolved
-        record, instant = records[0]
-        if event_times.count(instant) != 1:
+
+        target_activity_id = action.target["target_activity_id"]
+        # Repeated returns can create multiple tasks at the same activity. This
+        # readback shows the activity exists without attributing those task IDs
+        # to this particular return.
+        destination_observed = any(
+            isinstance(task, dict)
+            and task.get("activity_id") == target_activity_id
+            and task.get("taskid") is not None
+            and str(task["taskid"]).strip()
+            and str(task["taskid"]) != action.target["task_id"]
+            for task in source["tasks"]
+        )
+        if not destination_observed:
             return unresolved
-        next_event = min((value for value in event_times if value > instant), default=observed_at)
-        # DingTalk task create_time is often truncated to whole seconds while
-        # its operation record has milliseconds. A task created in the same
-        # second can therefore appear a few hundred milliseconds before the
-        # exact redirect event. Accept that same-second bucket only when the
-        # redirect is the sole event in that second and the bucket overlaps
-        # the original dispatch/acceptance interval. All identity, target,
-        # actor, remark, and exact event-boundary checks above remain required.
-        destinations = []
-        for task in source["tasks"]:
-            if (not isinstance(task, dict) or task.get("taskid") is None
-                or str(task["taskid"]) == action.target["task_id"]
-                or task.get("activity_id") != action.target["target_activity_id"]):
-                continue
-            created_value = task.get("create_time")
-            created = self._event_time(created_value)
-            if created is None or created > observed_at:
-                continue
-            second_precision = self._second_precision_timestamp(created_value)
-            if second_precision:
-                second_start = created.replace(microsecond=0)
-                second_end = second_start + timedelta(seconds=1)
-                event_second = int(instant.timestamp())
-                interval_bucket_match = (
-                    second_start >= instant
-                    and second_end <= next_event
-                    and second_end > dispatch_started
-                )
-                source_events_in_second = [
-                    value for value in event_times if int(value.timestamp()) == event_second
-                ]
-                precise_events_in_second = [
-                    value for _, _, value in precise_events if int(value.timestamp()) == event_second
-                ]
-                same_second_match = (
-                    int(created.timestamp()) == event_second
-                    and len(source_events_in_second) == 1
-                    and source_events_in_second[0] == instant
-                    and len(precise_events_in_second) == 1
-                    and precise_events_in_second[0] == instant
-                    and second_start <= accepted_at
-                    and second_end > dispatch_started
-                )
-                destination_time_matches = interval_bucket_match or same_second_match
-            else:
-                destination_time_matches = instant <= created < next_event
-            if destination_time_matches:
-                destinations.append(str(task["taskid"]))
-        if not destinations:
-            return unresolved
-        return ActionOutcome("verified", {**prior, "process_instance_id": process_id,
-            "task_id": action.target["task_id"], "destination_activity_id": action.target["target_activity_id"],
-            "destination_task_ids": destinations, "return_record": {
-                "type": record["operation_type"], "user_id": principal, "date": record["date"],
-                "remark_sha256": sha256(action.payload["remark"].encode()).hexdigest()}})
+        return ActionOutcome("verified", {
+            **prior,
+            "process_instance_id": process_id,
+            "task_id": action.target["task_id"],
+            "destination_activity_id": target_activity_id,
+            "return_record": {
+                "type": matching_records[0]["operation_type"],
+                "user_id": principal,
+                "date": matching_records[0].get("date"),
+                "remark_sha256": sha256(approved_remark.encode()).hexdigest(),
+            },
+        })
 
 
 class OaRedirectHandler:

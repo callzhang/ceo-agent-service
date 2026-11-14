@@ -1,7 +1,6 @@
 """Historical repair uses saved identities and never sends a second OA action."""
 
 import json
-from datetime import datetime, timedelta, timezone
 
 import pytest
 
@@ -19,27 +18,9 @@ from tests.test_reviewed_orchestration import setup
 from tests.test_system_executor import _candidate
 
 
-def _uncertain_return(tmp_path, monkeypatch):
-    class Clock(datetime):
-        offset = timedelta()
-
-        @classmethod
-        def now(cls, tz=None):
-            return datetime.now(tz) + cls.offset
-
-    monkeypatch.setattr("app.system_action_handlers.datetime", Clock)
-
+def _uncertain_return(tmp_path):
     class ReturningSource(Source):
         failed_first_readback = False
-
-        def revert_oa_approval_task(self, **kwargs):
-            self.calls.append(kwargs)
-            self.returned = True
-            event = datetime.now(timezone.utc) + timedelta(seconds=2)
-            self.records[0]["date"] = event.isoformat()
-            self.destination["create_time"] = (event + timedelta(seconds=1)).isoformat()
-            Clock.offset = timedelta(seconds=4)
-            return {"success": True, "dingOpenErrcode": 0, "result": True}
 
         def read_oa_process_instance_openapi(self, process_id):
             # Preserve a real uncertain state for the recovery tests: the
@@ -76,12 +57,12 @@ def _uncertain_return(tmp_path, monkeypatch):
     return store, source, ReturnRepair(task.id, selected["id"], review["id"], execution["id"], attempt["id"])
 
 
-def test_repair_reconciles_recorded_return_without_provider_dispatch(tmp_path, monkeypatch):
-    store, source, repair = _uncertain_return(tmp_path, monkeypatch)
+def test_repair_reconciles_recorded_return_without_provider_dispatch(tmp_path):
+    store, source, repair = _uncertain_return(tmp_path)
     before = store.list_candidate_action_attempts(repair.execution_id)
 
     evidence = inspect_recorded_return(store, source, repair)
-    assert evidence["destination_task_ids"] == ["destination"]
+    assert evidence["destination_activity_id"] == "handover"
     assert store.get_candidate_execution(repair.candidate_id)["status"] == "uncertain"
     assert len(source.calls) == 1
 
@@ -95,8 +76,8 @@ def test_repair_reconciles_recorded_return_without_provider_dispatch(tmp_path, m
     assert len(source.calls) == 1
 
 
-def test_repair_refuses_wrong_action_identity_before_provider_read(tmp_path, monkeypatch):
-    store, source, repair = _uncertain_return(tmp_path, monkeypatch)
+def test_repair_refuses_wrong_action_identity_before_provider_read(tmp_path):
+    store, source, repair = _uncertain_return(tmp_path)
     reads = len(source.calls)
     mismatched = ReturnRepair(
         repair.task_id, repair.candidate_id, repair.review_id,
