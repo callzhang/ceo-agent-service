@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-minutes-structured-permission-20261114 | app/minutes_sync.py, app/cli.py (Minutes sync result), tests/test_minutes_sync.py, tests/test_minutes_access.py, tests/test_cli.py (Minutes result), tests/gate_files.txt (focused test), docs/runtime-mechanism.md | Recognize the provider resource refusal and route it through existing access and archive jobs. | 2026-11-14 |
+
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
