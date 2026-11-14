@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-native-exit-stdin-20261114 | app/process_runner.py; tests/test_process_exit_output.py; relevant process lifecycle documentation | Preserve native stderr and exit code when a child closes stdin before receiving the prompt. | 2026-11-14 |
+
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
