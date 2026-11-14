@@ -3415,11 +3415,7 @@ class DingTalkAutoReplyWorker:
             }
             event_id = next(
                 (
-                    (
-                        DwsClient.decode_calendar_link_event_id(item.strip())
-                        if key == "uniqueid"
-                        else item.strip()
-                    )
+                    item.strip()
                     for key in ("eventid", "uniqueid")
                     if isinstance((item := normalized_items.get(key)), str)
                     and item.strip()
