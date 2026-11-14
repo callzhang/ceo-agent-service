@@ -7555,7 +7555,7 @@ def test_recurring_calendar_link_uses_instance_id_in_agent_context(
     )
 
 
-def test_raw_calendar_payload_decodes_wrapped_link_unique_id():
+def test_raw_calendar_payload_preserves_wrapped_link_unique_id():
     trigger = DingTalkMessage(
         open_conversation_id="cid-1",
         open_message_id="msg-1",
@@ -7571,7 +7571,7 @@ def test_raw_calendar_payload_decodes_wrapped_link_unique_id():
     )
 
     assert DingTalkAutoReplyWorker._raw_calendar_event_id(trigger) == (
-        "v50c6odATU56gwXn0ZeVDg==_1792467000000"
+        "djUwYzZvZEFUVTU2Z3dYbjBaZVZEZz09_1792467000000"
     )
 
 
