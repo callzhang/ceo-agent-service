@@ -4,15 +4,19 @@ This fixture models the historical feedback reported for attempt #8308.  It
 uses the real local Console API and persists only the deterministic summary
 and references; no model invocation is involved in the import step.
 """
-from app.action_storage import ACTION_RECORD_TYPES, _action_layout, _encoded_native_sqlite_value, update_action
-from app.action_feedback_storage import _materialize, insert_feedback_action
+from app.action_storage import update_action
+from app.action_feedback_storage import insert_feedback_action
 import subprocess
 import time
 from pathlib import Path
-from tests.feedback_processing_fixtures import completed_workbench_association
+from tests.feedback_processing_fixtures import (
+    completed_workbench_association,
+    registered_feedback_route_client,
+    seed_feedback_batch_lookup,
+    seed_feedback_noise,
+)
 
 import pytest
-from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from app.feedback_processing import (
@@ -24,7 +28,6 @@ import app.config as app_config
 import app.web_api.registration as registration_module
 from app.audit_web import create_audit_app
 from app.store import AutoReplyStore
-from app.web_api.registration import register_console_routes
 
 
 class _NonExecutingExecutor:
@@ -65,35 +68,6 @@ def _client(tmp_path: Path) -> TestClient:
         ),
         client=("127.0.0.1", 50000),
         headers={"Host": "127.0.0.1:8765"},
-    )
-
-
-def _registered_route_client(
-    tmp_path: Path,
-    *,
-    feedback_backlog_factory,
-    status_payload_factory=lambda: {
-        "service": {"state": "refreshing"},
-        "summary": {"processing": 0, "failed": 0, "retryable": 0},
-    },
-) -> tuple[TestClient, AutoReplyStore]:
-    db_path = tmp_path / "route-worker.sqlite3"
-    store = AutoReplyStore(db_path)
-    app = FastAPI()
-    register_console_routes(
-        app,
-        store_factory=lambda: store,
-        status_payload_factory=status_payload_factory,
-        feedback_backlog_factory=feedback_backlog_factory,
-        attention_rows_factory=lambda: [],
-    )
-    return (
-        TestClient(
-            app,
-            client=("127.0.0.1", 50000),
-            headers={"Host": "127.0.0.1:8765"},
-        ),
-        store,
     )
 
 
@@ -246,7 +220,7 @@ def test_feedback_batch_resolve_api_can_resolve_selected_items(
     receipt = _resolution_receipt(
         "a" * 40, test_name="itemwise-resolution", before_pid=10, after_pid=11,
     )
-    client, store = _registered_route_client(
+    client, store = registered_feedback_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {
             "processing": 1, "failed": 13, "retryable": 0,
@@ -387,37 +361,6 @@ def test_main_receipt_is_independent_of_detached_checkout(
     ).stdout.strip()
 
 
-def _seed_feedback_noise(
-    store: AutoReplyStore,
-    *,
-    count: int,
-    received_at: str = "2030-01-01 00:00:00",
-) -> None:
-    with store._connect() as db:
-        first_rowid = db.execute(
-            "select coalesce(max(cast(legacy_key as integer)),0)+1 "
-            "from actions where record_type='feedback_events'"
-        ).fetchone()[0]
-        kind = "feedback_events"
-        layout = _action_layout(kind)
-        defaults = dict.fromkeys(layout.fields) | _materialize(db, kind, {"received_at": received_at})
-        code = ACTION_RECORD_TYPES.code(kind)
-        rows = (
-            (
-                code, str(first_rowid + index),
-                layout.pack(defaults | {
-                    "key": f"noise-{index:05d}",
-                    "feedback_token": f"noise-token-{index:05d}",
-                }, scalar_codec=_encoded_native_sqlite_value),
-            )
-            for index in range(count)
-        )
-        db.executemany(
-            "insert into main.actions(_kind,legacy_key,payload_json) values(?,?,jsonb(?))",
-            rows,
-        )
-
-
 def test_feedback_noise_matches_native_inserts_with_one_batch(tmp_path, monkeypatch):
     from app.action_feedback_definitions import feedback_projection
 
@@ -446,7 +389,7 @@ def test_feedback_noise_matches_native_inserts_with_one_batch(tmp_path, monkeypa
 
     with monkeypatch.context() as patch:
         patch.setattr(store, "_connect", session)
-        _seed_feedback_noise(store, count=3)
+        seed_feedback_noise(store, count=3)
 
     with store._connect() as db:
         actual = db.execute(
@@ -467,43 +410,38 @@ def test_feedback_noise_matches_native_inserts_with_one_batch(tmp_path, monkeypa
     assert batches == [3]
 
 
-def test_batch_detail_reads_exact_item_beyond_general_feedback_limit(tmp_path: Path):
-    client, store = _registered_route_client(
-        tmp_path,
-        feedback_backlog_factory=lambda: {
-            "processing": 0,
-            "failed": 0,
-            "retryable": 0,
-        },
+def test_batch_detail_reads_exact_item_beyond_general_feedback_limit(tmp_path: Path, monkeypatch):
+    client, store = registered_feedback_route_client(
+        tmp_path, feedback_backlog_factory=lambda: {"processing": 0, "failed": 0, "retryable": 0},
     )
-    store.upsert_feedback_event(
-        key="feedback-outside-limit",
-        feedback_token="target-token",
-        received_at="2000-01-01 00:00:00",
+    key, summary = seed_feedback_batch_lookup(store, noise_count=3)
+
+    general_list = store.list_user_feedback_items
+    page = general_list(limit=2)
+    assert len(page) == 2
+    assert key not in {item.key for item in page}
+    monkeypatch.setattr(
+        store,
+        "list_user_feedback_items",
+        lambda limit=200, offset=0: general_list(limit=min(limit, 2), offset=offset),
     )
-    store.claim_feedback_processing_items(
-        "batch-outside-limit",
-        ["feedback-outside-limit"],
-    )
-    _seed_feedback_noise(store, count=10_001)
 
     with client:
-        response = client.get(
-            "/api/console/feedback/batches/batch-outside-limit"
-        )
+        response = client.get("/api/console/feedback/batches/batch-outside-limit")
 
     assert response.status_code == 200
     batch = response.json()["item"]
     assert batch["requested_count"] == 1
-    assert len(batch["items"]) == batch["requested_count"]
-    assert batch["items"][0]["feedback_key"] == "feedback-outside-limit"
+    [item] = batch["items"]
+    assert item["feedback_key"] == key
+    assert item["summary"] == summary
 
 
 def test_batch_detail_database_query_count_is_bounded_by_batch_not_total_feedback(
     tmp_path: Path,
     monkeypatch,
 ):
-    client, store = _registered_route_client(
+    client, store = registered_feedback_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {
             "processing": 0,
@@ -519,7 +457,7 @@ def test_batch_detail_database_query_count_is_bounded_by_batch_not_total_feedbac
         "batch-query-bound",
         ["feedback-query-bound"],
     )
-    _seed_feedback_noise(store, count=250)
+    seed_feedback_noise(store, count=3)
 
     queries: list[str] = []
     original_open_connection = AutoReplyStore._open_connection
@@ -549,7 +487,7 @@ def test_resolve_does_not_require_zero_global_backlog(
     feedback_repository: Path,
 ):
     receipt = _main_receipt()
-    client, store = _registered_route_client(
+    client, store = registered_feedback_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {
             "processing": 1,
@@ -580,7 +518,7 @@ def test_resolve_does_not_read_global_backlog(
     def unavailable_backlog():
         raise RuntimeError("fresh backlog unavailable")
 
-    client, store = _registered_route_client(
+    client, store = registered_feedback_route_client(
         tmp_path,
         feedback_backlog_factory=unavailable_backlog,
     )
@@ -607,7 +545,7 @@ def test_resolve_does_not_call_cached_status_factory(
     def cached_status_failure():
         raise RuntimeError("cached status must not be used for resolution")
 
-    client, store = _registered_route_client(
+    client, store = registered_feedback_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {
             "processing": 0,
@@ -642,7 +580,7 @@ def test_resolve_preserves_real_git_commit_and_main_ancestry_checks(
         receipt["commit_sha"] = _fixture_git(feedback_repository, "rev-parse", "HEAD").stdout.strip()
     else:
         receipt["commit_sha"] = "0" * 40
-    client, store = _registered_route_client(
+    client, store = registered_feedback_route_client(
         tmp_path,
         feedback_backlog_factory=lambda: {"processing": 0, "failed": 0, "retryable": 0},
     )

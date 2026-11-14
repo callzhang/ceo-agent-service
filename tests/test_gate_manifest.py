@@ -21,7 +21,15 @@ def test_manifest_lists_existing_test_files_once_each():
 
 
 def test_manifest_excludes_opt_in_suites():
-    assert not [name for name in _listed() if name.startswith(("tests/browser/", "tests/e2e/"))]
+    opt_in_suites = ("tests/browser/", "tests/e2e/", "tests/performance/")
+    assert not [name for name in _listed() if name.startswith(opt_in_suites)]
+
+
+def test_scale_check_is_outside_default_pytest_discovery():
+    performance_checks = ROOT / "tests" / "performance"
+    assert (performance_checks / "feedback_batch_scale.py").is_file()
+    assert not list(performance_checks.rglob("test_*.py"))
+    assert not list(performance_checks.rglob("*_test.py"))
 
 
 def test_manifest_contains_the_tests_of_the_gate_itself():
