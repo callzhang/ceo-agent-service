@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+from types import SimpleNamespace
 
 import pytest
 
@@ -72,6 +74,7 @@ def test_terminal_failure_twice_creates_empty_official_transcript_archive_for_re
     store, result = run_case(tmp_path, source)
     assert source.calls == [None, 300]
     assert result.failed == 1 and result.summary_recovery_ids == ("test-uuid",)
+    assert result.official_recovery_transcripts == ()
     assert "DEADLINE_EXCEEDED" in result.failures[0][1]
     [path] = (tmp_path / "archive").rglob("*.md")
     original = path.read_text()
@@ -211,3 +214,71 @@ def test_transcript_resource_permission_wait_preserves_summary_failure(tmp_path)
     assert result.permission_pending == 1 and result.summary_recovery_ids == ()
     assert "DEADLINE_EXCEEDED" in result.failures[0][1]
     assert not list((tmp_path / "archive").rglob("*.md"))
+
+
+def test_official_transcript_recovers_summary_without_audio_or_replacing_transcript(
+    tmp_path, monkeypatch,
+):
+    from app import minutes_auto_recovery as auto
+
+    source = Source(FAILED, FAILED, paragraphs=[
+        {"startTime": 1000, "paragraph": "Official words"},
+    ])
+    store, result = run_case(tmp_path, source)
+    archive = tmp_path / "archive"
+    [path] = archive.rglob("*.md")
+    original = path.read_text()
+
+    class SummaryWorkbench:
+        def __init__(self):
+            self.calls = []
+            self.turn = SimpleNamespace(id="91", task_id="90", status="running",
+                                        final_text="", error_code="")
+        def create_task(self, **kwargs):
+            return SimpleNamespace(id="90")
+        def save_attachment(self, *args, **kwargs):
+            pass
+        def create_turn(self, task_id, **kwargs):
+            self.calls.append(kwargs)
+            return self.turn
+        def get_turn(self, turn_id):
+            assert turn_id == "91"
+            return self.turn
+
+    def unexpected_audio(*args, **kwargs):
+        pytest.fail("complete official transcript must not require audio or ASR")
+    monkeypatch.setattr(auto, "prepare_audio", unexpected_audio)
+    monkeypatch.setattr(auto, "completed_asr_receipt", unexpected_audio)
+    wb = SummaryWorkbench()
+    kwargs = dict(archive_dir=archive, service_root=tmp_path, result=result,
+                  workbench=wb, wait_seconds=0, temp_root=tmp_path)
+    pending = auto.recover_summaries(store, source, **kwargs)
+    assert pending.failed == 1 and path.read_text() == original
+    assert len(wb.calls) == 1 and str(path.resolve()) in wb.calls[0]["user_text"]
+    wb.turn.status = "completed"
+    digest = hashlib.sha256(b"[00:01] Official words").hexdigest()
+    wb.turn.final_text = f"Transcript SHA-256: {digest}\n\nActual internal supplementary summary"
+    path.write_text(original.replace("Official words", "Other meeting words"))
+    rejected = auto.recover_summaries(store, source, **kwargs)
+    assert rejected.failed == 1 and "Actual internal" not in path.read_text()
+    path.write_text(original)
+    recovered = auto.recover_summaries(store, source, **kwargs)
+    assert recovered.failed == 0 and recovered.synced == 1
+    body = path.read_text()
+    assert body.startswith(original.rstrip())
+    assert body.count("<!-- dingtalk-transcript-recovery -->") == 1
+    assert "Actual internal supplementary summary" in body
+    assert auto.recover_summaries(store, source, **kwargs).synced == 1
+    assert len(wb.calls) == 1 and path.read_text() == body
+
+
+def test_partial_transcript_cannot_supply_official_summary_source(tmp_path):
+    class PartialSource(Source):
+        def get_all_minutes_transcription(self, task_uuid):
+            raise DwsError("minutes transcription pagination repeated next token")
+
+    source = PartialSource(FAILED, FAILED, paragraphs=[{"paragraph": "partial words"}])
+    _, result = run_case(tmp_path, source)
+    assert result.failed == 1
+    assert result.summary_recovery_ids == ("test-uuid",)
+    assert result.official_recovery_transcripts == ()

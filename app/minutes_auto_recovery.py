@@ -20,9 +20,12 @@ import httpx
 from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
 from app.minutes_archive_recovery import recover_archive
 from app.minutes_recovery_agent import (
-    InvalidAsrReceipt, build_recovery_prompt, completed_asr_receipt,
+    InvalidAsrReceipt, build_official_summary_prompt, build_recovery_prompt, completed_asr_receipt,
 )
-from app.minutes_sync import MINUTES_SYNC_SCANNER, MinutesSyncResult, _minutes_sync_lock
+from app.minutes_sync import (
+    MINUTES_SYNC_SCANNER, MinutesSyncResult, OfficialMinutesTranscript,
+    _minutes_sync_lock, archive_transcription_recovery,
+)
 from app.workbench.store import WorkbenchStore
 from app.store import AutoReplyStore
 
@@ -294,6 +297,90 @@ def _finish(store, wb, dws, archive_dir: Path, recovery: dict) -> None:
     _cleanup_archived(store)
 
 
+def _ensure_official_turn(store, wb, archive_dir: Path, source: OfficialMinutesTranscript):
+    task_uuid = source.task_uuid
+    digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+    preview = archive_transcription_recovery(
+        store, archive_dir, task_uuid=task_uuid, supplement="", apply=False,
+        official_transcript=source.text,
+    )
+    with _minutes_sync_lock(store):
+        state, cursor = _cursor(store)
+        asr = cursor.get("summary_recoveries", {}).get(task_uuid, {})
+        if asr.get("turn_id"):
+            turn = wb.get_turn(asr["turn_id"])
+            if turn and turn.status in {"queued", "running", "stopped"}:
+                raise ValueError(f"Existing audio recovery is {turn.status}")
+        recoveries = cursor.setdefault("official_summary_recoveries", {})
+        entry = recoveries.get(task_uuid)
+        if entry is None:
+            task = wb.create_task(
+                title=f"Minutes official transcript summary: {task_uuid}", runtime_kind="codex",
+            )
+            entry = {"task_id": task.id, "transcript_sha256": digest, "attempt": 1}
+            recoveries[task_uuid] = entry
+            _save(store, state, cursor)
+        if entry["transcript_sha256"] != digest:
+            raise ValueError("complete official transcript changed since summary submission")
+        if entry.get("turn_id"):
+            turn = wb.get_turn(entry["turn_id"])
+            if turn is None or turn.task_id != entry["task_id"]:
+                raise ValueError("official transcript recovery turn does not match its source")
+            if turn.status not in {"failed", "completed"} or (
+                turn.status == "completed" and _official_summary_text(turn, digest)
+            ):
+                return turn
+            if entry["attempt"] >= MAX_AUTOMATIC_ATTEMPTS:
+                raise ValueError("official transcript summary attempts exhausted")
+            entry["attempt"] += 1
+            entry.pop("turn_id")
+            _save(store, state, cursor)
+        # A small, immutable attachment binds the local source and selects
+        # runtimes that can read the archive. The transcript remains in place.
+        wb.save_attachment(
+            entry["task_id"],
+            client_request_id=str(uuid5(NAMESPACE_URL, f"minutes-official:{task_uuid}:{digest}")),
+            filename="minutes-transcript-source.json",
+            media_type="application/json",
+            content=json.dumps({"task_uuid": task_uuid, "sha256": digest}).encode("utf-8"),
+        )
+        turn = wb.create_turn(
+            entry["task_id"],
+            user_text=build_official_summary_prompt(preview.resolve(), task_uuid, digest),
+            client_request_id=f"minutes-official:{task_uuid}:{digest}:{entry['attempt']}",
+        )
+        entry["turn_id"] = turn.id
+        _save(store, state, cursor)
+        return turn
+
+
+def _official_summary_text(turn, digest: str) -> str:
+    receipt, _, summary = turn.final_text.strip().partition("\n")
+    return summary.strip() if receipt == f"Transcript SHA-256: {digest}" else ""
+
+
+def _finish_official_summary(
+    store, wb, archive_dir: Path, source: OfficialMinutesTranscript, turn, deadline: float,
+) -> None:
+    while turn.status in {"queued", "running"}:
+        if time.monotonic() >= deadline:
+            raise TimeoutError(f"Official transcript recovery still {turn.status}; turn={turn.id}")
+        time.sleep(min(2, max(0, deadline - time.monotonic())))
+        current = wb.get_turn(turn.id)
+        if current is None or current.task_id != turn.task_id:
+            raise ValueError("official transcript recovery turn is missing")
+        turn = current
+    digest = hashlib.sha256(source.text.encode("utf-8")).hexdigest()
+    summary = _official_summary_text(turn, digest) if turn.status == "completed" else ""
+    if not summary:
+        raise ValueError(f"Official transcript summary unavailable; turn={turn.id} ({turn.status})")
+    supplement = "# Internal supplementary summary (DingTalk official transcript)\n\n" + summary
+    archive_transcription_recovery(
+        store, archive_dir, task_uuid=source.task_uuid, supplement=supplement, apply=True,
+        official_transcript=source.text,
+    )
+
+
 def _recover_summaries(
     store,
     dws,
@@ -314,8 +401,27 @@ def _recover_summaries(
     recovered = set(result.summary_recovery_ids) & set(cursor.get("archived_ids", []))
     errors = {}
     deadline = time.monotonic() + wait_seconds
+    official = {
+        source.task_uuid: source for source in result.official_recovery_transcripts
+        if source.task_uuid in result.summary_recovery_ids and source.task_uuid not in recovered
+    }
+    official_turns = {}
+    for task_uuid, source in official.items():
+        try:
+            official_turns[task_uuid] = _ensure_official_turn(store, wb, archive_dir, source)
+        except (OSError, ValueError, RuntimeError) as exc:
+            errors[task_uuid] = f"official transcript recovery: {exc}"
+    for task_uuid, turn in official_turns.items():
+        try:
+            _finish_official_summary(store, wb, archive_dir, official[task_uuid], turn, deadline)
+        except (OSError, ValueError, RuntimeError) as exc:
+            errors[task_uuid] = f"official transcript recovery: {exc}"
+        else:
+            recovered.add(task_uuid)
+    if official_turns:
+        _cleanup_archived(store)
     for task_uuid in result.summary_recovery_ids:
-        if task_uuid in recovered:
+        if task_uuid in recovered or task_uuid in official:
             continue
         try:
             # Finalizing an existing completed result is not another Agent
@@ -377,7 +483,7 @@ def _recover_summaries(
         ) as exc:
             # Preserve the real source failure alongside the recovery failure;
             # the same native turn/checkpoint is resumed on the next sync.
-            errors[task_uuid] = str(exc)
+            errors[task_uuid] = f"ASR recovery: {exc}"
             with _minutes_sync_lock(store):
                 state, cursor = _cursor(store)
                 entry = cursor.get("summary_recoveries", {}).get(task_uuid)
@@ -409,12 +515,16 @@ def _recover_summaries(
         failed=result.failed - len(recovered),
         synced=result.synced + len(recovered),
         failures=tuple(
-            (key, f"{reason}; ASR recovery: {errors[key]}" if key in errors else reason)
+            (key, f"{reason}; {errors[key]}" if key in errors else reason)
             for key, reason in result.failures
             if key not in recovered
         ),
         summary_recovery_ids=tuple(
             key for key in result.summary_recovery_ids if key not in recovered
+        ),
+        official_recovery_transcripts=tuple(
+            source for source in result.official_recovery_transcripts
+            if source.task_uuid not in recovered
         ),
     )
 

@@ -62,6 +62,12 @@ def _detail(label: str, items: tuple[tuple[str, str], ...]) -> str:
 
 
 @dataclass(frozen=True)
+class OfficialMinutesTranscript:
+    task_uuid: str
+    text: str
+
+
+@dataclass(frozen=True)
 class MinutesSyncResult:
     """Every discovered minute lands in exactly one outcome."""
 
@@ -85,6 +91,7 @@ class MinutesSyncResult:
     skips: tuple[tuple[str, str], ...] = ()
     summary_recovery_ids: tuple[str, ...] = ()
     listing_error: str = ""
+    official_recovery_transcripts: tuple[OfficialMinutesTranscript, ...] = ()
 
     def __post_init__(self) -> None:
         accounted = (
@@ -321,6 +328,11 @@ def _render_archive(
         "# Transcript",
         "",
     ]
+    return "\n".join(lines + _transcript_lines(paragraphs)) + "\n"
+
+
+def _transcript_lines(paragraphs: list[dict[str, Any]]) -> list[str]:
+    lines = []
     for paragraph in paragraphs:
         text = str(paragraph.get("paragraph") or "").strip()
         if not text:
@@ -328,7 +340,7 @@ def _render_archive(
         speaker = _speaker(paragraph)
         prefix = f"{_timecode(paragraph.get('startTime'))} "
         lines.append(f"{prefix}{speaker}: {text}" if speaker else f"{prefix}{text}")
-    return "\n".join(lines) + "\n"
+    return lines
 
 
 def archive_path_for(
@@ -583,6 +595,7 @@ def _sync_minutes_once(
     failures: list[tuple[str, str]] = []
     skips: list[tuple[str, str]] = []
     summary_recovery_ids: list[str] = []
+    official_recovery_transcripts: list[OfficialMinutesTranscript] = []
     for task_uuid in candidates:
         transcript_error = ""
         summary_error = ""
@@ -661,6 +674,12 @@ def _sync_minutes_once(
             summary_recovery_ids.append(task_uuid)
             if transcript_error:
                 failures.append((task_uuid, transcript_error))
+            else:
+                transcript = "\n".join(_transcript_lines(paragraphs))
+                if transcript:
+                    official_recovery_transcripts.append(
+                        OfficialMinutesTranscript(task_uuid, transcript)
+                    )
         if not paragraphs and not rendered_summary.strip():
             skipped += 1
             duration = _duration(basic)
@@ -747,6 +766,7 @@ def _sync_minutes_once(
         skips=tuple(skips),
         summary_recovery_ids=tuple(summary_recovery_ids),
         listing_error=pagination_error,
+        official_recovery_transcripts=tuple(official_recovery_transcripts),
     )
 
 
@@ -759,15 +779,23 @@ def _read_duration_for_restricted(dws, task_uuid: str) -> timedelta | None:
     return _duration(basic)
 
 
-def archive_transcription_recovery(store, archive_dir: Path, *, task_uuid: str, supplement: str, apply: bool) -> Path:
+def archive_transcription_recovery(
+    store, archive_dir: Path, *, task_uuid: str, supplement: str, apply: bool,
+    official_transcript: str | None = None,
+) -> Path:
+    args = dict(
+        task_uuid=task_uuid, supplement=supplement, apply=apply,
+        official_transcript=official_transcript,
+    )
     if not apply:
-        return _archive_transcription_recovery(store, archive_dir, task_uuid=task_uuid, supplement=supplement, apply=False)
+        return _archive_transcription_recovery(store, archive_dir, **args)
     with _minutes_sync_lock(store):
-        return _archive_transcription_recovery(store, archive_dir, task_uuid=task_uuid, supplement=supplement, apply=True)
+        return _archive_transcription_recovery(store, archive_dir, **args)
 
 
 def _archive_transcription_recovery(
     store, archive_dir: Path, *, task_uuid: str, supplement: str, apply: bool,
+    official_transcript: str | None = None,
 ) -> Path:
     """Append a verified recovery to one existing archive, then mark it archived."""
     marker = f'<!-- row_key: {task_uuid} -->'
@@ -783,6 +811,12 @@ def _archive_transcription_recovery(
     if '# AI Summary\n' not in original or '# Transcript\n' not in original:
         raise ValueError('existing archive is missing official artifacts')
     recovery_marker = '<!-- ai-services-asr-recovery -->'
+    if official_transcript is not None:
+        recovery_marker = '<!-- dingtalk-transcript-recovery -->'
+        original_transcript = original.split('\n# Transcript\n', 1)[1]
+        original_transcript = original_transcript.partition('\n\n' + recovery_marker + '\n')[0]
+        if not official_transcript.strip() or original_transcript.strip() != official_transcript.strip():
+            raise ValueError('official transcript does not match the source archive')
     suffix = recovery_marker + '\n' + supplement.rstrip() + '\n'
     if recovery_marker in original:
         if not original.endswith(suffix):

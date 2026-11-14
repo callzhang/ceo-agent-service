@@ -5,6 +5,13 @@ summary-generation failure or retryable summary-read error persisted through one
 workflow retry. The normal provider retry uses a 300-second read timeout. It does
 not regenerate, overwrite or represent DingTalk's official summary as repaired.
 
+When the scanner has read a complete, nonempty official DingTalk transcript,
+the coordinator instead uses it to produce an internal summary. It binds
+the Workbench turn to the unique archive and transcript hash, then checks
+the association and original transcript again before publishing the labeled
+supplement. The ASR procedure below applies when a complete official
+transcript is unavailable.
+
 Read the supplied metadata file and its original working directory (given in the
 user request). `metadata.json` binds the task UUID, actual audio SHA-256 and actual
 duration to the original DWS download. The work directory contains
