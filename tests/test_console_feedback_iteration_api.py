@@ -28,6 +28,43 @@ def test_feedback_iteration_api_reports_disabled_capability_and_rejects_claim(tm
     assert claim.json()["code"] == "feedback_iteration_disabled"
 
 
+def test_feedback_import_returns_a_decodable_batch_on_claim_and_retry(tmp_path):
+    store = _target_store(tmp_path / "feedback.sqlite3")
+    store.upsert_feedback_event(key="manual:1", feedback_token="token")
+    app = FastAPI()
+    register_console_routes(
+        app, store_factory=lambda: store, status_payload_factory=lambda: {},
+        feedback_backlog_factory=lambda: {}, attention_rows_factory=lambda: [],
+    )
+    batches = "/api/console/feedback/batches"
+    claim_payload = {
+        "batch_id": "feedback-import:manual:1",
+        "feedback_keys": ["manual:1"],
+        "workbench_task_id": "100",
+    }
+    batch_url = f'{batches}/{claim_payload["batch_id"]}'
+
+    with TestClient(app) as client:
+        first = client.post(batches, json=claim_payload)
+        retry = client.post(batches, json=claim_payload)
+        detail = client.get(batch_url)
+        associated = client.patch(batch_url, json={
+            "workbench_task_id": "100", "workbench_turn_id": "200",
+        })
+
+    assert all(response.status_code == 200 for response in (first, retry, detail, associated))
+    for response in (first, retry, detail, associated):
+        batch = response.json()["item"]
+        item, = batch["items"]
+        assert (batch.get("requested_count"), "scope_receipt" in item) == (1, False)
+        assert item["feedback_key"] == "manual:1"
+    assert "- key: manual:1" in first.json()["item"]["start_message"]
+    assert retry.json()["item"]["start_message"] == first.json()["item"]["start_message"]
+    round_item, = store.list_feedback_processing_rounds("manual:1")
+    assert round_item.workbench_task_id == "100"
+    assert round_item.workbench_turn_id == "200"
+
+
 def test_feedback_iteration_decision_api_rejects_forged_round_identity(tmp_path):
     store = _target_store(tmp_path / "feedback.sqlite3")
     store.upsert_feedback_event(key="manual:1", feedback_token="token")

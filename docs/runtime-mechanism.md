@@ -669,6 +669,10 @@ turn、可选业务 attempt/run、commit 和测试/重启/健康证据都归属�
 空证据开始；旧批次、旧轮次和旧回执始终不可变，也不参与新轮次的结案。
 结案按真实 Workbench 处理身份核验：turn 属于关联 task 且已完成，其最新 `workload_kind=workbench` / `workload_key=turn ID` 原生 RuntimeAttempt 已完成且完成时间不早于当前反馈轮次开始。Workbench 本身没有业务 ReplyAttempt/AgentRun，二者可同时省略或为 0；附带业务重跑引用时必须成对、精确绑定，且业务 Run 已在当前轮次完成。错 task/turn、旧运行、未完成运行或伪造业务 ID 均拒绝，原项目保持 processing；决策、测试、重启、健康和业务结果仍按原合同核验。
 
+Workbench 领取反馈批次后，使用响应中的 `start_message` 创建处理回合，再保存回合关联。
+领取响应、批次详情和关联响应统一返回 `requested_count`，批次项目只在回执已生成时返回
+`scope_receipt`。使用原批次和相同项目重试领取时，复用现有处理轮次。
+
 只有当前 `processing` 轮次可以接收关联或证据 PATCH。resolution receipt 按已持久化的
 feedback-iteration decision scope 校验，而不是对所有修复一律要求 commit：`skill_only` 要求
 精确 revision/SHA、active config、匹配的启动 load receipt、场景验证和 health；

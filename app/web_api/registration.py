@@ -1385,6 +1385,8 @@ def register_console_routes(
         for round_item in batch_rounds:
             row = source_rows.get(round_item.feedback_key)
             projected = json_safe(round_item)
+            if not round_item.scope_receipt:
+                projected.pop("scope_receipt", None)
             projected.update({
                 "processing_status": round_item.status,
                 "summary": persisted_feedback_summary(row) if row else "",
@@ -1477,7 +1479,16 @@ def register_console_routes(
         imports = [item for item in store.list_feedback_import_items(limit=10000, offset=0) if item.feedback_key in keys]
         imports.sort(key=lambda item: keys.index(item.feedback_key))
         refreshed_batch = store.get_feedback_processing_batch(cleaned_batch_id)
-        item = {"batch_id": cleaned_batch_id, "status": refreshed_batch.status if refreshed_batch else "processing", "feedback_keys": keys, "items": _feedback_items_for_batch(store, cleaned_batch_id), "start_message": build_feedback_start_message(cleaned_batch_id, imports, runtime_context=_feedback_iteration_runtime_context(store))}
+        item = {
+            "batch_id": cleaned_batch_id,
+            "status": refreshed_batch.status if refreshed_batch else "processing",
+            "requested_count": len(keys),
+            "feedback_keys": keys,
+            "items": _feedback_items_for_batch(store, cleaned_batch_id),
+            "start_message": build_feedback_start_message(
+                cleaned_batch_id, imports, runtime_context=_feedback_iteration_runtime_context(store),
+            ),
+        }
         return command_result(item=item, message="反馈批次已领取")
 
     @app.get("/api/console/feedback/batches/{batch_id}")
