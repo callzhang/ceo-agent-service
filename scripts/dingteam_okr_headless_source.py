@@ -19,6 +19,7 @@ from urllib.parse import urlsplit
 
 import httpx
 from playwright.sync_api import Error as PlaywrightError, sync_playwright
+from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
 
 SERVICE_ROOT = Path(__file__).resolve().parents[1]
 if str(SERVICE_ROOT) not in sys.path:
@@ -35,7 +36,6 @@ LOCAL_SSO_CONFIRM_SCRIPT = Path(__file__).with_name("dingtalk_local_sso_confirm.
 HEADLESS_REFRESH_SECONDS = 40
 HEADLESS_LOCK_TIMEOUT_SECONDS = 130
 LOCAL_SSO_TIMEOUT_MS = 10_000
-LOCAL_SSO_DIALOG_DELAY_MS = 1_500
 LOCAL_SSO_CONFIRM_PROCESS_SECONDS = 40
 # The caller allows 240 seconds. Leave room for this wrapper to stop and reap
 # its isolated Chromium process group after a slow lock wait or browser refresh.
@@ -134,28 +134,28 @@ def _confirm_local_dingtalk_login() -> None:
 
 
 def _submit_local_dingtalk_account(page, *, allow_direct_login: bool = True) -> None:
-    corp = page.locator(LOCAL_SSO_CORP_ITEM).filter(
-        has_text=LOCAL_SSO_CORP_NAME
-    ).first
-    if not corp.is_visible():
-        if allow_direct_login:
-            direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
-            direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
-            direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
+    organizations = page.locator(LOCAL_SSO_CORP_ITEM)
+    corp = organizations.filter(has_text=LOCAL_SSO_CORP_NAME).first
+    if not organizations.first.is_visible() and allow_direct_login:
+        direct_login = page.locator(LOCAL_SSO_DIRECT_BUTTON).first
+        direct_login.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+        direct_login.click(timeout=LOCAL_SSO_TIMEOUT_MS)
 
-            page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-            # The organization chooser shares the login URL but needs no native prompt.
-            if _is_dingtalk_login_url(getattr(page, "url", "")) and not corp.is_visible():
+    if _is_dingtalk_login_url(getattr(page, "url", "")):
+        try:
+            organizations.first.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
+        except PlaywrightTimeoutError:
+            if _is_dingtalk_login_url(getattr(page, "url", "")) and not organizations.first.is_visible():
                 _confirm_local_dingtalk_login()
 
-        redirected = urlsplit(getattr(page, "url", ""))
-        entry = urlsplit(browser.ENTRY_URL)
-        if (redirected.scheme, redirected.netloc, redirected.path) == (
-            entry.scheme,
-            entry.netloc,
-            entry.path,
-        ):
-            return
+    redirected = urlsplit(getattr(page, "url", ""))
+    entry = urlsplit(browser.ENTRY_URL)
+    if (redirected.scheme, redirected.netloc, redirected.path) == (
+        entry.scheme,
+        entry.netloc,
+        entry.path,
+    ):
+        return
 
     corp.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
     corp.click(timeout=LOCAL_SSO_TIMEOUT_MS)
@@ -173,8 +173,6 @@ def _attempt_local_dingtalk_sso(page) -> bool:
         avatar = page.locator(LOCAL_SSO_ACCOUNT_AVATAR).first
         avatar.wait_for(state="visible", timeout=LOCAL_SSO_TIMEOUT_MS)
         avatar.click(timeout=LOCAL_SSO_TIMEOUT_MS)
-        page.wait_for_timeout(LOCAL_SSO_DIALOG_DELAY_MS)
-        _confirm_local_dingtalk_login()
         _submit_local_dingtalk_account(page, allow_direct_login=False)
         return True
 

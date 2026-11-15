@@ -14,6 +14,7 @@ def source(tmp_path, monkeypatch):
     (scripts / "dingteam_okr_browser_source.py").write_text(
         "from types import SimpleNamespace\n"
         "class MissingOkrPeriod(Exception): pass\n"
+        "ENTRY_URL = 'https://dingokr.dingteam.com/web/okr/pc/index.html'\n"
         "direct=SimpleNamespace(MissingOkrPeriod=MissingOkrPeriod)\n"
     )
     monkeypatch.setenv("CEO_SKILLS_ROOT", str(tmp_path))
@@ -117,7 +118,6 @@ def sso_pages(body):
 
 def test_direct_sso_ignores_earlier_button_on_old_page(source, sso_chrome, monkeypatch):
     monkeypatch.setattr(source.browser, "ENTRY_URL", "about:blank", raising=False)
-    monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
     page = sso_chrome.new_page()
     try:
         page.set_content(sso_pages(
@@ -136,17 +136,23 @@ def test_direct_sso_ignores_earlier_button_on_old_page(source, sso_chrome, monke
 
 @pytest.mark.parametrize("initial_mode", ["account", "qr"])
 @pytest.mark.parametrize("labels", [("Account", "QR Code"), ("账号", "扫码登录")])
-def test_qr_sso_uses_shared_tabs_and_current_panes(source, sso_chrome, monkeypatch, initial_mode, labels):
+@pytest.mark.parametrize("advances_without_dialog", [False, True])
+def test_qr_sso_uses_shared_tabs_and_current_panes(
+    source, sso_chrome, monkeypatch, initial_mode, labels, advances_without_dialog,
+):
     monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 1000)
-    monkeypatch.setattr(source, "LOCAL_SSO_DIALOG_DELAY_MS", 0)
     monkeypatch.setattr(source, "LOCAL_SSO_CORP_NAME", "Synthetic Corp")
     confirmations = []
     page = sso_chrome.new_page()
+    advance = (
+        "document.querySelector('#qr').classList.remove('app-page-curr');"
+        "document.querySelector('#corp').classList.add('app-page-curr')"
+    )
+    delayed_advance = f";setTimeout(()=>{{{advance}}},40)" if advances_without_dialog else ""
 
     def confirm_native():
         confirmations.append(True)
-        page.evaluate("document.querySelector('#qr').classList.remove('app-page-curr');"
-                      "document.querySelector('#corp').classList.add('app-page-curr')")
+        page.evaluate(advance)
 
     monkeypatch.setattr(source, "_confirm_local_dingtalk_login", confirm_native)
     account_label, qr_label = labels
@@ -169,7 +175,8 @@ def test_qr_sso_uses_shared_tabs_and_current_panes(source, sso_chrome, monkeypat
         f"<div id='account' class='app-page third-part-login-page{account_active}'>Account methods</div>"
         f"<div id='qr' class='app-page app-qr-login-page{qr_active}'>"
         "<button class='module-qrcode-user-avatar' "
-        "onclick=\"document.querySelector('#events').textContent+='avatar,'\">Current account</button></div>"
+        f"onclick=\"document.querySelector('#events').textContent+='avatar,'{delayed_advance}\">"
+        "Current account</button></div>"
         "<div id='corp' class='app-page'><button class='module-corp-sel-listitem' "
         "onclick=\"document.querySelector('#events').textContent+='corp,'\">Synthetic Corp</button></div>"
         "<div class='app-page'><div class='flex-box-tab-content'>"
@@ -186,6 +193,30 @@ def test_qr_sso_uses_shared_tabs_and_current_panes(source, sso_chrome, monkeypat
 
         expected = "qr,avatar,corp," if initial_mode == "account" else "avatar,corp,"
         assert page.locator("#events").text_content() == expected
-        assert confirmations == [True]
+        assert confirmations == ([] if advances_without_dialog else [True])
+    finally:
+        page.close()
+
+
+def test_active_org_picker_never_selects_another_organization(source, sso_chrome, monkeypatch):
+    from playwright.sync_api import TimeoutError as PlaywrightTimeoutError
+
+    monkeypatch.setattr(source, "LOCAL_SSO_TIMEOUT_MS", 250)
+    monkeypatch.setattr(source, "LOCAL_SSO_CORP_NAME", "Expected Corp")
+    monkeypatch.setattr(source, "_confirm_local_dingtalk_login",
+                        lambda: pytest.fail("an active organization picker needs no desktop prompt"))
+    page = sso_chrome.new_page()
+    page.route("https://login.dingtalk.com/oauth2/test", lambda route: route.fulfill(
+        body="<div class='app-page app-page-curr'><button class='module-corp-sel-listitem' "
+             "onclick=\"document.title='selected'\">Unrelated Corp</button></div>",
+        content_type="text/html",
+    ))
+    try:
+        page.goto("https://login.dingtalk.com/oauth2/test")
+
+        with pytest.raises(PlaywrightTimeoutError, match="Expected Corp"):
+            source._submit_local_dingtalk_account(page)
+
+        assert page.title() != "selected"
     finally:
         page.close()
