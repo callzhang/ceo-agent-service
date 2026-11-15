@@ -280,7 +280,7 @@ class ClaudeRuntimeAdapter:
             raise ValueError("max_turns must be a positive integer")
         if session_id is not None:
             require_claude_session_id(session_id)
-        settings_json, mcp_json = self._invocation_boundary(selected_policy)
+        settings, transports = self._invocation_boundary(selected_policy)
         command = [self.claude_bin, "-p"]
         if configured.credential_mode is CredentialMode.SERVICE_API:
             # --bare reads Anthropic auth strictly from ANTHROPIC_API_KEY.  The
@@ -293,10 +293,10 @@ class ClaudeRuntimeAdapter:
                 "--setting-sources",
                 "",
                 "--settings",
-                settings_json,
+                json.dumps(settings, sort_keys=True, separators=(",", ":")),
                 "--strict-mcp-config",
                 "--mcp-config",
-                mcp_json,
+                json.dumps({"mcpServers": transports}, sort_keys=True, separators=(",", ":")),
                 "--input-format",
                 "text",
                 "--output-format",
@@ -320,8 +320,23 @@ class ClaudeRuntimeAdapter:
         elif selected_policy.role:
             # Derek 2026-10-23: the Consumer has a shell on every route (it runs
             # `dws` itself); the sandbox in `_invocation_boundary` confines it.
-            tools = "Read,Glob,Grep,Bash" if selected_policy.role == "consumer" else "Read,Glob,Grep"
-            command.extend(["--restricted", "--tools", tools])
+            tools = ["Read", "Glob", "Grep"]
+            if selected_policy.role == "consumer":
+                tools.append("Bash")
+            command.extend(["--restricted", "--tools", ",".join(tools)])
+            if "ai_services" in transports:
+                # The selected agent runs this same session with the native tool
+                # allowlist. --tools only restricts built-ins, not MCP tools.
+                agent = "ceo-service-role"
+                definition = {
+                    "description": "CEO Agent Service role tools",
+                    "prompt": "",
+                    "tools": [*tools, "mcp__agent_cli__*", "mcp__ai_services__ocr_document"],
+                }
+                command.extend([
+                    "--agent", agent,
+                    "--agents", json.dumps({agent: definition}, separators=(",", ":")),
+                ])
         if json_schema is not None:
             cli_schema = _native_cli_schema(json_schema)
             command.extend([
@@ -520,7 +535,9 @@ class ClaudeRuntimeAdapter:
             failover_permitted=True,
         )
 
-    def _invocation_boundary(self, policy: ClaudeCommandPolicy) -> tuple[str, str]:
+    def _invocation_boundary(
+        self, policy: ClaudeCommandPolicy
+    ) -> tuple[dict[str, object], dict[str, dict[str, object]]]:
         """The settings and MCP servers for one turn, passed to the CLI inline.
 
         The CLI takes both as JSON strings, so nothing is written to disk and
@@ -536,6 +553,7 @@ class ClaudeRuntimeAdapter:
                     "--execution-generation", policy.execution_generation,
                 ],
             }}
+            transports.update(self._mcp_transports("ai_services"))
         else:
             transports = self._mcp_transports() if policy.tools_enabled else {}
         settings = {
@@ -544,23 +562,19 @@ class ClaudeRuntimeAdapter:
         }
         if policy.role == "consumer":
             settings["sandbox"] = _consumer_shell_sandbox()
-        settings_json = json.dumps(
-            settings,
-            sort_keys=True,
-            separators=(",", ":"),
-        )
-        mcp_json = json.dumps(
-            {"mcpServers": transports}, sort_keys=True, separators=(",", ":")
-        )
-        return settings_json, mcp_json
+        return settings, transports
 
-    def _mcp_transports(self) -> dict[str, dict[str, object]]:
+    def _mcp_transports(self, *names: str) -> dict[str, dict[str, object]]:
         configured = (
             self._service_mcp_servers
             if self._service_mcp_servers is not None
             else load_service_mcp_servers(env=os.environ)
         )
-        return {server.name: _mcp_transport(server, os.environ) for server in configured}
+        return {
+            server.name: _mcp_transport(server, os.environ)
+            for server in configured
+            if not names or server.name in names
+        }
 
     def _configured_route(self, route: RuntimeRoute) -> RuntimeRoute:
         # A route's credential mode comes from the configuration that built it,
