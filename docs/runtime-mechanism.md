@@ -649,6 +649,9 @@ Audit 不得仅因 OCR/转写来源字节由已配置 AI Services 处理而额�
 
 当这类重评在同一个 OA 业务 Task 中结束，且当前 Consumer 候选的 `no_action` 结果经 digest 匹配的 Audit `approve` 明确通过时，任务完成时及启动恢复都会把绑定的旧 Attempt 投影为 `skipped`，保留新的 Audit run 和结论作为当前详情证据，并记录“未执行审批、退回或留言”。仅有 Task 的 `done` 状态、无 Audit 通过、候选已失效或任何其他结果都不会清除旧 `needs_human`；OA 待办及其处理人保持原状。
 
+钉钉聊天媒体下载使用 DWS 原子写入的目标文件。若命令超时但文件已经完整落盘，读取方继续使用
+该本地文件并执行原有内容校验。目标缺失或为空时，清理空文件并继续报告原超时错误。
+
 ## 用户反馈处理轮次
 
 Consumer/Audit 的通用应用结果合同只在 Developer 注入一次，不在每轮 Task context 复制。Audit 的重复 Role Boundary 合并到“应用结果合同”段；Task 中显式自定义 Audit Rules、完整候选与 digest、当前事实、阶段和反馈继续保留。会话绑定、角色政策和 wire schema 保持不变，Settings 的当前预览沿用同一装配函数，历史视图继续读取原始已保存输入。

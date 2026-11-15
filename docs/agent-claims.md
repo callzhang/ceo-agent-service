@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex/review-repair-354 | app/dws_client.py get_resource_download_url only; tests/test_dws_client.py media timeout; docs/runtime-mechanism.md media download | Port the verified media timeout recovery to current main for existing PR 354. | 2026-11-15 |
-
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
