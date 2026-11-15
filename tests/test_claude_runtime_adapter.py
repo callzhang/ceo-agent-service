@@ -13,6 +13,7 @@ from app.claude_runtime_adapter import (
     ClaudeRuntimeResultError,
     ClaudeTerminalProof,
 )
+from app.service_codex_config import ServiceMcpServer
 from tests.runtime_route_env import claude_api_env, codex_api_env, set_env
 
 SYSTEM_INIT = {
@@ -108,7 +109,10 @@ def normalizer(adapter):
     return adapter.new_event_normalizer()
 
 
-def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
+def test_role_command_without_ai_services_uses_only_task_bound_agent_cli(
+    adapter, route, monkeypatch
+):
+    monkeypatch.setattr(adapter, "_service_mcp_servers", ())
     command = adapter.build_command(
         route=route, session_id=None, max_turns=5,
         policy=ClaudeCommandPolicy.consumer(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
@@ -143,6 +147,42 @@ def test_role_command_uses_only_task_bound_agent_cli(adapter, route):
         ],
     }
 
+
+
+@pytest.mark.parametrize(
+    ("role_policy", "builtins"),
+    [
+        (ClaudeCommandPolicy.consumer, ["Read", "Glob", "Grep", "Bash"]),
+        (ClaudeCommandPolicy.audit, ["Read", "Glob", "Grep"]),
+    ],
+)
+def test_role_command_exposes_only_ai_services_ocr(adapter, route, monkeypatch, role_policy, builtins):
+    url = "https://ai-services.example.test/mcp"
+    monkeypatch.setattr(
+        adapter,
+        "_service_mcp_servers",
+        (
+            ServiceMcpServer(name="ai_services", url=url),
+            ServiceMcpServer(
+                name="other",
+                url="https://other.example.test/mcp",
+                bearer_token_env_var="CEO_TEST_UNSET_SERVICE_MCP_TOKEN",
+            ),
+        ),
+    )
+    command = adapter.build_command(
+        route=route, session_id="previous-session", max_turns=5,
+        policy=role_policy(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
+    )
+    transports = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
+    assert set(transports) == {"agent_cli", "ai_services"}
+    assert transports["ai_services"] == {"type": "http", "url": url}
+    assert command[command.index("--tools") + 1] == ",".join(builtins)
+    agent = command[command.index("--agent") + 1]
+    definition = json.loads(command[command.index("--agents") + 1])[agent]
+    assert definition["tools"] == [*builtins, "mcp__agent_cli__*", "mcp__ai_services__ocr_document"]
+    assert definition["prompt"] == ""
+    assert command[command.index("--resume") + 1] == "previous-session"
 
 
 @pytest.mark.parametrize("filename", [
