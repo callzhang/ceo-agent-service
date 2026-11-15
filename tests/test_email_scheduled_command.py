@@ -1,3 +1,4 @@
+import errno
 import json
 import socket
 import ssl
@@ -115,6 +116,13 @@ def test_email_discovery_retries_transient_transport_with_capped_backoff(error: 
         (socket.gaierror("temporary DNS failure"), 3, True),
         (TimeoutError("provider timed out"), 3, True),
         (ssl.SSLEOFError("unexpected EOF while reading"), 3, True),
+        (OSError(errno.ENETDOWN, "network down"), 3, True),
+        (OSError(errno.ENETUNREACH, "network unreachable"), 3, True),
+        (OSError(errno.EHOSTDOWN, "host down"), 3, True),
+        (OSError(errno.EHOSTUNREACH, "host unreachable"), 3, True),
+        (OSError(errno.ETIMEDOUT, "timed out"), 3, True),
+        (PermissionError(errno.EACCES, "permission denied"), 1, False),
+        (ssl.SSLError("unsupported protocol"), 1, False),
         (ssl.SSLCertVerificationError("certificate verify failed"), 1, False),
         (ConnectionError("IMAP login failed: invalid credentials"), 1, False),
         (ConnectionError("email IMAP credential is unavailable"), 1, False),
