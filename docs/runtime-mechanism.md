@@ -641,6 +641,8 @@ Audit 不得仅因 OCR/转写来源字节由已配置 AI Services 处理而额�
 失败微信 Attempt 的 History `POST /api/console/history/{attempt_id}/retry` 是原生读回恢复入口，不要求用户回复确认卡，也不调用 Sender。它先校验当前已审核候选、审核、执行代、动作正文和 Delivery 证据完全绑定。`sent` 仅在 Reader 从准确账号、会话和动作开始时间之后读回唯一匹配的本人消息时结算为 `done`；明确 `superseded_by_newer_wechat_trigger` 链只有在最终 successor 的已发送正文被读回、旧正文在完整有限窗口内不存在且账号/会话/目标相同后才结算为 `skipped`。无法证明时保留真实失败并返回冲突；原失败 Attempt、Run 和动作历史保持不变。
 正式 `skipped` 的投递及终点为 `skipped` 的明确替代链，也可用同一入口结算父 Task。每段都必须由微信 Reader 按原账号、会话及动作时间读出完整窗口，确认该段没有匹配的本人发送；事务内重新核对执行代、原审核、正文摘要、替代关系及不存在已派发或成功回执。只结算当前父 Task，保留 Delivery、Attempt 和已有回执。页面说明读回未发送。
 
+同一入口可传入已核实的 `principal_reply_message_id`，用于本次自动回复在创建投递前失败、本人后来已回复的任务。提交方须确认该消息确实是本人对原事项的回复。Reader 在原账号和会话的完整窗口内按 ID 核对原始入站消息与较晚的本人发出消息，并核对审核正文未被发出。事务内复核当前代次、审核、创建投递前的失败记录以及不存在投递、派发标记或服务方回执；已知系统自动回复不能用作本人回复。通过后将当前 Task 结为 `done` 并保存原触发和本人回复的身份，详情显示「本人已回复」。原自动投递失败仍可在历史执行中查看；此分支只使用 Reader。
+
 需要重新执行内部失败的 Attempt 时，调用 `POST /api/console/history/{attempt_id}/rerun`，由原任务流程重新读取并审核当前输入；调用该 API 不要求 Agent 让 Derek 回复聊天确认卡。它与 `/retry` 的外部动作只读对账分开：存在投递或回执时不通过 rerun 重发。
 
 当前未解决的 OA `needs_human` 审批也可从 Attempt 详情发起“重新评估当前审批”。该入口只对最新 Attempt、仍为 `needs_human` 的任务、完全匹配的流程实例/审批节点/业务对象，且当前候选尚无已选方案、无 OA 动作回执的情况开放；已解决事项、身份不匹配事项和普通非 OA `needs_human` 均不可重跑。提交后使用现有手动 OA rerun 流程刷新当前选中的 OA Skills，并创建新执行修订；旧候选和审核记录保留，新候选仍经 Consumer、Audit 及既有 System 执行门槛，入口本身不会同意、拒绝或退回审批。若 Attempt 引用较早一次 OA 扫描，重新评估仍复用同一业务任务当前扫描输入编号；底层同时按 Attempt 自身原始扫描编号核验该来源 Attempt，两种编号分别标识当前输入和待复核的历史结果。

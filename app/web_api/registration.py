@@ -959,8 +959,14 @@ def register_console_routes(
         """Retry failed WeChat work through exact Reader reconciliation, without sending."""
         from app.wechat_reconciliation import reconcile_failed_wechat_attempt
 
+        binding = await json_object(request) if await request.body() else {}
+        reply_id = binding.get("principal_reply_message_id")
+        if binding and (set(binding) != {"principal_reply_message_id"}
+                        or not isinstance(reply_id, str) or not reply_id.strip()):
+            raise HTTPException(status_code=422, detail="principal_reply_message_id is required")
         try:
-            result = reconcile_failed_wechat_attempt(store_factory(), attempt_id)
+            arguments = {"principal_reply_message_id": reply_id.strip()} if reply_id else {}
+            result = reconcile_failed_wechat_attempt(store_factory(), attempt_id, **arguments)
         except ValueError as exc:
             return JSONResponse(
                 {"ok": False, "code": "retry_not_applicable", "message": str(exc), "details": {}},

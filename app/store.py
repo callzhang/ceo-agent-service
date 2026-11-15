@@ -16371,6 +16371,75 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     raise ValueError("invalid WeChat supersession link")
                 expected_task_id = int(link)
 
+    def settle_failed_wechat_task_from_principal_reply(self, task, review, reply) -> bool:
+        """Close the business task from a native reply without writing a send receipt."""
+        from app import task_entity_storage
+
+        with self._immediate_write_transaction() as db:
+            current = self._native_wechat_task(db, task.id)
+            if (current is None or current["channel"] != "wechat"
+                    or current["execution_generation"] != task.execution_generation
+                    or current["status"] != "failed" or current["error"] != "external_action_failed"
+                    or current["conversation_id"] != task.conversation_id
+                    or current["trigger_message_id"] != task.trigger_message_id
+                    or current["trigger_create_time"] != task.trigger_create_time):
+                return False
+
+            approved = self.current_reviewed_candidate(task.id, task.execution_generation)
+            if approved != review:
+                return False
+            execution = self._native_execution(db, review["candidate_id"])
+            if (execution is None or execution["status"] != "failed"
+                    or execution["review_id"] != review["review_id"]):
+                return False
+
+            attempts = db.execute(
+                """select status, action_index, dispatched_at, provider_receipt_id,
+                          provider_result_id, json_extract(outcome_json, '$.reason') as reason
+                   from action_receipts where execution_run_id=?""",
+                (review["candidate_id"],),
+            ).fetchall()
+            if len(attempts) != 1:
+                return False
+            failure = attempts[0]
+            if (failure["status"] != "failed" or failure["action_index"] != 0
+                    or failure["reason"] != "wechat_delivery_not_creatable"
+                    or any(failure[key] for key in (
+                        "dispatched_at", "provider_receipt_id", "provider_result_id",
+                    ))):
+                return False
+            if db.execute(
+                f"""select 1 from ({WECHAT_DELIVERY_SQL})
+                    where reply_task_id=? or (account_id=? and conversation_id=?
+                        and target_type=? and reply_text=?) limit 1""",
+                (task.id, reply.account_id, reply.conversation_id,
+                 reply.conversation_type, reply.text),
+            ).fetchone() is not None:
+                return False
+
+            changed = task_entity_storage.update_task_cas(
+                db, task_id=task.id,
+                expected={"status": "failed", "error": "external_action_failed",
+                          "execution_generation": task.execution_generation},
+                changes={"status": "done", "error": "", "available_at": "", "locked_at": None,
+                         "updated_at": db.execute("select current_timestamp").fetchone()[0]},
+            )
+            if changed is None:
+                return False
+            insert_error_action(db, {
+                "conversation_id": task.conversation_id,
+                "message_id": task.trigger_message_id,
+                "kind": "wechat_reply_task_done_reconciled",
+                "detail": json.dumps({
+                    "task_id": task.id, "execution_generation": task.execution_generation,
+                    "audit_run_id": review["audit_run_id"], "reply_message_id": reply.message_id,
+                    "reply_sent_at": reply.sent_at,
+                }),
+                "resolution": "verified_wechat_principal_reply",
+            }, resolved_at_now=True)
+            self._compact_settled_reply_task_input(db, task.id)
+            return True
+
     def settle_failed_wechat_task_from_delivery(
         self,
         task_id: int,

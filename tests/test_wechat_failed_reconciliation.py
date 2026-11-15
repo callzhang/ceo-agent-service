@@ -433,3 +433,111 @@ def test_failed_wechat_predecessor_settles_after_its_successor_is_formally_skipp
     assert store.get_wechat_delivery_by_id(old_delivery).status == "superseded"
     assert store.get_wechat_delivery_by_id(next_delivery).status == "skipped"
     assert len(reader.calls) == 2
+
+
+@pytest.mark.parametrize("case", [
+    "verified", "wrong_scope", "before_trigger", "incomplete", "dispatched",
+    "missing_reply", "automated_reply",
+])
+def test_readback_of_principal_reply_resolves_the_task_without_a_send(
+    tmp_path, monkeypatch, case,
+):
+    from fastapi.testclient import TestClient
+
+    from app import task_entity_storage
+    from app.action_storage import update_action
+    from app.audit_web import create_audit_app
+    from app.system_executor import SystemExecutor
+    from app.wechat.models import WechatMessage
+    from tests.wechat.support import approve_delivery, create_wechat_delivery
+    from tests.wechat.test_send_message_handler import _account, _setup
+
+    store, task, review, _action, handler, runner, _prepared = _setup(tmp_path)
+    previous = store.ensure_reply_task(
+        channel="wechat", conversation_id=task.conversation_id, conversation_title="Alex",
+        single_chat=True, trigger_message_id="older", trigger_create_time="2026-10-24T09:55:00",
+        trigger_sender="Alex", trigger_text="Unrelated prior question",
+    )
+    previous_delivery = create_wechat_delivery(
+        store, reply_task_id=previous.id, account_id="acct-1", target_type="direct",
+        target_id=task.conversation_id, conversation_id=task.conversation_id,
+        reply_text="The previous automated message",
+    )
+    approve_delivery(store, previous_delivery)
+    store.mark_wechat_delivery_sending(previous_delivery, now="2026-10-24 10:00:01")
+    result = SystemExecutor(store, handlers={("wechat", "send_message"): handler}).execute(
+        task, review["candidate_id"], review["review_id"],
+    )
+    assert result.error.code == "external_action_failed"
+    assert store.get_wechat_delivery_for_task(task.id) is None
+    store.set_wechat_delivery_status(previous_delivery, "sent")
+
+    with store._connect() as db:
+        task_entity_storage.update_task_cas(
+            db, task_id=task.id, expected={"status": "processing"},
+            changes={"status": "failed", "error": "external_action_failed"},
+        )
+        if case == "dispatched":
+            db.execute(
+                "update action_receipts set dispatched_at=current_timestamp where execution_run_id=?",
+                (review["candidate_id"],),
+            )
+    attempt_id = store.record_reply_attempt(
+        channel="wechat", conversation_id=task.conversation_id, conversation_title="Alex",
+        trigger_message_id=task.trigger_message_id, trigger_sender="Alex", trigger_text="hi",
+        action="send_reply", sensitivity_kind="normal", send_status="failed",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {
+            "agent_run_id": review["audit_run_id"], "send_error": "external_action_failed",
+        })
+
+    trigger = WechatMessage(
+        account_id="acct-1", conversation_id=task.conversation_id, conversation_type="direct",
+        message_id=task.trigger_message_id, sender_id="u9", sender_display_name="Alex",
+        direction="inbound", sent_at="2026-10-24T10:00:00+00:00", kind="text",
+        text="hi", source_version="4.1.10",
+    )
+    reply = trigger.model_copy(update={
+        "message_id": "manual-1", "sender_id": "self-1", "direction": "outbound",
+        "sent_at": "2026-10-24T10:01:00+00:00", "text": "I replied myself",
+    })
+    if case == "wrong_scope":
+        reply = reply.model_copy(update={"conversation_id": "another"})
+    if case == "before_trigger":
+        reply = reply.model_copy(update={"sent_at": "2026-10-24T09:59:59+00:00"})
+    if case == "automated_reply":
+        reply = reply.model_copy(update={
+            "text": store.get_wechat_delivery_by_id(previous_delivery).reply_text,
+        })
+    messages = [trigger] if case == "missing_reply" else [trigger, reply]
+    if case == "incomplete":
+        messages.extend(
+            trigger.model_copy(update={"message_id": f"extra-{i}"}) for i in range(198)
+        )
+
+    monkeypatch.setattr(
+        wechat_reconciliation, "WechatSendMessageHandler",
+        lambda store: WechatSendMessageHandler(
+            store, reader_factory=lambda: _Reader(messages), account_factory=_account,
+            sender_factory=lambda: pytest.fail("settlement must never construct Sender"),
+        ),
+    )
+
+    expected = "done" if case == "verified" else "failed"
+    client = TestClient(create_audit_app(store.path))
+    response = client.post(
+        f"/api/console/history/{attempt_id}/retry",
+        json={"principal_reply_message_id": "manual-1"},
+    )
+    assert response.status_code == (200 if case == "verified" else 409)
+    assert store.get_reply_task(task.id).status == expected
+    assert store.get_reply_attempt(attempt_id).send_status == "failed"
+    assert store.get_wechat_delivery_for_task(task.id) is None
+    assert runner.calls == []
+    if case == "verified":
+        detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+        assert detail["status"]["raw"] == "done"
+        assert "本人已回复" in detail["status"]["message"]
+        assert detail["historical_attempt"]["status"] == "failed"
+        assert detail["delivery"] is None

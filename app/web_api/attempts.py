@@ -832,6 +832,7 @@ def _console_command_display(record: Any) -> str:
 
 
 _VERIFIED_WECHAT_DELIVERY_MESSAGE = "已通过微信读回确认这条回复已发送；原执行回执保留，无需操作。"
+_PRINCIPAL_WECHAT_REPLY_MESSAGE = "本人已回复，任务已完成。系统未发送本次候选回复。"
 
 
 def _verified_wechat_delivery_payload(
@@ -875,6 +876,13 @@ def _reconciled_wechat_message(store: Any, attempt: Any, reply_task: Any) -> str
     if record is None:
         return ""
     if str(getattr(record, "kind", "")) == "wechat_reply_task_done_reconciled":
+        if getattr(record, "resolution", "") == "verified_wechat_principal_reply":
+            evidence = _stored_json(record.detail, {})
+            if (isinstance(evidence, dict) and evidence.get("task_id") == reply_task.id
+                    and evidence.get("execution_generation") == reply_task.execution_generation
+                    and evidence.get("audit_run_id") == attempt.agent_run_id):
+                return _PRINCIPAL_WECHAT_REPLY_MESSAGE
+            return ""
         return _VERIFIED_WECHAT_DELIVERY_MESSAGE
     if str(getattr(record, "kind", "")) == "wechat_reply_task_skipped_reconciled":
         if getattr(record, "resolution", "") == "verified_wechat_no_send_readback":
@@ -1121,6 +1129,11 @@ def build_attempt_detail(
         reply_task is not None and terminal_run is not None
         and reply_task.execution_generation != terminal_run.execution_generation
     )
+    principal_reply_completed = (
+        projected_status == "done" and wechat_delivery is None
+        and attempt.channel == "wechat" and attempt.send_status == "failed"
+        and _reconciled_wechat_message(store, attempt, reply_task) == _PRINCIPAL_WECHAT_REPLY_MESSAGE
+    )
     if (current_generation_changed and current_execution is not None
             and current_execution["status"] == "uncertain" and not task_stopped_on_execution):
         projected_status = "uncertain"
@@ -1134,7 +1147,7 @@ def build_attempt_detail(
     from app.web_api.native_trajectory import run_trajectory_links
     historical_links = run_trajectory_links(store, historical_attempt.agent_run_id)
     historical_record = None
-    if current_generation_changed:
+    if current_generation_changed or principal_reply_completed:
         historical_record = {
             "run_id": historical_attempt.agent_run_id,
             "status": historical_attempt.send_status,
@@ -1151,6 +1164,8 @@ def build_attempt_detail(
     if current_stop_execution is not None and current_stop_execution["status"] not in {"failed", "uncertain", "retry"}:
         current_stop_execution = None
     display_updates = {"send_status": projected_status}
+    if principal_reply_completed:
+        display_updates["send_error"] = ""
     if current_generation_changed:
         latest = current_agent_runs[-1] if current_agent_runs else None
         error = _stored_json(latest.structured_error_json, {}) if latest else {}
@@ -1278,7 +1293,10 @@ def build_attempt_detail(
             )
     human_decision = _human_decision_payload(decision_reviewed)
     system_execution = _system_execution_payload(
-        store, display_reviewed, is_current=display_reviewed is not None and display_reviewed == current_task_reviewed,
+        store, display_reviewed, is_current=(
+            not principal_reply_completed
+            and display_reviewed is not None and display_reviewed == current_task_reviewed
+        ),
     )
     verified_wechat_delivery = None
     if display_reviewed is not None and display_reviewed == current_task_reviewed:
@@ -1313,6 +1331,8 @@ def build_attempt_detail(
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:
         status_message = rerun.explanation
+    if principal_reply_completed:
+        status_message = _PRINCIPAL_WECHAT_REPLY_MESSAGE
     if reply_task is not None and reply_task.status == "failed" and reply_task.error in {"external_action_uncertain", "external_action_failed"}:
         # Historical sent projections and Agent summaries precede the current
         # delivery readback and cannot override its failure/uncertainty.
@@ -1324,6 +1344,8 @@ def build_attempt_detail(
         audit_explanation = attempt.codex_reason or attempt.send_error
     if current_generation_changed and display_terminal_run is not None:
         audit_explanation = str(_stored_json(display_terminal_run.adopted_result_json, {}).get("summary") or "")
+    if principal_reply_completed:
+        audit_explanation = _PRINCIPAL_WECHAT_REPLY_MESSAGE
     oa_decision = _oa_decision_payload(attempt, display_reviewed, system_execution)
     if oa_decision is not None:
         if oa_decision["receipt"] is not None:
@@ -1391,6 +1413,8 @@ def build_attempt_detail(
     external_effect = normalize_display_value(getattr(attention, "external_effect", "")) if attention else ""
     if verified_wechat_delivery is not None:
         external_effect = "已通过微信读回核验回复已发送。"
+    elif principal_reply_completed:
+        external_effect = "已通过微信读回核验本人回复。"
     elif what_happened["reached_the_outside_world"] or what_happened.get("reused_external_actions"):
         external_effect = _external_effect_sentence(what_happened)
     oa_action = oa_decision["operation"] if oa_decision is not None else attempt.oa_action

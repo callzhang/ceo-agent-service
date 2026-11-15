@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
 from hashlib import sha256
 from typing import Any
 
@@ -44,10 +45,7 @@ def _settle_skipped_chain(store, handler, task, deliveries):
     }
 
 
-def _current_wechat_action(store: Any, task_id: int):
-    task = store.get_reply_task(task_id)
-    if task is None or task.channel != "wechat":
-        raise ValueError("wechat_task_missing")
+def _reviewed_wechat_action(store: Any, task: Any):
     review = store.current_reviewed_candidate(task.id, task.execution_generation)
     if (review is None or review.get("decision") != "approve"
             or review.get("execution_generation") != task.execution_generation):
@@ -62,6 +60,14 @@ def _current_wechat_action(store: Any, task_id: int):
     action = proposal.actions[0]
     if action.capability != "wechat" or action.operation != "send_message":
         raise ValueError("wechat_action_mismatch")
+    return review, action
+
+
+def _current_wechat_action(store: Any, task_id: int):
+    task = store.get_reply_task(task_id)
+    if task is None or task.channel != "wechat":
+        raise ValueError("wechat_task_missing")
+    review, action = _reviewed_wechat_action(store, task)
     delivery = store.get_wechat_delivery_for_task(task.id)
     if (delivery is None or delivery.execution_generation != task.execution_generation
             or delivery.reply_text != action.payload.get("text")
@@ -111,7 +117,58 @@ def reconcile_sent_wechat_tasks(store, reader, account) -> None:
             continue
 
 
-def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, object]:
+def _settle_principal_reply(store, task, attempt, message_id: str) -> dict[str, object]:
+    review, action = _reviewed_wechat_action(store, task)
+    if attempt.agent_run_id != review["audit_run_id"]:
+        raise ValueError("wechat_attempt_review_mismatch")
+    target = action.target
+    conversation_type = "direct" if task.single_chat else "group"
+    failure = {"outcome": "failed", "task_id": task.id}
+    if (target.get("conversation_id") != task.conversation_id
+            or target.get("target_type") != conversation_type):
+        return {**failure, "reason": "wechat_readback_scope_mismatch"}
+    handler = WechatSendMessageHandler(store)
+    instant = handler._utc_instant
+    try:
+        account, reader = handler._reader_runtime()
+        if account is None or not account.self_user_id or account.account_id != target.get("account_id"):
+            return {**failure, "reason": "wechat_readback_account_mismatch"}
+        messages = reader.read_messages(
+            account, conversation_id=task.conversation_id, conversation_type=conversation_type,
+            since=(instant(task.trigger_create_time) - timedelta(seconds=1)).isoformat(),
+            limit=200, order="newest",
+        )
+    except Exception:
+        return {**failure, "reason": "wechat_principal_reply_readback_unavailable"}
+    if len(messages) >= 200 or any(
+        message.account_id != account.account_id
+        or message.conversation_id != task.conversation_id
+        or message.conversation_type != conversation_type for message in messages
+    ):
+        return {**failure, "reason": "wechat_principal_reply_window_unverified"}
+
+    triggers = [m for m in messages if m.message_id == task.trigger_message_id]
+    replies = [m for m in messages if m.message_id == message_id]
+    if len(triggers) != 1 or len(replies) != 1:
+        return {**failure, "reason": "wechat_principal_reply_readback_not_unique"}
+    trigger, reply = triggers[0], replies[0]
+    if (trigger.direction != "inbound" or reply.direction != "outbound"
+            or reply.sender_id != account.self_user_id or not reply.text
+            or instant(trigger.sent_at) != instant(task.trigger_create_time)
+            or instant(reply.sent_at) <= instant(trigger.sent_at)
+            or any(m.direction == "outbound" and m.text == action.payload.get("text") for m in messages)):
+        return {**failure, "reason": "wechat_principal_reply_readback_mismatch"}
+    settled = store.settle_failed_wechat_task_from_principal_reply(
+        task, review, reply,
+    )
+    if not settled:
+        return {**failure, "reason": "wechat_principal_reply_settlement_conflict"}
+    return {"outcome": "done", "task_id": task.id, "principal_reply_message_id": message_id}
+
+
+def reconcile_failed_wechat_attempt(
+    store: Any, attempt_id: int, *, principal_reply_message_id: str = "",
+) -> dict[str, object]:
     """Verify exact current WeChat effects and settle only their failed Task projection.
 
     This function has no Sender dependency. A sent delivery must have one exact
@@ -128,6 +185,8 @@ def reconcile_failed_wechat_attempt(store: Any, attempt_id: int) -> dict[str, ob
     if (task is None or task.status != "failed"
             or task.conversation_id != attempt.conversation_id):
         raise ValueError("wechat_task_not_current_failed")
+    if principal_reply_message_id:
+        return _settle_principal_reply(store, task, attempt, principal_reply_message_id)
     current, review, action, delivery = _current_wechat_action(store, task.id)
     if attempt.agent_run_id != review.get("audit_run_id"):
         raise ValueError("wechat_attempt_review_mismatch")
