@@ -377,13 +377,14 @@ actions; those effects must use the reviewed typed-action path. Audit must use
 declared read tools only and must not use shell or local `dws` commands. If the
 matching native read tool is not declared, report that exact capability as
 unavailable before choosing an appropriate read path.
-When a declared read returns source bytes requiring OCR, use `functions.exec`
-to call the read tool and `mcp__ai_services__ocr_document` (the native
-`ai_services.ocr_document` tool) in the same JS cell.
-Pass the exact returned bytes, MIME type and page numbers through in memory;
-print only OCR text and source metadata. Never copy binary data into model
-context or reconstruct it in a later tool call. If the OCR call fails, preserve
-its concrete tool/provider error as the technical read failure.
+When a declared read returns source bytes requiring OCR, call the native
+`ai_services.ocr_document` tool (`mcp__ai_services__ocr_document`) with the
+exact returned bytes, MIME type and page numbers. If `functions.exec` is
+available in this session, call the read tool and OCR in the same JS cell and
+pass the bytes through in memory; print only OCR text and source metadata.
+Otherwise call OCR directly with the exact returned bytes. Never alter or
+reconstruct binary data. If the OCR call fails, preserve its concrete
+tool/provider error as the technical read failure.
 """.strip()
 _OA_SOURCE_FALLBACK_INSTRUCTIONS = """
 In Codex OA turns, when a read returns `ocr_input_base64`, pass that value to

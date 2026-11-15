@@ -66,7 +66,8 @@ def test_consumer_capability_guidance_is_generic_and_declares_native_ocr():
     assert "ai_services.ocr_document" in instructions
     assert "functions.exec" in instructions
     assert "same JS cell" in instructions
-    assert "Never copy binary data into model" in instructions
+    assert "If `functions.exec` is available" in instructions
+    assert "Never alter or reconstruct binary data" in instructions
 
 
 CARD_CONTENT = """@Alex Chen(明哥) 明哥，董事会报告根据昨天的会议进行了修改，您是否已完成审核？是否可以定稿了？

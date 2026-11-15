@@ -331,7 +331,8 @@ def test_service_agent_instructions_use_native_dingtalk_read_tools() -> None:
     assert "ai_services.ocr_document" in audit_normalized
     assert "functions.exec" in audit_normalized
     assert "same js cell" in audit_normalized
-    assert "never copy binary data into model context" in audit_normalized
+    assert "if functions.exec is available" in audit_normalized
+    assert "never alter or reconstruct binary data" in audit_normalized
 
     oa_normalized = " ".join(oa_consumer.replace("`", "").split()).lower()
     assert "functions.exec" in oa_normalized
