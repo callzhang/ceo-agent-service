@@ -1514,6 +1514,34 @@ def test_get_resource_download_url_keeps_file_when_dws_reports_secondary_error(
     assert payload == {"localPath": str(output_path)}
 
 
+@pytest.mark.parametrize("payload", [None, b"", b"complete media bytes"])
+def test_get_resource_download_url_uses_only_completed_output_after_timeout(
+    tmp_path, monkeypatch, payload,
+):
+    monkeypatch.setattr(dws_client.tempfile, "tempdir", str(tmp_path))
+    paths = []
+
+    def timed_out(command, **kwargs):
+        assert kwargs["isolate_process_group"] is True
+        output = Path(command[command.index("--output") + 1])
+        paths.append(output)
+        assert not output.exists()
+        if payload is not None:
+            output.write_bytes(payload)
+        raise subprocess.TimeoutExpired(command, 45)
+
+    monkeypatch.setattr(DwsClient, "_run_cli_process", staticmethod(timed_out))
+    client = DwsClient(dws_bin="dws")
+    if payload:
+        result = client.get_resource_download_url("cid-1", "msg-1", "media-1", "mediaId")
+        assert result == {"localPath": str(paths[0])}
+        assert paths[0].read_bytes() == payload
+    else:
+        with pytest.raises(subprocess.TimeoutExpired):
+            client.get_resource_download_url("cid-1", "msg-1", "media-1", "mediaId")
+        assert not paths[0].exists()
+
+
 def test_download_robot_message_file_command_uses_official_download_api(monkeypatch):
     monkeypatch.setenv("CEO_DING_ROBOT_CODE", "ding-robot-1")
     client = DwsClient(dws_bin="dws")
