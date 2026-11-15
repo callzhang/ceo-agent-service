@@ -73,7 +73,7 @@ def inspect_recorded_return(store: object, dws: object, repair: ReturnRepair) ->
         "execution_id": repair.execution_id,
         "action_attempt_id": repair.action_attempt_id,
         "external_action_key": action_key,
-        "destination_task_ids": proof.provider_result["destination_task_ids"],
+        "destination_activity_id": proof.provider_result["destination_activity_id"],
     }
 
 

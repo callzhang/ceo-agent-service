@@ -2017,6 +2017,8 @@ Historical terminal Attempt or settlement projections cannot override a current 
 
 When a DingTalk OA `revert_task` dispatch is accepted by the provider but its immediate readback remains pending, System Executor first persists that exact dispatch outcome, then asks the same handler for read-only reconciliation. A verified readback is written to the normal external-action ledger and completes the action without another dispatch. Inconclusive or failed readback leaves the persisted uncertain outcome intact for the existing reconciliation path; it never authorizes replay.
 
+OA return reconciliation binds the saved dispatch to the action key, accepted request digest and operator. It verifies the same provider process, cancellation of the exact original task, a unique return record with the operator and full approved remark, and a distinct task at the approved destination activity. Duplicate or incomplete potential matches leave the action uncertain. Timestamps in earlier receipts and provider records are audit data only. Destination activity history confirms the activity is present in the process. The receipt records that activity ID because repeated visits can create multiple tasks there.
+
 An operator may explicitly stop a current failed `external_action_uncertain` Reply task through
 `GET /api/console/reply-tasks/{task_id}` followed by `POST /api/console/reply-tasks/{task_id}/skip` with
 the observed `execution_generation` and a non-empty reason. The generation and uncertain failure are checked
