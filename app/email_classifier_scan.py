@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import imaplib
 import re
 import socket
@@ -708,6 +709,9 @@ class EmailFolderScanResult:
 
 
 CONNECTION_UNAVAILABLE = "connection_unavailable"
+_NETWORK_UNREACHABLE_ERRNOS = frozenset({
+    errno.ENETDOWN, errno.ENETUNREACH, errno.EHOSTDOWN, errno.EHOSTUNREACH,
+})
 
 
 def is_transient_connection_error(exc: Exception) -> bool:
@@ -728,6 +732,8 @@ def is_transient_connection_error(exc: Exception) -> bool:
             })
         if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
                               httpx.TimeoutException)):
+            return True
+        if isinstance(cause, OSError) and cause.errno in _NETWORK_UNREACHABLE_ERRNOS:
             return True
         cause = cause.__cause__
     return False
