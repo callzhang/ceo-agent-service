@@ -2316,7 +2316,7 @@ A command factory's output-schema declaration reaches Claude CLI through its nat
 
 The formal deploy gate uses native pytest `tmp_path_retention_policy=failed`: passing test temporary directories are removed at fixture teardown, while failed test evidence remains available. This avoids repeatedly enumerating directories from already-passed cases as the suite grows. The fixed test manifest, assertions, strict schema validation, 600-second/2-GB process limits, gate-result rule, quiet wait and deployment mutex are unchanged.
 
-Repair selection uses the latest native Workbench turn status. A truly queued/running turn retains the single repair slot, including a turn created before an interrupted checkpoint whose readback is deferred. Once that turn ends, a stale repair-level running label carries no priority; existing native conversation order determines the next eligible source before a newer source retries. Source-local error and Attempt counters are not compared as conversation age. Existing capacity, retry bounds, stop behavior and frozen-intent recovery are unchanged.
+Repair selection uses the latest native Workbench turn status. A truly queued/running turn retains the single repair slot, including a turn created before an interrupted checkpoint whose readback is deferred. Once the turn ends, the eligible source that has waited longest is selected. PR polling uses its scheduled readback time, and an entry without a scheduled readback uses its last persisted checkpoint time. Conversation order breaks ties. A stale repair-level running label carries no priority. Existing capacity, retry bounds, stop behavior and frozen-intent recovery are unchanged.
 
 
 ### Agent 轨迹阅读

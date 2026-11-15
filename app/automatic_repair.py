@@ -74,14 +74,17 @@ class AutomaticRepairCoordinator:
             # executor's existing independent capacity and leases.
             candidates = []
             now = time.time()
-            for entry in list_repairs(self.store):
+            for entry, updated_at in list_repairs(self.store):
                 if entry['status'] in TERMINAL:
                     continue
                 summary = self.store.get_task_summary(entry['task_id']) if entry['task_id'] else None
                 active = summary is not None and summary[1] in {'queued', 'running'}
-                if active or entry.get('next_readback_at', 0) <= now:
-                    candidates.append((entry, active))
-            candidates.sort(key=lambda item: (not item[1],
+                ready_at = entry.get('next_readback_at', updated_at)
+                if active or ready_at <= now:
+                    candidates.append((entry, active, ready_at))
+            # A slow PR read can keep multiple checks past due every cycle.
+            # Give the longest-waiting eligible source the next idle slot.
+            candidates.sort(key=lambda item: (not item[1], 0 if item[1] else item[2],
                                               not bool(item[0]['task_id']), int(item[0]['task_id'] or 0),
                                               item[0]['source_id']))
             if candidates:

@@ -553,9 +553,40 @@ def test_existing_conversation_order_is_independent_of_source_id_counters(store,
         dict(source="errors", source_id=1, task_id=newer.id,
              status="running", turn_ids=[]),
     ]
-    monkeypatch.setattr(module, "list_repairs", lambda unused: entries)
+    monkeypatch.setattr(module, "list_repairs", lambda unused: [(entry, 0) for entry in entries])
     watcher = coordinator(store, tmp_path)
     selected = []
     monkeypatch.setattr(watcher, "_advance", selected.append)
     watcher.run_once()
     assert selected == [entries[0]]
+
+
+@pytest.mark.parametrize("scheduled_readback", [False, True])
+def test_repeatedly_due_old_pr_yields_to_longer_unobserved_pr(store, tmp_path, scheduled_readback):
+    import json
+
+    from app.automatic_repair_store import repair_key
+    from app.state_storage import insert_state
+
+    older_task = store.create_task(title="older conversation", runtime_kind="codex")
+    newer_task = store.create_task(title="newer conversation", runtime_kind="codex")
+    with store._immediate_write_transaction() as db:
+        for task, identity, last_checked, next_readback_at in (
+            (older_task, 41, "2001-01-02 00:00:20", 100),
+            (newer_task, 42, "2001-01-02 00:00:00", 10),
+        ):
+            entry = dict(
+                source="errors", source_id=identity, task_id=task.id,
+                status="awaiting_checks", turn_ids=[], pr_url=f"https://github.com/example/service/pull/{identity}",
+            )
+            if scheduled_readback:
+                entry["next_readback_at"] = next_readback_at
+            insert_state(db, "service_state", {
+                "key": repair_key("errors", identity),
+                "value": json.dumps(entry), "updated_at": last_checked,
+            })
+
+    poll(store, tmp_path, snapshot(state="CLOSED"))
+
+    assert get_repair(store, "errors", 42)["status"] == "pr_closed"
+    assert get_repair(store, "errors", 41)["status"] == "awaiting_checks"

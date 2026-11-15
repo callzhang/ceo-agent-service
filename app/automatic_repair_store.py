@@ -31,13 +31,14 @@ def get_repair(store, source: str, source_id: int) -> dict | None:
     return json.loads(value) if value else None
 
 
-def list_repairs(store) -> list[dict]:
+def list_repairs(store) -> list[tuple[dict, int]]:
     with store._connect() as db:
         rows = db.execute(
-            f"select value from ({state_projection('service_state')}) where key like ? order by key",
+            f"select value,cast(strftime('%s',updated_at) as integer) as updated_epoch "
+            f"from ({state_projection('service_state')}) where key like ? order by key",
             (PREFIX + '%',),
         ).fetchall()
-    return [json.loads(row['value']) for row in rows]
+    return [(json.loads(row['value']), row['updated_epoch']) for row in rows]
 
 
 def save_repair(store, entry: dict) -> None:
