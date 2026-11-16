@@ -328,10 +328,13 @@ class ClaudeRuntimeAdapter:
                 # The selected agent runs this same session with the native tool
                 # allowlist. --tools only restricts built-ins, not MCP tools.
                 agent = "ceo-service-role"
+                role_tools = [*tools, "mcp__agent_cli__*", "mcp__ai_services__ocr_document"]
+                if json_schema is not None:
+                    role_tools.append(CLAUDE_STRUCTURED_OUTPUT_TOOL)
                 definition = {
                     "description": "CEO Agent Service role tools",
                     "prompt": "",
-                    "tools": [*tools, "mcp__agent_cli__*", "mcp__ai_services__ocr_document"],
+                    "tools": role_tools,
                 }
                 command.extend([
                     "--agent", agent,

@@ -156,7 +156,10 @@ def test_role_command_without_ai_services_uses_only_task_bound_agent_cli(
         (ClaudeCommandPolicy.audit, ["Read", "Glob", "Grep"]),
     ],
 )
-def test_role_command_exposes_only_ai_services_ocr(adapter, route, monkeypatch, role_policy, builtins):
+@pytest.mark.parametrize("with_schema", [False, True])
+def test_role_command_exposes_only_ai_services_ocr(
+    adapter, route, monkeypatch, role_policy, builtins, with_schema
+):
     url = "https://ai-services.example.test/mcp"
     monkeypatch.setattr(
         adapter,
@@ -172,6 +175,7 @@ def test_role_command_exposes_only_ai_services_ocr(adapter, route, monkeypatch, 
     )
     command = adapter.build_command(
         route=route, session_id="previous-session", max_turns=5,
+        json_schema={"type": "object", "properties": {}} if with_schema else None,
         policy=role_policy(task_id=17, db_path="/tmp/role.sqlite3", execution_generation="claim-generation"),
     )
     transports = json.loads(command[command.index("--mcp-config") + 1])["mcpServers"]
@@ -180,7 +184,10 @@ def test_role_command_exposes_only_ai_services_ocr(adapter, route, monkeypatch, 
     assert command[command.index("--tools") + 1] == ",".join(builtins)
     agent = command[command.index("--agent") + 1]
     definition = json.loads(command[command.index("--agents") + 1])[agent]
-    assert definition["tools"] == [*builtins, "mcp__agent_cli__*", "mcp__ai_services__ocr_document"]
+    expected_tools = [*builtins, "mcp__agent_cli__*", "mcp__ai_services__ocr_document"]
+    if with_schema:
+        expected_tools.append("StructuredOutput")
+    assert definition["tools"] == expected_tools
     assert definition["prompt"] == ""
     assert command[command.index("--resume") + 1] == "previous-session"
 

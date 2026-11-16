@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-claude-role-structured-output | app/claude_runtime_adapter.py; tests/test_claude_runtime_adapter.py; native Claude structured output paragraphs in docs/architecture.md and docs/runtime-mechanism.md | Preserve native structured results when the Claude role allowlist exposes AI Services OCR | 2026-11-16 |
+
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
 
