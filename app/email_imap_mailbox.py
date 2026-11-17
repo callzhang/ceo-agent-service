@@ -15,6 +15,36 @@ class ImapFetchFlagsError(ValueError):
     """A FETCH response contains malformed or ambiguous FLAGS metadata."""
 
 
+GMAIL_IMAP_CAPABILITY = "X-GM-EXT-1"
+
+# The Gmail extension returns an IMAP list of atoms and quoted strings.
+_GMAIL_LABEL_TOKEN = rb'(?:"(?:[^"\\]|\\.)*"|[^\s()"]+)'
+_GMAIL_LABEL_LIST = rb'X-GM-LABELS \((?P<labels>(?:' + _GMAIL_LABEL_TOKEN + rb'(?: ' + _GMAIL_LABEL_TOKEN + rb')*)?)\)'
+_GMAIL_LABEL_FETCH = (
+    re.compile(rb'\d+ \(UID (?P<uid>\d+) ' + _GMAIL_LABEL_LIST + rb'\)', re.IGNORECASE),
+    re.compile(rb'\d+ \(' + _GMAIL_LABEL_LIST + rb' UID (?P<uid>\d+)\)', re.IGNORECASE),
+)
+
+
+def gmail_important_label(data: object, uid: int) -> bool:
+    """Return the exact Gmail system label from a UID-scoped label response."""
+    if not isinstance(data, (list, tuple)):
+        raise ImapFetchFlagsError("invalid Gmail label response")
+    matches = [
+        match
+        for item in data
+        if isinstance(item, bytes)
+        for pattern in _GMAIL_LABEL_FETCH
+        if (match := pattern.fullmatch(item)) is not None and int(match["uid"]) == uid
+    ]
+    if len(matches) != 1:
+        raise ImapFetchFlagsError("missing or ambiguous Gmail labels for UID")
+    labels = re.findall(_GMAIL_LABEL_TOKEN, matches[0]["labels"])
+    return any(
+        label.lower() in (rb"\important", rb'"\\important"') for label in labels
+    )
+
+
 _IMAP_ATOM_SPECIALS = frozenset(b"(){ %*\"\\]")
 _FETCH_FLAGS_TOKEN = re.compile(rb"FLAGS", flags=re.IGNORECASE)
 _FETCH_FLAGS_LIST = re.compile(rb" +\((?P<flags>[^()]*)\)")

@@ -16,9 +16,11 @@ from app.email_classifier_contracts import (
     EmailProviderLocator,
 )
 from app.email_imap_mailbox import (
+    GMAIL_IMAP_CAPABILITY,
     ImapFetchFlagsError,
     ImapMailboxCodecError,
     encode_imap_mailbox_argument,
+    gmail_important_label,
     parse_imap_flag_list,
     parse_imap_fetch_flags,
 )
@@ -57,6 +59,7 @@ class ProviderMessageState:
     important_signal_names: frozenset[str] = frozenset()
     required_important_signal_names: frozenset[str] = frozenset()
     locator: StoredEmailLocator | None = None
+    gmail_important: bool | None = None
 
     def satisfies(
         self,
@@ -66,6 +69,8 @@ class ProviderMessageState:
         destination_folder: str | None = None,
     ) -> bool:
         if action_type is EmailAction.LABEL:
+            if parameters.get("remove_gmail_important") is True:
+                return self.gmail_important is False
             return set(parameters["labels"]).issubset(self.labels)
         if action_type is EmailAction.MARK_READ:
             return self.is_read
@@ -198,6 +203,8 @@ class DeterministicEmailActionExecutor:
 
     def execute(self, action: StoredEmailAction) -> ProviderActionResult:
         operation = _provider_operation(action.action_type)
+        if action.action_type is EmailAction.LABEL and action.parameters.get("remove_gmail_important") is True:
+            operation = "REMOVE GMAIL IMPORTANT"
         readback_provider: DeterministicEmailProvider | None = None
         provider_closed = False
         keep_readback_session = False
@@ -352,11 +359,9 @@ class DeterministicEmailActionExecutor:
         now is (COPYUID); without that, the new location has to be looked up.
         """
 
-        if action.action_type in {
-            EmailAction.LABEL,
-            EmailAction.MARK_READ,
-            EmailAction.FLAG_IMPORTANT,
-        }:
+        if action.action_type is EmailAction.LABEL:
+            return action.parameters.get("remove_gmail_important") is not True
+        if action.action_type in {EmailAction.MARK_READ, EmailAction.FLAG_IMPORTANT}:
             return True
         return applied_locator is not None
 
@@ -735,6 +740,17 @@ class ImapDeterministicProvider:
     ) -> StoredEmailLocator | None:
         self._validate_locator(locator)
         if action_type is EmailAction.LABEL:
+            if parameters.get("remove_gmail_important") is True:
+                if observed_state.gmail_important is None:
+                    raise ImapKeywordUnsupported("Gmail importance label is unavailable")
+                uidvalidity = self._select(locator.folder, readonly=False)
+                if uidvalidity != locator.uidvalidity:
+                    raise ImapMessageUnavailable("message UIDVALIDITY changed before store")
+                status, data = self.session.uid(
+                    "STORE", str(locator.uid), "-X-GM-LABELS", r'("\\Important")'
+                )
+                _require_ok(status, "IMAP Gmail importance removal failed", data)
+                return None
             labels = tuple(str(label) for label in parameters["labels"])
             if any(not _is_imap_keyword(label) for label in labels):
                 raise ImapKeywordUnsupported("label is not an IMAP keyword atom")
@@ -965,6 +981,11 @@ class ImapDeterministicProvider:
             required_important_signal_names.update(
                 _required_important_signals(self._permanent_flags())
             )
+        gmail_important = None
+        if action_type is EmailAction.LABEL and GMAIL_IMAP_CAPABILITY in self._capabilities():
+            status, data = self.session.uid("FETCH", str(locator.uid), "(UID X-GM-LABELS)")
+            _require_ok(status, "IMAP Gmail label fetch failed", data)
+            gmail_important = gmail_important_label(data, locator.uid)
         mailbox_flags = self._cached_mailbox_flags(locator.folder)
         observed_locator = StoredEmailLocator(
             account_id=locator.account_id,
@@ -982,6 +1003,7 @@ class ImapDeterministicProvider:
                 str(locator.uidvalidity),
                 str(locator.uid),
                 *sorted(raw_flags),
+                *(() if gmail_important is None else (f"gmail-important:{gmail_important}",)),
             )
         )
         return ProviderMessageState(
@@ -996,6 +1018,7 @@ class ImapDeterministicProvider:
                 required_important_signal_names
             ),
             locator=observed_locator,
+            gmail_important=gmail_important,
         )
 
     def _select(self, mailbox: str, *, readonly: bool) -> int:

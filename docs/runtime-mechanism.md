@@ -712,6 +712,8 @@ corrected reply 的原条件。
 
 ### Email task 的运行边界
 
+Gmail 邮件详情读取通过 IMAP 的 X-GM-LABELS 识别系统「重要」标签。上线模型判为通知且 Gmail 已标重要时，由现有 Email 分类 Agent 评估内容是否为无需关注的常规自动通知。只有分类为「通知」、明确判断不重要，并确认属于常规自动状态、成功回执或无实质新信息的重复提醒，动作计划才先移除 Gmail 的「重要」标签并读回，然后移到已绑定的「通知」文件夹。实际故障、具体审查发现和需要处理的事项按内容判断。移除只操作 Gmail 的系统标签，保留 Star；既有邮件计划按其原动作继续处理。
+
 Service supervisor 先启动主 service，等待其完成启动期任务恢复并发出一次性 ready 信号，才启动
 Email worker。主 service 运行中重启时，先停止 Email worker，再等待新 service 的恢复信号后启动；
 Audit web 独立运行。这样启动恢复不会把另一个进程刚领取的 Reply task 误判为上次运行遗留。

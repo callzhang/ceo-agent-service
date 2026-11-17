@@ -3124,6 +3124,35 @@ def test_agent_business_result_plans_move_then_optional_flag() -> None:
     assert not plan.agent_actions
 
 
+@pytest.mark.parametrize(
+    ("routine_notification", "gmail_important", "important", "expected"),
+    [
+        (True, True, False, (EmailAction.LABEL, EmailAction.MOVE)),
+        (True, False, False, (EmailAction.MOVE,)),
+        (False, True, True, (EmailAction.MOVE, EmailAction.FLAG_IMPORTANT)),
+        (False, True, False, (EmailAction.MOVE,)),
+    ],
+)
+def test_agent_notification_only_clears_gmail_priority_with_positive_routine_decision(
+    routine_notification, gmail_important, important, expected
+):
+    plan = _module()._agent_classification_action_plan(
+        classification_id=71,
+        account_id="gmail-account",
+        result=SimpleNamespace(
+            category="notification", important=important, certainty="certain",
+            confidence=0.96, routine_notification=routine_notification,
+        ),
+        gmail_important=gmail_important,
+        folder_targets={"notification": "Notifications"},
+        config_version="config-v1",
+        created_at=datetime(2026, 9, 8, tzinfo=timezone.utc),
+    )
+    assert plan.actions == expected
+    if EmailAction.LABEL in expected:
+        assert plan.action_parameters[EmailAction.LABEL] == {"remove_gmail_important": True}
+
+
 def test_agent_junk_with_exact_candidate_plans_audited_unsubscribe_then_trash() -> None:
     from app.email_classifier_agent import (
         AgentClassificationResult,

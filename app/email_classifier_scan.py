@@ -62,6 +62,14 @@ class MessageClassifier(Protocol):
     def predict_message(self, message: Mapping[str, object]) -> PredictionLike: ...
 
 
+def _model_notification_needs_attention_decision(message: object, prediction: object) -> bool:
+    return (
+        isinstance(message, Mapping)
+        and message.get("gmailImportant") is True
+        and getattr(prediction, "category", None) == "notification"
+    )
+
+
 def route_online_classification(
     *,
     mode: object,
@@ -91,6 +99,12 @@ def route_online_classification(
         agent_classify=enqueue_agent,
     ).classify(current_input)
     if result.source == "model":
+        if _model_notification_needs_attention_decision(current_input, result.value):
+            return OnlineClassificationResult(
+                source="agent",
+                value=enqueue_agent(current_input),
+                fallback_reason="gmail_notification_attention",
+            )
         try:
             accepted = accept_model(result.value)
         except OnlineModelAcceptError as exc:
@@ -510,8 +524,11 @@ def scan_model_classification_batch(
         if type(result) is not OnlineClassificationResult or result.source != "model":
             raise TypeError("model history predictor returned an invalid result")
         if result.value is not None and not result.fallback_reason:
-            accept_model(message, result.value, entries, model_text, model_id)
-            processed += 1
+            if _model_notification_needs_attention_decision(message, result.value):
+                enqueue_agent(message, entries)
+            else:
+                accept_model(message, result.value, entries, model_text, model_id)
+                processed += 1
         elif result.fallback_reason in {
             "model_rejected",
             "model_others",

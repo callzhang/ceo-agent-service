@@ -14,6 +14,7 @@ from pydantic import (
     StrictBool,
     StrictInt,
     field_validator,
+    model_serializer,
     model_validator,
 )
 
@@ -32,6 +33,7 @@ class _AgentClassificationFields(BaseModel):
 
     category: EmailCategoryKey | None
     important: StrictBool
+    routine_notification: StrictBool = False
     certainty: Literal["certain", "uncertain"]
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1)
@@ -45,6 +47,10 @@ class _AgentClassificationFields(BaseModel):
 
     @model_validator(mode="after")
     def certainty_and_category_are_consistent(self) -> Self:
+        if self.routine_notification and (
+            self.certainty != "certain" or self.category != "notification" or self.important
+        ):
+            raise ValueError("routine notification requires a certain, non-important notification")
         if self.certainty == "uncertain":
             if self.category is not None:
                 raise ValueError(
@@ -108,6 +114,7 @@ class DurableAgentClassificationResult(BaseModel):
 
     category: EmailCategoryKey | None
     important: StrictBool
+    routine_notification: StrictBool = False
     certainty: Literal["certain", "uncertain"]
     confidence: float = Field(ge=0.0, le=1.0)
     reason: str = Field(min_length=1)
@@ -115,6 +122,13 @@ class DurableAgentClassificationResult(BaseModel):
     unsubscribe_candidate_source: str | None = None
     unsubscribe_candidate_digest: str | None = None
     unsubscribe_candidate_reference: str | None = None
+
+    @model_serializer(mode="wrap")
+    def omit_absent_routine_decision(self, handler):
+        payload = handler(self)
+        if not self.routine_notification:
+            payload.pop("routine_notification")
+        return payload
 
     @field_validator("reason")
     @classmethod
@@ -129,6 +143,10 @@ class DurableAgentClassificationResult(BaseModel):
 
     @model_validator(mode="after")
     def selection_is_all_or_nothing(self) -> Self:
+        if self.routine_notification and (
+            self.certainty != "certain" or self.category != "notification" or self.important
+        ):
+            raise ValueError("routine notification requires a certain, non-important notification")
         values = (
             self.unsubscribe_candidate_index,
             self.unsubscribe_candidate_source,
@@ -190,6 +208,7 @@ def durable_agent_classification_result(
     return DurableAgentClassificationResult(
         category=result.category,
         important=result.important,
+        routine_notification=result.routine_notification,
         certainty=result.certainty,
         confidence=result.confidence,
         reason=reason,
@@ -310,6 +329,7 @@ class EmailClassifierRoutedBackend:
             return DurableAgentClassificationResult(
                 category=validated.category,
                 important=validated.important,
+                routine_notification=validated.routine_notification,
                 certainty=validated.certainty,
                 confidence=validated.confidence,
                 reason=(
@@ -339,7 +359,8 @@ class EmailClassifierRoutedBackend:
                     "You are only an email classifier. Return exactly one strict "
                     "AgentClassificationWireResult JSON object and perform no action. "
                     "Select an unsubscribe candidate only by its supplied index; "
-                    "do not return or rewrite its URL."
+                    "do not return or rewrite its URL. Include the boolean "
+                    "routine_notification in the result alongside the original Skill fields."
                 ),
                 use_output_schema=False,
                 skill_names=(),
@@ -366,6 +387,7 @@ class EmailClassifierRoutedBackend:
         return AgentClassificationResult(
             category=durable.category,
             important=durable.important,
+            routine_notification=durable.routine_notification,
             certainty=durable.certainty,
             confidence=durable.confidence,
             reason=durable.reason,
@@ -578,6 +600,14 @@ def build_agent_classification_prompt(
         "only one AgentClassificationWireResult JSON object.\n\n"
         f"{scheduled_block}"
         f"Managed Skill:\n{skill_text}\n\n"
+        "Include a boolean routine_notification alongside the original Skill fields. "
+        "Set it true only with category=notification, certainty=certain, important=false "
+        "when the content is a routine automated status, ordinary success receipt, or "
+        "repetitive reminder that gives the principal no substantive new information or "
+        "work to do. An automated deployment-in-progress update can qualify. A concrete "
+        "review finding, meaningful failure, security issue, or request needing attention "
+        "does not qualify. Judge the actual content, since the same sender can deliver "
+        "either kind. Use false when the evidence does not establish that it is routine.\n\n"
         f"{_similar_examples_block(similar_examples)}"
         "Exact invocation context:\n"
         + json.dumps(classification_context, ensure_ascii=False, sort_keys=True, separators=(",", ":"))

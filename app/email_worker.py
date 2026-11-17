@@ -105,6 +105,7 @@ def _agent_classification_action_plan(
     classification_source: str = "agent",
     model_id: str = "email-classifier-agent:v1",
     preserve_read: bool = False,
+    gmail_important: bool = False,
 ):
     """Translate a validated Agent decision into Task 3/4 deterministic actions."""
 
@@ -165,6 +166,9 @@ def _agent_classification_action_plan(
         parameters = {EmailAction.MOVE: {"target_folder": target}}
         if getattr(result, "important") is True:
             actions += (EmailAction.FLAG_IMPORTANT,)
+        elif gmail_important and getattr(result, "routine_notification", False) is True:
+            actions = (EmailAction.LABEL, *actions)
+            parameters[EmailAction.LABEL] = {"remove_gmail_important": True}
         if preserve_read:
             actions += (EmailAction.MARK_READ,)
             dependencies = [EmailAction.MOVE.value]
@@ -881,6 +885,7 @@ def run_email_classification_task_once(
             or current_message.get("folder") != locator_payload.get("folder")
             or (
                 current_message.get("providerUnread") is not True
+                and current_message.get("gmailImportant") is not True
                 and not include_read
             )
         ):
@@ -990,6 +995,11 @@ def run_email_classification_task_once(
             folder_targets=payload["folder_targets"],
             config_version=payload["config_version"],
             created_at=datetime.now(timezone.utc),
+            gmail_important=current_message.get("gmailImportant") is True,
+            preserve_read=(
+                current_message.get("gmailImportant") is True
+                and current_message.get("providerUnread") is False
+            ),
         )
         message = payload["message"]
         sender_value = message.get("sender") or {}
