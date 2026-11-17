@@ -141,12 +141,23 @@ class AutomaticRepairCoordinator:
                 return
         source = entry['source']
         identity = entry['source_id']
-        source_url = f'/attempts/{identity}' if source == 'reply_attempts' else f'/history/errors/{identity}'
+        if source == 'reply_attempts':
+            detail_url = f'/api/console/history/{identity}'
+            source_identity = (
+                f"Use {identity} as the public Attempt ID. "
+                f"For read-only SQL on the source Attempt, select from actions where "
+                f"record_type='reply_attempts' AND legacy_key='{identity}'. "
+                "The physical actions.id is a separate key. "
+            )
+        else:
+            detail_url = f'/api/console/history/errors/{identity}'
+            source_identity = ''
         prompt = (
             f"Derek has authorized automatic code repair for this service error. "
             f"Read {Path(__file__).resolve().parents[1]}/docs/automatic-error-repair.md and follow its workflow. "
-            f"Source: {source} #{identity}, URL http://127.0.0.1:8765{source_url}, "
-            f"database {self.store.path}. Development repository {self.repository}. "
+            f"Source: {source} #{identity}. Start with the current source state and recorded "
+            f"receipts at http://127.0.0.1:8765{detail_url}. {source_identity}"
+            f"Read-only database evidence: {self.store.path}. Development repository {self.repository}. "
             f"Use branch {branch} and worktree {self.repository}/.worktrees/repair-{source}-{identity}. "
             f"This is turn {len(turn_ids) + 1}/{MAX_AUTOMATIC_ATTEMPTS} in the SAME repair conversation. "
             f"Previous progress: {entry['summary'] or 'No previous repair turn.'} "

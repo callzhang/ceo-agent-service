@@ -4,6 +4,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from app.action_storage import insert_action
 from app.automatic_repair import AutomaticRepairCoordinator, repair_presentation
 from app.automatic_repair_store import enqueue_repair, get_repair, list_repairs
 from app.workbench.store import WorkbenchStore
@@ -61,6 +62,46 @@ def test_restart_resumes_same_conversation_and_uses_idempotent_turn(store, tmp_p
     assert len(continued['turn_ids']) == 2
     assert store.get_turn(continued['turn_ids'][1]).client_request_id.endswith(':2')
     assert '/history/errors/' in store.get_turn(continued['turn_ids'][1]).user_text
+
+
+def test_repair_handoff_uses_public_attempt_identity_when_physical_id_collides(store, tmp_path):
+    with store._connect() as db:
+        def insert(public_id, title):
+            insert_action(db, "reply_attempts", {
+                "id": public_id, "conversation_id": title,
+                "conversation_title": title, "trigger_message_id": "message",
+                "trigger_sender": "sender", "trigger_text": "request",
+                "action": "reply", "sensitivity_kind": "normal", "send_status": "failed",
+            })
+
+        insert(9800, "unrelated old attempt")
+        public_id = db.execute(
+            "select id from actions where record_type='reply_attempts' and legacy_key='9800'"
+        ).fetchone()[0]
+        assert public_id != 9800
+        insert(public_id, "intended attempt")
+
+    assert store.get_reply_attempt(public_id).conversation_title == "intended attempt"
+    enqueue_repair(store, "reply_attempts", public_id)
+    coordinator(store, tmp_path).run_once()
+    entry = get_repair(store, "reply_attempts", public_id)
+    prompt = store.get_turn(entry["turn_ids"][0]).user_text
+
+    assert f"http://127.0.0.1:8765/api/console/history/{public_id}" in prompt
+    assert f"record_type='reply_attempts' AND legacy_key='{public_id}'" in prompt
+    assert "public Attempt ID" in prompt
+    assert "current source state" in prompt
+
+
+def test_repair_handoff_uses_current_service_error_detail(store, tmp_path):
+    store.record_error(None, None, "test_failure", "failed")
+    source = store.list_errors(limit=1)[0]
+    coordinator(store, tmp_path).run_once()
+    entry = get_repair(store, "errors", source.id)
+    prompt = store.get_turn(entry["turn_ids"][0]).user_text
+
+    assert f"http://127.0.0.1:8765/api/console/history/errors/{source.id}" in prompt
+    assert "public Attempt ID" not in prompt
 
 
 def test_actual_remote_pr_is_linked_even_if_agent_final_was_interrupted(store, tmp_path):
