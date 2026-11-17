@@ -2259,6 +2259,8 @@ def test_real_tls_imap_literal_deadline_stops_a_trickling_server(
             raw, _ = listener.accept()
             with server_context.wrap_socket(raw, server_side=True) as connection:
                 stream = connection.makefile("rb")
+                # Initialization can finish later than the command budget under load.
+                time.sleep(0.18)
                 connection.sendall(b"* OK server greeting\r\n")
                 capability = stream.readline().split()[0]
                 connection.sendall(
@@ -2279,16 +2281,18 @@ def test_real_tls_imap_literal_deadline_stops_a_trickling_server(
 
     thread = threading.Thread(target=server, daemon=True)
     thread.start()
-    started = time.monotonic()
     session = DeadlineIMAP4SSL(
         "localhost",
         port,
         ssl_context=client_context,
         timeout=1.0,
-        command_timeout=0.12,
+        command_timeout=1.0,
     )
+    # The short deadline belongs to the NOOP that receives the literal.
+    session._command_timeout = 0.12
+    started = time.monotonic()
     try:
-        with pytest.raises(TimeoutError, match="total deadline"):
+        with pytest.raises(TimeoutError, match=r"IMAP command exceeded its 0\.12s total deadline"):
             session.noop()
     finally:
         session.shutdown()
