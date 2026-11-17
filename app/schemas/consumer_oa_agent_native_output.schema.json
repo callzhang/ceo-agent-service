@@ -1139,5 +1139,111 @@
       ],
       "type": "object"
     }
-  }
+  },
+  "anyOf": [
+    {
+      "type": "object",
+      "properties": {
+        "decision_options": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "requested_input": {
+          "type": "null"
+        },
+        "needs_human_reason": {
+          "type": "null"
+        },
+        "decision_basis": {
+          "type": "null"
+        },
+        "decision": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "plan",
+                "approve",
+                "reject",
+                "return",
+                "add_approver",
+                "comment",
+                "request_access"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "properties": {
+        "decision_options": {
+          "type": "array",
+          "maxItems": 0
+        },
+        "requested_input": {
+          "type": "null"
+        },
+        "needs_human_reason": {
+          "type": "null"
+        },
+        "decision_basis": {
+          "type": "null"
+        },
+        "decision": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "enum": [
+                "no_action",
+                "failed",
+                "retry"
+              ]
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    },
+    {
+      "type": "object",
+      "properties": {
+        "decision_options": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 4
+        },
+        "requested_input": {
+          "type": "null"
+        },
+        "needs_human_reason": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 100
+        },
+        "decision_basis": {
+          "type": "object",
+          "required": [],
+          "additionalProperties": false
+        },
+        "decision": {
+          "type": "object",
+          "properties": {
+            "action": {
+              "const": "needs_human"
+            }
+          },
+          "required": [
+            "action"
+          ]
+        }
+      }
+    }
+  ]
 }
