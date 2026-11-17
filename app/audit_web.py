@@ -3461,7 +3461,8 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
                         "status": "pending", "context": str(task["conversation_title"]),
                         "summary": str(task["trigger_text"]),
                         "updated_at": str(task["updated_at"]),
-                        "error": str(latest["audit_summary"] or "钉钉仍待审批，本轮未执行审批动作。"),
+                        "detail_label": "待审批",
+                        "detail": str(latest["audit_summary"] or "钉钉仍待审批，本轮未执行审批动作。"),
                         "detail_url": f"/attempts/{latest['id']}",
                     })
                 continue
