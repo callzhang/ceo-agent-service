@@ -170,6 +170,21 @@ class PurposeRetryBudget:
 
         return self._update(mutate)
 
+    def wake_for_oa_input(self, *, input_id: int, received_at: datetime, now: datetime) -> None:
+        """Bring one existing bounded read forward when the scanner has new evidence."""
+        def mutate(state):
+            if (
+                not state or state.get("closed") or not state.get("next_at")
+                or input_id <= state.get("latest_evidence_input_id", 0)
+                or received_at <= utc_time(state["requested_at"])
+            ):
+                return state, None
+            state["latest_evidence_input_id"] = input_id
+            state["next_at"] = min(utc_time(state["next_at"]), now).isoformat()
+            return state, None
+
+        self._update(mutate)
+
     def claim_manual_access_check(self, *, attempt_id: int, generation: int, now: datetime) -> bool:
         """Reserve the single human-triggered access check after exhaustion."""
         def mutate(state):

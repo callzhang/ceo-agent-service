@@ -1,8 +1,10 @@
 import json
 import pytest
 
+from app.action_storage import update_action
 from app.audit_web import _queue_attention_rows
-from app.store import AutoReplyStore
+from app.web_api.attempts import build_attempt_detail
+from app.store import AgentRole, AutoReplyStore
 from app.dws_client import DwsOaApprovalCandidate
 from app.task_scanners import (
     _pending_oa_task_ids_for_current_user,
@@ -64,6 +66,48 @@ def test_completed_oa_from_previous_cursor_is_removed_from_attention(tmp_path):
     assert _queue_attention_rows(store) == []
     cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
     assert cursor["pending_business_object_keys"] == []
+
+
+def test_skipped_review_still_shows_a_verified_pending_oa_node(tmp_path):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    key = "oa:instance:node"
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:instance", conversation_title="OA",
+        single_chat=True, trigger_message_id="message", trigger_sender="OA",
+        trigger_text="Review travel", trigger_create_time="2026-10-13T00:00:00Z",
+        business_object_key=key,
+    )
+    run = store.claim_agent_run(
+        task.id, task.execution_generation, role=AgentRole.CONSUMER,
+        proposal_revision=0, turn_attempt=0, parent_agent_run_id=None,
+        operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(run.id, {"outcome": "no_action"}, owner="consumer")
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title="OA",
+        trigger_message_id=task.trigger_message_id, trigger_sender="OA",
+        trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="general",
+        oa_process_instance_id="instance", oa_task_id="node", send_status="skipped",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+
+    def scan(keys):
+        store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T01:00:00Z",
+                                   cursor_json=json.dumps({"pending_business_object_keys": keys}),
+                                   last_error="")
+
+    scan([key])
+    rows = [row for row in _queue_attention_rows(store) if row["category"] == "OA approval"]
+    assert [row["detail_url"] for row in rows] == [f"/attempts/{attempt_id}"]
+    detail = build_attempt_detail(store, attempt_id)[1]
+    assert detail["status"]["raw"] == "pending"
+    assert "钉钉仍待你审批" in detail["status"]["message"]
+    assert store.get_reply_attempt(attempt_id).send_status == "skipped"
+    scan(["oa:instance:other-node"])
+    assert _queue_attention_rows(store) == []
+    assert build_attempt_detail(store, attempt_id)[1]["status"]["raw"] == "skipped"
 
 
 def test_verified_pending_node_without_a_local_task_is_not_attention_yet(tmp_path):

@@ -29,16 +29,25 @@ def _state_key(process_instance_id: str) -> str:
     return _STATE_PREFIX + process_instance_id
 
 
-def pending_oa_review_request(store, process_instance_id: str) -> dict | None:
-    """The request the next scan must honour for this approval, if any."""
+def _read_oa_review_request(store, process_instance_id: str) -> dict | None:
     raw = store.get_service_state(_state_key(process_instance_id))
     try:
         request = json.loads(raw) if raw else None
     except json.JSONDecodeError:
         return None
-    if not isinstance(request, dict) or request.get("status") != "pending":
-        return None
-    return request
+    return request if isinstance(request, dict) else None
+
+
+def pending_oa_review_request(store, process_instance_id: str) -> dict | None:
+    """The request the next scan must honour for this approval, if any."""
+    request = _read_oa_review_request(store, process_instance_id)
+    return request if request and request.get("status") == "pending" else None
+
+
+def is_queued_oa_review_request(store, process_instance_id: str, trigger_id: str) -> bool:
+    request = _read_oa_review_request(store, process_instance_id)
+    return bool(request and request.get("status") == "queued"
+                and request.get("trigger_message_id") == trigger_id)
 
 
 def mark_oa_review_request_queued(

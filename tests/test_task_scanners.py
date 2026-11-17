@@ -2267,6 +2267,8 @@ def test_scan_pending_oa_approvals_waits_for_a_new_comment_once_reviewed(tmp_pat
     # Not reviewed yet: the daily revisit still protects it.
     assert scan_pending_oa_approvals(store, dws, now=day_one) == 1
     assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=1)) == 1
+    task = store.get_reply_task_for_business_object("oa:proc-1:task-1")
+    assert json.loads(task.trigger_message_json)["raw_payload"]["oa_review_has_new_evidence"] is False
 
     # We commented. No timer wake-up, however many days pass: our own record
     # is excluded from the revision, so nothing about the approval has moved.
@@ -2283,6 +2285,8 @@ def test_scan_pending_oa_approvals_waits_for_a_new_comment_once_reviewed(tmp_pat
         {"operationType": "ADD_REMARK", "operationTime": 3, "userId": "requester"},
     ]
     assert scan_pending_oa_approvals(store, dws, now=day_one + timedelta(days=10)) == 1
+    task = store.get_reply_task_for_business_object("oa:proc-1:task-1")
+    assert json.loads(task.trigger_message_json)["raw_payload"]["oa_review_has_new_evidence"] is True
 
 
 def test_scan_pending_oa_approvals_starts_each_review_from_a_clean_session(tmp_path):

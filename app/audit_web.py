@@ -3438,13 +3438,34 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
         ) if state is not None else []
         for key in pending_keys:
             task = db.execute(
-                f"select id,conversation_title,trigger_text,updated_at,error,status "
+                f"select id,conversation_title,trigger_text,updated_at,error,status, "
+                f"trigger_message_id,conversation_id,channel "
                 f"from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where business_object_key=? "
                 "order by id desc limit 1", (key,),
             ).fetchone()
             if task is None:
                 continue
-            if str(task["status"] or "").lower() not in {"pending", "processing"}:
+            task_status = str(task["status"] or "").lower()
+            if task_status == "done":
+                latest = db.execute(
+                    f"select id,send_status,resolved_at,audit_summary "
+                    f"from ({REPLY_ATTEMPT_COMMON_SQL}) "
+                    "where channel=? and conversation_id=? and trigger_message_id=? "
+                    "and 'oa:' || oa_process_instance_id || ':' || oa_task_id=? "
+                    "order by id desc limit 1",
+                    (task["channel"], task["conversation_id"], task["trigger_message_id"], key),
+                ).fetchone()
+                if latest is not None and latest["send_status"] == "skipped" and not latest["resolved_at"]:
+                    pending_oa_rows.append({
+                        "category": "OA approval", "id": str(task["id"]),
+                        "status": "pending", "context": str(task["conversation_title"]),
+                        "summary": str(task["trigger_text"]),
+                        "updated_at": str(task["updated_at"]),
+                        "error": str(latest["audit_summary"] or "钉钉仍待审批，本轮未执行审批动作。"),
+                        "detail_url": f"/attempts/{latest['id']}",
+                    })
+                continue
+            if task_status not in {"pending", "processing"}:
                 continue
             stalled = db.execute(
                 "select julianday(?) <= julianday('now') - (? / 86400.0)",

@@ -27,6 +27,7 @@ from app.reviewed_candidates import rejected_content_changed
 from app.store import AgentRole, AgentRun, AutoReplyStore, ReplyTask
 
 from app.consumer_purpose import purpose_for_context
+from app.oa_review_request import is_queued_oa_review_request
 from app.consumer_purpose_retry import (
     MAX_PURPOSE_RETRIES, PurposeRetryBudget, RetryBudgetExhausted,
     RETRY_REQUESTED, RETRY_EXHAUSTED,
@@ -295,6 +296,23 @@ class AgentOrchestrator:
         refresh_context: Callable[[], AgentTaskContext],
     ) -> OrchestrationResult:
         _validate_refreshed_task_context(task, context)
+        source = context.trigger_raw_payload
+        if task.current_input_id and source.get("source") == "oa_pending_scan":
+            process_id = source.get("processInstanceId")
+            budget = self._purpose_budget(task, "oa")
+            saved = budget.state()
+            if (
+                saved and not saved.get("closed") and saved.get("next_at")
+                and task.current_input_id > saved.get("latest_evidence_input_id", 0)
+                and (
+                    source.get("oa_review_has_new_evidence") is True
+                    or (process_id and is_queued_oa_review_request(
+                        self.store, process_id, task.trigger_message_id))
+                )
+            ):
+                budget.wake_for_oa_input(input_id=task.current_input_id,
+                                         received_at=utc_time(task.trigger_create_time),
+                                         now=self.now())
         attempts: dict[tuple[AgentRole, int], int] = {}
         for _ in range(MAX_TURNS_PER_PROCESS):
             state = self._derive_state(task)

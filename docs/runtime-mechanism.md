@@ -230,7 +230,7 @@ OA 扫描按已验证的当前用户 ID 归属待办，任务节点凡未处于�
 无状态记录）都作为未完成节点，不只识别 `RUNNING`。来源不完整或所有者无法验证时，不把本地状态当作审批完成。
 如果失败回复的当前代次审核候选指向精确 OA 流程和任务，扫描器只有在实时详情同时证明流程及该任务节点均为
 终态后，才记录外部读回证据并以代次 CAS 将该回复任务收口；OA 仍待办、ID 不匹配或读取失败都保留原状态。
-Attention 只投影当前未解决状态；已完成／已跳过任务不继续显示，旧 OA 游标也须经完整实时读回才可清除。
+Attention 只投影当前未解决状态。OA 审阅以 `no_action` 收口、内部 Attempt 记录为 `skipped` 时，最近一次钉钉待办核验仍属于 Derek 的同一节点继续出现在 Attention 和审批详情，直到源端确认节点离开待办。旧 OA 游标须经完整实时读回才可清除。
 Reply Task 启动时的 pre-Agent orphan recovery 只接管 Agent 执行通道；由专用 worker 消费的其他通道继续由各自 owner 按租约恢复，不会仅因不存在 AgentRun 被重置。
 
 高风险 OA 同意还须核验当前用户对当前实例、当前任务的明确授权。材料完整、会议结论或
@@ -2118,6 +2118,8 @@ OA `request_access` 是普通 Consumer purpose 动作，不进入 Audit。target
 预算持久化在 service_state，key 绑定 business_object_key（无业务键时绑定 reply task）和 purpose。原已验证请求的动作 dispatch 时间固定 72 小时硬截止；模型不能指定时间、次数或重试间隔，新的 receipt 不能重置已存在预算。Consumer 的回执引用在匹配前只剥离一个已知 `receipt:` 或 `prior_receipt_id=` 标记，随后与已验证动作存储的原始 key 精确比较。Consumer request_access 执行并核验后先等待，再进入后续 Consumer；Consumer retry 按同一 purpose 的预算延后重读。最多启动 3 次后续 Consumer 重读，每次固定间隔 12 小时；旧版本已排队的等待首次加载时同步更新为 12 小时间隔，不清零原次数、reservation 或 deadline。worker/scheduled/email 延后时保留普通 attempt 预算，遵守该延时。
 
 每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 3 次。所有被请求文件共享一个业务对象和 purpose 预算。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 3 次或 72 小时后不再刷新来源或启动新的文件重读。OA purpose 在预算耗尽或权限申请明确失败时，让 Consumer 再运行一轮提出普通 `return` 候选；即使恢复记录里没有可关联的已完成 Consumer run，也启动受限的 Consumer 退回轮次，再走 Audit。该业务对象只认领一次 OA 退回轮次；后续重复触发挂靠该轮对应的已完成 Consumer run，进入 `permission_blocked` / `blocked`，防止重复退回。若没有可关联的 Consumer run，保留非失败状态并转人工处理。退回轮次不得再次申请权限或安排重试，但提退回前必须对被阻塞文件实读一次：能读则按正常审批处理，仍读不了才提退回。该候选经 Audit、执行器和节点读回，服务不合成或直接执行退回；候选无效或未产生时才转人工处理，外部权限问题不标记为 `failed`。非 OA purpose 仍可返回 `permission_blocked`，Attempt 为 `blocked`，ReplyTask 为 `needs_human` 队列外等待。History 的一次人工重读入口保留原预算，只用于确认权限已开通；仍不可读时不继续重试，也不执行 OA 动作。
+
+OA 扫描发现同一待办的新操作记录，或收到已入队的明确复审请求时，新输入可以提前使用一次现有权限重读机会。权限等待仍绑定原 OA 节点，沿用同一截止时间、次数和已验证权限请求。相同输入只提前一次。
 
 ## Deployment admission and drain (2026-10-20)
 

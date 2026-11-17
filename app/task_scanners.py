@@ -737,6 +737,17 @@ def scan_pending_oa_approvals(
         )
         if not revision:
             continue
+        previous_revision = previous_revisions.get(process_instance_id)
+        previous_skill_digest = previous_skill_digests.get(process_instance_id)
+        current_source_with_previous_skill = revision
+        if previous_skill_digest:
+            current_source_with_previous_skill = hashlib.sha256(
+                f"{revision}:{previous_skill_digest}".encode("utf-8")
+            ).hexdigest()
+        new_source_records = bool(
+            _oa_operation_records(records_payload) and previous_revision
+            and previous_revision != current_source_with_previous_skill
+        )
         if skill_digest:
             revision = hashlib.sha256(
                 f"{revision}:{skill_digest}".encode("utf-8")
@@ -884,6 +895,7 @@ def scan_pending_oa_approvals(
                 **({"principalUserid": current_user_id} if current_user_id else {}),
                 "processName": process_name,
                 "title": title,
+                "oa_review_has_new_evidence": new_source_records or review_request is not None,
                 **(
                     {"originatorUserid": applicant_user_id}
                     if applicant_user_id

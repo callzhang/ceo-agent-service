@@ -113,6 +113,48 @@ def test_permission_request_and_retry_do_not_invoke_audit(tmp_path):
     assert len(handler.calls) == 1
 
 
+@pytest.mark.parametrize("source_kind", ["new_records", "queued_review", "daily_scan"])
+def test_new_oa_evidence_wakes_permission_wait(tmp_path, source_kind):
+    from app.oa_review_request import mark_oa_review_request_queued
+
+    store, task, context = task_and_context(tmp_path)
+    context = replace(context, skill_names=("dingtalk-oa-approval",))
+    clock = [datetime.now(timezone.utc)]
+    request = output("request_access",
+        target={"process_instance_id": "p", "file_id": "file-a"},
+        payload={"content": "Please grant read access"})
+    consumer = ScriptedConsumer(store, request, output("no_action"))
+    handler = VerifiedHandler()
+    runtime = AgentOrchestrator(
+        store=store, consumer=consumer, audit=ScriptedAudit(store, "approve"),
+        system_executor=SystemExecutor(store, {("dingtalk-oa", "comment"): handler}),
+        now=lambda: clock[0],
+    )
+    assert runtime.process(task, context, refresh_context=lambda: context).error.code == RETRY_REQUESTED
+    clock[0] += timedelta(minutes=10)
+    new_id = task.current_input_id + 1
+    new_input = task.model_copy(update={
+        "current_input_id": new_id, "trigger_message_id": "new-trigger",
+        "trigger_create_time": clock[0].isoformat(),
+    })
+    fresh = replace(context, trigger_message_id="new-trigger", trigger_raw_payload={
+        "source": "oa_pending_scan", "processInstanceId": "p",
+        "oa_review_has_new_evidence": source_kind == "new_records",
+    })
+    if source_kind == "queued_review":
+        mark_oa_review_request_queued(store, "p", {}, "new-trigger")
+    result = runtime.process(new_input, fresh, refresh_context=lambda: fresh)
+    if source_kind == "daily_scan":
+        assert result.error.code == RETRY_REQUESTED
+        assert len(consumer.calls) == 1
+    else:
+        assert result.status == "no_action"
+        budget = PurposeRetryBudget(store, task.business_object_key or f"reply-task:{task.id}", "oa")
+        assert budget.state()["count"] == 1
+        assert len(consumer.calls) == 2
+    assert len(handler.calls) == 1
+
+
 def test_verified_legacy_permission_request_is_not_sent_again(tmp_path):
     store, task, context = task_and_context(tmp_path)
     context = replace(context, skill_names=('dingtalk-oa-approval',))

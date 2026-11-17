@@ -18,6 +18,7 @@ from app.history_actions import (
 from app.web_api.common import json_safe, normalize_display_value
 from app.agent_contracts import parse_persisted_consumer_result
 from app.dingtalk_models import DingTalkConversation
+from app.oa_notification_routing import oa_node_key
 
 
 def _trigger_block(attempt: Any) -> dict[str, str]:
@@ -1347,6 +1348,22 @@ def build_attempt_detail(
     if principal_reply_completed:
         audit_explanation = _PRINCIPAL_WECHAT_REPLY_MESSAGE
     oa_decision = _oa_decision_payload(attempt, display_reviewed, system_execution)
+    oa_open_after_review = False
+    if (
+        attempt.send_status == "skipped" and not attempt.resolved_at
+        and oa_decision is None and reply_task is not None and reply_task.status == "done"
+        and attempt.oa_process_instance_id and attempt.oa_task_id
+        and reply_task.trigger_message_id == attempt.trigger_message_id
+    ):
+        node_key = oa_node_key(attempt.oa_process_instance_id, attempt.oa_task_id)
+        scan = store.get_daily_scan_state("oa_pending")
+        cursor = _stored_json(scan["cursor_json"], {}) if scan else {}
+        oa_open_after_review = (
+            node_key == reply_task.business_object_key
+            and node_key in cursor.get("pending_business_object_keys", [])
+        )
+        if oa_open_after_review:
+            status_message = "钉钉仍待你审批，本轮审阅未执行审批动作。"
     if oa_decision is not None:
         if oa_decision["receipt"] is not None:
             status_message = f"审批已{oa_decision['label']}，操作结果已核验。"
@@ -1480,7 +1497,7 @@ def build_attempt_detail(
             "trigger_sender": normalize_display_value(attempt.trigger_sender),
         },
         "status": {
-            "raw": normalize_display_value(attempt.send_status),
+            "raw": "pending" if oa_open_after_review else normalize_display_value(attempt.send_status),
             "subject": normalize_display_value(next((line.strip() for line in attempt.trigger_text.splitlines() if line.strip()), "未记录事项摘要")[:180]),
             "message": status_message,
             "requires_decision": requires_decision,
