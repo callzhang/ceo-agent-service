@@ -92,6 +92,9 @@ def _record(row: dict[str, Any]) -> AttentionRecord:
     error = normalize_display_value(row.get("error"))
     status = normalize_display_value(row.get("status"))
     default_detail_label, default_detail = _detail(status, error)
+    if row.get("category") == "OA approval" and status == "pending" and not error:
+        default_detail_label = "待审批"
+        default_detail = normalize_display_value(row.get("root_cause")) or "钉钉仍待审批。"
     detail_label = normalize_display_value(row.get("detail_label")) or default_detail_label
     detail = normalize_display_value(row.get("detail")) or default_detail
     context = normalize_display_value(row.get("context"))

@@ -4,6 +4,7 @@ import pytest
 from app.action_storage import update_action
 from app.audit_web import _queue_attention_rows
 from app.web_api.attempts import build_attempt_detail
+from app.web_api.status import AttentionRow
 from app.store import AgentRole, AutoReplyStore
 from app.dws_client import DwsOaApprovalCandidate
 from app.task_scanners import (
@@ -101,6 +102,7 @@ def test_skipped_review_still_shows_a_verified_pending_oa_node(tmp_path):
     scan([key])
     rows = [row for row in _queue_attention_rows(store) if row["category"] == "OA approval"]
     assert [row["detail_url"] for row in rows] == [f"/attempts/{attempt_id}"]
+    assert AttentionRow.model_validate(rows[0]).error == ""
     detail = build_attempt_detail(store, attempt_id)[1]
     assert detail["status"]["raw"] == "pending"
     assert "钉钉仍待你审批" in detail["status"]["message"]
