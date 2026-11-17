@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 import fcntl
+from functools import partial
 from time import sleep as _sleep
 from datetime import datetime, timedelta, timezone
 import json
@@ -472,12 +473,7 @@ def _list_minutes_scope(
     return items, f"minutes list pagination exceeded {_MINUTES_LIST_MAX_PAGES} pages"
 
 
-def _list_all_minutes(
-    dws,
-    *,
-    archived_ids: set[str],
-    permission_pending_ids: set[str],
-) -> tuple[list[dict[str, Any]], str]:
+def _list_all_minutes(dws, *, through: datetime) -> tuple[list[dict[str, Any]], str]:
     """Merge every listing scope, returning a deferred error if any ended partial.
 
     A scope that fails does not discard the scopes that succeeded: its items
@@ -488,7 +484,13 @@ def _list_all_minutes(
     if list_page is None:
         return dws.parse_minutes_list(dws.list_minutes()), ""
 
-    del archived_ids, permission_pending_ids
+    # Both bounds select a fixed DingTalk time-range search. Starting at the
+    # epoch keeps older minutes visible when their permissions change later.
+    list_page = partial(
+        list_page,
+        start=datetime.fromtimestamp(0, tz=timezone.utc).isoformat(),
+        end=through.astimezone(timezone.utc).isoformat(),
+    )
     items: list[dict[str, Any]] = []
     seen_uuids: set[str] = set()
     errors: list[str] = []
@@ -571,9 +573,7 @@ def _sync_minutes_once(
     pending = {str(value) for value in (cursor.get("permission_pending_ids") or [])}
 
     listed, pagination_error = _list_all_minutes(
-        dws,
-        archived_ids=archived,
-        permission_pending_ids=pending,
+        dws, through=now or datetime.now(timezone.utc),
     )
 
     candidates: dict[str, dict[str, Any]] = {}

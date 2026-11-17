@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import datetime, timedelta, timezone
 import json
 from pathlib import Path
 
@@ -488,6 +488,41 @@ def test_incomplete_minutes_pagination_does_not_claim_success(tmp_path: Path) ->
         "shared: temporary page failure"
     )
     assert cursor["archived_ids"] == ["u1"]
+
+
+def test_sync_supplies_a_complete_time_range_to_every_listing_page(tmp_path, monkeypatch):
+    monkeypatch.setattr(minutes_sync, "_MINUTES_LIST_MAX_PAGES", 3)
+    now = datetime(2026, 11, 17, 12, tzinfo=timezone.utc)
+    calls = []
+
+    class Provider(FakeDws):
+        def list_minutes_page(self, *, scope, cursor, start="", end=""):
+            calls.append((scope, cursor, start, end))
+            if scope != "all":
+                return {"items": [], "has_more": False}
+            if not (start and end):
+                # The open-ended search issues more cursors without finishing.
+                return {"items": [], "has_more": True, "next_token": cursor + "next"}
+            if not cursor:
+                return {"items": [], "has_more": True, "next_token": "next"}
+            return {"items": [{"taskUuid": "old-grant"}], "has_more": False}
+
+    dws = Provider([])
+    dws._basic["old-grant"] = {"title": "older meeting", "startTime": 1680600000000}
+    dws._paragraphs["old-grant"] = [{"startTime": 0, "paragraph": "内容"}]
+    store = _store(tmp_path)
+
+    result = sync_minutes_once(store, dws, archive_dir=tmp_path / "AI听记", now=now)
+
+    assert result.listing_error == ""
+    assert result.synced == 1
+    assert _cursor(store)["archived_ids"] == ["old-grant"]
+    assert [(scope, cursor) for scope, cursor, _, _ in calls] == [
+        ("all", ""), ("all", "next"), ("mine", ""), ("shared", ""),
+    ]
+    assert {(start, end) for _, _, start, end in calls} == {
+        ("1970-01-01T00:00:00+00:00", now.isoformat()),
+    }
 
 
 def test_the_walk_does_not_stop_at_an_already_archived_minute(
