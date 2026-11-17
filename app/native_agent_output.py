@@ -74,6 +74,18 @@ def _consumer_action_branches(root: dict) -> list[dict]:
     raise ValueError("consumer action branch schema missing")
 
 
+def _consumer_outcome_branches(root: dict) -> list[dict]:
+    for clause in root.get("allOf", []):
+        branches = clause.get("oneOf", [])
+        if branches and all(
+            {"action", "decision_options", "requested_input", "needs_human_reason",
+             "decision_basis"} <= set(branch.get("properties", {}))
+            for branch in branches
+        ):
+            return branches
+    raise ValueError("consumer outcome branch schema missing")
+
+
 def native_output_schema(role: str = "consumer", *, purpose: str = "general") -> dict:
     """Project the current purpose wire model into Codex's structural subset."""
     if role == "audit":
@@ -127,6 +139,35 @@ def native_output_schema(role: str = "consumer", *, purpose: str = "general") ->
         branches.append(shape)
     projected["properties"]["decision"] = {"anyOf": branches}
     projected["required"] = list(projected["properties"])
+
+    # The native projection must preserve outcome-dependent fields as a
+    # relationship. Projecting only individual field types would let a model
+    # return a valid decision_basis alongside no_action, which the strict wire
+    # parser rejects after native generation.
+    outcome_branches = []
+    for branch in _consumer_outcome_branches(root):
+        properties = branch["properties"]
+        action_rule = properties["action"]
+        allowed_actions = set(action_rule.get("enum", ()))
+        if "const" in action_rule:
+            allowed_actions.add(action_rule["const"])
+        decision_actions = [
+            decision_branch for decision_branch in branches
+            if decision_branch["properties"]["action"]["enum"][0] in allowed_actions
+        ]
+        if not decision_actions:
+            raise ValueError("consumer outcome branch has no action schema")
+        constraints = {
+            "decision_options": _project(properties["decision_options"]),
+            "requested_input": _project(properties["requested_input"]),
+            "needs_human_reason": _project(properties["needs_human_reason"]),
+            "decision_basis": _project(properties["decision_basis"]),
+            "decision": {"type": "object", "properties": {
+                "action": action_rule,
+            }, "required": ["action"]},
+        }
+        outcome_branches.append({"type": "object", "properties": constraints})
+    projected["anyOf"] = outcome_branches
     return projected
 
 

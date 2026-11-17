@@ -165,6 +165,24 @@ def test_native_retry_rejects_nested_evidence(purpose):
         parse_native_output(_event(native), purpose=purpose)
 
 
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_schema_rejects_needs_human_fields_on_no_action_result(purpose):
+    native = _consumer(purpose=purpose)
+    native["decision_basis"] = {
+        "verified_facts": [{"assertion": "Fact", "references": ["source:1"]}],
+        "rule_evidence": [{"assertion": "Rule", "references": ["source:2"]}],
+        "quality_explanation": "The result was checked.",
+        "no_external_action_evidence": [
+            {"assertion": "No action was executed.", "references": ["source:3"]}
+        ],
+        "conclusion": "No human decision is required.",
+    }
+
+    assert not Draft202012Validator(native_output_schema(purpose=purpose)).is_valid(native)
+    with pytest.raises(ResultParseError):
+        parse_native_output(_event(native), purpose=purpose)
+
+
 def test_native_consumer_schema_rejects_flat_result_that_can_lose_root_fields():
     malformed = _consumer()
     malformed.pop("decision")
