@@ -2121,7 +2121,7 @@ OA `request_access` 是普通 Consumer purpose 动作，不进入 Audit。target
 
 每次实际准备启动后续 Consumer 前用既有 SQLite 短事务预留一次，最多 3 次。所有被请求文件共享一个业务对象和 purpose 预算。key 中不含 native session、proposal revision 或 execution generation；更换它们、重启和任务 attempt 退款都不能清零。预约使用 task/generation/revision/turn 唯一键，重复检查同一预约不重复扣数；进程在预约后退出仍消耗该次预算。到达 3 次或 72 小时后不再刷新来源或启动新的文件重读。OA purpose 在预算耗尽或权限申请明确失败时，让 Consumer 再运行一轮提出普通 `return` 候选；即使恢复记录里没有可关联的已完成 Consumer run，也启动受限的 Consumer 退回轮次，再走 Audit。该业务对象只认领一次 OA 退回轮次；后续重复触发挂靠该轮对应的已完成 Consumer run，进入 `permission_blocked` / `blocked`，防止重复退回。若没有可关联的 Consumer run，保留非失败状态并转人工处理。退回轮次不得再次申请权限或安排重试，但提退回前必须对被阻塞文件实读一次：能读则按正常审批处理，仍读不了才提退回。该候选经 Audit、执行器和节点读回，服务不合成或直接执行退回；候选无效或未产生时才转人工处理，外部权限问题不标记为 `failed`。非 OA purpose 仍可返回 `permission_blocked`，Attempt 为 `blocked`，ReplyTask 为 `needs_human` 队列外等待。History 的一次人工重读入口保留原预算，只用于确认权限已开通；仍不可读时不继续重试，也不执行 OA 动作。
 
-OA 扫描发现同一待办的新操作记录，或收到已入队的明确复审请求时，新输入可以提前使用一次现有权限重读机会。权限等待仍绑定原 OA 节点，沿用同一截止时间、次数和已验证权限请求。相同输入只提前一次。
+OA 扫描发现同一待办的新操作记录，或收到已入队的明确复审请求时，新输入可以提前使用一次现有权限重读机会。恢复已保存的处理结果前，先检查队列实际认领的输入。权限等待仍绑定原 OA 节点，沿用同一截止时间、次数和已验证权限请求。相同输入只提前一次。
 
 ## Deployment admission and drain (2026-10-20)
 

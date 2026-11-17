@@ -1,5 +1,6 @@
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
+import json
 import pytest
 
 from test_agent_orchestrator import (
@@ -117,9 +118,17 @@ def test_permission_request_and_retry_do_not_invoke_audit(tmp_path):
 def test_new_oa_evidence_wakes_permission_wait(tmp_path, source_kind):
     from app.oa_review_request import mark_oa_review_request_queued
 
-    store, task, context = task_and_context(tmp_path)
-    context = replace(context, skill_names=("dingtalk-oa-approval",))
-    clock = [datetime.now(timezone.utc)]
+    store, _, context = task_and_context(tmp_path)
+    trigger = dict(
+        conversation_id="oa_pending_scan:p", conversation_title="OA", single_chat=True,
+        trigger_sender="Derek OA", trigger_text="Review OA",
+        trigger_create_time="2026-11-17 09:12:00", business_object_key="oa:p:t",
+    )
+    store.ensure_reply_task(trigger_message_id="original", **trigger)
+    task = store.claim_reply_tasks(1)[0]
+    context = replace(context, task_id=task.id, conversation_id=task.conversation_id,
+                      trigger_message_id="original", skill_names=("dingtalk-oa-approval",))
+    clock = [datetime.now(timezone.utc) - timedelta(minutes=5)]
     request = output("request_access",
         target={"process_instance_id": "p", "file_id": "file-a"},
         payload={"content": "Please grant read access"})
@@ -132,22 +141,23 @@ def test_new_oa_evidence_wakes_permission_wait(tmp_path, source_kind):
     )
     assert runtime.process(task, context, refresh_context=lambda: context).error.code == RETRY_REQUESTED
     clock[0] += timedelta(minutes=10)
-    new_id = task.current_input_id + 1
-    new_input = task.model_copy(update={
-        "current_input_id": new_id, "trigger_message_id": "new-trigger",
-        "trigger_create_time": clock[0].isoformat(),
-    })
-    fresh = replace(context, trigger_message_id="new-trigger", trigger_raw_payload={
+    source = {
         "source": "oa_pending_scan", "processInstanceId": "p",
         "oa_review_has_new_evidence": source_kind == "new_records",
-    })
+    }
+    new_input = store.ensure_reply_task(trigger_message_id="new-trigger",
+                                      trigger_message_json=json.dumps({"raw_payload": source}), **trigger)
+    new_input = new_input.model_copy(update={"claimed_input_id": new_input.current_input_id})
+    fresh = replace(context, trigger_message_id="new-trigger", trigger_raw_payload=source)
     if source_kind == "queued_review":
         mark_oa_review_request_queued(store, "p", {}, "new-trigger")
-    result = runtime.process(new_input, fresh, refresh_context=lambda: fresh)
+    recovered = runtime.persisted_terminal_result(new_input)
     if source_kind == "daily_scan":
-        assert result.error.code == RETRY_REQUESTED
+        assert recovered.error.code == RETRY_REQUESTED
         assert len(consumer.calls) == 1
     else:
+        assert recovered is None
+        result = runtime.process(new_input, fresh, refresh_context=lambda: fresh)
         assert result.status == "no_action"
         budget = PurposeRetryBudget(store, task.business_object_key or f"reply-task:{task.id}", "oa")
         assert budget.state()["count"] == 1

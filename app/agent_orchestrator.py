@@ -284,7 +284,8 @@ class AgentOrchestrator:
         )
 
     def persisted_terminal_result(self, task: ReplyTask) -> OrchestrationResult | None:
-        """Read a terminal generation without rebuilding its retired input."""
+        """Resume persisted work before deciding whether an Agent context is needed."""
+        self._wake_oa_permission_wait(task)
         state = self._derive_state(task)
         return state if isinstance(state, OrchestrationResult) else None
 
@@ -296,23 +297,7 @@ class AgentOrchestrator:
         refresh_context: Callable[[], AgentTaskContext],
     ) -> OrchestrationResult:
         _validate_refreshed_task_context(task, context)
-        source = context.trigger_raw_payload
-        if task.current_input_id and source.get("source") == "oa_pending_scan":
-            process_id = source.get("processInstanceId")
-            budget = self._purpose_budget(task, "oa")
-            saved = budget.state()
-            if (
-                saved and not saved.get("closed") and saved.get("next_at")
-                and task.current_input_id > saved.get("latest_evidence_input_id", 0)
-                and (
-                    source.get("oa_review_has_new_evidence") is True
-                    or (process_id and is_queued_oa_review_request(
-                        self.store, process_id, task.trigger_message_id))
-                )
-            ):
-                budget.wake_for_oa_input(input_id=task.current_input_id,
-                                         received_at=utc_time(task.trigger_create_time),
-                                         now=self.now())
+        self._wake_oa_permission_wait(task)
         attempts: dict[tuple[AgentRole, int], int] = {}
         for _ in range(MAX_TURNS_PER_PROCESS):
             state = self._derive_state(task)
@@ -919,6 +904,34 @@ class AgentOrchestrator:
     def _purpose_budget(self, task, purpose):
         return PurposeRetryBudget(self.store,
             task.business_object_key or f"reply-task:{task.id}", purpose)
+
+    def _wake_oa_permission_wait(self, task: ReplyTask) -> None:
+        input_id = task.claimed_input_id or task.current_input_id
+        if not input_id or not task.conversation_id.startswith("oa_pending_scan:"):
+            return
+        budget = self._purpose_budget(task, "oa")
+        saved = budget.state()
+        if (
+            not saved or saved.get("closed") or not saved.get("next_at")
+            or input_id <= saved.get("latest_evidence_input_id", 0)
+        ):
+            return
+        source = json.loads(task.trigger_message_json).get("raw_payload", {})
+        if source.get("source") != "oa_pending_scan":
+            return
+        process_id = source.get("processInstanceId")
+        if source.get("oa_review_has_new_evidence") is not True and not (
+            process_id and is_queued_oa_review_request(
+                self.store, process_id, task.trigger_message_id
+            )
+        ):
+            return
+        for item in self.store.list_reply_task_inputs(task.id):
+            if item["id"] == input_id and item["trigger_message_id"] == task.trigger_message_id:
+                budget.wake_for_oa_input(
+                    input_id=input_id, received_at=utc_time(item["created_at"]), now=self.now()
+                )
+                break
 
     def _manual_permission_access_check(self, task, purpose, saved) -> bool:
         """Allow one explicit post-grant read without extending the retry budget."""
