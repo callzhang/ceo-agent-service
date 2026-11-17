@@ -3,7 +3,7 @@ name: ceo-email-classifier
 description: Use when cold-start classification is requested for an unread email from an explicitly eligible unclassified mailbox source.
 metadata:
   managed_by: ceo-agent-service
-  version: 1
+  version: 2
 ---
 
 # CEO Email Classifier
@@ -14,10 +14,10 @@ urgency, automation authority, or prior approval.
 
 ## Output Contract
 
-Return exactly one JSON object with these six fields and no prose:
+Return exactly one JSON object with these seven fields and no prose:
 
 ```json
-{"category":"junk","important":false,"certainty":"certain","confidence":0.95,"reason":"Unsolicited promotion with no retention value.","unsubscribe_candidate_index":0}
+{"category":"junk","important":false,"routine_notification":false,"certainty":"certain","confidence":0.95,"reason":"Unsolicited promotion with no retention value.","unsubscribe_candidate_index":0}
 ```
 
 `category` is an exact supplied key or null; `important` is always a boolean;
@@ -43,6 +43,13 @@ boolean.
 | `external_billing` | Charges, payment requests, invoices, or payment evidence issued to us by an outside party. Our invoices and internal budgets take `work`. |
 | `shopping` | Orders, logistics, refunds, and fulfillment for goods or standard consumer services. External professional-service invoices take `external_billing`. |
 | `junk` | Unwanted, suspicious, irrelevant, or no-retention-value mail, including unsolicited promotion. A link alone is not evidence of junk. |
+
+Set `routine_notification=true` only when the result is a certain `notification` with
+`important=false` and the content is a routine automated status, ordinary success
+receipt, or repetitive reminder with no substantive new information or action for
+the principal. Evaluate deployment failures, security alerts, concrete review
+findings, and requests for action on their own content. Use `routine_notification=false`
+when the evidence does not establish a routine notification.
 
 Importance, urgency, or need for the principal's attention never changes the category.
 Never invent compound or alternate categories such as `legal_financing`,
