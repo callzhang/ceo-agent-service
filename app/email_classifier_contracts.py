@@ -554,7 +554,7 @@ class EmailActionPlan(BaseModel):
                     )
 
         parameter_schemas = {
-            EmailAction.LABEL: {"labels"},
+            EmailAction.LABEL: {"labels", "remove_gmail_important"},
             EmailAction.MOVE: {"target_folder"},
             EmailAction.AUTO_REPLY: {"instruction"},
             EmailAction.UNSUBSCRIBE: {
@@ -601,8 +601,17 @@ class EmailActionPlan(BaseModel):
         effective_direct_action_dependencies(self.actions, self.action_parameters)
 
         if EmailAction.LABEL in self.actions:
-            labels = self.action_parameters.get(EmailAction.LABEL, {}).get("labels")
-            if (
+            label_parameters = self.action_parameters.get(EmailAction.LABEL, {})
+            labels = label_parameters.get("labels")
+            if "remove_gmail_important" in label_parameters:
+                if (
+                    label_parameters["remove_gmail_important"] is not True
+                    or "labels" in label_parameters
+                    or self.category != EmailCategory.NOTIFICATION
+                    or self.classification_source != "agent"
+                ):
+                    raise ValueError("Gmail priority removal requires an Agent notification label action")
+            elif (
                 not isinstance(labels, list | tuple)
                 or not labels
                 or any(

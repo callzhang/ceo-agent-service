@@ -23,7 +23,9 @@ from typing import Any
 from app.email_classifier_contracts import EmailProviderLocator
 from app.email_imap_folders import ImapFolderListError, parse_imap_list_response
 from app.email_imap_mailbox import (
+    GMAIL_IMAP_CAPABILITY,
     ImapMailboxCodecError,
+    gmail_important_label,
     encode_imap_mailbox_argument,
     parse_imap_fetch_flags,
 )
@@ -764,7 +766,7 @@ class ImapReadonlyAdapter:
                 body_parts.append(text)
         body = "\n".join(body_parts).strip()
         body_html = "\n".join(html_parts).strip()
-        return _normalized_message_record(
+        message = _normalized_message_record(
             headers,
             body=body,
             body_html=body_html,
@@ -776,6 +778,11 @@ class ImapReadonlyAdapter:
             important_signals=important_signals,
             provider_unread=provider_unread,
         )
+        if GMAIL_IMAP_CAPABILITY in getattr(self.session, "capabilities", ()):
+            message["gmailImportant"] = gmail_important_label(
+                fetch("(UID X-GM-LABELS)", "IMAP Gmail label fetch failed"), int(uid)
+            )
+        return message
 
     def fetch_uid_membership(
         self,

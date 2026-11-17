@@ -871,6 +871,38 @@ def test_production_imap_store_fails_before_write_when_flag_is_not_permanent(
     assert not any(call[:2] == ("uid", "STORE") for call in session.calls)
 
 
+@pytest.mark.parametrize("important_label", [r"\Important", r'"\\Important"'])
+def test_gmail_label_removal_is_read_back_without_clearing_star_or_read_state(important_label) -> None:
+    module = import_module("app.email_provider_actions")
+
+    class GmailSession(FakeWritableImapSession):
+        important = True
+
+        def uid(self, command, *args):
+            if command == "FETCH" and args[1] == "(UID X-GM-LABELS)":
+                labels = [r"\Inbox", '"Priority (custom)"']
+                if self.important:
+                    labels.append(important_label)
+                return "OK", [f"1 (X-GM-LABELS ({' '.join(labels)}) UID 7)".encode()]
+            if command == "STORE" and args[1] == "-X-GM-LABELS":
+                assert args == ("7", "-X-GM-LABELS", r'("\\Important")')
+                self.important = False
+                return "OK", [b"stored"]
+            return super().uid(command, *args)
+
+    session = GmailSession(
+        capabilities=(b"IMAP4rev1", b"MOVE", b"X-GM-EXT-1"),
+        messages={"INBOX": {7: ("<message@example.com>", {"\\Flagged"})}},
+    )
+    provider = module.ImapDeterministicProvider(session, account_id="account-1")
+    result = module.DeterministicEmailActionExecutor(provider).execute(
+        _action(EmailAction.LABEL, {"remove_gmail_important": True})
+    )
+    assert result.status == "done"
+    assert not session.important
+    assert session.messages["INBOX"][7][1] == {"\\Flagged"}
+
+
 def test_production_imap_label_accepts_explicit_permanent_keyword() -> None:
     module = import_module("app.email_provider_actions")
     session = FakeWritableImapSession(permanent_flags={"\\Seen", "work"})

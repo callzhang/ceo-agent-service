@@ -492,6 +492,49 @@ def test_model_history_scan_accepts_or_requests_feedback_without_agent_fallback(
     assert search["last_seen_uid"] == 0
 
 
+def test_gmail_important_notification_gets_content_review_before_model_acceptance(tmp_path):
+    message = _message() | {"providerUnread": True, "gmailImportant": True}
+
+    class Source:
+        account_id = message["accountId"]
+
+        def fetch_uid_batch(self, mailbox, **kwargs):
+            return ImapUidBatch(
+                account_id=self.account_id,
+                folder=mailbox,
+                uidvalidity=42,
+                previous_uidvalidity=kwargs["cursor_uidvalidity"],
+                messages=(message,),
+            )
+
+    prediction = SimpleNamespace(category="notification", important=False)
+    runtime = RuntimeSnapshot.model_primary(
+        predictor=lambda _: OnlineClassificationResult(source="model", value=prediction),
+        model_id="email-embedding-mlp-ready",
+        input_schema_version="email-folder-model-input-v4",
+        compatibility={"embedding_revision": "r1"},
+    )
+    handed_to_agent = []
+    scan_model_classification_batch(
+        Source(),
+        EmailStore(tmp_path / "priority.sqlite3"),
+        AgentScanContext(
+            allowed_category_keys=("notification",),
+            category_descriptions={"notification": {}},
+            folder_targets={"notification": "Notifications"},
+            config_version="config-v1",
+        ),
+        folder_role=FolderRole.INBOX,
+        configured_unclassified_source=False,
+        lookback_days=365,
+        online_runtime=runtime,
+        accept_model=lambda *args: pytest.fail("model lacks a routine notification decision"),
+        enqueue_agent=lambda *args: handed_to_agent.append(args),
+        request_feedback=lambda *args: pytest.fail("message is eligible for Agent classification"),
+    )
+    assert handed_to_agent == [(message, ())]
+
+
 def test_model_history_scan_does_not_turn_technical_failure_into_an_agent_handoff(tmp_path):
     message = _message() | {
         "providerUnread": False,
