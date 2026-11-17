@@ -52,7 +52,6 @@ reverts committed work they did not author.
    anything conflicts. Every other use of stash stays forbidden.
 
 ## Current claims
-| codex-gmail-routine-notifications | app/email_classifier_agent.py; app/email_classifier_scan.py; app/email_worker.py; app/email_provider_actions.py; app/email_classifier_contracts.py; app/email_imap_readonly.py; app/email_imap_mailbox.py; focused Email classifier/provider tests; docs/architecture.md and docs/runtime-mechanism.md | Fix classification and Gmail priority for routine notifications with content evidence | 2026-11-17 |
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
