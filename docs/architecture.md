@@ -1421,11 +1421,15 @@ Reader 与服务同版本（Derek 2026-10-28）：Reader 源文件摘要是双�
 
 ### 微信发送动作 `wechat / send_message`（阶段 2，Derek 2026-10-24）
 
-标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（传入预备消息）。后台 sender loop 在 `auto` 模式重试已审核的 `ready_to_send` 投递时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须复用同一代次、候选、审核、动作身份和最终正文精确匹配的已持久化预备消息。旧投递可使用 `wechat:{delivery_id}` 键，但不能新建或重构正文；证据不全或正文不匹配时，API 在重新入队前报错，且不调用发送器。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，不从未知状态重发），其他发送前失败→failed（重试可再次发送），被取代→business_state_changed。后台 WeChat 发送等待电脑连续空闲达到 `CEO_WECHAT_SEND_IDLE_SECONDS`（默认30秒），不设发送窗口截止时间；发送 IPC 保持请求，执行器续租已审核 action claim，用户活动中断草稿后重新等待。只读目标确认保留原有限等待。sender loop 只在 `auto` 且发送开关启用时消费投递；`confirm` 模式保留显式确认流程。若某投递的持久化状态/代次比较被并发更新击败，自动 sender loop 停止处理该旧结果并继续队列；下一轮现有只读对账负责确认任何可能已发生的外发动作，发送器不会重放它。
+标准流水线通过 `wechat / send_message` 动作发微信：目标是 `account_id`、`target_type`（`direct` 或 `group`）、`target_id`、`conversation_id`，参数只有 `text`，且 `text` 必须逐字等于已持久化的预备正文（与钉钉一致，渠道为 `wechat`，投递键由 `agent_message_delivery_key` 生成）。`WechatSendMessageHandler` 的 `dispatch`：确认任务是微信任务 → 核对预备正文 → 发送开关（`CEO_WECHAT_SENDER_ENABLED` 且 `CEO_WECHAT_SEND_MODE=auto`，否则直接 `failed` 且不创建投递）→ 用 `create_standard_wechat_delivery` 从被批准的动作创建投递 → 放行判定复核标准审核 → 沿用现有的当前会话取证、绑定核对和 `WechatSender.send`（传入预备消息）。后台 sender loop 在 `auto` 模式重试已审核的 `ready_to_send` 投递时，以及批准、未执行失败重试和已确认无外发回执后的重试 API，都必须复用同一代次、候选、审核、动作身份和最终正文精确匹配的已持久化预备消息。旧投递可使用 `wechat:{delivery_id}` 键，但不能新建或重构正文；证据不全或正文不匹配时，API 在重新入队前报错，且不调用发送器。结果完全取自投递状态：`sent`→verified，`sending`／`send_unknown`→uncertain（交给现有的只读对账，不从未知状态重发），其他发送前失败→failed（重试可再次发送），被取代→business_state_changed。后台 WeChat 发送等待电脑连续空闲达到 `CEO_WECHAT_SEND_IDLE_SECONDS`（默认30秒），不设发送窗口截止时间；发送 IPC 保持请求，执行器续租已审核 action claim，用户活动中断草稿后重新等待。发送激活暂时读不到搜索框或会话列表时，也保留原投递并恢复焦点、重新等待空闲窗口，不因四次激活未就绪结束发送。只读目标确认保留原有限等待。sender loop 只在 `auto` 且发送开关启用时消费投递；`confirm` 模式保留显式确认流程。若某投递的持久化状态/代次比较被并发更新击败，自动 sender loop 停止处理该旧结果并继续队列；下一轮现有只读对账负责确认任何可能已发生的外发动作，发送器不会重放它。
 
 日历回复候选的 `response_status` 与 DWS 客户端共用原生允许值，新候选在输出解析阶段纠正不支持的值，既有历史结果仍按原记录读取。
 
 Sender 的被动 readiness 和发送导航均遍历应用的 `AXChildren` 和独立公开的 `AXWindows`。被动检查只有在 Accessibility 树中找到发送导航实际使用的搜索框或会话列表控件时才返回 `ready`；仅有 WeChat 进程或窗口不代表已登录且可发送。窗口存在但这些控件缺失时返回 `wechat_window_unavailable`，不会尝试登录或发送。
+
+
+
+微信旧发送前失败的正式恢复：新一轮 Consumer/Audit 批准同一任务、动作身份和精确目标后，System 先追溯旧动作绑定的原投递。仅当原 Sender 持久化了未派发证明，旧投递、候选、审核、任务代次与原审核正文一致，且同一账号／会话的完整 Reader 窗口证明旧正文没有发出，才记录 confirmed_no_effect 并允许新审核动作接续。缺页、身份变化、匹配到已发送消息、缺少未派发证明或结果未知时继续只读对账，不自动发送。旧执行失败和投递记录保留，不手改业务终态。
 
 ### 任务长期记忆
 

@@ -931,11 +931,7 @@ class MacWechatAccessibility:
                 sleep=time.sleep,
                 reactivate=self._reactivate,
             ):
-                return AccessibilityResult(
-                    False,
-                    False,
-                    failure_reason="wechat_ui_not_ready",
-                )
+                return None
             composer = _open_target(
                 target_label, first=first, click=click,
                 type_fn=type_to_wechat, settle=self.settle, sleep=time.sleep,
@@ -1013,7 +1009,10 @@ class MacWechatAccessibility:
             if guarded:
                 self._wait_until_idle(wait_forever=True)
             try:
-                return attempt()
+                result = attempt()
+                if result is not None:
+                    return result
+                LOGGER.info("wechat_sender_waiting_for_ui")
             except UserActive:
                 # Pause: leave nothing half typed, give the user their app back,
                 # then wait for another quiet period and start over.
@@ -1024,6 +1023,7 @@ class MacWechatAccessibility:
             finally:
                 if self.restore_focus:
                     self._reactivate(prev_app)
+            time.sleep(1.0)
 
     def open_and_identify(
         self, target_label: str, *, search_query: str | None = None,

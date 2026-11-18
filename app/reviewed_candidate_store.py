@@ -592,14 +592,12 @@ class ReviewedCandidateStoreMixin:
             if prior is None or prior["status"] not in ("failed", "uncertain", "dispatched"):
                 raise ValueError("prior action is not reconcilable")
             prior_result = json.loads(prior["result_json"])
-            if prior_result.get("reason") != "reviewed_message_preparation_mismatch":
-                raise ValueError("prior action failure is outside this reconciliation")
             prior_execution = db.execute(
                 "select * from run_execution_progress where consumer_run_id=?",
                 (prior["execution_id"],),
             ).fetchone()
-            prior_candidate = self._candidate_context(db, prior_execution["consumer_run_id"])
-            if prior_candidate["business_object_key"] != candidate["business_object_key"]:
+            prior_candidate = self._adopted_candidate_row(db, prior_execution["consumer_run_id"])
+            if prior_candidate is None or prior_candidate["business_object_key"] != candidate["business_object_key"]:
                 raise ValueError("prior action belongs to another business object")
             prior_selection = self._native_selection(db, prior_execution["consumer_run_id"]) if prior_execution["selection_id"] else None
             prior_actions = shared_action_lifecycle.reviewed_action_steps(db, prior_candidate, selection=prior_selection)
@@ -612,9 +610,39 @@ class ReviewedCandidateStoreMixin:
                 raise ValueError("action index outside approved plan")
             action = actions[action_index]
             if (prior_action.get("action_identity") != action.get("action_identity")
+                    or prior_action.get("capability") != action.get("capability")
                     or prior_action.get("operation") != action.get("operation")
                     or prior_action.get("target") != action.get("target")):
                 raise ValueError("prior action identity differs from the current approved action")
+            if prior_result.get("reason") != "reviewed_message_preparation_mismatch":
+                delivery_id = prior_result.get("delivery_id")
+                delivery = (self._native_wechat_delivery(db, delivery_id)
+                            if type(delivery_id) is int else None)
+                proof = result.get("readback", {}) if isinstance(result, dict) else {}
+                old_execution = self._native_execution(db, prior["execution_id"])
+                evidence = json.loads(delivery["evidence_json"]) if delivery else {}
+                if (action.get("capability") != "wechat" or action.get("operation") != "send_message"
+                        or prior["status"] != "failed" or status != "confirmed_no_effect" or delivery is None
+                        or delivery["status"] != "failed" or not delivery["pre_action_failure"]
+                        or delivery["reply_task_id"] != candidate["task_id"]
+                        or prior_candidate["task_id"] != candidate["task_id"]
+                        or delivery["execution_generation"] != prior_candidate["execution_generation"]
+                        or evidence.get("standard_candidate_id") != str(prior["execution_id"])
+                        or evidence.get("standard_review_id") != str(old_execution["review_id"])
+                        or evidence.get("standard_action_identity") != action["action_identity"]
+                        or delivery["reply_text"] != prior_action.get("payload", {}).get("text")
+                        or action["target"] != {key: delivery[key] for key in (
+                            "account_id", "target_type", "target_id", "conversation_id")}
+                        or result.get("delivery_id") != delivery_id
+                        or proof.get("window_complete") is not True
+                        or type(proof.get("match_count")) is not int or proof["match_count"] != 0
+                        or proof.get("account_id") != delivery["account_id"]
+                        or proof.get("conversation_id") != delivery["conversation_id"]
+                        or proof.get("conversation_type") != delivery["target_type"]
+                        or not delivery["action_started_at"]
+                        or proof.get("since") != delivery["action_started_at"]
+                        or proof.get("text_sha256") != hashlib.sha256(delivery["reply_text"].encode()).hexdigest()):
+                    raise ValueError("prior WeChat failure lacks exact no-send readback")
             if status == "verified":
                 target_json = _json(action.get("target", {}))
                 provider_json = result_json

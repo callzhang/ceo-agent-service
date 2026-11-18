@@ -1024,6 +1024,9 @@ class WechatSendMessageHandler:
         return self._from_delivery(self.store.get_wechat_delivery_by_id(delivery_id))
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
+        prior = candidate.get("action_attempt")
+        if isinstance(prior, dict) and prior.get("status") == "failed":
+            return self._reconcile_failed_delivery(action, candidate, prior)
         delivery = self.store.get_wechat_delivery_for_task(candidate["task_id"])
         if delivery is None or delivery.execution_generation != candidate["execution_generation"]:
             return None
@@ -1047,7 +1050,29 @@ class WechatSendMessageHandler:
             })
         return self._readback_delivery(delivery, body)
 
-    def _readback_delivery(self, delivery, body: str, *, require_scope: bool = False) -> ActionOutcome:
+    def _reconcile_failed_delivery(self, action, candidate, prior) -> ActionOutcome:
+        result = json.loads(prior.get("result_json", "{}"))
+        delivery_id = result.get("delivery_id")
+        delivery = self.store.get_wechat_delivery_by_id(delivery_id) if type(delivery_id) is int else None
+        old = self.store.get_review_candidate(prior["execution_id"])
+        execution = self.store.get_candidate_execution(prior["execution_id"])
+        if (delivery is None or old is None or execution is None
+                or delivery.status != "failed" or not delivery.pre_action_failure
+                or not delivery.action_started_at
+                or delivery.task_id != candidate["task_id"] or old["task_id"] != delivery.task_id
+                or delivery.execution_generation != old["execution_generation"]
+                or delivery.evidence.get("standard_candidate_id") != str(old["id"])
+                or delivery.evidence.get("standard_review_id") != str(execution["review_id"])
+                or delivery.evidence.get("standard_action_identity") != action.action_identity
+                or action.target != {"account_id": delivery.account_id,
+                    "target_type": delivery.target_type, "target_id": delivery.target_id,
+                    "conversation_id": delivery.conversation_id}):
+            return ActionOutcome("uncertain", {"reason": "wechat_prior_delivery_proof_mismatch"})
+        return self._readback_delivery(delivery, delivery.reply_text,
+            require_scope=True, confirm_no_effect=True)
+
+    def _readback_delivery(self, delivery, body: str, *, require_scope: bool = False,
+                          confirm_no_effect: bool = False) -> ActionOutcome:
         try:
             account, reader = self._reader_runtime()
             if account is None or account.account_id != delivery.account_id:
@@ -1087,6 +1112,16 @@ class WechatSendMessageHandler:
             and message.message_id
         ]
         window_complete = len(messages) < 200
+        if confirm_no_effect:
+            proof = {"delivery_id": delivery.id, "readback": {
+                "window_complete": window_complete, "match_count": len(matches),
+                "account_id": delivery.account_id, "conversation_id": delivery.conversation_id,
+                "conversation_type": delivery.target_type, "since": delivery.action_started_at,
+                "text_sha256": sha256(body.encode("utf-8")).hexdigest(),
+            }}
+            if window_complete and not matches:
+                return ActionOutcome("confirmed_no_effect", proof)
+            return ActionOutcome("uncertain", {**proof, "reason": "wechat_prior_send_not_excluded"})
         if len(matches) == 1 and not window_complete:
             return ActionOutcome("uncertain", {
                 "reason": "wechat_readback_window_incomplete", "delivery_id": delivery.id,

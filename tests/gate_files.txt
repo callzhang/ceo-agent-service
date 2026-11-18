@@ -465,3 +465,4 @@ tests/test_native_claude_structured_output.py
 
 tests/test_native_trajectory_view.py
 tests/test_stalled_reply_recovery.py
+tests/wechat/test_send_window_recovery.py

@@ -403,7 +403,8 @@ class SystemExecutor:
             prior_attempt = prior_attempt_reader(action_key, execution_id) if callable(prior_attempt_reader) else None
             if prior_attempt is not None and prior_attempt.get("status") == "failed":
                 prior_result = json.loads(prior_attempt.get("result_json", "{}"))
-                if prior_result.get("reason") == "reviewed_message_preparation_mismatch":
+                if (prior_result.get("reason") == "reviewed_message_preparation_mismatch"
+                        or (action.capability == "wechat" and action.operation == "send_message")):
                     try:
                         reconciliation = handler.reconcile(
                             action, action_key=action_key,
