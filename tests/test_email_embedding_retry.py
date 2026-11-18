@@ -27,6 +27,12 @@ def _endpoint(statuses):
         calls.append(request.method)
         if status == "timeout":
             raise httpx.ReadTimeout("provider timed out", request=request)
+        if status == "read_error":
+            raise httpx.ReadError("connection reset by peer", request=request)
+        if status == "protocol_disconnect":
+            raise httpx.RemoteProtocolError("server disconnected", request=request)
+        if status == "connect_error":
+            raise httpx.ConnectError("all connection attempts failed", request=request)
         if status == "tls":
             try:
                 raise ssl.SSLCertVerificationError("invalid certificate")
@@ -86,7 +92,7 @@ def test_discovery_recovers_temporary_embedding_failure_before_persisting():
         assert persisted == [1]
 
 
-@pytest.mark.parametrize("status", [500, 502, 503, 504, "timeout"])
+@pytest.mark.parametrize("status", [500, 502, 503, 504, "timeout", "read_error", "protocol_disconnect", "connect_error"])
 def test_exhausted_embedding_outage_remains_failed_transient_discovery(status):
     delays, persisted = [], []
     with _endpoint([status]) as (batcher, calls):
@@ -108,3 +114,24 @@ def test_auth_configuration_and_protocol_errors_are_not_retried(status):
         assert len(calls) == 1
         assert delays == []
         assert persisted == []
+
+
+def test_embedding_deadline_exceeded_is_a_transient_outage():
+    delays, persisted = [], []
+
+    def handle(_request):
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as transport:
+        client = EmailEmbeddingClient(
+            url="https://embedding.example.test/v1/embeddings", embedding_revision="revision",
+            dimension=1, transport=transport, timeout_seconds=1e-9,  # the absolute deadline is past on the first check
+        )
+        batcher = OnlineEmbeddingMicrobatcher(client, maximum_wait_seconds=0.001)
+        try:
+            with pytest.raises(TransientEmailDiscoveryError):
+                _discovery(batcher, delays, persisted)()
+        finally:
+            batcher.close()
+    assert persisted == []
+    assert delays == [1.0, 2.0]

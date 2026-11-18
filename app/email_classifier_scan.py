@@ -16,6 +16,7 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 import httpx
 
+from app.email_embedding_client import EmbeddingDeadlineExceeded
 from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
@@ -734,7 +735,10 @@ _NETWORK_UNREACHABLE_ERRNOS = frozenset({
 def is_transient_connection_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
     cause: BaseException | None = exc
+    transport_failure = False
     while cause is not None:
+        if isinstance(cause, EmbeddingDeadlineExceeded):
+            return True
         if isinstance(cause, ssl.SSLError):
             return isinstance(cause, ssl.SSLEOFError)
         if isinstance(cause, httpx.HTTPStatusError):
@@ -750,10 +754,14 @@ def is_transient_connection_error(exc: Exception) -> bool:
         if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
                               httpx.TimeoutException)):
             return True
+        if isinstance(cause, httpx.TransportError):
+            # Resets, disconnects and refused connections are outages unless
+            # a deeper cause proves a permanent TLS rejection, so keep walking.
+            transport_failure = True
         if isinstance(cause, OSError) and cause.errno in _NETWORK_UNREACHABLE_ERRNOS:
             return True
         cause = cause.__cause__
-    return False
+    return transport_failure
 
 
 @dataclass(frozen=True)
