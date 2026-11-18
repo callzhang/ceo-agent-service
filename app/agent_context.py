@@ -465,6 +465,10 @@ class AuditTurnContext:
                 })
                 + (
                     "\nSource bindings remain complete in Candidate revision and are not expanded again here. "
+                    "They are service-captured historical/reference evidence, not Consumer-authored output. "
+                    "A credential appearing only in a source binding is not an authored disclosure. "
+                    "Check sensitive values in Consumer-authored candidate fields and message bodies; "
+                    "reject an authored field that contains a credential. "
                     "Use this evidence to verify a reported current-candidate field value or JSON type. "
                     "A field-type observation must match its exact JSON Pointer path, literal value, "
                     "and JSON type here; do not infer the type from identifier appearance."

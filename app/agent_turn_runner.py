@@ -2308,8 +2308,9 @@ def _validate_runtime_reference_domain_result(
     # Local paths can be accidentally echoed while describing source material.
     # Redact the serialized domain fields before enforcing the result boundary.
     # Provider snapshots can contain full cards/documents under keys also used
-    # by authored judgments. Keep their depth/codec/security limits, not the
-    # Agent's short-field limits, without changing the persisted source value.
+    # by authored judgments. Keep their depth/size and local-path limits, not
+    # the Agent's short-field or authored-credential checks. The latter apply
+    # to authored_result below, without changing the persisted source value.
     authored_result = dict(domain_result)
     source_bindings = authored_result.pop("source_bindings", [])
     _validate_runtime_reference_text_bounds(authored_result)
@@ -2319,12 +2320,6 @@ def _validate_runtime_reference_domain_result(
             metadata, depth=2,
         )
         _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
-        if _contains_sensitive_value(binding["value"]):
-            raise RuntimeResultValidationError("runtime_result_source_invalid") from ValueError(
-                "agent_result_contains_sensitive_value"
-            )
-        if _contains_sensitive_value(metadata):
-            raise ValueError("agent_result_contains_sensitive_value")
         if _contains_local_runtime_value(metadata) or _contains_local_runtime_value(binding["value"]):
             raise RuntimeResultValidationError("runtime_result_contains_local_runtime_leak")
     # Each source already has its own bounds; the envelope must not charge
