@@ -33,6 +33,10 @@ def _endpoint(statuses):
             raise httpx.ReadError("connection dropped", request=request)
         if status == "connect":
             raise httpx.ConnectError("connection failed", request=request)
+        if status == "unsupported_protocol":
+            raise httpx.UnsupportedProtocol("missing URL scheme", request=request)
+        if status == "local_protocol":
+            raise httpx.LocalProtocolError("illegal header value", request=request)
         if status == "tls":
             try:
                 raise ssl.SSLCertVerificationError("invalid certificate")
@@ -104,7 +108,7 @@ def test_exhausted_embedding_outage_remains_failed_transient_discovery(status):
         assert persisted == []
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 501, 505, "protocol", "tls"])
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 501, 505, "protocol", "tls", "unsupported_protocol", "local_protocol"])
 def test_auth_configuration_and_protocol_errors_are_not_retried(status):
     delays, persisted = [], []
     with _endpoint([status]) as (batcher, calls):
@@ -114,3 +118,24 @@ def test_auth_configuration_and_protocol_errors_are_not_retried(status):
         assert len(calls) == 1
         assert delays == []
         assert persisted == []
+
+
+def test_embedding_deadline_exceeded_is_a_transient_outage():
+    delays, persisted = [], []
+
+    def handle(_request):
+        return httpx.Response(200, json={"data": [{"index": 0, "embedding": [1.0]}]})
+
+    with httpx.Client(transport=httpx.MockTransport(handle)) as transport:
+        client = EmailEmbeddingClient(
+            url="https://embedding.example.test/v1/embeddings", embedding_revision="revision",
+            dimension=1, transport=transport, timeout_seconds=1e-9,
+        )
+        batcher = OnlineEmbeddingMicrobatcher(client, maximum_wait_seconds=0.001)
+        try:
+            with pytest.raises(TransientEmailDiscoveryError):
+                _discovery(batcher, delays, persisted)()
+        finally:
+            batcher.close()
+    assert persisted == []
+    assert delays == [1.0, 2.0]

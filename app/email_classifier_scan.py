@@ -16,6 +16,7 @@ from typing import Callable, Mapping, Protocol, Sequence
 
 import httpx
 
+from app.email_embedding_client import EmbeddingDeadlineExceeded
 from app.email_classifier_contracts import (
     EmailAction,
     EmailAttachmentMetadata,
@@ -736,6 +737,8 @@ def is_transient_connection_error(exc: Exception) -> bool:
     cause: BaseException | None = exc
     network_failure = False
     while cause is not None:
+        if isinstance(cause, EmbeddingDeadlineExceeded):
+            return True
         if isinstance(cause, (httpx.NetworkError, httpx.RemoteProtocolError)):
             # A dropped or unreachable HTTP connection is transient unless a
             # deeper cause (TLS verification, a login failure) says otherwise.
