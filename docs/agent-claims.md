@@ -53,6 +53,9 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-dingtalk-approved-recovery-20261118 | app/system_action_handlers.py approved PR381 integration only; app/dws_client.py shared validation classifier; app/reviewed_candidate_store.py scoped recovery; app/reply_action_reconciliation.py; app/web_api/registration.py History retry dispatch; focused identity/receipt/API tests and tests/gate_files.txt; docs/architecture.md and docs/runtime-mechanism.md; own claim | Derek explicitly approved native trigger conversation/message identity for reply dispatch/readback and formal recovery of old typed parameter-validation no-effect receipts after reviewed no_action. Root owns implementation/integration and sole deployment. Preserve original failures, no direct send, no safety bypass. | Active in .worktrees/dingtalk-approved-recovery; PR381 native agent held by coordination turn419993. |
+
+
 
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
