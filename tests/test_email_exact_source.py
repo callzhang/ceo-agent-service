@@ -77,6 +77,14 @@ def test_exact_source_refuses_missing_or_wrong_identity(mismatch):
         read(adapter, identity='a:message-id:<wrong@example.test>' if mismatch == 'stable_identity' else None)
 
 
+def test_missing_exact_uid_is_a_retryable_external_source_miss():
+    adapter, session = source()
+    session.uid = lambda command, *args: ("OK", [None])
+
+    with pytest.raises(EmailSourceMessageMissing, match="UID is unavailable"):
+        read(adapter)
+
+
 def test_no_message_id_checks_existing_content_identity_from_full_body():
     body = 'x' * 90000
     adapter, _ = source(headers=HEADERS.replace(b'Message-ID: <source@example.test>\r\n', b''), body=body.encode())

@@ -55,7 +55,7 @@ IMAP_SOURCE_LOOKUP_TIMEOUT_SECONDS = 8 * 60
 
 
 class EmailSourceMessageMissing(LookupError):
-    """An exact RFC Message-ID is absent from one observed folder."""
+    """The exact source message is absent from a provider location."""
 
     retryable_external_dependency = True
 
@@ -1671,9 +1671,9 @@ def _split_exact_fetch_records(data, requested):
 def _require_exact_fetch_uid(data: object, expected: bytes) -> None:
     # FETCH literal bodies are never interpreted as response metadata.
     if not isinstance(data, (list, tuple)):
-        raise LookupError("email source UID is unavailable")
+        raise EmailSourceMessageMissing("email source UID is unavailable")
     if not _split_exact_fetch_records(data, {int(expected)}):
-        raise LookupError("email source UID is unavailable")
+        raise EmailSourceMessageMissing("email source UID is unavailable")
 
 
 def _fetch_payload(data: object) -> bytes:
