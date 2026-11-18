@@ -735,10 +735,14 @@ _NETWORK_UNREACHABLE_ERRNOS = frozenset({
 def is_transient_connection_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
     cause: BaseException | None = exc
-    transport_failure = False
+    network_failure = False
     while cause is not None:
         if isinstance(cause, EmbeddingDeadlineExceeded):
             return True
+        if isinstance(cause, (httpx.NetworkError, httpx.RemoteProtocolError)):
+            # A dropped or unreachable HTTP connection is transient unless a
+            # deeper cause (TLS verification, a login failure) says otherwise.
+            network_failure = True
         if isinstance(cause, ssl.SSLError):
             return isinstance(cause, ssl.SSLEOFError)
         if isinstance(cause, httpx.HTTPStatusError):
@@ -754,18 +758,10 @@ def is_transient_connection_error(exc: Exception) -> bool:
         if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
                               httpx.TimeoutException)):
             return True
-        if isinstance(cause, (httpx.UnsupportedProtocol, httpx.LocalProtocolError)):
-            # A bad embedding URL scheme or invalid request header is local
-            # configuration; retrying the same request cannot repair it.
-            return False
-        if isinstance(cause, httpx.TransportError):
-            # Resets, disconnects and refused connections are outages unless
-            # a deeper cause proves a permanent TLS rejection, so keep walking.
-            transport_failure = True
         if isinstance(cause, OSError) and cause.errno in _NETWORK_UNREACHABLE_ERRNOS:
             return True
         cause = cause.__cause__
-    return transport_failure
+    return network_failure
 
 
 @dataclass(frozen=True)
