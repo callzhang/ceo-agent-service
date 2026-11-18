@@ -4,6 +4,7 @@ import { Link, useParams } from "react-router-dom";
 import { displayValue, getCodexSession } from "../api/console";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { ExecutionStep } from "../components/ExecutionStep";
+import { groupToolCalls, ToolCallGroup } from "../components/ToolCallGroup";
 import { TrajectoryContent } from "../components/TrajectoryContent";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 import { StatusBadge } from "../components/status/StatusBadge";
@@ -81,7 +82,8 @@ function SessionMarkdown({ event }: { event: CodexSessionEvent }) {
 
 function SessionTrace({ event, output, terminal = false }: { event: CodexSessionEvent; output?: CodexSessionEvent; terminal?: boolean }) {
   const trace = event.trace || {};
-  const result = output?.trace?.output ?? trace.output;
+  const orphan = event.kind === "tool_output";
+  const result = output?.trace?.output ?? trace.output ?? (orphan ? event.body ?? "未记录内容" : undefined);
   return <ExecutionStep
     kind="tool"
     startedAt={event.timestamp}
@@ -90,9 +92,9 @@ function SessionTrace({ event, output, terminal = false }: { event: CodexSession
     payload={{
       kind: "trace",
       summary: terminal && result === undefined ? "本次运行已结束，原生记录中未收到此工具的返回。" : "",
-      name: trace.name || event.title?.replace(/^Tool call:\s*/, "") || "工具调用",
+      name: orphan ? "未配对的工具返回" : trace.name || event.title?.replace(/^Tool call:\s*/, "") || "工具调用",
       tool_call_id: trace.call_id,
-      input: trace.input ?? event.body ?? "未记录",
+      ...(!orphan ? { input: trace.input ?? event.body ?? "未记录" } : {}),
       ...(result !== undefined ? { output: result } : {}),
     }}
   />;
@@ -117,6 +119,17 @@ export function SessionTimeline({ events, terminal = false, compact = false }: {
     const content = [event.title, event.kind === "reasoning" ? "" : event.body, event.trace?.name, event.trace?.input, event.trace?.output, output?.body, output?.trace?.output].join("\n");
     return !search || content.toLocaleLowerCase().includes(search);
   });
+  const renderRow = ({ event, output, index }: (typeof visible)[number]) => (
+    <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
+      <div className="codex-session-event-rail"><span aria-hidden="true" /><small>#{index + 1}</small><time dateTime={event.timestamp}>{displayEventTime(event.timestamp)}</time></div>
+      <article>
+        {eventCategory(event) === "tools" ? <SessionTrace event={event} output={output} terminal={terminal} /> : <>
+          <header><span>{eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>
+          <SessionMarkdown event={event} />
+        </>}
+      </article>
+    </li>
+  );
   if (!events.length) return <section className="console-card page-state">本次没有可展示的执行事件。</section>;
   return <section className={`console-card codex-session-timeline${compact ? " trajectory-compact" : ""}`} aria-label="Agent 执行时间线">
     {!compact && <><div className="codex-session-timeline-header"><div><h2>Agent 执行过程</h2><p>按发生顺序展示已加载的轨迹；工具输入与返回合并阅读，长内容可展开。</p></div><span>{rows.length} 条记录</span></div>
@@ -125,10 +138,9 @@ export function SessionTimeline({ events, terminal = false, compact = false }: {
       <div className="trajectory-search"><input type="search" aria-label="搜索轨迹" placeholder="搜索工具、输入或返回内容…" value={query} onChange={(event) => setQuery(event.target.value)} /><span role="status">显示 {visible.length} / {rows.length} 条记录</span></div>
     </div></>}
     {!compact && !visible.length && <p className="page-state">没有匹配的轨迹记录。<button type="button" className="secondary-button" onClick={() => { setFilter("all"); setQuery(""); }}>清除筛选</button></p>}
-    <ol>{visible.map(({ event, output, index }) => <li className={`codex-session-event codex-session-event-${event.kind || "system"}`} key={`${event.timestamp}-${index}`}>
-      <div className="codex-session-event-rail"><span aria-hidden="true" /><small>#{index + 1}</small><time dateTime={event.timestamp}>{displayEventTime(event.timestamp)}</time></div>
-      <article>{event.kind === "tool" || event.kind === "tool_call" ? <SessionTrace event={event} output={output} terminal={terminal} /> : <><header><span>{event.kind === "tool_output" ? "未配对的工具返回" : eventLabel(event.kind)}</span>{event.kind !== "reasoning" && <small>{event.title || "已记录"}</small>}</header>{event.kind === "tool_output" ? <TrajectoryContent text={event.trace?.output ?? event.body ?? "未记录内容"} plain /> : <SessionMarkdown event={event} />}</>}</article>
-    </li>)}</ol>
+    <ol>{compact ? visible.map(renderRow) : groupToolCalls(visible, ({ event }) => eventCategory(event) === "tools").map(({ tools, items }) =>
+      tools ? <li key={`tools-${items[0].index}`}><ToolCallGroup count={items.length}><ol>{items.map(renderRow)}</ol></ToolCallGroup></li> : renderRow(items[0])
+    )}</ol>
   </section>;
 }
 

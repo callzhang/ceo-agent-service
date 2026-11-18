@@ -42,6 +42,7 @@ describe("ConversationTimeline", () => {
     if (mode === "request-error") nativeResource.mockRejectedValue(new Error("读取失败"));
     else nativeResource.mockResolvedValue({ item: { available: false, message: "原生文件已清理", attempt: { id: 9, runtime: "claude_cli", status: "failed", created_at: "", finished_at: "" }, runtime_attempts: [] } });
     render(<ConversationTimeline timeline={{ ...timeline, turns: [{ ...turn, status: "failed", runtime_attempts: [{ id: 9, runtime: "claude_cli", status: "failed", failure_code: "", failure_class: "", url: "/runtime-attempts/9/trajectory" }] }], events: timeline.events, artifacts: [] }} activeTurnId={null} />);
+    await userEvent.click(screen.getByText("工具调用", { selector: "summary" }));
     expect(await screen.findByText(mode === "request-error" ? "读取失败" : "原生文件已清理")).toBeVisible();
     expect(screen.getByText(/已加载服务事件：1 次工具开始，0 次工具结束/)).toBeVisible();
     expect(document.querySelectorAll(".execution-step")).toHaveLength(0);
@@ -59,8 +60,20 @@ describe("ConversationTimeline", () => {
       { id: 2, turn_id: turn.id, sequence: 2, event_type: "tool_started", payload: { tool_call_id: "event-2", summary: "原生 Agent 记录不可用。" }, created_at: "" },
       { id: 3, turn_id: turn.id, sequence: 3, event_type: "tool_completed", payload: { tool_call_id: "event-3", summary: "原生 Agent 记录不可用。" }, created_at: "" },
     ], artifacts: [] }} activeTurnId={null} />);
-    expect(await screen.findByText("pytest tests/native_7.py", { selector: "small" })).toBeVisible();
-    expect(await screen.findByText("pytest tests/native_8.py", { selector: "small" })).toBeVisible();
+    const group = screen.getByText("工具调用", { selector: "summary" });
+    const first = await screen.findByText("pytest tests/native_7.py", { selector: "small" });
+    const second = await screen.findByText("pytest tests/native_8.py", { selector: "small" });
+    expect(group.closest("details")).not.toHaveAttribute("open");
+    expect(first).not.toBeVisible();
+    expect(second).not.toBeVisible();
+    await userEvent.click(group);
+    expect(first).toBeVisible();
+    expect(second).toBeVisible();
+    const output = screen.getByText("7 passed", { selector: "pre" });
+    expect(output).not.toBeVisible();
+    await userEvent.click(first);
+    expect(output).toBeVisible();
+    expect(screen.getByText("8 passed", { selector: "pre" })).not.toBeVisible();
     expect(document.querySelectorAll(".execution-step")).toHaveLength(2);
     expect(screen.queryByText("已中止")).not.toBeInTheDocument();
     expect(screen.queryByText("历史事件未记录命令详情")).not.toBeInTheDocument();

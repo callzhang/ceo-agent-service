@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-collapse-runtime-tools | frontend trajectory and conversation timeline components, ExecutionStep, styles, focused tests, trajectory documentation | Group tool calls behind a collapsed summary and open each row separately | 2026-11-19 |
+
 
 
 

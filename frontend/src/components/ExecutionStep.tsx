@@ -116,7 +116,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
           {payload.arguments !== undefined && <section><h4>参数</h4><pre>{detailText(payload.arguments)}</pre></section>}
           {payload.output !== undefined && <section><h4>输出</h4><pre>{detailText(payload.output)}</pre></section>}
           {payload.result !== undefined && <section><h4>结果</h4><pre>{detailText(payload.result)}</pre></section>}
-          <details className="execution-technical"><summary>调用详情{payload.provider_item !== undefined ? "与原始事件" : ""}</summary><dl className="execution-metadata">
+          <section className="execution-technical"><h4>调用详情{payload.provider_item !== undefined ? "与原始事件" : ""}</h4><dl className="execution-metadata">
             {sessionTrace ? (
               <>
                 <div><dt>调用名称</dt><dd><code>{exactText(payload.name, "未提供")}</code></dd></div>
@@ -139,7 +139,7 @@ export function ExecutionStep({ kind, status = "running", payload = {}, startedA
             <TimeDetail label="完成时间" value={completedAt} />
           </dl>
           {payload.provider_item !== undefined && <section><h4>原始工具事件</h4><pre>{detailText(payload.provider_item)}</pre></section>}
-          </details>
+          </section>
           {status === "aborted" && <p className="execution-aborted-note">{summary}</p>}
           {failed && <p className="execution-failure-note">{summary}</p>}
         </div>

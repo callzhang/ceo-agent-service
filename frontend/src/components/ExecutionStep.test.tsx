@@ -37,15 +37,12 @@ describe("ExecutionStep", () => {
     expect(screen.getByText('{"message_id":9007199254740993}', { selector: "pre" })).toBeInTheDocument();
     expect(screen.getByText("1e400", { selector: "pre" })).toBeInTheDocument();
   });
-  it("previews the command and opens input/output before optional technical metadata", async () => {
+  it("opens output and technical metadata together", async () => {
     render(<ExecutionStep kind="tool" status="completed" payload={{ kind: "trace", name: "shell", input: { cmd: "pytest tests/test_example.py" }, output: "3 passed", tool_call_id: "exact-call" }} />);
     const preview = screen.getByText("pytest tests/test_example.py");
     expect(preview).toBeVisible();
     await userEvent.click(preview);
     expect(screen.getByText("3 passed", { selector: "pre" })).toBeVisible();
-    const technical = screen.getByText("调用详情").closest("details");
-    expect(technical).not.toHaveAttribute("open");
-    await userEvent.click(screen.getByText("调用详情"));
     expect(screen.getByText("exact-call")).toBeVisible();
   });
   it("exposes its state label as a narrowly scoped status announcement", () => {

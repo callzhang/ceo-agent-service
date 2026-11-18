@@ -36,7 +36,7 @@ describe("CodexSessionDetailPage", () => {
       { kind: "assistant", body: "最终答复" },
     ] }, meta: { snapshot_at: "" } });
     render(<MemoryRouter initialEntries={["/codex/test"]}><Routes><Route path="/codex/:sessionId" element={<CodexSessionDetailPage />} /></Routes></MemoryRouter>);
-    expect(await screen.findByText("未配对的工具返回")).toBeInTheDocument();
+    expect(await screen.findByText("未配对的工具返回", { selector: ".execution-name" })).toBeInTheDocument();
     const search = screen.getByRole("searchbox", { name: "搜索轨迹" });
     await userEvent.type(search, "matched-output-marker");
     expect(screen.getByText("显示 1 / 3 条记录")).toBeInTheDocument();
@@ -44,7 +44,7 @@ describe("CodexSessionDetailPage", () => {
     await userEvent.clear(search);
     await userEvent.click(screen.getByRole("button", { name: /Agent 输出/ }));
     expect(screen.getByText("最终答复")).toBeInTheDocument();
-    expect(screen.queryByText("未配对的工具返回")).not.toBeInTheDocument();
+    expect(screen.queryByText("未配对的工具返回", { selector: ".execution-name" })).not.toBeInTheDocument();
   });
   beforeEach(() => {
     getCodexSession.mockResolvedValue({
