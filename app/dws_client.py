@@ -117,6 +117,17 @@ def extract_recall_key_from_send_result(send_result: dict[str, Any] | None) -> s
     return ""
 
 
+def message_validation_rejected(provider_error: dict[str, Any], *, server_key: str = "") -> bool:
+    """Whether the native response proves rejection before a message write."""
+    return (
+        provider_error.get("reason") == "invalid_request"
+        and provider_error.get("stage") == "tool_validation"
+    ) or (
+        provider_error.get("category") == "validation"
+        and not server_key and not provider_error.get("server_error_code")
+    )
+
+
 class DwsError(RuntimeError):
     DIRECT_CHAT_TARGET_NOT_FOUND_CODE = "DIRECT_CHAT_TARGET_NOT_FOUND"
     AGENT_CODE_NOT_EXISTS_CODE = "AGENT_CODE_NOT_EXISTS"
@@ -3472,17 +3483,8 @@ class DwsClient:
         try:
             self.run_json([*command, "--dry-run"], **options)
         except DwsError as exc:
-            provider_validation = (
-                exc.provider_error.get("reason") == "invalid_request"
-                and exc.provider_error.get("stage") == "tool_validation"
-            )
-            exc.pre_action_failure = (
-                provider_validation
-                or (
-                    exc.provider_error.get("category") == "validation"
-                    and not exc.server_key
-                    and not exc.provider_error.get("server_error_code")
-                )
+            exc.pre_action_failure = message_validation_rejected(
+                exc.provider_error, server_key=exc.server_key,
             )
             raise
         return self.run_json(command, **options)

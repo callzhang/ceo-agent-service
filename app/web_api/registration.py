@@ -956,8 +956,8 @@ def register_console_routes(
 
     @app.post("/api/console/history/{attempt_id}/retry")
     async def console_history_retry(attempt_id: int, request: Request):
-        """Retry failed WeChat work through exact Reader reconciliation, without sending."""
-        from app.wechat_reconciliation import reconcile_failed_wechat_attempt
+        """Reconcile native reply evidence through a read-only recovery path."""
+        from app.reply_action_reconciliation import reconcile_reply_attempt
 
         binding = await json_object(request) if await request.body() else {}
         reply_id = binding.get("principal_reply_message_id")
@@ -966,7 +966,7 @@ def register_console_routes(
             raise HTTPException(status_code=422, detail="principal_reply_message_id is required")
         try:
             arguments = {"principal_reply_message_id": reply_id.strip()} if reply_id else {}
-            result = reconcile_failed_wechat_attempt(store_factory(), attempt_id, **arguments)
+            result = reconcile_reply_attempt(store_factory(), attempt_id, **arguments)
         except ValueError as exc:
             return JSONResponse(
                 {"ok": False, "code": "retry_not_applicable", "message": str(exc), "details": {}},
@@ -978,7 +978,7 @@ def register_console_routes(
                 status_code=409,
             )
         _record_console_command(attempt_id, "retry", request)
-        return command_result(message="已通过原生读回恢复该任务", item=result)
+        return command_result(message="已通过原生证据恢复该任务", item=result)
 
     @app.post("/api/console/history/{attempt_id}/resend-wechat")
     async def console_history_resend_wechat(attempt_id: int, request: Request):

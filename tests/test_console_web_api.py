@@ -3724,7 +3724,7 @@ def test_wechat_history_retry_uses_reconciliation_result_without_confirmation_ca
         return {"outcome": "done", "task_id": 417557, "delivery_id": 146}
 
     monkeypatch.setattr(
-        "app.wechat_reconciliation.reconcile_failed_wechat_attempt", reconcile,
+        "app.reply_action_reconciliation.reconcile_reply_attempt", reconcile,
     )
     with _client(tmp_path) as client:
         response = client.post("/api/console/history/16128/retry")

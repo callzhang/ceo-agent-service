@@ -607,6 +607,8 @@ Prompt 另写入负责人的个人规则（只存在该定时任务的数据库�
 
 ## 外部动作幂等与依赖
 
+现有 History `retry` 是只读对账入口。对于旧版误记 failed/uncertain 的钉钉聊天参数拒绝，它复用发送预检的同一原生错误分类器，要求持久化 `DwsError` 证明参数校验阶段未派发、原候选/审核/动作键/目标/执行代次精确一致、没有供应商成功回执，且当前同一任务已有完成并批准的 `no_action`。事务内先验证全部旧动作，再保存 `confirmed_no_effect` 及完整旧错误和当前审核引用，通过 CAS 结案任务并写入 Attempt 的 resolution；原 failed 状态、发送错误及原 System uncertain 历史保留。超时、结果未知、已有回执、身份变化、未完成/未批准审核或历史风险拒绝仍不结案。重复请求幂等，不调用 Sender、不发送消息。质检的“未解决最新失败”计数排除具有正式 `resolved_at` 的 Attempt，不改变历史 failed 事实；无结案标记的未知失败仍告警。
+
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 
 原生群消息和直接用户消息在 provider 接受、但本地回执尚未保存的中断后，恢复读取原精确目标，并比对持久化审核正文、本人发送者、未撤回、dispatch 时间下界及唯一消息身份，匹配后补存回执而不重派。窗口读回使用 DingTalk `im.message-list.v1` 完整分页 contract，并验证时间范围、页数、失败数及结果条数；群聊按会话 ID 查询，单聊按稳定 userId/openDingTalkId 查询。若回复任务明确标记 `input_compacted`，触发消息 JSON 是溯源包装而非 `DingTalkMessage`；具名 reconcile 先按保留的原触发消息 ID 只读读取该消息，并核对会话、消息 ID、发送人和时间均与任务元数据一致，再进行原生完整会话消息核对。压缩输入不得导致普通异常重试或进入 dispatch。新 action attempt 在调用 provider 前原子保存 UTC 毫秒 dispatch 时间；旧无时区秒时间不能作为精确归属边界，保持失败并要求新的精确复检；provider 只返回秒时间时，同秒不足以证明消息在 dispatch 后，也保持失败并停止重发。完整窗口唯一精确命中恢复真实发送回执；完整窗口零个匹配的发送人/正文/引用组合记录为未送达，停止旧候选，仅允许确认无效果后由新候选重试；不完整窗口或多匹配保持失败且不派发。若原始发送在准备正文一致性检查处已失败，新执行先对原目标、审核正文和原始派发边界执行只读完整窗口复检。只有完整零命中才把原 action attempt 记录为 `confirmed_no_effect` 并解除动作键门禁；唯一命中记录 verified 回执。若源任务终止而当前待办归档为 skipped，历史中仍保留未送达事实，不投影为已送达。文档评论和 OA 评论恢复读取原 node/process instance 并保存只读诊断；尚无已验证的 author/time/body/stable-ID 联合归属契约时，不凭相似正文补记成功或再次发送。

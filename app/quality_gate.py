@@ -436,6 +436,7 @@ def _check_reply_attempts(
             where ordinal=1
               and lower(action) in ('send_reply','ask_clarifying_question')
               and lower(send_status) in ('failed','blocked')
+              and trim(coalesce(a.resolved_at, ''))=''
               and not exists (
                 select 1 from ({SENT_REPLY_SQL}) sr
                 where sr.conversation_id=a.conversation_id
