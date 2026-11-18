@@ -3137,8 +3137,8 @@ def test_consumer_source_callback_pair_uses_identity_not_preview_text(
 
 
 @pytest.mark.parametrize("change", ["mixed_tokens", "mixed_attempts", "duplicate_rating",
-                                    "extra_query", "extra_url", "outside_credential", "preview_credential"])
-def test_participant_callback_format_cannot_bypass_source_security(
+                                    "extra_query", "extra_url", "preview_credential"])
+def test_participant_callback_format_cannot_bypass_source_validation(
     store, task, context, monkeypatch, change,
 ):
     from app.feedback_spike import build_callback_url
@@ -3160,8 +3160,6 @@ def test_participant_callback_format_cannot_bypass_source_security(
     source = f"Participant notice.\n[Positive]({up}) | [Negative]({down})"
     if change == "extra_url":
         source += f"\nUnpaired URL: {up}"
-    elif change == "outside_credential":
-        source += "\nAuthorization: Bearer abcdef1234567890"
     context = replace(context, trigger_text=source)
     with pytest.raises(ValueError):
         ConsumerAgentRunner(
@@ -3169,31 +3167,31 @@ def test_participant_callback_format_cannot_bypass_source_security(
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
-def test_captured_source_credentials_are_service_validation_not_provider_failure(
+def test_captured_source_credentials_are_retained_for_audit_not_treated_as_output(
     store, task, context,
 ):
-    context = replace(context, trigger_raw_payload={"access_token": "synthetic-secret"})
-    with pytest.raises(ValueError):
-        ConsumerAgentRunner(
-            store=store, workspace=Path("/workspace"),
-            executor=CapturingExecutor(_result_jsonl()),
-        ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
-    [run] = store.list_agent_runs_for_task_generation(task.id, task.execution_generation)
-    error = json.loads(run.structured_error_json)
-    assert error["code"] == "runtime_result_source_invalid"
-    assert error["source"] == "service"
-    assert error["retryable"] is False
-    assert run.status == "failed"
+    source = {"access_token": "synthetic-secret"}
+    context = replace(context, trigger_raw_payload=source)
+    result = ConsumerAgentRunner(
+        store=store, workspace=Path("/workspace"),
+        executor=CapturingExecutor(_result_jsonl()),
+    ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
+
+    assert result.result.outcome == "no_action"
+    [binding] = result.result.source_bindings
+    assert binding.value["trigger_raw_payload"] == source
+    saved = store.get_agent_run(result.run_id)
+    assert saved.status == "completed"
+    assert json.loads(saved.adopted_result_json)["source_bindings"][0]["value"][
+        "trigger_raw_payload"
+    ] == source
 
 
-@pytest.mark.parametrize("failure", ["credential", "depth", "codec_size"])
+@pytest.mark.parametrize("failure", ["depth", "codec_size"])
 def test_captured_sources_keep_security_and_resource_bounds(
     store, task, context, failure,
 ):
-    if failure == "credential":
-        source = {"access_token": "secret-value"}
-        expected = "runtime_result_source_invalid"
-    elif failure == "depth":
+    if failure == "depth":
         source = {"leaf": "value"}
         for _ in range(13):
             source = {"nested": source}
@@ -3221,8 +3219,8 @@ def test_authored_reference_still_has_short_field_bound(store, task, context):
         ).run(task, context, proposal_revision=0, parent_agent_run_id=None)
 
 
-@pytest.mark.parametrize("change", ["foreign", "token", "query", "unpaired", "source-secret"])
-def test_quoted_feedback_does_not_exempt_invalid_urls_or_source_credentials(
+@pytest.mark.parametrize("change", ["foreign", "token", "query", "unpaired"])
+def test_quoted_feedback_does_not_exempt_invalid_callback_links(
     store, task, context, monkeypatch, change,
 ):
     from app.feedback_spike import prepare_outgoing_reply_text
@@ -3241,8 +3239,6 @@ def test_quoted_feedback_does_not_exempt_invalid_urls_or_source_credentials(
         source = source.replace("&rating=", "&access_token=secret&rating=")
     elif change == "unpaired":
         source = source.split("｜")[0]
-    else:
-        source += "\nAuthorization: Bearer abcdef1234567890"
     context = replace(context, messages=(AgentContextMessage(
         message_id="historical-synthetic", sender="quoted_message", text=source, create_time="2026-10-04T00:00:00Z",
     ),))

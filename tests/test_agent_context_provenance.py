@@ -124,7 +124,7 @@ def test_mixed_timestamp_offsets_and_unknown_time_do_not_invent_order():
 
 
 def test_audit_identifies_source_bindings_as_service_captured_evidence():
-    context = _context()
+    context = replace(_context(), trigger_raw_payload={"access_token": "synthetic-secret"})
     consumer_result = candidate()
     assert consumer_result.source_bindings == ()
     prepared = capture_candidate_sources(consumer_result, context, None)
@@ -142,7 +142,12 @@ def test_audit_identifies_source_bindings_as_service_captured_evidence():
 
     revision = _prompt_json_section(rendered, "Candidate revision")
     assert any(binding["provider"] == "task_context" for binding in revision["candidate"]["source_bindings"])
+    assert revision["candidate"]["source_bindings"][0]["value"]["trigger_raw_payload"][
+        "access_token"
+    ] == "synthetic-secret"
     provenance = _prompt_json_section(rendered, "Service-captured source binding provenance")
     assert provenance["managed_by"] == "service"
     assert "Consumer cannot edit source_bindings" in rendered
+    assert "not Consumer-authored output" in rendered
+    assert "Check sensitive values in Consumer-authored candidate fields" in rendered
     assert "current card" in rendered

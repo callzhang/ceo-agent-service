@@ -9,7 +9,7 @@ from tests.test_reviewed_orchestration import candidate, setup
 
 
 @pytest.mark.parametrize("placement", ["history", "quoted", "trigger", "authored", "other_channel", "unidentified"])
-def test_unused_history_text_does_not_become_candidate_source(tmp_path, placement):
+def test_source_evidence_stays_separate_from_authored_candidate_fields(tmp_path, placement):
     from app.agent_turn_runner import (
         RuntimeResultValidationError, _contains_sensitive_value,
         _validate_runtime_reference_domain_result,
@@ -35,9 +35,12 @@ def test_unused_history_text_does_not_become_candidate_source(tmp_path, placemen
         assert synthetic not in prepared.model_dump_json()
         assert prepared.source_bindings[0].value["messages"] == [{"message_id": "old"}]
         assert prepared.source_bindings[0].value["trigger_text"] == context.trigger_text
-    else:
+    elif placement == "authored":
         with pytest.raises((RuntimeResultValidationError, ValueError)):
             _validate_runtime_reference_domain_result(prepared)
+    else:
+        _validate_runtime_reference_domain_result(prepared)
+        assert synthetic in prepared.model_dump_json()
 
 
 @pytest.mark.parametrize("channel", ["dingtalk", "wechat"])
