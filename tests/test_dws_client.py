@@ -65,6 +65,33 @@ def test_validation_after_actual_send_started_is_not_pre_action_failure(monkeypa
     assert raised.value.pre_action_failure is False
 
 
+def test_backend_parameter_rejection_during_dry_run_is_pre_action_failure(monkeypatch):
+    error = {
+        "category": "api",
+        "code": 1,
+        "message": "请求未通过后端参数校验",
+        "operation": "tools/call",
+        "reason": "invalid_request",
+        "server_error_code": "PARAM_ERROR",
+        "stage": "tool_validation",
+    }
+    commands = []
+
+    def process(command, **kwargs):
+        commands.append(command)
+        return subprocess.CompletedProcess(
+            command, 1, json.dumps({"error": error}), ""
+        )
+
+    monkeypatch.setattr(dws_client.DwsClient, "_run_cli_process", staticmethod(process))
+    with pytest.raises(DwsError) as raised:
+        DwsClient().reply_message("conversation", "trigger", "sender", "body")
+
+    assert len(commands) == 1
+    assert "--dry-run" in commands[0]
+    assert raised.value.pre_action_failure is True
+
+
 @pytest.fixture(autouse=True)
 def disable_dws_process_pacing(monkeypatch):
     monkeypatch.setenv(dws_client.DWS_PROCESS_MIN_INTERVAL_SECONDS_ENV, "0")
