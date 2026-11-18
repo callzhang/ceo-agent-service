@@ -27,6 +27,12 @@ def _endpoint(statuses):
         calls.append(request.method)
         if status == "timeout":
             raise httpx.ReadTimeout("provider timed out", request=request)
+        if status == "disconnect":
+            raise httpx.RemoteProtocolError("Server disconnected without sending a response", request=request)
+        if status == "read":
+            raise httpx.ReadError("connection dropped", request=request)
+        if status == "connect":
+            raise httpx.ConnectError("connection failed", request=request)
         if status == "tls":
             try:
                 raise ssl.SSLCertVerificationError("invalid certificate")
@@ -86,7 +92,7 @@ def test_discovery_recovers_temporary_embedding_failure_before_persisting():
         assert persisted == [1]
 
 
-@pytest.mark.parametrize("status", [500, 502, 503, 504, "timeout"])
+@pytest.mark.parametrize("status", [500, 502, 503, 504, "timeout", "disconnect", "read", "connect"])
 def test_exhausted_embedding_outage_remains_failed_transient_discovery(status):
     delays, persisted = [], []
     with _endpoint([status]) as (batcher, calls):

@@ -734,7 +734,12 @@ _NETWORK_UNREACHABLE_ERRNOS = frozenset({
 def is_transient_connection_error(exc: Exception) -> bool:
     """Distinguish transport outages from account setup and local scan defects."""
     cause: BaseException | None = exc
+    network_failure = False
     while cause is not None:
+        if isinstance(cause, (httpx.NetworkError, httpx.RemoteProtocolError)):
+            # A dropped or unreachable HTTP connection is transient unless a
+            # deeper cause (TLS verification, a login failure) says otherwise.
+            network_failure = True
         if isinstance(cause, ssl.SSLError):
             return isinstance(cause, ssl.SSLEOFError)
         if isinstance(cause, httpx.HTTPStatusError):
@@ -753,7 +758,7 @@ def is_transient_connection_error(exc: Exception) -> bool:
         if isinstance(cause, OSError) and cause.errno in _NETWORK_UNREACHABLE_ERRNOS:
             return True
         cause = cause.__cause__
-    return False
+    return network_failure
 
 
 @dataclass(frozen=True)
