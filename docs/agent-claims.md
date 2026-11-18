@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-repair-errors-16590 | `app/email_classifier_scan.py`, `tests/test_email_embedding_retry.py`, `docs/runtime-mechanism.md`; this claim row | Classify Embedding deadline exhaustion and transient httpx transport interruptions as retryable discovery outages while preserving permanent TLS/protocol failures. Add regression evidence and update the behavior documentation; do not touch production data or replay business actions. | 2026-11-18 |
-
 
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
