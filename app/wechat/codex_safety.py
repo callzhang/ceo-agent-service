@@ -303,8 +303,9 @@ def make_role_agent_command(
               role == "consumer" and feature in CONSUMER_INHERITED_NATIVE_FEATURES
           )
           for option in ("-c", f"features.{feature}=false")),
-        # Only OA Consumer/Audit compose source bytes and OCR inside CodeMode.
-        # Other role tools and the sandbox retain their existing boundaries.
+        # Source reads and OCR share CodeMode so the Agent can pass exact bytes
+        # between the two MCP tools without copying them through model context.
+        # Other configured MCP namespaces retain their direct-only boundary.
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
         "-c", "features.code_mode.enabled=true",
@@ -316,8 +317,7 @@ def make_role_agent_command(
         "-c", "features.code_mode.direct_only_tool_namespaces="
         + json.dumps(
             [f"mcp__{name}" for name in sorted(configured_names - {"agent_cli", "ai_services"})]
-            if oa_audit_ocr else [] if role == "consumer" and purpose_name == "oa"
-            else ["mcp__agent_cli", "mcp__ai_services"]
+            if not (role == "consumer" and purpose_name == "oa") else []
         ),
         "-c",
         'sandbox_mode="workspace-write"' if role == "consumer" else 'sandbox_mode="read-only"',

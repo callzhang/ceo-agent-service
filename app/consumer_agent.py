@@ -368,7 +368,7 @@ already wrote.
 Use only stable provider identities established by the current source for the
 exact operation; a similarly named business object is not identity evidence.
 """.strip()
-_DIRECT_SOURCE_READ_INSTRUCTIONS = """
+_CODEMODE_SOURCE_READ_INSTRUCTIONS = """
 For DingTalk reads in service Consumer turns, prefer the declared
 `mcp__agent_cli` read tools. The Consumer may use local `dws` commands through
 shell for source reads when appropriate. Never use `dws` through shell to send
@@ -377,17 +377,17 @@ actions; those effects must use the reviewed typed-action path. Audit must use
 declared read tools only and must not use shell or local `dws` commands. If the
 matching native read tool is not declared, report that exact capability as
 unavailable before choosing an appropriate read path.
-When a declared read returns source bytes or page references requiring OCR,
-call the native `ai_services.ocr_document` MCP directly with those exact source
-bytes, MIME type, page numbers and source digest. Do not infer that this tool
-is absent from a nested `ALL_TOOLS` catalog, shell inventory or another Agent's
-tool list; those do not describe this native Consumer/Audit session. If the
-direct call itself fails, preserve its concrete tool/provider error as the
-technical read failure.
+When a declared read returns source bytes requiring OCR, call the native
+`ai_services.ocr_document` tool (`mcp__ai_services__ocr_document`) with the
+exact returned bytes, MIME type and page numbers. If `functions.exec` is
+available in this session, call the read tool and OCR in the same JS cell and
+pass the bytes through in memory; print only OCR text and source metadata.
+Otherwise call OCR directly with the exact returned bytes. Never alter or
+reconstruct binary data. If the OCR call fails, preserve its concrete
+tool/provider error as the technical read failure.
 """.strip()
-_OA_OCR_HANDOFF_INSTRUCTIONS = """
-In Codex OA turns, use `functions.exec` to call the declared `mcp__agent_cli`
-tools. When a read returns `ocr_input_base64`, pass that value to
+_OA_SOURCE_FALLBACK_INSTRUCTIONS = """
+In Codex OA turns, when a read returns `ocr_input_base64`, pass that value to
 `mcp__ai_services__ocr_document` as `data_base64` in the same JS cell, with a
 filename and its MIME type. For a rendered single-page image, do not pass its
 original PDF page number as OCR `page_numbers`; keep that number for the result.
@@ -439,11 +439,12 @@ Wire results use error_code, error_retryable, error_authorization_required;
 do not return a nested error object. Match the supplied wire schema exactly.
 """.strip()
 AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
-    _CAPABILITY_COMMON_HEAD, _DIRECT_SOURCE_READ_INSTRUCTIONS,
+    _CAPABILITY_COMMON_HEAD, _CODEMODE_SOURCE_READ_INSTRUCTIONS,
     _CAPABILITY_COMMON_TAIL,
 )) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
 OA_AGENT_CAPABILITY_INSTRUCTIONS = "\n".join((
-    _CAPABILITY_COMMON_HEAD, _OA_OCR_HANDOFF_INSTRUCTIONS,
+    _CAPABILITY_COMMON_HEAD, _CODEMODE_SOURCE_READ_INSTRUCTIONS,
+    _OA_SOURCE_FALLBACK_INSTRUCTIONS,
     _CAPABILITY_COMMON_TAIL,
 )) + "\n\n" + TASK_STORAGE_INSTRUCTIONS
 
@@ -1645,8 +1646,8 @@ def audit_developer_sections(
         core,
         capability_instructions=(
             "Use the capabilities available to the calling Agent.\n"
-            + (_OA_OCR_HANDOFF_INSTRUCTIONS if purpose_name == "oa"
-               else _DIRECT_SOURCE_READ_INSTRUCTIONS)
+            + _CODEMODE_SOURCE_READ_INSTRUCTIONS
+            + (_OA_SOURCE_FALLBACK_INSTRUCTIONS if purpose_name == "oa" else "")
             + "\nApply the applicable business and operation Skills to the typed candidate. "
             "The application does "
             "not inspect command names, MCP tools, receipt formats, or readback procedures; "
