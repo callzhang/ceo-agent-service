@@ -147,7 +147,11 @@ class DingTalkMessageHandler:
                         or (trigger_sender_user_id
                             and trigger.sender_user_id != trigger_sender_user_id)):
                     return ActionOutcome("uncertain", {"reason": "compacted_trigger_readback_mismatch"})
-            if trigger.single_chat is not task.single_chat:
+            if (action.target.get("conversation_id") != trigger.open_conversation_id
+                    or action.target.get("message_id") != trigger.open_message_id):
+                return ActionOutcome("uncertain", {"reason": "reply_target_mismatch"})
+            if (trigger.open_message_id != task.trigger_message_id
+                    or trigger.single_chat is not task.single_chat):
                 return ActionOutcome("uncertain", {"reason": "reply_trigger_mismatch"})
             conversation = DingTalkConversation(
                 open_conversation_id=trigger.open_conversation_id,

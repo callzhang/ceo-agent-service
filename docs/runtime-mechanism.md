@@ -52,6 +52,8 @@ WorkSummary、Email classification、Feedback processing 和 Workbench turn 的
 
 ## 运行角色
 
+钉钉引用回复的发送与只读对账统一使用持久触发消息的原生 `open_conversation_id` / `open_message_id`，队列 `conversation_id` 可为同一会话的读取别名，不用作供应商发送身份。两条路径都核对已审核动作目标、原触发消息 ID 和单聊/群聊类型；错消息、错会话或类型不符时在调用 Sender/供应商前拒绝。已精简输入沿用原消息 ID 的现有原生读取与发送者、时间核对，不重新猜收件人。
+
 钉钉文档在审核后派发前复核来源时，忽略读取响应的顶层 `logId`。它由钉钉为每次读取请求分配。文档节点身份、标题、链接、正文及其他响应字段仍逐项比较，真实变化继续触发重新审核。原始审核候选、来源快照和审核摘要保持原样。
 
 钉钉 reaction 读回的 `replyUsers[]` 是显示名/昵称，不是组织 userId。执行器通过当前目录搜索，按完整姓名或昵称唯一解析到稳定 userId 后与当前账号比较；原消息 ID 和 emoji 仍须精确匹配。无法解析或同名歧义时保持未确认。核对已有 reaction 仅调用读取，不重复添加。
