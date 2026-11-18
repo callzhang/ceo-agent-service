@@ -754,6 +754,10 @@ def is_transient_connection_error(exc: Exception) -> bool:
         if isinstance(cause, (socket.gaierror, TimeoutError, imaplib.IMAP4.abort,
                               httpx.TimeoutException)):
             return True
+        if isinstance(cause, (httpx.UnsupportedProtocol, httpx.LocalProtocolError)):
+            # A bad embedding URL scheme or invalid request header is local
+            # configuration; retrying the same request cannot repair it.
+            return False
         if isinstance(cause, httpx.TransportError):
             # Resets, disconnects and refused connections are outages unless
             # a deeper cause proves a permanent TLS rejection, so keep walking.

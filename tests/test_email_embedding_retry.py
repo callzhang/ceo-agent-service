@@ -33,6 +33,10 @@ def _endpoint(statuses):
             raise httpx.RemoteProtocolError("server disconnected", request=request)
         if status == "connect_error":
             raise httpx.ConnectError("all connection attempts failed", request=request)
+        if status == "unsupported_protocol":
+            raise httpx.UnsupportedProtocol("missing URL scheme", request=request)
+        if status == "local_protocol":
+            raise httpx.LocalProtocolError("illegal header value", request=request)
         if status == "tls":
             try:
                 raise ssl.SSLCertVerificationError("invalid certificate")
@@ -104,7 +108,7 @@ def test_exhausted_embedding_outage_remains_failed_transient_discovery(status):
         assert persisted == []
 
 
-@pytest.mark.parametrize("status", [400, 401, 403, 404, 501, 505, "protocol", "tls"])
+@pytest.mark.parametrize("status", [400, 401, 403, 404, 501, 505, "protocol", "tls", "unsupported_protocol", "local_protocol"])
 def test_auth_configuration_and_protocol_errors_are_not_retried(status):
     delays, persisted = [], []
     with _endpoint([status]) as (batcher, calls):
