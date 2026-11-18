@@ -688,6 +688,9 @@ def test_native_dingtalk_handler_requires_exact_prepared_body_and_receipt():
         def get_outbound_postfix_receipt(self, channel, delivery_key):
             return None
 
+        def record_outbound_postfix_receipt(self, channel, delivery_key, receipt, *, operation):
+            return receipt
+
     class Sender:
         def __init__(self):
             self.calls = []
@@ -728,6 +731,85 @@ def test_native_dingtalk_handler_requires_exact_prepared_body_and_receipt():
     assert sender.calls[-1][1] is None
     assert sender.calls[-1][2]["user_id"] == "applicant-user"
     assert sender.calls[-1][2]["open_dingtalk_id"] is None
+
+
+@pytest.mark.parametrize("operation", ["dispatch", "reconcile"])
+def test_native_dingtalk_reply_uses_trigger_open_conversation_id_for_client_alias(operation):
+    from app.dingtalk_models import DingTalkMessage
+    from app.outbound_postfix import PreparedOutboundMessage
+    from app.system_action_handlers import DingTalkMessageHandler
+
+    trigger = DingTalkMessage(
+        open_conversation_id="open-conversation-id",
+        open_message_id="trigger-message-id",
+        conversation_title="Melody",
+        single_chat=True,
+        sender_name="Melody",
+        create_time="2026-11-18 15:28:18",
+        content="Please confirm the work requirements.",
+    )
+
+    class Store:
+        def get_reply_task_for_execution(self, task_id, generation):
+            return type("Task", (), {
+                "business_object_key": "object:1",
+                "execution_generation": "gen-1",
+                "conversation_id": "client-conversation-alias",
+                "conversation_title": "Melody",
+                "single_chat": True,
+                "trigger_message_id": "trigger-message-id",
+                "trigger_message_json": trigger.model_dump_json(),
+            })()
+
+        def get_outbound_postfix(self, channel, delivery_key):
+            return PreparedOutboundMessage(channel, delivery_key, "Prepared reply", "", "v1")
+
+        def get_outbound_postfix_receipt(self, channel, delivery_key):
+            return None
+
+        def record_outbound_postfix_receipt(self, channel, delivery_key, receipt, *, operation):
+            return receipt
+
+    class Sender:
+        calls = []
+
+        def send_dingtalk_reply_to_trigger_prepared(self, prepared, *, conversation, trigger):
+            self.calls.append((conversation.open_conversation_id, trigger.open_message_id))
+            return type("Receipt", (), {
+                "provider_result": {"success": True, "result": {"openMessageId": "reply-id"}}
+            })()
+
+    class Dws:
+        calls = []
+
+        def verify_message_send_result(self, result):
+            return {"state": "sent"}
+
+        def reconcile_reply_to_trigger(self, conversation, trigger, body):
+            self.calls.append((conversation.open_conversation_id, trigger.open_message_id))
+            return {"success": True, "result": {"openMessageId": "reply-id"}}
+
+    action = _candidate(actions=[{
+        "description": "Reply", "action_identity": "reply", "capability": "dingtalk-chat",
+        "operation": "reply_to_message",
+        "target": {"conversation_id": "open-conversation-id", "message_id": "trigger-message-id"},
+        "payload": {"content": "Prepared reply"},
+    }]).proposal.actions[0]
+
+    sender = Sender()
+    dws = Dws()
+    handler = DingTalkMessageHandler(Store(), dws, sender=sender)
+    candidate = {"task_id": 1, "proposal_revision": 0, "execution_generation": "gen-1"}
+    if operation == "dispatch":
+        outcome = handler.dispatch(action, action_key="action-key", candidate=candidate)
+        observed = sender.calls
+    else:
+        candidate["action_attempt"] = {"created_at": "2026-11-18T07:55:00Z"}
+        outcome = handler.reconcile(action, action_key="action-key", candidate=candidate)
+        observed = dws.calls
+
+    assert outcome.status == "verified"
+    assert observed == [("open-conversation-id", "trigger-message-id")]
 
 
 def test_dingtalk_message_reconciliation_checks_provider_when_prepared_body_mismatches():

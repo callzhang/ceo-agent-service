@@ -62,14 +62,17 @@ class DingTalkMessageHandler:
             return ActionOutcome("failed", {"reason": "reviewed_message_preparation_mismatch"})
         target = action.target
         if action.operation == "reply_to_message":
-            if target.get("conversation_id") != task.conversation_id or target.get("message_id") != task.trigger_message_id:
-                return ActionOutcome("failed", {"reason": "reply_target_mismatch"})
             trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
-            if trigger.open_conversation_id != task.conversation_id or trigger.open_message_id != task.trigger_message_id:
+            if (target.get("conversation_id") != trigger.open_conversation_id
+                    or target.get("message_id") != trigger.open_message_id):
+                return ActionOutcome("failed", {"reason": "reply_target_mismatch"})
+            if (trigger.open_message_id != task.trigger_message_id
+                    or trigger.single_chat is not task.single_chat):
                 return ActionOutcome("failed", {"reason": "reply_trigger_mismatch"})
             conversation = DingTalkConversation(
-                open_conversation_id=task.conversation_id, title=task.conversation_title,
-                single_chat=task.single_chat, unread_point=0,
+                open_conversation_id=trigger.open_conversation_id,
+                title=trigger.conversation_title,
+                single_chat=trigger.single_chat, unread_point=0,
             )
             receipt = self.sender.send_dingtalk_reply_to_trigger_prepared(
                 prepared, conversation=conversation, trigger=trigger,
@@ -118,13 +121,14 @@ class DingTalkMessageHandler:
         if action.operation == "reply_to_message":
             if prepared is None:
                 return ActionOutcome("failed", {"reason": "reviewed_message_preparation_mismatch"})
-            conversation = DingTalkConversation(
-                open_conversation_id=task.conversation_id, title=task.conversation_title,
-                single_chat=task.single_chat, unread_point=0,
-            )
             try:
                 trigger = DingTalkMessage.model_validate_json(task.trigger_message_json)
             except ValueError:
+                conversation = DingTalkConversation(
+                    open_conversation_id=task.conversation_id,
+                    title=task.conversation_title,
+                    single_chat=task.single_chat, unread_point=0,
+                )
                 if (task.input_compacted is not True
                         or not isinstance(task.trigger_message_id, str)
                         or not task.trigger_message_id
@@ -137,12 +141,19 @@ class DingTalkMessageHandler:
                 trigger_sender_user_id = getattr(task, "trigger_sender_user_id", "")
                 if (trigger is None
                         or trigger.open_message_id != task.trigger_message_id
-                        or trigger.open_conversation_id != task.conversation_id
+                        or trigger.single_chat is not task.single_chat
                         or trigger.sender_name != task.trigger_sender
                         or trigger.create_time != task.trigger_create_time
                         or (trigger_sender_user_id
                             and trigger.sender_user_id != trigger_sender_user_id)):
                     return ActionOutcome("uncertain", {"reason": "compacted_trigger_readback_mismatch"})
+            if trigger.single_chat is not task.single_chat:
+                return ActionOutcome("uncertain", {"reason": "reply_trigger_mismatch"})
+            conversation = DingTalkConversation(
+                open_conversation_id=trigger.open_conversation_id,
+                title=trigger.conversation_title,
+                single_chat=trigger.single_chat, unread_point=0,
+            )
             receipt = self.dws.reconcile_reply_to_trigger(conversation, trigger, prepared.final_body)
             if receipt is None:
                 return None
