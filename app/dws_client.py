@@ -3472,10 +3472,17 @@ class DwsClient:
         try:
             self.run_json([*command, "--dry-run"], **options)
         except DwsError as exc:
+            provider_validation = (
+                exc.provider_error.get("reason") == "invalid_request"
+                and exc.provider_error.get("stage") == "tool_validation"
+            )
             exc.pre_action_failure = (
-                exc.provider_error.get("category") == "validation"
-                and not exc.server_key
-                and not exc.provider_error.get("server_error_code")
+                provider_validation
+                or (
+                    exc.provider_error.get("category") == "validation"
+                    and not exc.server_key
+                    and not exc.provider_error.get("server_error_code")
+                )
             )
             raise
         return self.run_json(command, **options)
