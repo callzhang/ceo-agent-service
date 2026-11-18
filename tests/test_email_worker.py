@@ -7056,6 +7056,58 @@ def test_direct_unsubscribe_browser_timeout_retries_after_recovery_error():
     assert calls[1][1][0:2] == (92, "email_unsubscribe_browser_timeout:1")
 
 
+def test_direct_unsubscribe_allows_the_configured_number_of_retries(monkeypatch):
+    module = _module()
+    task = SimpleNamespace(
+        id=941,
+        execution_generation="generation-941",
+        attempts=1,
+        channel="email",
+        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        conversation_id="email-thread:941",
+        conversation_title="Email unsubscribe",
+        trigger_message_id="email-action:retry-budget-941",
+        trigger_sender="sender@example.com",
+        trigger_text="Immutable ActionPlan authorizes unsubscribe.",
+    )
+    calls = []
+
+    class Store:
+        def record_reply_attempt(self, **kwargs):
+            calls.append(("attempt", kwargs["send_status"]))
+
+        def fail_reply_task(self, task_id, error, **kwargs):
+            calls.append(("fail", task_id, error))
+
+        def defer_reply_task(self, task_id, error, **kwargs):
+            calls.append(("defer", task_id, error, kwargs["available_at"]))
+
+    monkeypatch.setattr(
+        module,
+        "_email_task_retry_available_at",
+        lambda failures: f"backoff-{failures}",
+    )
+    module._finalize_direct_email_unsubscribe_task(
+        Store(),
+        task,
+        {
+            "status": "failed",
+            "outcome": "failed_browser",
+            "error": {"code": "email_unsubscribe_browser_failed", "retryable": True},
+        },
+    )
+
+    assert calls == [
+        ("attempt", "failed"),
+        (
+            "defer",
+            941,
+            f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES}",
+            "backoff-3",
+        ),
+    ]
+
+
 def test_direct_unsubscribe_backoff_uses_persisted_external_failure_count(monkeypatch):
     module = _module()
     task = SimpleNamespace(
@@ -7106,7 +7158,7 @@ def test_direct_unsubscribe_browser_timeout_stops_after_retry_limit():
         id=94,
         execution_generation="generation-94",
         attempts=1,
-        error=f"email_unsubscribe_browser_timeout:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        error=f"email_unsubscribe_browser_timeout:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES}",
         conversation_id="email-thread:94",
         conversation_title="Email unsubscribe",
         trigger_message_id="email-action:timeout-94",
@@ -7291,7 +7343,7 @@ def test_direct_unsubscribe_failure_detail_reaches_the_attempt_and_task():
         channel="email",
         attempts=1,
         # Already spent the retry budget: this call is the exhausting one.
-        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES}",
         conversation_id="email-thread:93",
         conversation_title="Email unsubscribe",
         trigger_message_id="email-action:unexpected-93",
@@ -7342,7 +7394,7 @@ def test_direct_unsubscribe_exhaustion_keeps_the_category_that_names_an_external
         execution_generation="generation-97",
         channel="email",
         attempts=1,
-        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        error=f"email_unsubscribe_browser_failed:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES}",
         conversation_id="email-thread:97",
         conversation_title="Email unsubscribe",
         trigger_message_id="email-action:rejected-97",
@@ -7415,7 +7467,7 @@ def test_direct_unsubscribe_exhaustion_keeps_a_dedicated_code_bare():
         execution_generation="generation-98",
         channel="email",
         attempts=1,
-        error=f"email_unsubscribe_browser_timeout:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES - 1}",
+        error=f"email_unsubscribe_browser_timeout:{module.TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES}",
         conversation_id="email-thread:98",
         conversation_title="Email unsubscribe",
         trigger_message_id="email-action:timeout-98",

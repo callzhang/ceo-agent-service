@@ -2031,7 +2031,7 @@ def _finalize_direct_email_unsubscribe_task(
             spent = _transient_browser_retry_count(
                 str(getattr(task, "error", "") or ""), error_code
             ) + 1
-            if spent >= TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
+            if spent > TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES:
                 # The generic fallback code names nothing on its own -- the
                 # category behind it (already in task_error, computed above)
                 # is what says whether a rerun could ever succeed, and is
