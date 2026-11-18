@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-trajectory-link-label | frontend/src/components/ConversationTimeline.tsx; its existing test; docs/architecture.md trajectory paragraph | Remove invocation IDs from conversation trajectory links while retaining exact link destinations | 2026-11-18 |
+
 
 
 

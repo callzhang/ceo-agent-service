@@ -245,8 +245,8 @@ describe("ConversationTimeline", () => {
     render(<ConversationTimeline timeline={{ ...timeline, turns: [failed], events: [] }} activeTurnId={null} />);
     expect(screen.getByRole("alert")).toHaveTextContent("claude_idle_timeout");
     const links = within(screen.getByRole("navigation", { name: "本轮原生轨迹" }));
-    expect(links.getByRole("link", { name: /#12.*codex_cli.*codex_total_timeout/ })).toHaveAttribute("href", "/runtime-attempts/12/trajectory");
-    expect(links.getByRole("link", { name: /#13.*claude_cli.*claude_idle_timeout/ })).toHaveAttribute("href", "/runtime-attempts/13/trajectory");
+    expect(links.getByRole("link", { name: /^查看原生轨迹 · codex_cli · codex_total_timeout$/ })).toHaveAttribute("href", "/runtime-attempts/12/trajectory");
+    expect(links.getByRole("link", { name: /^查看原生轨迹 · claude_cli · claude_idle_timeout$/ })).toHaveAttribute("href", "/runtime-attempts/13/trajectory");
   });
 
   it("shows an aborted explanation for an unmatched tool on a failed historical turn", () => {
