@@ -14,6 +14,7 @@ from app.action_storage import (
     candidate_action_attempt_row,
     NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL,
     NATIVE_EXTERNAL_ACTION_RESULT_SQL,
+    task_delivery_projection,
 )
 
 
@@ -684,6 +685,71 @@ class ReviewedCandidateStoreMixin:
                 f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where id=?",
                 (prior["id"],),
             ).fetchone())
+
+    def reconcile_completed_wechat_delivery(self, task, review, delivery, result) -> bool:
+        """Persist a no-effect receipt after a later approved no-action completion.
+
+        The old delivery and Task are immutable here. The existing Action receipt
+        records the read-only observation, exactly as prior-action reconciliation does.
+        """
+        with self._immediate_write_transaction() as db:
+            current = _native_reply_task(db, task.id)
+            saved = self._native_wechat_delivery(db, delivery.id)
+            if (current is None or current["status"] != "done" or current["channel"] != "wechat"
+                    or current["execution_generation"] != task.execution_generation
+                    or self.current_reviewed_candidate(task.id, task.execution_generation) != review
+                    or self._standard_wechat_review_rows(db, review["candidate_id"], review["review_id"]) is None
+                    or json.loads(review["candidate_json"]).get("outcome") != "no_action"
+                    or saved is None or saved["reply_task_id"] != task.id
+                    or saved["conversation_id"] != current["conversation_id"]
+                    or saved["status"] != "failed" or not saved["pre_action_failure"]
+                    or not self._standard_wechat_review_approves(db, saved, json.loads(saved["evidence_json"]))):
+                return False
+            fields = ("account_id", "conversation_id", "target_type", "target_id",
+                      "execution_generation", "reply_text", "action_started_at", "error")
+            if any(saved[field] != getattr(delivery, field) for field in fields):
+                return False
+            latest = db.execute("select max(id) from (" + task_delivery_projection("wechat_deliveries") + ") where reply_task_id=?",
+                (task.id,)).fetchone()[0]
+            if latest != delivery.id:
+                return False
+            old_id = int(delivery.evidence["standard_candidate_id"])
+            execution = self._native_execution(db, old_id)
+            if (review["candidate_id"] <= old_id or execution is None
+                    or execution["status"] != "failed"
+                    or str(execution["review_id"]) != delivery.evidence["standard_review_id"]):
+                return False
+            rows = db.execute(
+                f"select * from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) where execution_id=?",
+                (old_id,),
+            ).fetchall()
+            matches = [candidate_action_attempt_row(row) for row in rows
+                       if json.loads(row["result_json"]).get("delivery_id") == delivery.id]
+            if len(matches) != 1:
+                return False
+            prior = matches[0]
+            proof = result.get("readback", {})
+            if (prior["status"] not in ("failed", "confirmed_no_effect") or prior["provider_receipt_id"]
+                    or json.loads(prior["target"]) != {key: saved[key] for key in (
+                        "account_id", "conversation_id", "target_type", "target_id")}
+                    or result.get("delivery_id") != delivery.id
+                    or proof.get("window_complete") is not True
+                    or type(proof.get("match_count")) is not int or proof["match_count"] != 0
+                    or proof.get("account_id") != delivery.account_id
+                    or proof.get("conversation_id") != delivery.conversation_id
+                    or proof.get("conversation_type") != delivery.target_type
+                    or not delivery.action_started_at or proof.get("since") != delivery.action_started_at
+                    or proof.get("text_sha256") != hashlib.sha256(delivery.reply_text.encode()).hexdigest()):
+                return False
+            if prior["status"] == "failed":
+                shared_action_lifecycle.record_reviewed_action_outcome(
+                    db, attempt=prior, status="confirmed_no_effect", provider_receipt_id=None,
+                    result_json=_json({**result, "completion_review_id": review["review_id"],
+                        "completion_candidate_id": review["candidate_id"],
+                        "completion_execution_generation": task.execution_generation}),
+                    agent_run_id=old_id, updated_at=_db_timestamp(db),
+                )
+            return True
 
     def reserve_calendar_response(
         self, execution_id: int, owner: str, action_index: int, principal_id: str, event_id: str,

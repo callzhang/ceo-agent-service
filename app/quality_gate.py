@@ -905,7 +905,19 @@ def _check_external_delivery_queues(
         # its reply attempt to skipped, so the external queue must do the same.
         ("wechat_deliveries", "status", ("failed", "send_unknown"),
          ("pending", "sending", "ready_to_send"),
-         "and lower(coalesce(error, '')) != 'user_rejected'"),
+         f"""and lower(coalesce(error, '')) != 'user_rejected'
+         and not exists(select 1 from ({NATIVE_CANDIDATE_ACTION_ATTEMPT_SQL}) receipt
+           where delivery.status='failed' and delivery.pre_action_failure=1
+             and receipt.status='confirmed_no_effect'
+             and receipt.execution_id=cast(json_extract(delivery.evidence_json,'$.standard_candidate_id') as integer)
+             and json_extract(receipt.result_json,'$.delivery_id')=delivery.id
+             and json_extract(receipt.result_json,'$.readback.window_complete')=1
+             and json_extract(receipt.result_json,'$.readback.match_count')=0
+             and json_extract(receipt.result_json,'$.readback.account_id')=delivery.account_id
+             and json_extract(receipt.result_json,'$.readback.conversation_id')=delivery.conversation_id
+             and json_extract(receipt.result_json,'$.readback.conversation_type')=delivery.target_type
+             and json_extract(receipt.result_json,'$.readback.since')=delivery.action_started_at)
+         """),
         ("memory_write_events", "status", ("failed",), ("pending", "processing"), ""),
     ):
         if source == "memory_write_events":
@@ -921,7 +933,7 @@ def _check_external_delivery_queues(
             source_sql = f"({task_delivery_projection(source)})"
         failed = _count(
             db,
-            f"""select count(*) from {source_sql}
+            f"""select count(*) from {source_sql} as delivery
                 where lower({status_column}) in ({','.join('?' for _ in failed_statuses)})
                 {resolved_filter}""",
             failed_statuses,

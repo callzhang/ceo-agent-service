@@ -1,4 +1,4 @@
-"""No-send reconciliation for a failed, reviewed WeChat Reply Task."""
+"""Read-only reconciliation of reviewed WeChat deliveries and Task outcomes."""
 
 from __future__ import annotations
 
@@ -166,12 +166,35 @@ def _settle_principal_reply(store, task, attempt, message_id: str) -> dict[str, 
     return {"outcome": "done", "task_id": task.id, "principal_reply_message_id": message_id}
 
 
+def _reconcile_completed_no_action(store, task):
+    """Record absence for an old delivery; never change the completed Task."""
+    failure = {"outcome": "failed", "task_id": task.id}
+    review = store.current_reviewed_candidate(task.id, task.execution_generation)
+    if (review is None
+            or parse_persisted_consumer_result(review["candidate_json"]).outcome.value != "no_action"):
+        return {**failure, "reason": "wechat_completion_review_missing"}
+    delivery = store.get_wechat_delivery_for_task(task.id)
+    if (delivery is None or delivery.status != "failed" or not delivery.pre_action_failure
+            or not delivery.action_started_at):
+        return {**failure, "reason": "wechat_delivery_not_proven_pre_action"}
+    result = WechatSendMessageHandler(store)._readback_delivery(
+        delivery, delivery.reply_text, require_scope=True, confirm_no_effect=True)
+    if result.status != "confirmed_no_effect":
+        return {**failure, "reason": "wechat_no_send_readback_unproven"}
+    if not store.reconcile_completed_wechat_delivery(task, review, delivery, result.provider_result):
+        return {**failure, "reason": "wechat_terminal_reconciliation_conflict"}
+    return {"outcome": "done", "task_id": task.id, "delivery_id": delivery.id,
+            "reconciliation_status": "confirmed_no_effect"}
+
+
 def reconcile_failed_wechat_attempt(
     store: Any, attempt_id: int, *, principal_reply_message_id: str = "",
 ) -> dict[str, object]:
     """Verify exact current WeChat effects and settle only their failed Task projection.
 
-    This function has no Sender dependency. A sent delivery must have one exact
+    A completed task with a later approved no-action candidate can record an
+    earlier pre-action failed delivery as confirmed_no_effect, preserving Task
+    and delivery history. This function has no Sender dependency. A sent delivery must have one exact
     native Reader match. An explicit skip, or a supersession chain ending in
     a skip, requires complete readback windows proving no delivery. A sent
     successor requires its exact presence and the obsolete body's absence.
@@ -182,9 +205,11 @@ def reconcile_failed_wechat_attempt(
     task = store.get_reply_task_by_trigger_message_id(
         attempt.trigger_message_id, channel="wechat"
     )
-    if (task is None or task.status != "failed"
+    if (task is None or task.status not in {"failed", "done"}
             or task.conversation_id != attempt.conversation_id):
         raise ValueError("wechat_task_not_current_failed")
+    if task.status == "done":
+        return _reconcile_completed_no_action(store, task)
     if principal_reply_message_id:
         return _settle_principal_reply(store, task, attempt, principal_reply_message_id)
     current, review, action, delivery = _current_wechat_action(store, task.id)
