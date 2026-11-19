@@ -2347,7 +2347,7 @@ def build_role_server(
     )
     drive_previews: dict[str, object] = {}
 
-    def preview_dingtalk_drive_file(
+    async def preview_dingtalk_drive_file(
         node_id: str, page_number: int | None = None,
     ) -> dict[str, object]:
         """Read a view-only DingTalk Drive file through its web preview page.
@@ -2364,7 +2364,7 @@ def build_role_server(
 
         preview = drive_previews.get(node_id)
         if preview is None:
-            preview = capture_drive_preview(node_id)
+            preview = await asyncio.to_thread(capture_drive_preview, node_id)
             drive_previews[node_id] = preview
         if page_number is None:
             return {

@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from contextlib import contextmanager
 from io import BytesIO
@@ -156,16 +157,31 @@ def test_preview_tool_returns_pages_then_bounded_ocr_input(monkeypatch, role) ->
     )
 
     assert tool.annotations.readOnlyHint is True
-    summary = tool.fn(node_id="AbCdEf0123456789AbCdEf0123456789")
+    summary = asyncio.run(tool.fn(node_id="AbCdEf0123456789AbCdEf0123456789"))
     assert summary == {
         "node_id": "AbCdEf0123456789AbCdEf0123456789", "title": "结算单.pdf",
         "page_count": 1, "ocr_page_numbers": [1], "truncated": False,
     }
-    page = tool.fn(node_id="AbCdEf0123456789AbCdEf0123456789", page_number=1)
+    page = asyncio.run(tool.fn(node_id="AbCdEf0123456789AbCdEf0123456789", page_number=1))
     assert page["ocr_required"] is True and page["ocr_mime_type"] == "image/jpeg"
     assert page["ocr_original_page_number"] == 1
     assert len(base64.b64decode(page["ocr_input_base64"])) <= agent_cli.MAX_OCR_AGENT_INPUT_BYTES
     # The pages are captured once per MCP process.
     assert captures == ["AbCdEf0123456789AbCdEf0123456789"]
     with pytest.raises(agent_cli.AgentReadOnlyViolationError):
-        tool.fn(node_id="AbCdEf0123456789AbCdEf0123456789", page_number=2)
+        asyncio.run(tool.fn(node_id="AbCdEf0123456789AbCdEf0123456789", page_number=2))
+
+
+@pytest.mark.parametrize("role", ["consumer", "audit"])
+def test_preview_mcp_call_runs_sync_browser_outside_event_loop(monkeypatch, role):
+    def capture(node_id):
+        with pytest.raises(RuntimeError, match="no running event loop"):
+            asyncio.get_running_loop()
+        return DrivePreview(title="view-only.pdf", page_count=1, pages=(_png(),))
+
+    monkeypatch.setattr(drive_preview_browser, "capture_drive_preview", capture)
+    tool = agent_cli.build_role_server(role)._tool_manager.get_tool(
+        "preview_dingtalk_drive_file"
+    )
+    result = asyncio.run(tool.run({"node_id": "AbCdEf0123456789AbCdEf0123456789"}))
+    assert result["page_count"] == 1
