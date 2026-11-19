@@ -2,9 +2,8 @@
 
 Derek, 2026-11-02: a file shared with us as "仅可查看" (READER) cannot be
 downloaded -- the Drive API refuses it under leak protection -- yet the same
-account can open its preview page. The page is the alidocs pdf.js viewer: one
-`.page` element per document page, each rendered to a canvas only once it is
-scrolled into view, and no text layer. So the readable form is an image of
+account can open its preview page. The page embeds its PDF viewer in a child frame: one `.w-page` element
+per document page, rendered to a canvas, with no text layer. So the readable form is an image of
 each page, which the Agent passes to OCR.
 
 The preview opens in the service's shared headless Chrome
@@ -23,8 +22,9 @@ PREVIEW_URL = "https://alidocs.dingtalk.com/i/nodes/{node_id}"
 LOGIN_HOST = "login.dingtalk.com"
 MAX_PREVIEW_PAGES = 30
 _NODE_ID = re.compile(r"[A-Za-z0-9]{8,64}")
-_PAGE_SELECTOR = ".pdf-container .page"
-_LOAD_SETTLE_MS = 12_000
+_PAGE_SELECTOR = ".w-page"
+_PREVIEW_READY_TIMEOUT_MS = 60_000
+_PAGE_POLL_MS = 500
 _PAGE_SETTLE_MS = 1_500
 
 
@@ -92,18 +92,23 @@ def _read_preview(page, node_id: str) -> DrivePreview:
         PREVIEW_URL.format(node_id=node_id),
         wait_until="domcontentloaded", timeout=60_000,
     )
-    page.wait_for_timeout(_LOAD_SETTLE_MS)
-    if LOGIN_HOST in page.url:
-        raise DrivePreviewError(
-            "drive_preview_login_required: the copy of Derek's Chrome cookies "
-            "carries no DingTalk login"
-        )
-    title = page.title()
-    elements = page.query_selector_all(_PAGE_SELECTOR)
+    elements = []
+    for _ in range(_PREVIEW_READY_TIMEOUT_MS // _PAGE_POLL_MS):
+        if LOGIN_HOST in page.url:
+            raise DrivePreviewError(
+                "drive_preview_login_required: the copy of Derek's Chrome cookies "
+                "carries no DingTalk login"
+            )
+        for frame in page.frames:
+            elements = frame.query_selector_all(_PAGE_SELECTOR)
+            if elements:
+                break
+        if elements:
+            break
+        page.wait_for_timeout(_PAGE_POLL_MS)
     if not elements:
-        raise DrivePreviewError(
-            f"drive_preview_pages_unavailable: no document pages at {page.url[:120]}"
-        )
+        raise DrivePreviewError("drive_preview_pages_unavailable: no rendered document pages")
+    title = page.title()
     images = []
     for element in elements[:MAX_PREVIEW_PAGES]:
         element.scroll_into_view_if_needed()

@@ -2551,3 +2551,5 @@ Stalled recovery also refuses live dispatcher owners, unexpired or unparseable R
 日历事件详情读取（`dws calendar event get`）返回 `business_error` 且为 `success=false`、`300014 Invalid EventId`、`322000` 或 `Event not exist.` / `Event not exist!`（事件已被删除）（无 developerMessage 的业务码，提供方无法返回该事件，例如已过期的重复日程实例）时，视为该事件详情不可用，`get_calendar_event` 返回空，不记录为服务错误；认证、权限和其他业务码仍按原错误记录。`Event not exist` 的句末句号和感叹号均按同一缺失事件响应处理。
 
 钉盘只读预览工具由 MCP 异步入口调用时，在工作线程执行既有同步 Playwright 捕获；不在事件循环中启动同步浏览器。每个工具进程仍按节点缓存页面，原登录会话、来源节点、页数／图片上限和临时页面清理保持原样，Consumer 与 Audit 共用相同行为。
+
+钉盘 PDF 只读预览按实际内嵌查看器读取：在页面的 frame 中查找 `.w-page` 文档页，最多等待60秒直到真实文档页出现，不以固定12秒或顶层页面没有旧选择器认定不可读。逐页滚动、30页上限、图片/OCR限制、登录错误和会话清理保持原样；超时仍报告真实读取失败。此路径使用当前账号已获准的可视预览，不修改或绕过原件下载权限。

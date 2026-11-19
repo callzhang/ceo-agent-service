@@ -36,6 +36,7 @@ class _Page:
         self.elements = elements
         self.url = "about:blank"
         self.visited: list[str] = []
+        self.frames = [self]
 
     def goto(self, url, **_kwargs) -> None:
         self.visited.append(url)
@@ -48,7 +49,7 @@ class _Page:
         return "结算单.pdf"
 
     def query_selector_all(self, selector: str):
-        assert selector == ".pdf-container .page"
+        assert selector == ".w-page"
         return self.elements
 
     def close(self) -> None:
@@ -185,3 +186,45 @@ def test_preview_mcp_call_runs_sync_browser_outside_event_loop(monkeypatch, role
     )
     result = asyncio.run(tool.run({"node_id": "AbCdEf0123456789AbCdEf0123456789"}))
     assert result["page_count"] == 1
+
+
+def test_capture_reads_real_pdf_pages_in_child_frame(monkeypatch, tmp_path):
+    image = _png()
+    child = _Page(final_url="https://space.dingtalk.com/preview/v1/", elements=[_Element(image)])
+    page = _Page(final_url="https://alidocs.dingtalk.com/uni-preview", elements=[])
+    page.frames.append(child)
+    factory, _, contexts = _fake_browser(monkeypatch, page)
+    preview = capture_drive_preview("AbCdEf0123456789AbCdEf0123456789",
+        profile_dir=tmp_path / "profile", playwright_factory=factory)
+    assert preview.pages == (image,)
+    assert preview.page_count == 1
+    assert all(context.closed for context in contexts)
+
+
+def test_capture_waits_for_document_frame_instead_of_fixed_sleep(monkeypatch, tmp_path):
+    image = _png()
+    page = _Page(final_url="https://alidocs.dingtalk.com/uni-preview", elements=[])
+    child = _Page(final_url="https://space.dingtalk.com/preview/v1/", elements=[_Element(image)])
+    waits = []
+    def wait(ms):
+        waits.append(ms)
+        if len(waits) == 3:
+            page.frames.append(child)
+    page.wait_for_timeout = wait
+    factory, _, _ = _fake_browser(monkeypatch, page)
+    preview = capture_drive_preview("AbCdEf0123456789AbCdEf0123456789",
+        profile_dir=tmp_path / "profile", playwright_factory=factory)
+    assert preview.pages == (image,)
+    assert waits[:3] == [drive_preview_browser._PAGE_POLL_MS] * 3
+
+
+def test_capture_empty_document_is_bounded_and_closes_browser(monkeypatch, tmp_path):
+    page = _Page(final_url="https://alidocs.dingtalk.com/uni-preview", elements=[])
+    waits = []
+    page.wait_for_timeout = waits.append
+    factory, _, contexts = _fake_browser(monkeypatch, page)
+    with pytest.raises(DrivePreviewError, match="pages_unavailable"):
+        capture_drive_preview("AbCdEf0123456789AbCdEf0123456789",
+            profile_dir=tmp_path / "profile", playwright_factory=factory)
+    assert sum(waits) == drive_preview_browser._PREVIEW_READY_TIMEOUT_MS
+    assert all(c.closed for c in contexts)
