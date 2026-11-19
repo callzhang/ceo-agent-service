@@ -11,7 +11,6 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-source-boundary-17597-20261119 | app/agent_turn_runner.py source-value credential check only; tests/test_consumer_agent.py; tests/test_reviewed_sources.py; scoped architecture/runtime docs; this row | Derek explicitly approved service-bound original source values as internal evidence while keeping Agent-authored fields, binding metadata, identity/content checks, local-path/depth/size limits and Audit/System execution unchanged. Restore Task420011 through the formal rerun after deployment; no direct sends or terminal edits. | Active: isolated /private/tmp/ceo-source-boundary-17597-20261119; main agent owns release and business readback. |
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents

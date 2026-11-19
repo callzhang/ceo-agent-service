@@ -2319,10 +2319,10 @@ def _validate_runtime_reference_domain_result(
             metadata, depth=2,
         )
         _validate_runtime_reference_text_bounds(binding["value"], depth=3, authored=False)
-        if _contains_sensitive_value(binding["value"]):
-            raise RuntimeResultValidationError("runtime_result_source_invalid") from ValueError(
-                "agent_result_contains_sensitive_value"
-            )
+        # These values are captured and rebound by the service, never accepted
+        # from the Agent wire result. Credentials in the original input are
+        # internal evidence; authored fields and binding identifiers remain
+        # checked below. Source depth/JSON limits and local-path checks remain.
         if _contains_sensitive_value(metadata):
             raise ValueError("agent_result_contains_sensitive_value")
         if _contains_local_runtime_value(metadata) or _contains_local_runtime_value(binding["value"]):

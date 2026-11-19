@@ -30,14 +30,60 @@ def test_unused_history_text_does_not_become_candidate_source(tmp_path, placemen
         message = replace(message, message_id=context.trigger_message_id)
     context = replace(context, messages=(message,))
     prepared = capture_candidate_sources(candidate(synthetic if placement == "authored" else "Safe reply"), context, None)
-    if placement == "history":
-        _validate_runtime_reference_domain_result(prepared)
-        assert synthetic not in prepared.model_dump_json()
-        assert prepared.source_bindings[0].value["messages"] == [{"message_id": "old"}]
-        assert prepared.source_bindings[0].value["trigger_text"] == context.trigger_text
-    else:
+    if placement == "authored":
         with pytest.raises((RuntimeResultValidationError, ValueError)):
             _validate_runtime_reference_domain_result(prepared)
+        return
+    _validate_runtime_reference_domain_result(prepared)
+    assert prepared.source_bindings[0].value["trigger_text"] == context.trigger_text
+    if placement == "history":
+        assert synthetic not in prepared.model_dump_json()
+        assert prepared.source_bindings[0].value["messages"] == [{"message_id": "old"}]
+    else:
+        assert synthetic in prepared.model_dump_json()
+
+
+def test_internal_credential_source_still_requires_the_exact_source_binding(tmp_path):
+    from app.agent_turn_runner import _validate_runtime_reference_domain_result
+
+    _, _, context = setup(tmp_path)
+    context = replace(context, trigger_raw_payload={"access_token": "synthetic-secret"})
+    prepared = capture_candidate_sources(candidate("Safe reply"), context, None)
+    _validate_runtime_reference_domain_result(prepared)
+    assert not changed_candidate_sources(prepared, context, None)
+    with pytest.raises(ValueError, match="reviewed source context unavailable"):
+        changed_candidate_sources(prepared, replace(context, trigger_message_id="other"), None)
+    assert changed_candidate_sources(prepared, replace(
+        context, trigger_raw_payload={"access_token": "different-synthetic-secret"},
+    ), None)
+
+
+def test_source_identifiers_still_reject_credentials(tmp_path):
+    from app.agent_turn_runner import _validate_runtime_reference_domain_result
+
+    _, _, context = setup(tmp_path)
+    prepared = capture_candidate_sources(candidate("Safe reply"), context, None)
+    binding = prepared.source_bindings[0].model_copy(update={
+        "object_ref": 'Authorization: Bearer abcdef1234567890',
+    })
+    with pytest.raises(ValueError, match="agent_result_contains_sensitive_value"):
+        _validate_runtime_reference_domain_result(prepared.model_copy(update={
+            "source_bindings": (binding,),
+        }))
+
+
+def test_source_encoded_json_depth_is_still_bounded(tmp_path):
+    import json
+    from app.agent_turn_runner import _validate_runtime_reference_domain_result
+
+    _, _, context = setup(tmp_path)
+    value = "leaf"
+    for _ in range(13):
+        value = json.dumps(value)
+    context = replace(context, trigger_raw_payload={"encoded": value})
+    prepared = capture_candidate_sources(candidate("Safe reply"), context, None)
+    with pytest.raises(ValueError):
+        _validate_runtime_reference_domain_result(prepared)
 
 
 @pytest.mark.parametrize("channel", ["dingtalk", "wechat"])
