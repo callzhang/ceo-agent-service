@@ -39,6 +39,37 @@ def test_sender_keeps_waiting_after_activation_attempts_are_exhausted(monkeypatc
     assert result.action_performed is False
 
 
+
+def test_sender_waits_for_current_process_after_client_exits_and_restarts(monkeypatch):
+    pids = iter((123, None, 456))
+    activated = []
+    roots = []
+    runner = accessibility.MacWechatAccessibility(restore_focus=False)
+    monkeypatch.setattr(runner, "_wechat_pid", lambda: next(pids))
+    monkeypatch.setattr(runner, "_ax", lambda: (
+        SimpleNamespace(sleep=lambda _seconds: None), lambda: True,
+        lambda pid: roots.append(pid) or object(), lambda *_args: (0, None),
+        None, None, None,
+    ))
+    monkeypatch.setattr(runner, "_frontmost_app", lambda: None)
+    monkeypatch.setattr(runner, "_wait_until_idle", lambda **_kw: None)
+    monkeypatch.setattr(runner, "_wait_for_interaction_slot", lambda **_kw: None)
+
+    def activate(pid, **_kwargs):
+        activated.append(pid)
+        assert len(activated) <= 2, "sender retained an exited process"
+        return pid == 456
+
+    monkeypatch.setattr(accessibility, "_activate_wait", activate)
+    monkeypatch.setattr(accessibility, "_open_target", lambda *_args, **_kw: None)
+
+    result = runner.send("Alex", "approved reply")
+
+    assert activated == [123, 456]
+    assert None not in roots
+    assert result.action_performed is False
+    assert result.failure_reason == "target_open_failed"
+
 def _failed_action_and_new_review(tmp_path):
     runner = Runner(accessibility.AccessibilityResult(False, False, failure_reason="wechat_ui_not_ready"))
     store, task, row, action, handler, runner, prepared = _setup(tmp_path, runner)

@@ -2364,3 +2364,5 @@ Stalled recovery also refuses live dispatcher owners, unexpired or unparseable R
 
 仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_message`，不生成群占位消息，也不使用 `skip_no_content`。仅敏感私聊使用原 `:sensitive` 投递键及回执；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
 敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。
+
+微信发送窗口等待期间，每轮重新取得当前运行的客户端进程；客户端退出时继续等待，重新启动后仅操作新实例，不保留已退出实例的进程号。原审核、动作身份、会话绑定、已派发和未知结果的只读对账保持原样。

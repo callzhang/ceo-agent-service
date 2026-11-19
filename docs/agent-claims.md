@@ -581,3 +581,4 @@ reverts committed work they did not author.
 | codex-repair-errors-16381 | `app/dws_client.py` calendar event detail error classification; `tests/test_dws_client.py` exact provider-error regression; calendar-read behavior sentence in `docs/architecture.md`; this claim | Fix the remaining punctuation variant in the original #16381 DWS error (`Event not exist!`) while preserving other business errors as errors. No calendar writes or message replay. | Active in `/Users/derek/Projects/ceo-agent-service/.worktrees/repair-errors-16381`, branch `codex/repair-errors-16381`, based on `origin/main` 23ccd13c3. |
 
 
+

@@ -789,16 +789,7 @@ class MacWechatAccessibility:
                 False,
                 failure_reason="accessibility_not_trusted",
             )
-        pid = self._wechat_pid()
-        if not pid:
-            return AccessibilityResult(
-                False,
-                False,
-                failure_reason="wechat_not_running",
-            )
-        # Prime the pre-activation AX root. WeChat replaces this root when it is
-        # foregrounded, so all searches below deliberately request a fresh root.
-        mk_app(pid)
+        pid = None
 
         def g(el, attr):
             err, val = get_attr(el, attr, None)
@@ -919,6 +910,12 @@ class MacWechatAccessibility:
         composer_holder = {}
 
         def attempt():
+            nonlocal pid
+            # A quiet window may outlive the client process. Resolve the current
+            # instance before touching its Accessibility tree or posting events.
+            pid = self._wechat_pid()
+            if not pid:
+                return None
             # --- navigation (needs a real click; briefly foreground WeChat) ---
             self._wait_for_interaction_slot(
                 sleep=time.sleep,
