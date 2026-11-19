@@ -45,9 +45,12 @@ def test_valid_source_depth_is_not_charged_for_candidate_packaging():
     {"resource": "https://example.test/download?signature=private-source-secret"},
     {"encoded": json.dumps({"access_token": "private-source-secret"})},
 ])
-def test_source_credentials_and_download_capabilities_still_fail(value):
-    with pytest.raises(RuntimeResultValidationError, match="runtime_result_source_invalid"):
-        _validate_runtime_reference_domain_result(_result(value), allow_configured_feedback_links=True)
+def test_bound_source_credentials_and_download_capabilities_remain_internal(value):
+    result = _result(value)
+    before = result.model_dump_json()
+    _validate_runtime_reference_domain_result(result, allow_configured_feedback_links=True)
+    assert result.model_dump_json() == before
+    assert result.proposal is None
 
 
 def test_source_decoded_depth_limit_still_fails():
@@ -99,12 +102,14 @@ def test_normal_oa_table_class_metadata_one_level_deeper_remains_readable():
     )
 
 
-def test_nested_oa_serialized_fields_still_reject_credentials():
+def test_nested_oa_serialized_credentials_remain_internal_evidence():
     value = _nested_oa_table_source(include_credential=True)
 
     assert _contains_sensitive_value(value)
-    with pytest.raises(RuntimeResultValidationError, match="runtime_result_source_invalid"):
-        _validate_runtime_reference_domain_result(_result(value), allow_configured_feedback_links=True)
+    result = _result(value)
+    before = result.model_dump_json()
+    _validate_runtime_reference_domain_result(result, allow_configured_feedback_links=True)
+    assert result.model_dump_json() == before
 
 
 def test_nested_json_text_depth_limit_still_fails():

@@ -2158,16 +2158,18 @@ _MAX_SENSITIVE_VALUE_JSON_TEXT_DEPTH = 12
 
 def _contains_sensitive_value(
     value: object, *, depth: int = 0, json_text_depth: int = 0,
+    check_credentials: bool = True,
 ) -> bool:
     if depth > _MAX_SENSITIVE_VALUE_STRUCTURE_DEPTH:
         return True
     if isinstance(value, dict):
-        if _contains_sensitive_argv(value):
+        if check_credentials and _contains_sensitive_argv(value):
             return True
         return any(
-            is_sensitive_credential_name(str(key))
+            (check_credentials and is_sensitive_credential_name(str(key)))
             or _contains_sensitive_value(
                 item, depth=depth + 1, json_text_depth=json_text_depth,
+                check_credentials=check_credentials,
             )
             for key, item in value.items()
         )
@@ -2175,12 +2177,13 @@ def _contains_sensitive_value(
         return any(
             _contains_sensitive_value(
                 item, depth=depth + 1, json_text_depth=json_text_depth,
+                check_credentials=check_credentials,
             )
             for item in value
         )
     if not isinstance(value, str):
         return False
-    if _is_signed_url(value) or contains_credential(value):
+    if check_credentials and (_is_signed_url(value) or contains_credential(value)):
         return True
     stripped = value.lstrip()
     if not stripped.startswith(("{", "[", '"')) or len(value) > 64 * 1024:
@@ -2197,6 +2200,7 @@ def _contains_sensitive_value(
     # structure-depth budget, while nested strings remain fail-closed.
     return _contains_sensitive_value(
         decoded, depth=depth, json_text_depth=json_text_depth + 1,
+        check_credentials=check_credentials,
     )
 
 
@@ -2323,6 +2327,10 @@ def _validate_runtime_reference_domain_result(
         # from the Agent wire result. Credentials in the original input are
         # internal evidence; authored fields and binding identifiers remain
         # checked below. Source depth/JSON limits and local-path checks remain.
+        if _contains_sensitive_value(binding["value"], check_credentials=False):
+            raise RuntimeResultValidationError("runtime_result_source_invalid") from ValueError(
+                "runtime_result_reference_depth_invalid"
+            )
         if _contains_sensitive_value(metadata):
             raise ValueError("agent_result_contains_sensitive_value")
         if _contains_local_runtime_value(metadata) or _contains_local_runtime_value(binding["value"]):
