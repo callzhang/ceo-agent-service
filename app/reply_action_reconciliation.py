@@ -123,6 +123,9 @@ def reconcile_reply_attempt(store, attempt_id, **arguments):
         raise ValueError('reply_attempt_missing')
     if attempt.channel == 'wechat':
         return reconcile_failed_wechat_attempt(store, attempt_id, **arguments)
+    if attempt.channel == 'dingtalk' and set(arguments) == {'action_attempt_id', 'execution_generation'}:
+        from app.native_reply_recovery import reconcile_native_reply_preflight
+        return reconcile_native_reply_preflight(store, attempt, **arguments)
     if attempt.channel == 'dingtalk' and not arguments:
         return _reconcile_validation_rejection(store, attempt)
     raise ValueError('reply_reconciliation_not_applicable')

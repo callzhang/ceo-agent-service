@@ -961,18 +961,24 @@ def register_console_routes(
 
         binding = await json_object(request) if await request.body() else {}
         reply_id = binding.get("principal_reply_message_id")
-        if binding and (set(binding) != {"principal_reply_message_id"}
-                        or not isinstance(reply_id, str) or not reply_id.strip()):
-            raise HTTPException(status_code=422, detail="principal_reply_message_id is required")
-        try:
+        if set(binding) == {"action_attempt_id", "execution_generation"}:
+            if (type(binding["action_attempt_id"]) is not int or binding["action_attempt_id"] <= 0
+                    or not isinstance(binding["execution_generation"], str) or not binding["execution_generation"].strip()):
+                raise HTTPException(status_code=422, detail="exact action attempt and generation are required")
+            arguments = binding
+        else:
+            if binding and (set(binding) != {"principal_reply_message_id"}
+                            or not isinstance(reply_id, str) or not reply_id.strip()):
+                raise HTTPException(status_code=422, detail="principal_reply_message_id is required")
             arguments = {"principal_reply_message_id": reply_id.strip()} if reply_id else {}
+        try:
             result = reconcile_reply_attempt(store_factory(), attempt_id, **arguments)
         except ValueError as exc:
             return JSONResponse(
                 {"ok": False, "code": "retry_not_applicable", "message": str(exc), "details": {}},
                 status_code=409,
             )
-        if result.get("outcome") not in {"done", "skipped"}:
+        if result.get("outcome") not in {"done", "skipped", "reconciled"}:
             return JSONResponse(
                 {"ok": False, "code": "retry_unresolved", "message": "当前失败无法由精确读回安全恢复", "details": result},
                 status_code=409,
