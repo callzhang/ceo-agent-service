@@ -487,12 +487,15 @@ class SystemExecutor:
                 source_code = getattr(exc, "code", "")
                 source = getattr(exc, "server_key", "")
                 prior_result = json.loads(attempt.get("result_json", "{}"))
+                from app.leak_check import redact_credentials
+
                 pre_action_failure = isinstance(exc, DwsError) and exc.pre_action_failure
                 outcome = ActionOutcome("confirmed_no_effect" if pre_action_failure else "uncertain", {**prior_result,
                     "reason": "provider_validation_rejected" if pre_action_failure else "provider_exception",
                     "exception_type": type(exc).__name__,
                     "pre_action_failure": pre_action_failure,
                     "provider_error": exc.provider_error if isinstance(exc, DwsError) else {},
+                    **({"provider_error_message": redact_credentials(str(exc))} if isinstance(exc, DwsError) else {}),
                     "source_code": str(source_code) if source_code else "",
                     "source": str(source) if source else "",
                 })

@@ -2334,7 +2334,7 @@ class DwsClient:
         if (message.open_message_id != message_id
                 or message.open_conversation_id != conversation.open_conversation_id):
             return None
-        return message
+        return self.resolve_native_reply_sender(message) if message.raw_payload.get("senderId") else message
 
     def read_mentioned_messages(
         self,
@@ -3582,6 +3582,31 @@ class DwsClient:
             )
         )
 
+    def resolve_native_reply_sender(self, message: DingTalkMessage) -> DingTalkMessage:
+        """Resolve a native stable ID through this account's directory, never by name alone."""
+        if message.sender_open_dingtalk_id:
+            return message
+        stable_id = message.sender_user_id or message.raw_payload.get("senderId")
+        profiles = self.search_user_profiles(message.sender_name) if stable_id else []
+        matches = [profile for profile in profiles
+                   if stable_id in (profile.user_id, profile.open_dingtalk_id)]
+        if len(matches) != 1 or not matches[0].open_dingtalk_id:
+            raise DwsError(
+                "native reply sender identity could not be uniquely verified",
+                code="native_reply_sender_unresolved",
+                provider_error={"reason": "invalid_request", "stage": "tool_validation",
+                                "field": "sender_open_dingtalk_id"},
+            )
+        profile = matches[0]
+        if (message.sender_user_id and message.sender_user_id != profile.user_id
+                or message.raw_payload.get("senderId")
+                and message.raw_payload["senderId"] not in (profile.user_id, profile.open_dingtalk_id)):
+            raise DwsError("native reply sender identities conflict", code="native_reply_sender_mismatch",
+                provider_error={"reason": "invalid_request", "stage": "tool_validation",
+                                "field": "sender_open_dingtalk_id"})
+        return message.model_copy(update={"sender_user_id": profile.user_id,
+                                          "sender_open_dingtalk_id": profile.open_dingtalk_id})
+
     def send_reply_to_trigger(
         self,
         conversation: DingTalkConversation,
@@ -3591,8 +3616,11 @@ class DwsClient:
         at_open_dingtalk_ids: list[str] | None = None,
         at_open_dingtalk_names: list[str] | None = None,
     ) -> dict[str, Any]:
-        if not trigger.sender_open_dingtalk_id:
-            raise DwsError("missing trigger senderOpenDingTalkId for native reply")
+        try:
+            trigger = self.resolve_native_reply_sender(trigger)
+        except DwsError as exc:
+            exc.pre_action_failure = True
+            raise
         return self.reply_message(
             conversation.open_conversation_id,
             trigger.open_message_id,
