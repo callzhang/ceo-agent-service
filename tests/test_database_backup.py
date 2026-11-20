@@ -1,5 +1,6 @@
 import sqlite3
 import stat
+from contextlib import closing
 from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 
@@ -27,10 +28,34 @@ def test_daily_backup_resumes_after_pause_is_removed(tmp_path, monkeypatch):
 
 
 def _create_database(path: Path) -> None:
-    with sqlite3.connect(path) as db:
+    with closing(sqlite3.connect(path)) as db, db:
         db.execute("pragma journal_mode = wal")
         db.execute("create table messages (id integer primary key, body text not null)")
         db.execute("insert into messages (body) values ('durable state')")
+
+
+def test_database_fixture_closes_committed_wal_writer(tmp_path, monkeypatch):
+    opened = []
+    real_connect = sqlite3.connect
+
+    class TrackedConnection(sqlite3.Connection):
+        explicitly_closed = False
+
+        def close(self):
+            self.explicitly_closed = True
+            super().close()
+
+    def connect(path, *args, **kwargs):
+        kwargs["factory"] = TrackedConnection
+        connection = real_connect(path, *args, **kwargs)
+        opened.append(connection)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", connect)
+    path = tmp_path / "fixture.sqlite3"
+    _create_database(path)
+    assert len(opened) == 1
+    assert opened[0].explicitly_closed, "fixture must not leave WAL checkpoint to garbage collection"
 
 
 def test_daily_backup_is_consistent_and_runs_only_once_per_day(tmp_path: Path):

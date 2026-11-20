@@ -2376,3 +2376,5 @@ Stalled recovery also refuses live dispatcher owners, unexpired or unparseable R
 钉盘 PDF 只读预览按实际内嵌查看器读取：在页面的 frame 中查找 `.w-page` 文档页，最多等待60秒直到真实文档页出现，不以固定12秒或顶层页面没有旧选择器认定不可读。逐页滚动、30页上限、图片/OCR限制、登录错误和会话清理保持原样；超时仍报告真实读取失败。此路径使用当前账号已获准的可视预览，不修改或绕过原件下载权限。
 
 钉钉公司文档归档检查可通过原角色工具读取确切 Wiki 节点及知识空间：`read_dingtalk_wiki_node` 取原件/父目录元数据，`read_dingtalk_wiki_space` 取空间详情。Consumer 与 Audit 使用相同的只读原生 DWS 入口，保留原始字段和权限错误，不根据分享权限、作者或链接外观生成合规结论，不执行迁移、改权或通知；业务判断由安装的 `company-document-check` Skill 承载。
+
+备份完整性回归的 WAL 造数连接在事务提交后显式关闭，保证测试读取主文件字节前已完成检查点，不依赖垃圾回收触发写回；原来的完整性失败保护、旧备份保留与源文件逐字节不变断言保持。
