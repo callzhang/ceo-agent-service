@@ -60,6 +60,8 @@ reverts committed work they did not author.
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
+| codex-repair-reply_attempts-17762-ci-followup | `app/agent_turn_runner.py` source credential boundary; `tests/test_reviewed_message_resources.py`; source behavior docs only if needed; this claim | Restore the already approved internal source-evidence behavior from main commits 179049275 and 175c62889 after PR #385 CI exposed that commit 8a5ccb514 rejected internal signed download URLs. Keep authored-field and identifier credential checks, native resource projection/verification, size/depth/path bounds and other policies intact; reconcile stale contradictory test expectations to the approved contract. | Active: PR #385 CI correction. |
+
 
 
 

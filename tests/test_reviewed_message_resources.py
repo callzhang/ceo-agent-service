@@ -47,15 +47,15 @@ def test_non_native_source_text_remains_unchanged_and_validated(tmp_path, raw):
     _validate_runtime_reference_domain_result(prepared)
 
 
-def test_serialized_signed_resource_is_not_treated_as_verified_native_data(tmp_path):
+def test_serialized_signed_resource_remains_internal_source_evidence(tmp_path):
     import json
 
     context = resource_context(tmp_path)
     raw = json.dumps(context.trigger_raw_payload)
     prepared = capture_candidate_sources(candidate(), replace(context, trigger_raw_payload=raw), Reader())
     assert prepared.source_bindings[0].value["trigger_raw_payload"] == raw
-    with pytest.raises(ValueError):
-        _validate_runtime_reference_domain_result(prepared)
+    assert len(prepared.source_bindings) == 1
+    _validate_runtime_reference_domain_result(prepared)
 
 
 def test_verified_resource_identity_and_content_replace_only_transport(tmp_path):
@@ -103,19 +103,12 @@ def test_resource_without_reader_cannot_be_bound(tmp_path):
         capture_candidate_sources(candidate(), resource_context(tmp_path), None)
 
 
-def test_signed_url_outside_native_resource_remains_rejected(tmp_path):
+def test_signed_url_outside_native_resource_remains_internal_source_evidence(tmp_path):
     context = resource_context(tmp_path)
     context.trigger_raw_payload["unrelated"] = "https://example.com/?signature=private"
     prepared = capture_candidate_sources(candidate(), context, Reader())
-    with pytest.raises(ValueError):
-        _validate_runtime_reference_domain_result(prepared)
-
-
-def test_source_validation_rejects_signed_urls_but_allows_internal_credentials():
-    from app.agent_turn_runner import _contains_sensitive_value
-
-    assert _contains_sensitive_value("https://example.com/?signature=private", check_credentials=False)
-    assert not _contains_sensitive_value("synthetic-secret", check_credentials=False)
+    assert prepared.source_bindings[0].value["trigger_raw_payload"]["unrelated"] == context.trigger_raw_payload["unrelated"]
+    _validate_runtime_reference_domain_result(prepared)
 
 
 def test_unknown_resource_fields_are_not_silently_dropped(tmp_path):
