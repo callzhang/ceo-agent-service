@@ -1851,9 +1851,11 @@ def test_resolved_terminal_oa_attempt_has_no_history_rerun_action(tmp_path: Path
     assert "The source OA task was verified terminal." in response_body
 
 
-@pytest.mark.parametrize("resolved,matching_task", [(False, True), (True, True), (False, False)])
+@pytest.mark.parametrize("resolved,matching_task,task_closed", [
+    (False, True, False), (True, True, False), (False, False, False), (False, True, True),
+])
 def test_current_unresolved_oa_needs_human_exposes_manual_reassessment_only_when_bound(
-    tmp_path: Path, resolved: bool, matching_task: bool,
+    tmp_path: Path, resolved: bool, matching_task: bool, task_closed: bool,
 ):
     store = AutoReplyStore(tmp_path / "oa-needs-human-rerun.sqlite3")
     process_id = "policy-review-process"
@@ -1944,7 +1946,7 @@ def test_current_unresolved_oa_needs_human_exposes_manual_reassessment_only_when
             (f"{trigger_id}:new-scan", task.current_input_id),
         )
     with store._connect() as db:
-        db.execute("update tasks set status='needs_human' where id=?", (task.id,))
+        db.execute("update tasks set status=? where id=?", ("done" if task_closed else "needs_human", task.id))
     attempt_id = store.record_reply_attempt(
         conversation_id=conversation_id,
         conversation_title="审批待办",
@@ -1973,8 +1975,13 @@ def test_current_unresolved_oa_needs_human_exposes_manual_reassessment_only_when
 
     assert status == 200
     assert item is not None
-    assert item["actions"]["can_rerun"] is (not resolved and matching_task)
-    if not resolved and matching_task:
+    assert item["actions"]["can_rerun"] is (not resolved and matching_task and not task_closed)
+    if task_closed:
+        assert item["status"]["raw"] == "done"
+        assert item["status"]["requires_decision"] is False
+        assert item["historical_attempt"]["status"] == "needs_human"
+        assert "原人工处理结论" in item["status"]["message"]
+    elif not resolved and matching_task:
         assert item["actions"]["rerun_label"] == "重新评估当前审批"
         assert "新的执行修订" in item["actions"]["rerun_confirmation"]
         assert "不会直接同意、拒绝或退回" in item["actions"]["rerun_confirmation"]

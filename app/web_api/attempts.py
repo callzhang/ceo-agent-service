@@ -1147,8 +1147,11 @@ def build_attempt_detail(
     )
     from app.web_api.native_trajectory import run_trajectory_links
     historical_links = run_trajectory_links(store, historical_attempt.agent_run_id)
+    closed_human_attempt = (
+        historical_attempt.send_status == "needs_human" and projected_status in {"done", "skipped"}
+    )
     historical_record = None
-    if current_generation_changed or principal_reply_completed:
+    if current_generation_changed or principal_reply_completed or closed_human_attempt:
         historical_record = {
             "run_id": historical_attempt.agent_run_id,
             "status": historical_attempt.send_status,
@@ -1328,6 +1331,8 @@ def build_attempt_detail(
                     status_message = _VERIFIED_WECHAT_DELIVERY_MESSAGE
                 elif reply_task.status == "skipped":
                     status_message = _reconciled_wechat_message(store, attempt, reply_task) or status_message
+    if closed_human_attempt and system_execution is None and not historical_attempt.resolved_at:
+        status_message = "当前任务已结束，原人工处理结论可在历史记录中查看。"
     if rerun_block_reason:
         status_message = rerun_block_reason
     elif attempt.send_status == "failed" and rerun.explanation:

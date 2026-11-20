@@ -114,6 +114,7 @@ def project_attempt_status(
     )
     if (
         fallback == "needs_human"
+        and task_status not in {"done", "skipped"}
         and current_runs
         and int(getattr(attempt, "agent_run_id", 0) or 0) > 0
     ):

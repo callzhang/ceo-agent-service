@@ -76,6 +76,19 @@ def test_closed_task_outranks_a_run_that_failed_inside_it():
     assert project_attempt_status(attempt, task, runs) == "skipped"
 
 
+
+@pytest.mark.parametrize("task_status", ["done", "skipped", "failed", "needs_human"])
+def test_stored_human_attempt_uses_closed_task_status_before_classifying_audit(task_status):
+    attempt = SimpleNamespace(send_status="needs_human", agent_run_id=2)
+    task = SimpleNamespace(status=task_status, execution_generation="g1")
+    audit = SimpleNamespace(
+        id=2, execution_generation="g1", role="audit", status="completed",
+        adopted_result_json='{"decision":{"outcome":"approve"}}',
+    )
+    expected = "failed" if task_status == "needs_human" else task_status
+    assert project_attempt_status(attempt, task, [audit]) == expected
+
+
 def test_a_live_task_still_reports_its_failing_run():
     attempt = SimpleNamespace(send_status="pending")
     task = SimpleNamespace(status="processing", execution_generation="g1")
