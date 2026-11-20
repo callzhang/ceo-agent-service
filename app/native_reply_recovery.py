@@ -53,7 +53,7 @@ def reconcile_native_reply_preflight(store, attempt, *, action_attempt_id, execu
         raise ValueError('native_reply_task_mismatch')
     with store._connect() as db:
         snapshot = dict(db.execute(f'select * from ({NATIVE_REPLY_TASK_CURRENT_SQL}) where id=?', (task.id,)).fetchone())
-        if (snapshot['status'] != 'failed' or snapshot['locked_at']
+        if (snapshot['status'] not in ('failed', 'done') or snapshot['locked_at']
                 or snapshot['execution_generation'] != execution_generation):
             raise ValueError('native_reply_task_not_reconcilable')
         store._check_historical_runtime_refusal(db, snapshot['business_object_key'])

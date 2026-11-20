@@ -184,3 +184,18 @@ def test_reconciled_action_runs_once_only_after_a_new_independent_review(tmp_pat
     assert executor.execute(current, candidate['id'], review['id']).outcome == 'executed'
     assert len(sends) == 1
     assert store.list_candidate_action_attempts(prior['execution_id'])[0]['status'] == 'confirmed_no_effect'
+
+
+def test_formal_retry_preserves_a_completed_task_while_reconciling_its_old_action(tmp_path, monkeypatch):
+    store, task, attempt, prior = fixture(tmp_path, monkeypatch)
+    from app.task_entity_storage import update_task_cas
+    with store._connect() as db:
+        update_task_cas(db, task_id=task.id, expected={'status': 'failed'}, changes={'status': 'processing'})
+    store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    before = store.get_reply_task(task.id)
+    with _client(tmp_path) as client:
+        response = client.post(f'/api/console/history/{attempt}/retry', json={
+            'action_attempt_id': prior['id'], 'execution_generation': task.execution_generation})
+        assert response.status_code == 200, response.json()
+    assert store.get_reply_task(task.id) == before
+    assert store.list_candidate_action_attempts(prior['execution_id'])[0]['status'] == 'confirmed_no_effect'
