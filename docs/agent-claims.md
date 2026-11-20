@@ -53,7 +53,7 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-repair-reply_attempts-17762 | `app/claude_runtime_adapter.py` Claude provider network rejection classification; `tests/test_claude_runtime_adapter.py` focused exact 403 regression; `docs/runtime-mechanism.md` failure detail behavior; this claim row | Preserve the native Claude provider's exact source-network HTTP 403 diagnostic in runtime failure classification and Attempt presentation. Keep existing retry, routing and policy behavior; do not claim network restoration, replay business actions or deploy. | Active in `.worktrees/repair-reply_attempts-17762`, branch `codex/repair-reply_attempts-17762`, based on `origin/main` fe2da5061. |
+| codex-repair-reply_attempts-17762 | `app/claude_runtime_adapter.py` Claude provider error classification; `app/workbench/executor.py` public failure detail; `tests/test_claude_runtime_adapter.py`, `tests/test_workbench_executor.py`, `frontend/src/pages/AttemptDetailPage.tsx` and corresponding test; `docs/runtime-mechanism.md`; this claim row | Preserve the native Claude provider's exact diagnostic in Attempt presentation, and give Workbench users an actionable network/proxy check for provider rejection. Keep existing retry, routing and policy behavior; do not claim network restoration, replay business actions or deploy. | Active in `.worktrees/repair-reply_attempts-17762`, branch `codex/repair-reply_attempts-17762`, based on `origin/main` fe2da5061. |
 
 
 
