@@ -46,6 +46,10 @@ _KNOWN_RUNTIME_FAILURE_DETAILS = {
     ),
     "invalid_provider_output": "Codex provider returned invalid JSONL output.",
     "runtime_unavailable": "The requested runtime is not available in this service.",
+    "claude_provider_error": (
+        "Claude 提供方拒绝了本次请求。请打开原生轨迹查看完整诊断，并按提供方说明处理；"
+        "若提示请求来源网络受限，请检查服务出口网络或代理，不要仅靠重新登录重试。"
+    ),
 }
 
 

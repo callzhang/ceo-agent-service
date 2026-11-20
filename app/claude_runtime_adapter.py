@@ -523,6 +523,14 @@ class ClaudeRuntimeAdapter:
             or "error_max_turns" in failure_text
         ):
             return _result_failure("claude_result_incomplete")
+        provider_error = _trusted_error_result_text(stdout)
+        if provider_error:
+            return RuntimeFailure(
+                failure_class=RuntimeFailureClass.PROCESS,
+                code="claude_provider_error",
+                detail=provider_error,
+                failover_permitted=True,
+            )
         return RuntimeFailure(
             failure_class=(
                 RuntimeFailureClass.PROCESS

@@ -447,6 +447,26 @@ describe("AttemptDetailPage", () => {
     expect(await screen.findByRole("link", { name: "查看这一步的 Agent 记录" })).toHaveAttribute("href", "/runtime-attempts/72/trajectory");
   });
 
+  it("identifies a Claude provider error and links to its full native diagnostic", async () => {
+    getAttemptDetail.mockResolvedValue({
+      item: {
+        ...detail,
+        runtime_attempts: [{
+          ...detail.runtime_attempts[0],
+          runtime: "claude_cli",
+          session_available: true,
+          session_url: "/runtime-attempts/73/trajectory",
+          failure_code: "claude_provider_error",
+        }],
+      },
+      meta: { snapshot_at: "2026-11-21T00:00:00Z" },
+    });
+    renderPage();
+
+    expect(await screen.findByText("Claude 提供方返回了错误；打开原生运行记录可查看完整诊断。")).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "查看这一步的 Agent 记录" })).toHaveAttribute("href", "/runtime-attempts/73/trajectory");
+  });
+
   it("explains that Consumer and Audit are the two steps of one processing batch", async () => {
     getAttemptDetail.mockResolvedValue({
       item: {

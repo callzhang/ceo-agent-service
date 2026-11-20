@@ -463,6 +463,33 @@ def test_runtime_failure_keeps_code_and_public_detail_without_native_copy(
     executor.close()
 
 
+def test_claude_provider_error_has_actionable_public_detail(tmp_path: Path):
+    store = _store(tmp_path)
+    _, turn = _queued(store)
+    native_error = (
+        "API Error: Request blocked before it reached Anthropic's API (HTTP 403); "
+        "the network this request came from isn't allowed"
+    )
+    runtime = FakeRuntime(
+        result=RuntimeResult(
+            status="failed",
+            error_code="claude_provider_error",
+            error_detail=native_error,
+        )
+    )
+    executor = WorkbenchExecutor(store, RuntimeRegistry([runtime]), workspace=tmp_path)
+
+    executor.run_once(max_turns=1)
+
+    persisted = store.get_turn(turn.id)
+    assert persisted.error_code == "claude_provider_error"
+    assert "网络" in persisted.error_detail
+    assert "原生轨迹" in persisted.error_detail
+    assert "重新登录" in persisted.error_detail
+    assert native_error not in persisted.error_detail
+    executor.close()
+
+
 def test_close_is_bounded_and_idempotent_without_heartbeat_thread_leak(tmp_path: Path):
     store = _store(tmp_path)
     executor = WorkbenchExecutor(store, RuntimeRegistry(), workspace=tmp_path)
