@@ -85,10 +85,6 @@ reverts committed work they did not author.
 
 
 
-| Owner | Files | What | Since |
-| --- | --- | --- | --- |
-| codex/runtime-startup-prompt-budget | `app/agent_runtime_config.py`, `app/agent_runtime_contracts.py`, `app/codex_runtime_adapter.py`, `app/web_api/agent_runtime_settings.py`, focused tests and startup paragraphs in runtime docs | Add native per-route Codex Apps setting for the proven compact Qwen startup path. | 2026-11-21 |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
