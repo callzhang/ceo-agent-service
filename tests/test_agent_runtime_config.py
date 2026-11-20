@@ -43,6 +43,19 @@ def test_codex_api_is_an_ordinary_added_route_name():
     assert config.secret_for("codex_api").get_secret_value() == "secret-value"
 
 
+def test_desktop_apps_setting_is_an_optional_codex_boolean():
+    values = {
+        "CEO_AGENT_RUNTIME_ROUTES": "compact_api",
+        **codex_api_env("test-key", name="compact_api"),
+    }
+
+    assert load_runtime_config(values).routes[0].codex_apps is None
+    assert load_runtime_config({**values, "CEO_RUNTIME_COMPACT_API_APPS": "false"}).routes[0].codex_apps is False
+    assert load_runtime_config({**values, "CEO_RUNTIME_COMPACT_API_APPS": "true"}).routes[0].codex_apps is True
+    with pytest.raises(ValueError, match="CEO_RUNTIME_COMPACT_API_APPS"):
+        load_runtime_config({**values, "CEO_RUNTIME_COMPACT_API_APPS": "sometimes"})
+
+
 def test_retired_built_in_api_settings_no_longer_configure_a_route():
     with pytest.raises(ValueError, match="CEO_RUNTIME_CODEX_API_KIND"):
         load_runtime_config(

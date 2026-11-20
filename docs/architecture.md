@@ -1551,6 +1551,8 @@ Router 取下一条已配置且健康的路由。列表里出现的名字分两�
   添加的 Codex 路由还可选 `CEO_RUNTIME_<大写名>_REASONING_EFFORT`，支持 `low`、`medium`、
   `high`、`xhigh`；空值继续使用全局 Codex thinking 强度。Settings 同一字段保存、展示、改名和删除。
   具体提供商可能只接受其中部分取值，配置时应以该路由的实测能力为准。
+  添加的 Codex 路由可以用 `CEO_RUNTIME_<大写名>_APPS=false` 将原生 `features.apps` 关闭，减少该线路首包中的桌面 App 定义。
+  `true` 显式打开，空值由 CLI 本机配置决定。服务声明的 MCP 仍随该线路的命令启动。这个设置随线路保存、改名和删除。
 - **按种类、不按名字**：依赖认证方式的规则看 `RuntimeRoute.is_cli_api_route`（凭自己 API Key
   登录的 Codex/Claude CLI 路由）。「临时失败后在同一路由换新会话重试一次」适用于所有这类路由；
   Consumer 连续两次结果不可用时强制换新会话，对所有路由一视同仁，没有例外。Consumer 的可重试 Agent 来源失败继续使用当前 conversation 的 route session；`AgentError` 的默认 `session_continuable=false`

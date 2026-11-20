@@ -47,6 +47,8 @@ class RuntimeRoute(BaseModel):
     model: str
     # Optional per-route override; empty keeps the Codex global default.
     reasoning_effort: str = ""
+    # None keeps the CLI home's native desktop connector configuration.
+    codex_apps: bool | None = None
     # A service-API route carries its own provider endpoint, so several routes
     # of one kind can point at different providers.
     base_url: str = ""

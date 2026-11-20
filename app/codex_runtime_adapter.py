@@ -173,6 +173,7 @@ class CodexRuntimeAdapter:
                 else None
             ),
             multi_agent=False,
+            apps=configured_route.codex_apps,
             shell_environment_policy_core=True,
             sandbox_mode=sandbox_mode,
             skip_git_repo_check=skip_git_repo_check,

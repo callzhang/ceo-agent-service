@@ -291,6 +291,15 @@ def _added_routes(
             raise AgentRuntimeSettingsError(
                 f"Runtime {name} has an unsupported automatic review setting."
             )
+        apps_key = f"{prefix}APPS"
+        raw_apps = fields.get(apps_key, persisted.get(apps_key, ""))
+        apps = "" if raw_apps is None else str(raw_apps).strip().lower()
+        if not kind.startswith("codex"):
+            apps = ""
+        elif apps not in ("", "true", "false"):
+            raise AgentRuntimeSettingsError(
+                f"Runtime {name} has an unsupported desktop apps setting."
+            )
         api_key = ""
         if kind in ADDED_ROUTE_KINDS_WITH_KEY:
             api_key = submitted("API_KEY") or persisted.get(f"{prefix}API_KEY", "").strip()
@@ -310,6 +319,7 @@ def _added_routes(
                 "model": model,
                 "reasoning_effort": reasoning_effort,
                 "automatic_review": automatic_review,
+                "apps": apps,
                 "api_key": api_key,
             }
         )
@@ -329,6 +339,7 @@ def _added_route_updates(
         updates[f"{prefix}MODEL"] = route["model"]
         updates[f"{prefix}REASONING_EFFORT"] = route["reasoning_effort"]
         updates[f"{prefix}AUTOMATIC_REVIEW"] = route["automatic_review"]
+        updates[f"{prefix}APPS"] = route["apps"]
         updates[f"{prefix}API_KEY"] = route["api_key"]
     kept = {route["name"] for route in added_routes}
     previous = set(_names(persisted.get("CEO_AGENT_RUNTIME_ROUTES", "")))
