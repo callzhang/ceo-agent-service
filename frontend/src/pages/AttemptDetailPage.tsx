@@ -462,6 +462,7 @@ function RuntimeEntry({ entry }: { entry: AttemptRuntimeEntry }) {
     service_restart_before_effect: "服务在产生外部动作前重启，之后可继续恢复。",
     runtime_capability_missing: "当前运行环境缺少所需能力，未执行外部动作。",
     runtime_route_unavailable: "当前运行路由不可用，系统等待后续恢复。",
+    claude_provider_error: "Claude 提供方返回了错误；打开原生运行记录可查看完整诊断。",
     codex_result_missing: "Agent 没有返回可验证结果。",
     audit_recovery_candidate_invalid: "审计恢复结果无法验证，未执行外部动作。",
     runtime_unclassified: "运行环境没有返回可验证结果，系统进行了恢复或重试。",

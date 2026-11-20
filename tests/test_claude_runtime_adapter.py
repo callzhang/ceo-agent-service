@@ -1346,6 +1346,32 @@ def test_a_successful_result_is_never_read_for_failure_markers(adapter):
     assert failure.failover_permitted is True
 
 
+def test_provider_network_rejection_keeps_native_error_detail(adapter):
+    provider_error = (
+        "API Error: Request blocked before it reached Anthropic's API "
+        "(HTTP 403) · the network this request came from isn't allowed: "
+        "usually an unsupported region, or a VPN, proxy or hosting network · "
+        "signing in again won't change this · check your VPN or network and retry · "
+        "supported regions: https://anthropic.com/supported-countries"
+    )
+    stdout = json.dumps(
+        {
+            "type": "result",
+            "subtype": "success",
+            "is_error": True,
+            "api_error_status": 403,
+            "result": provider_error,
+        }
+    )
+
+    failure = adapter.classify_failure(stdout, "", 1)
+
+    assert failure.code == "claude_provider_error"
+    assert failure.failure_class is RuntimeFailureClass.PROCESS
+    assert failure.detail == provider_error
+    assert failure.failover_permitted is True
+
+
 
 def test_service_mcp_servers_are_connected_directly(adapter, route, tmp_path, monkeypatch):
     """Seen live: memory_connector behind a 127.0.0.1 proxy failed Claude's OAuth

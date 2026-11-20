@@ -2354,6 +2354,8 @@ Repair selection uses the latest native Workbench turn status. A truly queued/ru
 
 控制台从 `/runtime-attempts/{id}/trajectory` 以保存的原生调用身份读取 Codex、Claude 和 Friday 轨迹。CLI 只读该调用记录的 `[transcript_start, transcript_end)` JSONL 范围，每页 100 条原生记录，不截断任务正文、工具参数或返回；页面可一次加载全部剩余页，只有读到保存范围末尾才标记完整。工具开始和返回按调用 ID 合并，原生工具错误保留失败状态；终态调用未保存返回的工具标明运行已结束、返回未记录。私有模型思考不作为可见轨迹展示。
 
+Claude CLI 在终态 `result.is_error=true` 中返回、且未归入已有认证/容量/会话分类的提供方错误，运行失败码为 `claude_provider_error`；历史详情以该类型提示用户打开同一调用的原生轨迹查看完整提供方原文。该分类保留既有进程失败类别和路由回退许可，不代表提供方错误已恢复。
+
 Friday 通过现有 CLI 身份的只读 operation 与 thread trace API 读取，以 operation 的 `scope_id` 定位确切 run，只展示该 run 的事件，不创建或执行新 turn。入口不依赖当前选中的路由；同一业务运行下各原生调用按保存的 `parent_id` 关联并可导航，涵盖 Meeting 的处理与审计调用；独立 operation 按自己的 workload 身份列出调用。原生会话或范围已缺失、远端读取失败时显示不可用原因，不从业务摘要或 SQLite 复制事件重造轨迹。
 
 Attempt 的处理／审计步骤、历史代记录、Task 历史、Meeting 详情和有已保存关联的服务错误都提供原生入口。服务错误只沿原触发身份 → Reply Attempt 保存的 Run → 同代运行关系展示关联调用，不把同一 Task 的其他输入运行猜作当前错误；没有 Agent 调用关系的服务错误明确说明。无 runtime attempt 的已有历史 Codex 会话链接继续保留。
