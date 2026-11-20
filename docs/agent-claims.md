@@ -60,7 +60,6 @@ reverts committed work they did not author.
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
-| codex-repair-reply_attempts-17762-ci | `app/agent_turn_runner.py` sensitive-source validation; `tests/test_reviewed_message_resources.py`; scoped message-resource behavior in `docs/architecture.md` and `docs/runtime-mechanism.md`; this claim | Fix verified PR #385 baseline failures: signed provider transport URLs must remain rejected in source bindings after native resource projection, including when nested in serialized JSON, while preserving existing internal credential-source behavior and all retry/routing/security policy. | Active: PR #385 CI correction. |
 
 
 
