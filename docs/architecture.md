@@ -1532,6 +1532,8 @@ session 中的对应 MCP 工具；只有直接工具调用或 provider 操作失
 
 ### Agent Runtime 路由模型
 
+服务的 Codex CLI 使用内置 OpenAI provider，且本轮没有声明必须直接调用的 MCP 命名空间时，通过原生 Code Mode 强制延后第三方工具定义，模型可按需发现并调用。此模式依赖 Responses API 的自定义工具协议，其他 OpenAI-compatible provider 仍使用其已有的原生命令。Consumer/Audit 的角色命令在原有 Code Mode 中启用工具搜索，并保留既有直接调用工具、角色工具选择和沙箱。按需发现减少的是启动时的工具定义，实际任务材料和后续工具返回按运行需要进入上下文。
+
 `CEO_AGENT_RUNTIME_ROUTES` 是一个有序的路由名列表，**顺序就是故障切换顺序**：前一条不可用时
 Router 取下一条已配置且健康的路由。列表里出现的名字分两类：
 

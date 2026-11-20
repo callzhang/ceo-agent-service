@@ -2264,6 +2264,10 @@ ASR Agent 的工作文件是本次原始录音及其真实下载回执，操作�
 
 自动 ASR 的 source metadata 与实际 upload job 身份在原 cursor 中持久保存；上传器在发出字节前核对冻结来源，收到真实响应后先登记到服务，再输出 job ID。归档核验原生调用的 job 必须属于该来源已登记的上传。已有完成产物优先结算，不受新生成预算耗尽阻挡；临时原音频已清理时只读重取，并按冻结 hash 验证后发布，随后再次清理。不会重置预算、修改原运行或新增 ASR 以制造成功。
 
+### Codex 启动工具目录
+
+服务托管的 Codex 调用使用内置 OpenAI provider 且未声明 direct-only MCP 命名空间时，启用原生 Code Mode 的强制工具延后加载和搜索，避免在首个模型请求一次性给出第三方工具的完整定义。显式要求直接调用的命令以及 Consumer/Audit 角色命令，优先保留原有直调和角色工具范围，角色可按模型的原生能力搜索其余工具。需要部署这一模式的 provider 必须能往返 Responses 自定义工具调用；兼容 Responses 普通函数和通过纯文本探测均不足以验证。冷启动对照以首个请求的输入 token 为准，多次工具调用后的整轮累计值另计。
+
 ### Automatic error-to-PR continuation
 
 `record_error`, failed plain/orchestrated Attempt persistence and failed Attempt updates enqueue an idempotent `automatic_repair:<source>:<id>` service State record. No historical backfill runs. The normal Workbench scheduler owns an independent coordination thread that advances durable records every ten seconds without blocking ordinary turn dispatch; one coordinator mutex serializes source association and continuation. Workbench parent plus association commit together and deterministic turn request IDs recover a turn created before its checkpoint. Workbench owns task lifecycle, route selection, deployment drain, CLI approval and native trajectory.

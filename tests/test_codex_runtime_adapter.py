@@ -299,6 +299,31 @@ def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_pa
 
 
 @pytest.mark.parametrize("session_id", [None, "session-1"])
+@pytest.mark.parametrize("route_name", ["codex_oauth", "codex_api"])
+def test_supported_provider_defers_tools_without_forcing_direct_namespaces(
+    adapter, config, monkeypatch, session_id, route_name,
+):
+    monkeypatch.delenv("CEO_CODEX_MODEL_PROVIDER", raising=False)
+    options = dict(
+        route=route(config, route_name), prompt="hello", session_id=session_id,
+        image_paths=None, output_schema_path=None, use_output_schema=False,
+        approval_policy="on-failure", developer_instructions="Use the requested tools.",
+        use_approval_bypass=False,
+    )
+    compact = adapter.build_command(**options)
+    direct = adapter.build_command(**options, direct_mcp_namespaces=("mcp__ai_services",))
+    flags = {
+        "features.code_mode.enabled=true",
+        "features.code_mode_only=true",
+        "features.code_mode_tool_search=true",
+        "features.code_mode_only_strict_3p_tools=true",
+    }
+    assert flags.intersection(compact) == (flags if route_name == "codex_oauth" else set())
+    assert not flags.intersection(direct)
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__ai_services"]' in direct
+
+
+@pytest.mark.parametrize("session_id", [None, "session-1"])
 def test_native_mcp_transport_is_scoped_to_the_requested_namespace(adapter, config, session_id):
     options = dict(
         route=route(config, "codex_oauth"), prompt="ASR", session_id=session_id,
@@ -306,11 +331,9 @@ def test_native_mcp_transport_is_scoped_to_the_requested_namespace(adapter, conf
         approval_policy="on-failure", developer_instructions="Read the receipt.",
         use_approval_bypass=False,
     )
-    normal = adapter.build_command(**options)
     direct = adapter.build_command(**options, direct_mcp_namespaces=("mcp__ai_services",))
     i = direct.index('features.code_mode.direct_only_tool_namespaces=["mcp__ai_services"]')
     assert direct[i - 1] == "-c"
-    assert direct[:i - 1] + direct[i + 1:] == normal
     assert direct[-(2 if session_id else 1):] == ([session_id, "-"] if session_id else ["-"])
 
 

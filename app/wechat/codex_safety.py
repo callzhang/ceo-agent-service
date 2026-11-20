@@ -291,6 +291,7 @@ def make_role_agent_command(
               if not (role == "consumer" and feature in CONSUMER_INHERITED_NATIVE_FEATURES)),
             "features.code_mode=", "features.code_mode_only=",
             "features.code_mode.enabled=",
+            "features.code_mode_tool_search=", "features.code_mode_only_strict_3p_tools=",
             "features.code_mode.excluded_tool_namespaces=",
             "features.code_mode.direct_only_tool_namespaces=",
             "skills.config=", "project_doc_max_bytes=",
@@ -310,6 +311,9 @@ def make_role_agent_command(
         "-c", "features.code_mode_host=true",
         "-c", "features.code_mode_only=true",
         "-c", "features.code_mode.enabled=true",
+        "-c", "features.code_mode_tool_search=true",
+        # Strict deferral would override the role's direct-only namespaces.
+        "-c", "features.code_mode_only_strict_3p_tools=false",
         "-c", "features.code_mode.excluded_tool_namespaces="
         + json.dumps(
             ["functions", "image_gen", "multi_agent_v1", "web"]
@@ -469,6 +473,7 @@ def make_model_only_agent_command(command: list[str]) -> None:
             "approval_policy=", "sandbox_mode=", "tools.enabled_tools=",
             "project_doc_max_bytes=", "skills.config=",
             "features.code_mode_only=", "features.code_mode.enabled=",
+            "features.code_mode_tool_search=", "features.code_mode_only_strict_3p_tools=",
             *(f"features.{feature}=" for feature in ROLE_DISABLED_NATIVE_FEATURES),
         ),
     )
