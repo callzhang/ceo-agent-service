@@ -2061,21 +2061,19 @@ def render_dingtalk_open_oa_popup(oa_url: str) -> str:
   <section class="card">
     <h1>正在打开钉钉审批</h1>
     <p id="status">请稍候...</p>
+    <p><a id="oa-web-link" href="{escape(oa_url, quote=True)}">在浏览器中打开审批</a></p>
   </section>
   <script>
     const statusEl = document.getElementById("status");
-    function closeSoon() {{
-      setTimeout(() => window.close(), 900);
-    }}
     fetch({escaped_open_url}, {{method: "POST", cache: "no-store"}})
       .then((response) => response.json())
       .then((payload) => {{
-        statusEl.textContent = payload && payload.ok ? "已发送打开请求，即将关闭。" : "打开请求失败，即将关闭。";
-        closeSoon();
+        statusEl.textContent = payload && payload.ok
+          ? "已请求钉钉打开审批。如果未显示，可使用下方链接。"
+          : "未能打开钉钉客户端，可使用下方链接。";
       }})
       .catch(() => {{
-        statusEl.textContent = "打开请求失败，即将关闭。";
-        closeSoon();
+        statusEl.textContent = "未能打开钉钉客户端，可使用下方链接。";
       }});
   </script>
 </body>
@@ -10734,12 +10732,12 @@ def create_audit_app(
 
     @app.get("/open-dingtalk-oa-popup", response_class=HTMLResponse)
     def open_dingtalk_oa_popup(url: str = "") -> HTMLResponse:
-        from app.oa_approval import extract_oa_url
+        from app.oa_approval import extract_oa_url, oa_detail_open_url
 
         cleaned_url = extract_oa_url(url)
         if not cleaned_url:
             return HTMLResponse("missing or invalid oa url", status_code=400)
-        return HTMLResponse(render_dingtalk_open_oa_popup(cleaned_url))
+        return HTMLResponse(render_dingtalk_open_oa_popup(oa_detail_open_url(cleaned_url)))
 
     @app.post("/api/console/history/{attempt_id}/reconcile-oa-return")
     def reconcile_oa_return(attempt_id: int, candidate_id: int, review_id: int) -> JSONResponse:
@@ -10818,7 +10816,7 @@ def create_audit_app(
 
     @app.post("/open-dingtalk-oa")
     def open_dingtalk_oa(url: str = "") -> JSONResponse:
-        from app.oa_approval import extract_oa_url
+        from app.oa_approval import extract_oa_url, oa_detail_open_url
 
         cleaned_url = extract_oa_url(url)
         if not cleaned_url:
@@ -10826,13 +10824,14 @@ def create_audit_app(
                 {"ok": False, "error": "missing_or_invalid_oa_url"},
                 status_code=400,
             )
-        dingtalk_url = _dingtalk_pc_slide_link_url(cleaned_url)
+        detail_url = oa_detail_open_url(cleaned_url)
+        dingtalk_url = _dingtalk_pc_slide_link_url(detail_url)
         completed = subprocess.run(["/usr/bin/open", dingtalk_url], check=False)
         return JSONResponse(
             {
                 "ok": completed.returncode == 0,
                 "dingtalk_url": dingtalk_url,
-                "oa_url": cleaned_url,
+                "oa_url": detail_url,
                 "open_returncode": completed.returncode,
             }
         )

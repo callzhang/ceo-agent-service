@@ -4750,7 +4750,32 @@ def test_open_dingtalk_oa_popup_fetches_native_oa_route(tmp_path: Path):
     assert response.status_code == 200
     assert "正在打开钉钉审批" in response.text
     assert "/open-dingtalk-oa?url=" in response.text
-    assert "window.close()" in response.text
+    assert 'id="oa-web-link"' in response.text
+    assert "window.close()" not in response.text
+
+
+def test_open_dingtalk_oa_resolves_scanner_short_link_for_both_open_paths(tmp_path: Path, monkeypatch):
+    commands = []
+
+    def fake_run(command, check):
+        commands.append(command)
+        return subprocess.CompletedProcess(command, 0)
+
+    monkeypatch.setattr("app.audit_web.subprocess.run", fake_run)
+    short_url = "https://aflow.dingtalk.com/detail?procInstId=proc-1&taskId=task-1"
+    detail_url = (
+        "https://aflow.dingtalk.com/dingtalk/pc/query/pchomepage.htm?"
+        "procInstId=proc-1&taskId=task-1#/approval"
+    )
+    client = TestClient(create_audit_app(tmp_path / "worker.sqlite3"))
+
+    popup = client.get("/open-dingtalk-oa-popup", params={"url": short_url})
+    opened = client.post("/open-dingtalk-oa", params={"url": short_url})
+
+    assert popup.status_code == 200
+    assert detail_url.replace("&", "&amp;") in popup.text
+    assert opened.json()["oa_url"] == detail_url
+    assert commands == [["/usr/bin/open", opened.json()["dingtalk_url"]]]
 
 
 def test_open_dingtalk_oa_uses_native_client_link(tmp_path: Path, monkeypatch):

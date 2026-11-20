@@ -41,6 +41,16 @@ def resolve_oa_url(
     return str(stored_url or "").strip()
 
 
+def oa_detail_open_url(oa_url: str) -> str:
+    """Open scanner links in the approval viewer instead of the redirector."""
+    parsed = urlparse(oa_url)
+    if parsed.path == "/detail" and parse_qs(parsed.query).get("procInstId"):
+        return parsed._replace(
+            path="/dingtalk/pc/query/pchomepage.htm", fragment="/approval"
+        ).geturl()
+    return oa_url
+
+
 def _urlish_candidates(text: str) -> list[str]:
     candidates: list[str] = []
     text = unescape(text).replace("\\/", "/").replace("\\u0026", "&")
