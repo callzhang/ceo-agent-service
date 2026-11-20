@@ -85,10 +85,6 @@ reverts committed work they did not author.
 
 
 
-| Owner | Files | What | Since |
-| --- | --- | --- | --- |
-| codex/runtime-startup-prompt-budget | `app/codex_runtime_adapter.py`, `app/wechat/codex_safety.py`, matching adapter and role tests, startup catalog paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md` | Force native deferred tool discovery for eligible service Codex invocations, preserve explicit direct tools and unverified provider protocols. | 2026-11-21 |
-
 ## Recent overlaps worth knowing
 
 - 2026-09-19, Claude session `claude-email-model-input-budget`: the `reserved email
