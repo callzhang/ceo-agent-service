@@ -305,6 +305,7 @@ tests/test_state_progress_binding.py
 tests/test_email_historical_candidate_schema.py
 tests/test_task_run_entity_definitions.py
 tests/test_agent_cli_aitable.py
+tests/test_agent_cli_wiki.py
 tests/test_agent_contracts.py
 tests/test_run_adoption_definitions.py
 tests/test_dingtalk_audience_reads.py

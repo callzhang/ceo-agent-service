@@ -2713,6 +2713,28 @@ def build_role_server(
         from app.dws_client import DwsClient
         return DwsClient().doc_info(node_id)
 
+    def read_dingtalk_wiki_node(node_id: str) -> dict[str, object]:
+        """Read an exact Wiki node's workspace and parent metadata, including folders."""
+        from app.dws_client import DwsClient
+        if not node_id.strip():
+            raise ValueError("Wiki node is required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "wiki", "+node-get", "--node", node_id,
+            "--format", "json",
+        ])
+
+    def read_dingtalk_wiki_space(workspace_id: str) -> dict[str, object]:
+        """Read an exact knowledge space's ownership/type and root metadata."""
+        from app.dws_client import DwsClient
+        if not workspace_id.strip():
+            raise ValueError("Wiki workspace is required")
+        dws = DwsClient()
+        return dws.run_json([
+            dws.dws_bin, "wiki", "+space-get", "--workspace", workspace_id,
+            "--format", "json",
+        ])
+
     def read_dingtalk_document_permissions(
         node_id: str, next_token: str = ""
     ) -> dict[str, object]:
@@ -3409,6 +3431,8 @@ def build_role_server(
         ("read_dingtalk_document", read_dingtalk_document),
         ("read_dingtalk_document_full", read_dingtalk_document_full),
         ("read_dingtalk_document_info", read_dingtalk_document_info),
+        ("read_dingtalk_wiki_node", read_dingtalk_wiki_node),
+        ("read_dingtalk_wiki_space", read_dingtalk_wiki_space),
         ("read_dingtalk_document_permissions", read_dingtalk_document_permissions),
         ("read_dingtalk_drive_info", read_dingtalk_drive_info),
         ("read_dingtalk_drive_file", read_dingtalk_drive_file),

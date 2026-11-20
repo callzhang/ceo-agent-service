@@ -583,3 +583,5 @@ reverts committed work they did not author.
 
 
 
+
+| codex-company-document-check-20261121 | app/agent_cli.py exact Wiki read tools; app/wechat/codex_safety.py read tool names; tests/test_agent_cli_wiki.py; tests/test_agent_role_tool_boundary.py Wiki assertions; tests/gate_files.txt own entry; scoped architecture/runtime docs | Supply missing exact knowledge-space and parent-node reads for company-document-check; preserve DWS account permissions, Audit read-only and System-only notifications. No migration or replay of uncertain delivery. | active |

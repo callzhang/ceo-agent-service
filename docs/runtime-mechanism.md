@@ -2370,3 +2370,5 @@ Stalled recovery also refuses live dispatcher owners, unexpired or unparseable R
 钉盘只读预览工具由 MCP 异步入口调用时，在工作线程执行既有同步 Playwright 捕获；不在事件循环中启动同步浏览器。每个工具进程仍按节点缓存页面，原登录会话、来源节点、页数／图片上限和临时页面清理保持原样，Consumer 与 Audit 共用相同行为。
 
 钉盘 PDF 只读预览按实际内嵌查看器读取：在页面的 frame 中查找 `.w-page` 文档页，最多等待60秒直到真实文档页出现，不以固定12秒或顶层页面没有旧选择器认定不可读。逐页滚动、30页上限、图片/OCR限制、登录错误和会话清理保持原样；超时仍报告真实读取失败。此路径使用当前账号已获准的可视预览，不修改或绕过原件下载权限。
+
+钉钉公司文档归档检查可通过原角色工具读取确切 Wiki 节点及知识空间：`read_dingtalk_wiki_node` 取原件/父目录元数据，`read_dingtalk_wiki_space` 取空间详情。Consumer 与 Audit 使用相同的只读原生 DWS 入口，保留原始字段和权限错误，不根据分享权限、作者或链接外观生成合规结论，不执行迁移、改权或通知；业务判断由安装的 `company-document-check` Skill 承载。
