@@ -262,6 +262,34 @@ def test_adapter_rejects_runtime_and_credential_mismatches(adapter):
 
 
 @pytest.mark.parametrize("session_id", [None, "session-1"])
+def test_added_codex_route_disables_desktop_apps_through_role_command(
+    tmp_path, monkeypatch, session_id,
+):
+    from app.wechat.codex_safety import make_consumer_agent_command
+
+    config = load_runtime_config({
+        "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth,compact_api",
+        **codex_api_env("test-key", name="compact_api"),
+        "CEO_RUNTIME_COMPACT_API_APPS": "false",
+    })
+    adapter = CodexRuntimeAdapter(tmp_path, config, codex_bin="codex-test")
+    options = dict(
+        prompt="Read a test marker.", session_id=session_id, image_paths=None,
+        output_schema_path=None, use_output_schema=False,
+        approval_policy="on-failure", developer_instructions=None, use_approval_bypass=False,
+    )
+    monkeypatch.setattr("app.wechat.codex_safety.inherited_native_server_names", lambda: ())
+    command = adapter.build_command(route(config, "compact_api"), **options)
+
+    assert "features.apps=false" in command
+    make_consumer_agent_command(command, task_workspace=str(tmp_path))
+    assert command.count("features.apps=false") == 1
+    assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
+    other = adapter.build_command(route(config, "codex_oauth"), **options)
+    assert not any(option.startswith("features.apps=") for option in other)
+
+
+@pytest.mark.parametrize("session_id", [None, "session-1"])
 def test_adapter_builds_equivalent_route_command_options(adapter, config, tmp_path, session_id):
     command = adapter.build_command(
         route(config, "codex_api"),

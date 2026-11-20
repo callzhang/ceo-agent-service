@@ -286,6 +286,21 @@ def test_a_newly_typed_token_replaces_the_stored_one(tmp_path: Path, env_path: P
     assert LONG_KEY not in env_text
 
 
+def test_desktop_apps_setting_round_trips_in_route_settings(tmp_path: Path, env_path: Path):
+    _seed_route(env_path)
+    key = "CEO_RUNTIME_KKSJ_APPS"
+    with _client(tmp_path) as client:
+        fields = client.get(ENDPOINT).json()["item"]["fields"]
+        saved = client.post(ENDPOINT, json={"fields": {**fields, **BASE_FIELDS, key: "false"}})
+        assert saved.status_code == 200, saved.json()
+        reread = client.get(ENDPOINT).json()["item"]["fields"]
+        assert reread.pop(key) == "false"
+        saved = client.post(ENDPOINT, json={"fields": {**reread, **BASE_FIELDS}})
+        assert saved.status_code == 200, saved.json()
+
+    assert f"{key}=false" in env_path.read_text(encoding="utf-8")
+
+
 def test_saving_keeps_a_routes_stored_automatic_review_setting(
     tmp_path: Path, env_path: Path
 ):
