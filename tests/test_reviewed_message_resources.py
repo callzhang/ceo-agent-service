@@ -111,6 +111,13 @@ def test_signed_url_outside_native_resource_remains_rejected(tmp_path):
         _validate_runtime_reference_domain_result(prepared)
 
 
+def test_source_validation_rejects_signed_urls_but_allows_internal_credentials():
+    from app.agent_turn_runner import _contains_sensitive_value
+
+    assert _contains_sensitive_value("https://example.com/?signature=private", check_credentials=False)
+    assert not _contains_sensitive_value("synthetic-secret", check_credentials=False)
+
+
 def test_unknown_resource_fields_are_not_silently_dropped(tmp_path):
     context = resource_context(tmp_path)
     context.trigger_raw_payload["quotedMessage"]["resources"][0]["unknown"] = "new fact"

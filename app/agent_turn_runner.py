@@ -2183,7 +2183,10 @@ def _contains_sensitive_value(
         )
     if not isinstance(value, str):
         return False
-    if check_credentials and (_is_signed_url(value) or contains_credential(value)):
+    # Signed URLs are provider transport capabilities. They must be removed
+    # by source projection or rejected even in trusted source bindings; other
+    # credential-bearing source values remain internal evidence.
+    if _is_signed_url(value) or (check_credentials and contains_credential(value)):
         return True
     stripped = value.lstrip()
     if not stripped.startswith(("{", "[", '"')) or len(value) > 64 * 1024:
