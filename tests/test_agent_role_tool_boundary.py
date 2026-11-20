@@ -143,8 +143,9 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
     approval = ["-c", 'approval_policy="on-failure"', "-c", 'approvals_reviewer="auto_review"']
     consumer = _codex_command()
     audit = _codex_command()
-    consumer[2:2] = approval
-    audit[2:2] = approval
+    forced = ["-c", "features.code_mode_only_strict_3p_tools=true"]
+    consumer[2:2] = approval + forced
+    audit[2:2] = approval + forced
     make_consumer_agent_command(consumer, task_workspace=str(tmp_path / "task-workspace"))
     make_audit_agent_command(audit)
 
@@ -172,6 +173,8 @@ def test_codex_roles_scope_native_execution_and_select_service_tools(tmp_path, m
         assert "features.code_mode_only=false" not in command
         assert "features.code_mode.enabled=true" in command
         assert "features.code_mode.enabled=false" not in command
+        assert "features.code_mode_tool_search=true" in command
+        assert "features.code_mode_only_strict_3p_tools=true" not in command
         assert 'features.code_mode.direct_only_tool_namespaces=["mcp__agent_cli", "mcp__ai_services"]' in command
         assert sum(option.startswith("features.code_mode.direct_only_tool_namespaces=") for option in command) == 1
         assert "mcp_servers.memory_connector.enabled=false" not in command

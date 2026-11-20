@@ -92,6 +92,7 @@ def _insert_service_mcp_options(
     session_id: str | None,
     tool_approval_modes_by_server: dict[str, dict[str, str]] | None = None,
     direct_mcp_namespaces: tuple[str, ...] = (),
+    defer_tool_discovery: bool = False,
 ) -> None:
     """Every routed Codex invocation carries the service MCP manifest.
 
@@ -102,14 +103,23 @@ def _insert_service_mcp_options(
     prompt_index = len(command) - 1  # the trailing "-" prompt marker
     if session_id:
         prompt_index -= 1  # `exec resume` keeps the session id before "-"
-    command[prompt_index:prompt_index] = service_mcp_config_options(
+    options = service_mcp_config_options(
         tool_approval_modes_by_server=tool_approval_modes_by_server
     )
     if direct_mcp_namespaces:
-        command[prompt_index:prompt_index] = [
+        options.extend([
+            "-c", "features.code_mode_only_strict_3p_tools=false",
             "-c", "features.code_mode.direct_only_tool_namespaces="
             + json.dumps(direct_mcp_namespaces),
-        ]
+        ])
+    elif defer_tool_discovery:
+        options.extend([
+            "-c", "features.code_mode.enabled=true",
+            "-c", "features.code_mode_only=true",
+            "-c", "features.code_mode_tool_search=true",
+            "-c", "features.code_mode_only_strict_3p_tools=true",
+        ])
+    command[prompt_index:prompt_index] = options
 
 
 class CodexRuntimeAdapter:
@@ -145,6 +155,7 @@ class CodexRuntimeAdapter:
         direct_mcp_namespaces: tuple[str, ...] = (),
     ) -> list[str]:
         configured_route = self._configured_route(route)
+        provider = self._provider_for(configured_route)
         command = self.runner.build_command(
             prompt=prompt,
             session_id=session_id,
@@ -155,7 +166,7 @@ class CodexRuntimeAdapter:
             developer_instructions=developer_instructions,
             use_approval_bypass=use_approval_bypass,
             model=configured_route.model,
-            provider=self._provider_for(configured_route),
+            provider=provider,
             model_provider_settings=(
                 self._api_provider_settings(configured_route)
                 if configured_route.credential_mode == CredentialMode.SERVICE_API
@@ -182,6 +193,9 @@ class CodexRuntimeAdapter:
             session_id=session_id,
             tool_approval_modes_by_server=tool_approval_modes_by_server,
             direct_mcp_namespaces=direct_mcp_namespaces,
+            # Native Code Mode needs custom tool calls on the Responses wire.
+            # An OpenAI-compatible endpoint does not imply support for them.
+            defer_tool_discovery=provider in {"", "openai"},
         )
         return command
 
