@@ -62,6 +62,8 @@ reverts committed work they did not author.
 
 | codex-repair-errors-16257-ci | `tests/test_email_connection_reuse.py` fd-cleanup regression only; this claim | Fix the verified CI false failure where an unrelated baseline descriptor closes between `/dev/fd` snapshots. Compare descriptor identities while continuing to reject pool descriptors that remain after cleanup; preserve all test limits and production behavior. | Active: PR #364 CI correction. |
 
+| codex-repair-reply_attempts-17808 | `app/email_unsubscribe.py`; `tests/test_email_unsubscribe.py`; `docs/reply-worker-reliability.md`; this claim | Diagnose and repair committed-page handling when `Page.goto` reports `net::ERR_CONNECTION_CLOSED`; preserve no-replay behavior and classify the already reached page once. | 2026-11-21 |
+
 
 
 
