@@ -72,6 +72,19 @@ def test_document_review_skill_defines_complete_review_workflow():
         assert required in text
 
 
+def test_document_review_skill_reconciles_final_artifact_with_authoritative_inventory():
+    long_document = _skill_text().split("## Long Documents and Full-Coverage Revisions", 1)[1]
+    for required in (
+        "authoritative source",
+        "stable source IDs",
+        "latest saved revision",
+        "content for each source item",
+        "exact files to be delivered",
+        "remaining gaps",
+    ):
+        assert required in long_document
+
+
 def test_document_review_skill_routes_aitables_through_service_read_mcp():
     text = _skill_text()
 

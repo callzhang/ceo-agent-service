@@ -1,9 +1,9 @@
 ---
 name: ceo-document-review
-description: Use for requests to inspect, summarize, compare, comment on, or approve DingTalk or Lark documents, files, images, and tables. Use ceo-mail-review for the enclosing mail thread and ceo-meeting-work for meeting records. Load the operation Skill matching the actual material type before reading or editing it.
+description: Use for requests to inspect, revise, summarize, compare, comment on, or approve DingTalk or Lark documents, files, images, and tables. Use ceo-mail-review for the enclosing mail thread and ceo-meeting-work for meeting records. Load the operation Skill matching the actual material type before reading or editing it.
 metadata:
   managed_by: ceo-agent-service
-  version: 1
+  version: 2
 ---
 
 # CEO Document Review
@@ -37,5 +37,13 @@ For DingTalk stored files, the matching drive Skill is `dingtalk-drive`. Load `d
 5. Review readable material directly. Do not ask the sender to paste content that the agent can read. Tie conclusions, requested changes, risks, and next steps to the content actually inspected. For a reported defect, give the material identity, inspected version or read time, exact sheet/cell/section, observed value, and the applicable rule or expected value. Distinguish a cached/displayed value from a formula or a newly recomputed result. A later follow-up must use the same source or an explicitly verified successor; compare versions before withdrawing an earlier finding. If a read fails, explain the technical gap and retain any exact prior observations as historical evidence; do not repeat an unverified demand to repair the material or use the Agent's own previous reply as proof of the defect.
 6. For a verified material access denial, use an authorized `request_access` purpose action once when an actual request route exists. The reviewed executor sends the request; its verified receipt anchors `action=retry`, `reason=access requested`, with that receipt in `evidence_refs`. The service persists at most three subsequent Consumer reads, 12 hours apart, with a 72-hour hard deadline from the original request. Native sessions, feedback revisions and restarts do not reset the budget. Request delivery is not permission approval. When no permission request route exists, the OA purpose may propose a real `action=return` under its operation Skill; explain access denial and request accessible materials without claiming business noncompliance. Other purposes use their declared supported business action. Download/parser/OCR/client failures remain explicit technical failures and never establish applicant fault or actual access denial. Do not infer missing content.
 7. Deliver comments in the material when the loaded operation Skill supports comments; otherwise deliver the review in the source conversation after loading that conversation's operation Skill.
+
+## Long Documents and Full-Coverage Revisions
+
+When work spans many sections or the requester expects complete coverage:
+
+- Identify the authoritative source and record its version and the source items in scope. Keep stable source IDs or section anchors so reordered sections, repeated headings, and omissions remain visible. Treat partial answers and appendices as working material unless the requester makes them the governing source.
+- Save completed sections and remaining gaps as work proceeds. When resuming or revising after feedback, inspect the latest saved revision against the current source and requested changes. Keep valid work, complete what is missing, and recheck sections affected by a source change.
+- Before reporting coverage, compare the exact files to be delivered against the source inventory. Read the content for each source item to check that it answers that item, and resolve duplicated or misplaced material. Heading counts alone do not establish coverage. State unresolved facts separately from missing review items and describe only the work verified in those files.
 
 Consumer reads the material and proposes any comment or response; it does not perform those controlled actions. Audit independently reads the same business and operation Skills, validates the exact path and SHA receipts, and rereads current material when required. It approves, returns, or rejects the exact current proposal. The System Executor alone performs approved controlled actions and verifies their result; the service records operations but never decides what the material means.

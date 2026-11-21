@@ -31,9 +31,9 @@
     {
       "source": "ci/shared-skills/ceo-document-review/SKILL.md",
       "target": "skills/ceo-document-review/SKILL.md",
-      "old_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77",
-      "new_sha256": "3dc86c9a0d57cca37980ef6dcbd059849bc2d81539139ab9e8537f67b4c76d01",
-      "old_managed_sha256": "b6b87c3d1ca32bb2e9a9c53675b22dd0a8932aa808205734c8725d9a3eb09d77"
+      "old_sha256": "3dc86c9a0d57cca37980ef6dcbd059849bc2d81539139ab9e8537f67b4c76d01",
+      "new_sha256": "a0df899351710998f8173d2f6e820db3a91018940b83d0bc523134c935182184",
+      "old_managed_sha256": "3dc86c9a0d57cca37980ef6dcbd059849bc2d81539139ab9e8537f67b4c76d01"
     },
     {
       "source": "ci/shared-skills/ceo-mail-review/SKILL.md",

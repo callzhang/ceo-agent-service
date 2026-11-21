@@ -1094,6 +1094,8 @@ CEO 业务 Skill（下表为 Consumer 按需发现的主要几个，完整清单
 `ceo-message-triage`；文档包含项目事实不改变调用角色。这是现有 Skill 职责的说明，
 不增加正文关键词路由或改变工具权限。CI 资产的描述修订不等于已安装运行资产已发布。
 
+长文档和要求全量复核的任务由 `ceo-document-review` 按当前原始材料建立条目清单，分段保存并在续跑时核对最新工作稿。交付前以实际拟发送文件逐项核对覆盖和内容，将事实待确认与审阅遗漏分别说明。
+
 ### 项目为中心的工作跟踪（已发布；业务验收部分完成）
 
 验收状态见 `docs/archive/records/task-project-centered-validation.md`。
