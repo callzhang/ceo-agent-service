@@ -420,6 +420,7 @@ TRANSIENT_BROWSER_ERROR_CODES = frozenset(
 # Chromium navigation timeout evidence shared by live classification and
 # recovery of historical Attempt details.
 CHROMIUM_NAVIGATION_TIMEOUT_MARKER = "net::ERR_TIMED_OUT"
+CHROMIUM_NAVIGATION_CONNECTION_CLOSED_MARKER = "net::ERR_CONNECTION_CLOSED"
 # A transient browser failure receives this many exact-action retries; the
 # worker applies its existing exponential backoff between attempts.
 TRANSIENT_BROWSER_UNSUBSCRIBE_RETRIES = MAX_AUTOMATIC_RETRIES
@@ -3470,6 +3471,7 @@ class PlaywrightUnsubscribeBrowser:
                         "timeout" in type(exc).__name__.casefold()
                         or "ERR_ABORTED" in str(exc)
                         or CHROMIUM_NAVIGATION_TIMEOUT_MARKER in str(exc)
+                        or CHROMIUM_NAVIGATION_CONNECTION_CLOSED_MARKER in str(exc)
                     )
                     current_url = str(getattr(self.page, "url", ""))
                     if (

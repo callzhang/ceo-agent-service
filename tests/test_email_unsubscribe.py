@@ -1547,6 +1547,43 @@ def test_open_entry_abort_reads_committed_page_without_requesting_unsubscribe_ur
     assert browser._document_url == TOKEN_URL
 
 
+def test_open_entry_connection_closed_reads_committed_page_once() -> None:
+    class Page:
+        url = "about:blank"
+
+        def __init__(self) -> None:
+            self.goto_calls = 0
+
+        def goto(self, url: str, **_kwargs: object) -> None:
+            self.goto_calls += 1
+            self.url = url
+            raise RuntimeError("Page.goto: net::ERR_CONNECTION_CLOSED")
+
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = Page()
+    browser.timeout_ms = 1_000
+    browser._document_url = ""
+    browser._blocked_popup = False
+    browser._blocked_download = False
+    observation = UnsubscribeObservation(
+        state=UnsubscribePageState.DONE,
+        state_reference="state-after-connection-close",
+        receipt=_terminal_receipt(_effect()),
+        visible_text="You have unsubscribed.",
+    )
+    browser.inspect_current_state = lambda *_args: observation
+
+    result = browser.execute_operation(
+        _effect(),
+        TOKEN_URL,
+        _operations(UnsubscribeOperationKind.OPEN_ENTRY)[0],
+    )
+
+    assert result is observation
+    assert browser.page.goto_calls == 1
+    assert browser._document_url == TOKEN_URL
+
+
 def test_no_reliable_browser_entry_is_skipped_without_calling_browser(
     tmp_path: Path,
 ) -> None:
