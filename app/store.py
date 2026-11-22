@@ -16193,29 +16193,22 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         process_instance_id: str,
         process_result: str,
     ) -> bool:
-        """Close an OA task only after terminal state or confirmed return.
+        """Close the local reminder after a verified resolution from DingTalk.
 
-        The OA scanner creates a terminal ``needs_human`` attempt when a
-        decision really requires Derek. Derek may then complete that approval
-        directly in DingTalk, or explicitly return that exact task while the
-        wider process continues. Merely disappearing from Derek's pending list
-        does not prove either outcome. A later projection repair can also turn an
-        invalid technical ``needs_human`` Attempt into ``failed`` while its
-        owning task still has the old status. Once the external process is
-        terminal or that exact OA task has a verified return receipt, there is
-        no action left for that attempt, so the local attempt is ``skipped``
-        and the owning task is ``done``.
+        The scanner verifies a terminal process or a decision or return of the
+        original node. Disappearance from a pending list alone is insufficient.
+        Keep prior Agent runs and action receipts as history.
         """
 
         process_id = process_instance_id.strip()
         if not process_id:
             raise ValueError("process_instance_id must be non-empty")
         result = process_result.strip() or "completed"
-        resolution = (
-            "Live DingTalk OA process has a verified return receipt for this task."
-            if result == "OA_RETURNED"
-            else f"Live DingTalk OA task reached terminal state {result}."
-        )
+        resolution = {
+            "OA_RETURNED": "Live DingTalk OA process has a verified return receipt for this task.",
+            "OA_NODE_APPROVED": "Live DingTalk OA confirms the principal approved this task.",
+            "OA_NODE_REJECTED": "Live DingTalk OA confirms the principal rejected this task.",
+        }.get(result, f"Live DingTalk OA task reached terminal state {result}.")
         with self._immediate_write_transaction() as db:
             attempt = db.execute(
                 "select channel, conversation_id, trigger_message_id "

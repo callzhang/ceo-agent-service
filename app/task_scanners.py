@@ -582,15 +582,18 @@ def scan_pending_oa_approvals(
             pending_task_ids = pending_task_ids_by_process.get(
                 process_instance_id, set()
             )
-            if (
-                attempt.oa_task_id.strip() not in pending_task_ids
-                and _oa_principal_explicitly_returned_process(
+            if attempt.oa_task_id.strip() not in pending_task_ids:
+                process_result = _oa_principal_completed_task_result(
                     detail_payload,
                     task_id=attempt.oa_task_id,
                     current_user_id=current_user_id,
                 )
-            ):
-                process_result = "OA_RETURNED"
+                if not process_result and _oa_principal_explicitly_returned_process(
+                    detail_payload,
+                    task_id=attempt.oa_task_id,
+                    current_user_id=current_user_id,
+                ):
+                    process_result = "OA_RETURNED"
         if not process_result:
             continue
         if store.resolve_completed_oa_needs_human_attempt(
@@ -1519,6 +1522,34 @@ def _oa_principal_has_commented(
         in OA_COMMENT_OPERATION_TYPES
         for record in _oa_operation_records(records_payload)
     )
+
+
+def _oa_principal_completed_task_result(
+    payload: Any,
+    *,
+    task_id: str,
+    current_user_id: str,
+) -> str:
+    """Read the decision of the original node, independently of the wider process."""
+    matches = [
+        row for row in _oa_task_records(payload)
+        if _oa_task_field(row, ("taskId", "taskid", "task_id", "id")) == task_id.strip()
+    ]
+    if len(matches) != 1:
+        return ""
+    task = matches[0]
+    if (
+        _oa_task_field(task, ("userId", "userid", "user_id")) != current_user_id
+        or _oa_task_field(task, ("status", "taskStatus", "task_status")).upper()
+        not in {"COMPLETED", "FINISHED"}
+    ):
+        return ""
+    result = _oa_task_field(task, ("taskResult", "task_result", "result")).upper()
+    if result == "AGREE":
+        return "OA_NODE_APPROVED"
+    if result in {"REFUSE", "REJECT"}:
+        return "OA_NODE_REJECTED"
+    return ""
 
 
 def _oa_principal_explicitly_returned_process(

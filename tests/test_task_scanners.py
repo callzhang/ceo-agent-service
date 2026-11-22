@@ -4,6 +4,8 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from types import SimpleNamespace
 
+import pytest
+
 from app.agent_cron.commands import (
     SERVICE_COMMAND_OPTIONS,
     ServiceCommandConsumerContext,
@@ -1264,6 +1266,54 @@ def test_scan_pending_oa_approvals_closes_running_process_after_explicit_return(
             (attempt_id,),
         ).fetchone()["resolution"]
     assert "verified return receipt" in resolution
+
+
+@pytest.mark.parametrize(
+    ("owner", "status", "result", "resolves"),
+    [
+        ("principal", "COMPLETED", "AGREE", True),
+        ("other", "COMPLETED", "AGREE", False),
+        ("principal", "RUNNING", "AGREE", False),
+        ("principal", "COMPLETED", "NONE", False),
+    ],
+)
+def test_scan_reconciles_only_the_principals_verified_decision(
+    tmp_path, owner, status, result, resolves,
+):
+    class FakeDws:
+        def list_pending_oa_approvals(self, **kwargs):
+            return []
+
+        def get_current_user_id(self):
+            return "principal"
+
+        def read_oa_approval_tasks(self, process_instance_id):
+            raise AssertionError("this instance has no current pending item")
+
+        def read_oa_process_instance_openapi(self, process_instance_id):
+            return {"result": {"status": "RUNNING", "tasks": [
+                {"taskId": "original", "userId": owner, "taskStatus": status,
+                 "taskResult": result},
+                {"taskId": "next", "userId": "other", "taskStatus": "RUNNING"},
+            ]}}
+
+    store = AutoReplyStore(tmp_path / "task.sqlite3")
+    attempt_id = store.record_reply_attempt(
+        conversation_id="oa_pending_scan",
+        conversation_title="审批待办",
+        trigger_message_id="oa-pending:proc:revision",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        action="agent_run",
+        sensitivity_kind="general",
+        oa_process_instance_id="proc",
+        oa_task_id="original",
+        send_status="needs_human",
+    )
+    assert scan_pending_oa_approvals(store, FakeDws()) == 0
+    assert store.get_reply_attempt(attempt_id).send_status == (
+        "skipped" if resolves else "needs_human"
+    )
 
 
 def test_scan_clears_attention_when_process_moves_to_another_approver(

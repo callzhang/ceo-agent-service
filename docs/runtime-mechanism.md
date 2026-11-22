@@ -541,10 +541,7 @@ Console Attention 同时投影当前队列故障和当前有效、已通过 Audi
 质量门禁按同一当前 Reply Task 的生命周期检查 `needs_human` 投影：Attempt 关联的 Run 必须指向同一 Task ID 和当前 execution generation，且 Task 仍为 `needs_human`，结构化结果缺失或无效才构成当前健康违规。Task 已到 `done`、`skipped` 或 `failed` 终态，或 Attempt 只属于旧 generation 时，该 Attempt 只保留为历史记录，不继续触发 Attention 或健康降级；当前 Task 仍待人工决定时，原有结构化结果校验不变。
 Attempt 详情以已完成或已跳过的任务状态显示当前结果，历史 `needs_human` 保留在原始处理记录中。
 
-如果 Derek 已直接在钉钉完成 OA，定时 OA 扫描会读取该 process instance 的实时状态。
-实例已进入明确终态时，服务不重放审批动作，而是把当前 `needs_human` attempt 收口为
-`skipped`，保存实时结果作为 resolution，并从当前 Attention 移除；原 Agent run 和决策
-内容仍作为历史事实保留。仍为 `RUNNING` 或读取失败时不得自动改写。
+如果 Derek 已直接在钉钉处理 OA，定时扫描会读取实时详情。整单进入明确终态，或钉钉证实 Derek 已对原任务节点同意、驳回或退回时，服务将对应的本地 `needs_human` Attempt 收口为 `skipped`，记录来源结果，并从 Attention 移除。整单继续在下一节点流转时，也可以关闭已经处理的旧节点提醒。精确节点、负责人和决策必须可核实，待读取或仅从待办列表消失时保持原状态。原 Agent 运行、审批动作和回执继续保留。
 
 ### 重复外发故障的统一排查顺序
 
