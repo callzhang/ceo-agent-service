@@ -10443,6 +10443,55 @@ def test_completed_oa_failed_attempt_closes_stale_task(
     assert store.get_reply_task(task.id).error == ""
 
 
+@pytest.mark.parametrize("previously_resolved", [False, True])
+def test_verified_oa_node_closes_task_after_same_node_input_changes(
+    tmp_path: Path, previously_resolved: bool,
+):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    scope = dict(
+        conversation_id="oa_pending_scan:proc",
+        conversation_title="审批待办",
+        single_chat=True,
+        trigger_create_time="2026-11-21 10:00:00",
+        trigger_sender="Derek OA",
+        trigger_text="审批待办扫描",
+        business_object_key="oa:proc:node",
+    )
+    original = store.ensure_reply_task(**scope, trigger_message_id="original")
+    run = store.claim_agent_run(
+        original.id, original.execution_generation,
+        role=AgentRole.CONSUMER, proposal_revision=0, turn_attempt=0,
+        parent_agent_run_id=None, operation_id="", owner="consumer",
+    ).run
+    store.complete_agent_run(run.id, {"outcome": "needs_human"}, owner="consumer")
+    latest = store.ensure_reply_task(**scope, trigger_message_id="refreshed")
+    assert latest.id == original.id
+    with store._immediate_write_transaction() as db:
+        _update_current_task8(db, 'reply_tasks', {'status': 'needs_human'},
+                              where_sql='and id=?', parameters=(latest.id,))
+    attempt_id = store.record_reply_attempt(
+        conversation_id=scope["conversation_id"], conversation_title="审批待办",
+        trigger_message_id="original", trigger_sender="Derek OA", trigger_text="OA",
+        action="agent_run", sensitivity_kind="general", oa_process_instance_id="proc",
+        oa_task_id="node", send_status="needs_human",
+    )
+    with store._connect() as db:
+        update_action(db, "reply_attempts", attempt_id, {"agent_run_id": run.id})
+        if previously_resolved:
+            update_action(db, "reply_attempts", attempt_id, {
+                "send_status": "skipped",
+                "resolution": "Live DingTalk OA confirms the principal approved this task.",
+                "resolved_at": "2026-11-22 10:00:00",
+            })
+    assert [a.id for a in store.list_open_oa_needs_human_attempts()] == [attempt_id]
+    assert store.resolve_completed_oa_needs_human_attempt(
+        attempt_id, process_instance_id="proc", process_result="OA_NODE_APPROVED",
+    )
+    assert store.get_reply_attempt(attempt_id).send_status == "skipped"
+    assert store.get_reply_task(latest.id).status == "done"
+    assert store.list_open_oa_needs_human_attempts() == []
+
+
 def test_completed_oa_closure_requires_matching_process_identity(tmp_path: Path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     attempt_id = store.record_reply_attempt(

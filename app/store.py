@@ -423,6 +423,26 @@ NATIVE_REPLY_TASK_CURRENT_SQL = """select tasks.id,tasks.status,tasks.available_
       and inputs.task_id=tasks.id
     where tasks.kind='reply'"""
 
+OA_NODE_DECISION_RESOLUTIONS = {
+    "OA_NODE_APPROVED": "Live DingTalk OA confirms the principal approved this task.",
+    "OA_NODE_REJECTED": "Live DingTalk OA confirms the principal rejected this task.",
+}
+OA_ATTEMPT_CURRENT_TASK_SQL = """
+    case when coalesce(attempts.agent_run_id, 0) > 0 then
+        tasks.business_object_key =
+            'oa:' || attempts.oa_process_instance_id || ':' || attempts.oa_task_id
+        and exists (
+            select 1 from runs
+            where runs.id=attempts.agent_run_id and runs.task_id=tasks.id
+              and runs.execution_generation=tasks.execution_generation
+        )
+    else
+        tasks.channel=attempts.channel
+        and tasks.conversation_id=attempts.conversation_id
+        and tasks.trigger_message_id=attempts.trigger_message_id
+    end
+"""
+
 # Delivery execution must retain the exact snapshot bound by the claim, even
 # when a newer trigger input becomes current while the worker is running.
 NATIVE_REPLY_TASK_CLAIMED_SQL = """select tasks.id,tasks.status,tasks.available_at,
@@ -16206,17 +16226,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         result = process_result.strip() or "completed"
         resolution = {
             "OA_RETURNED": "Live DingTalk OA process has a verified return receipt for this task.",
-            "OA_NODE_APPROVED": "Live DingTalk OA confirms the principal approved this task.",
-            "OA_NODE_REJECTED": "Live DingTalk OA confirms the principal rejected this task.",
+            **OA_NODE_DECISION_RESOLUTIONS,
         }.get(result, f"Live DingTalk OA task reached terminal state {result}.")
         with self._immediate_write_transaction() as db:
             attempt = db.execute(
-                "select channel, conversation_id, trigger_message_id "
-                f"from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where id=?",
-                (attempt_id,),
+                "select send_status, resolution, resolved_at "
+                f"from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts "
+                "where id=? and oa_process_instance_id=?",
+                (attempt_id, process_id),
             ).fetchone()
             if attempt is None:
                 return False
+            already_resolved = (
+                result in OA_NODE_DECISION_RESOLUTIONS
+                and attempt["send_status"] == "skipped"
+                and attempt["resolution"] == resolution
+                and bool(attempt["resolved_at"])
+            )
             now = db.execute("select current_timestamp").fetchone()[0]
             cursor = update_action(db, "reply_attempts", attempt_id, {
                 "send_status": "skipped", "send_error": "",
@@ -16226,12 +16252,14 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                          "and oa_process_instance_id=? "
                          "and trim(coalesce(resolved_at, ''))=''",
                parameters=(process_id,))
-            if cursor.rowcount != 1:
+            if cursor.rowcount != 1 and not already_resolved:
                 return False
             task = db.execute(
-                f"select id,status,execution_generation from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as reply_tasks where channel=? and conversation_id=? "
-                "and trigger_message_id=?",
-                (attempt["channel"], attempt["conversation_id"], attempt["trigger_message_id"]),
+                "select tasks.id, tasks.status, tasks.execution_generation "
+                f"from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts "
+                f"join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks on {OA_ATTEMPT_CURRENT_TASK_SQL} "
+                "where attempts.id=?",
+                (attempt_id,),
             ).fetchone()
             if task is not None:
                 from app import task_entity_storage
@@ -16245,7 +16273,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 ) if task["status"] in {"needs_human", "failed"} else None
                 if updated is not None:
                     self._compact_settled_reply_task_input(db, int(task["id"]))
-            return True
+                    return True
+            return cursor.rowcount == 1
 
     def close_unresolved_reply_task_already_settled(
         self,
@@ -22169,28 +22198,30 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
     def list_open_oa_needs_human_attempts(
         self, *, limit: int = 100
     ) -> list[ReplyAttempt]:
-        """Return latest unresolved OA decisions with no active local rerun."""
-
+        """Return current OA decisions still needing a verified local closure."""
         with self._connect() as db:
             rows = db.execute(
                 f"""
                 select attempts.*
                 from ({REPLY_ATTEMPT_COMMON_SQL}) as attempts
+                left join ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
+                    on {OA_ATTEMPT_CURRENT_TASK_SQL}
                 where (
-                        attempts.send_status='needs_human'
-                        or (
-                            attempts.send_status='failed'
-                            and exists (
-                                select 1
-                                from ({NATIVE_REPLY_TASK_CURRENT_SQL}) stale_tasks
-                                where stale_tasks.channel=attempts.channel
-                                  and stale_tasks.conversation_id=attempts.conversation_id
-                                  and stale_tasks.trigger_message_id=attempts.trigger_message_id
-                                  and stale_tasks.status in ('needs_human', 'failed')
-                            )
+                    (
+                        trim(coalesce(attempts.resolved_at, ''))=''
+                        and (
+                            attempts.send_status='needs_human'
+                            or (attempts.send_status='failed'
+                                and tasks.status in ('needs_human', 'failed'))
                         )
-                      )
-                  and trim(coalesce(attempts.resolved_at, ''))=''
+                    )
+                    or (
+                        attempts.send_status='skipped'
+                        and trim(coalesce(attempts.resolved_at, ''))<>''
+                        and attempts.resolution in (?, ?)
+                        and tasks.status in ('needs_human', 'failed')
+                    )
+                )
                   and trim(attempts.oa_process_instance_id)<>''
                   and trim(attempts.oa_task_id)<>''
                   and attempts.id=(
@@ -22199,18 +22230,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                       where latest.oa_process_instance_id=
                             attempts.oa_process_instance_id
                   )
-                  and not exists (
-                      select 1
-                      from ({NATIVE_REPLY_TASK_CURRENT_SQL}) tasks
-                      where tasks.channel=attempts.channel
-                        and tasks.conversation_id=attempts.conversation_id
-                        and tasks.trigger_message_id=attempts.trigger_message_id
-                        and tasks.status in ('pending', 'processing')
-                  )
+                  and coalesce(tasks.status, '') not in ('pending', 'processing')
                 order by attempts.id desc
                 limit ?
                 """,
-                (max(1, limit),),
+                (*OA_NODE_DECISION_RESOLUTIONS.values(), max(1, limit)),
             ).fetchall()
             return [ReplyAttempt.model_validate(dict(row)) for row in rows]
 
