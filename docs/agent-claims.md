@@ -11,7 +11,6 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-oa-node-reconciliation-20261122 | app/task_scanners.py; app/store.py (OA needs_human resolution); app/cli.py (OA scan result); tests/test_task_scanners.py; tests/test_cli.py; docs/runtime-mechanism.md; docs/architecture.md | Repair verified stale local OA reminders and erroneous success status after scan failures. | 2026-11-22 |
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents

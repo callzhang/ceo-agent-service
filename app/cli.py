@@ -2476,7 +2476,7 @@ def scan_oa_approvals_command(
     max_new_items: int | None = None,
     runtime_skill_snapshot=None,
 ) -> int:
-    from app.task_scanners import scan_pending_oa_approvals
+    from app.task_scanners import OA_PENDING_SCANNER, scan_pending_oa_approvals
 
     store = AutoReplyStore(settings.db_path)
     dws = DwsClient(
@@ -2500,6 +2500,9 @@ def scan_oa_approvals_command(
         max_new_items=max_new_items,
         skill_options=skill_options,
     )
+    scan_state = store.get_daily_scan_state(OA_PENDING_SCANNER) or {}
+    if scan_error := str(scan_state.get("last_error") or "").strip():
+        raise RuntimeError(f"scan-oa-approvals incomplete: {scan_error}")
     print(f"scan-oa-approvals queued={queued}", flush=True)
     return queued
 

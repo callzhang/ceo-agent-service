@@ -572,6 +572,7 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
 
 扫描规则：
 
+- 待办列表读取或 Skill 绑定失败时，任务历史显示失败及原因；只在实际扫描结束后报告入队数。
 - **`dws oa approval list-pending` 的行在 `result.values`。** cursor 里 `seen_process_instance_ids` 为空表示**解析失败**，不是"没有待办"。
 - **待办查询窗口按钉钉时区解释。** 扫描器所在主机的本地日期可能与钉钉日期不同；DWS 对
   `--start/--end` 的筛选按日历日期执行。服务先把窗口边界转换到 `Asia/Shanghai` 再调用，避免

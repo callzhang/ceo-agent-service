@@ -1893,6 +1893,22 @@ def test_scan_oa_approvals_command_honors_enabled_and_lookback(
     assert capsys.readouterr().out == "scan-oa-approvals queued=7\n"
 
 
+def test_scan_oa_approvals_command_reports_failed_pending_list(tmp_path, monkeypatch, capsys):
+    class UnavailableDwsClient:
+        def list_pending_oa_approvals(self, **kwargs):
+            raise RuntimeError("provider pending list unavailable")
+
+        def read_oa_approval_tasks(self, process_id):
+            raise AssertionError("no pending list was read")
+
+        read_oa_process_instance_openapi = read_oa_approval_tasks
+
+    monkeypatch.setattr(cli, "DwsClient", lambda **_: UnavailableDwsClient())
+    with pytest.raises(RuntimeError, match="scan-oa-approvals incomplete: provider pending list unavailable"):
+        cli.scan_oa_approvals_command(WorkerSettings(db_path=tmp_path / "worker.sqlite3"))
+    assert "queued=0" not in capsys.readouterr().out
+
+
 def test_process_okr_reviews_command_processes_and_sends_reply(
     tmp_path,
     monkeypatch,
