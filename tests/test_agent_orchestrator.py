@@ -430,6 +430,25 @@ def test_approved_candidate_executes_after_audit_and_persists_receipt(tmp_path):
     assert len(handler.calls) == 1
 
 
+def test_provider_risk_refusal_stops_without_another_consumer_turn(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    refusal = AgentError.model_validate(
+        agent_error_payload("provider_risk_refusal", failed=True)
+    )
+    consumer = ScriptedConsumer(store, refusal, refusal, refusal, refusal)
+    audit = ScriptedAudit(store)
+    driver, handler = orchestrator(store, consumer, audit)
+
+    result = driver.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "failed_terminal"
+    assert result.error.code == "provider_risk_rejected"
+    assert result.error.source_code == "provider_risk_refusal"
+    assert len(consumer.calls) == 1
+    assert audit.calls == []
+    assert handler.calls == []
+
+
 def test_audit_return_creates_append_only_consumer_revision_and_preserves_feedback(tmp_path):
     store, task, context = task_and_context(tmp_path)
     consumer = ScriptedConsumer(store, candidate("first"), candidate("corrected"))

@@ -1253,10 +1253,10 @@ continuation；新 revision 或 Skill/契约版本表示业务规则/结果版�
 
 Agent 返回的错误只是它观察到的现象，含义由服务决定（`app/agent_reported_error.py`）。wire 结果里的
 `error_retryable` 与 `error_authorization_required` 不被读取；`error_code` 先统一为小写，服务认识的码
-（需要授权或确认、dry run、可自行恢复的依赖、浏览器工具回报的退订码，以及缺少已声明操作的 `operation_unavailable`、`capability_unavailable`、`write_capability_unavailable`）按服务政策决定是否重试、
+（需要授权或确认、dry run、运行时风险拒绝 `provider_risk_rejected` / `provider_risk_refusal`、可自行恢复的依赖、浏览器工具回报的退订码，以及缺少已声明操作的 `operation_unavailable`、`capability_unavailable`、`write_capability_unavailable`）按服务政策决定是否重试、是否等人；原生拒绝拼写归一到终态服务码 `provider_risk_rejected`，原始拼写保留在 `source_code`，并命中现有历史拒绝重放限制。
 
 Derek 2026-10-25/26：缺少工具本身不是失败理由。若原操作不可执行，但现有信息足以形成真实、有用的回复，Consumer 应生成给请求人的消息候选，说明未完成操作、已有材料和请求人的下一步，并走原有独立 Audit 与投递流程；不能伪称操作成功。只有操作和有用回复都无法真实完成时才报 `operation_unavailable`（提示在 `_CAPABILITY_COMMON_TAIL`）。
-是否等人；其他任何失败码记为 `agent_reported_failure`，走有上限的普通重试（同一 role、generation、revision 连续失败 4 次 turn，即初始调用加三次 retry，
+其他任何失败码记为 `agent_reported_failure`，走有上限的普通重试（同一 role、generation、revision 连续失败 4 次 turn，即初始调用加三次 retry，
 终止为 `failed`，见上文），Agent 原文保存在 `source_code` 供排查。非失败结果（`needs_human`、`no_action` 等）上的码只作为原因标签，不驱动重试
 或授权。编排层依赖的服务码（`runtime_*`、`codex_provider_*`、租约与恢复类）只能由服务写入，
 Agent 写入时一律按 `agent_reported_failure` 处理。

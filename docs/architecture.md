@@ -1907,7 +1907,7 @@ Consumer/Audit stages (2026-10-04): immediate continuation is reserved for work 
 
 角色 MCP 启动参数携带原领取 run 的 execution_generation，启动时与当前任务校验；旧回合不能在 generation 更换后绑定到新一代工件，运行中的既有读写仍逐次检查当前 generation。
 
-未解除的实际 provider-risk refusal 保留 failed 与原始错误码，不重放；Consumer 不能把“拒绝后不重试”报告为 no_action 完成，Audit 应退回该终态错误。这个规则依据真实拒绝证据，不扫描正文完成短语。
+未解除的实际 provider-risk refusal 保留 failed 与原始来源码，不重放；Consumer 报告 Codex 原生 `provider_risk_refusal` 时，服务归一为终态码 `provider_risk_rejected` 并保留原拼写在 `source_code`，以应用现有拒绝重放限制。Consumer 不能把“拒绝后不重试”报告为 no_action 完成，Audit 应退回该终态错误。这个规则依据真实拒绝证据，不扫描正文完成短语。
 
 ### 显式维护部署（2026-10-05）
 
