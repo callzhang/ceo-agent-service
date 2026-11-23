@@ -739,13 +739,22 @@ class OaCommentHandler:
         content = action.payload.get("content")
         if not isinstance(process_id, str) or not process_id.strip() or not isinstance(content, str) or not content.strip():
             return ActionOutcome("failed", {"reason": "oa_comment_parameters_invalid"})
+        dispatch_started_at = datetime.now(timezone.utc).isoformat()
         response = self.dws.comment_oa_approval(process_id, content)
         comment_key = _provider_identity(response, "commentKey") or _provider_identity(response, "commentId")
         if comment_key:
             return ActionOutcome("verified", {"comment_id": comment_key, "process_instance_id": process_id, "provider_result": response})
         if isinstance(response, dict) and response.get("success") is False:
             return ActionOutcome("failed", {"provider_result": response})
-        return ActionOutcome("uncertain", {"reason": "oa_comment_id_missing"})
+        return self.reconcile(
+            action,
+            action_key=action_key,
+            candidate={"action_attempt": {
+                "status": "uncertain",
+                "external_action_key": action_key,
+                "created_at": dispatch_started_at,
+            }},
+        )
 
     def reconcile(self, action: ProposedAction, *, action_key: str, candidate: dict[str, object]) -> ActionOutcome | None:
         process_id = action.target.get("process_instance_id")

@@ -1,5 +1,6 @@
 import copy
 import json
+import time
 from datetime import datetime, timedelta, timezone
 
 import pytest
@@ -76,6 +77,29 @@ def test_unknown_oa_comment_is_verified_from_exact_native_detail_without_resend(
     assert result.provider_result["process_instance_id"] == "original-process"
     assert "comment_id" not in result.provider_result
     assert "remark" not in result.provider_result
+
+
+def test_dispatch_immediately_verifies_successful_oa_comment_without_provider_id():
+    class ReceiptWithoutId(CommentSource):
+        def comment_oa_approval(self, process_id, content):
+            self.comments += 1
+            time.sleep(0.01)
+            self.detail["result"]["operationRecords"].append({
+                "type": "ADD_REMARK", "userId": "principal", "remark": content,
+                "date": int(datetime.now(timezone.utc).timestamp() * 1000),
+            })
+            return {"success": True}
+
+    source = ReceiptWithoutId()
+    result = OaCommentHandler(source).dispatch(
+        action(), action_key="new-key", candidate={},
+    )
+
+    assert result.status == "verified"
+    assert source.comments == 1
+    assert source.reads == [("detail", "original-process")]
+    assert result.provider_result["operation_record"]["type"] == "ADD_REMARK"
+    assert "comment_id" not in result.provider_result
 
 
 @pytest.mark.parametrize("fault", [
