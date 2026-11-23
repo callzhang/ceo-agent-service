@@ -1507,7 +1507,7 @@ class DingTalkAutoReplyWorker:
                     separators=(",", ":"),
                 ).encode("utf-8")
             ).hexdigest()
-            if self.store.requeue_failed_reply_task_for_source_revision(
+            if self.store.requeue_reply_task_for_source_revision(
                 task.id,
                 expected_execution_generation=task.execution_generation,
                 source_revision_key=revision_key,

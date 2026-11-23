@@ -88,6 +88,8 @@ class AutomaticRepairCoordinator:
             candidates = []
             now = time.time()
             for entry, updated_at in repairs:
+                if self.user_feedback is not None and entry['source'] == USER_FEEDBACK_SOURCE:
+                    self.user_feedback.recheck_legacy_business_result(entry)
                 if entry['status'] in TERMINAL:
                     continue
                 summary = self.store.get_task_summary(entry['task_id']) if entry['task_id'] else None
@@ -128,7 +130,7 @@ class AutomaticRepairCoordinator:
             return
         branch = f"codex/repair-{entry['source']}-{entry['source_id']}"
         turn_ids = entry['turn_ids']
-        if turn_ids:
+        if turn_ids and turn_ids[-1] != entry.get('business_recheck_turn_id'):
             turn = self.store.get_turn(turn_ids[-1])
             if turn is None:
                 raise ValueError('automatic repair turn is missing')
@@ -144,13 +146,14 @@ class AutomaticRepairCoordinator:
                 except ValidationError:
                     diagnosis = None
                 if diagnosis is not None and diagnosis.outcome != 'pr_created':
-                    if diagnosis.outcome == 'business_revision':
+                    if diagnosis.outcome in {'business_revision', 'delivery_check'}:
                         entry.update(
                             status='awaiting_business',
                             summary=diagnosis.summary,
                             business_retry={
                                 'attempt_id': entry.get('feedback_attempt_id', 0),
                                 'diagnosis': diagnosis.summary,
+                                'outcome': diagnosis.outcome,
                                 'received_at': entry.get('feedback_received_at', ''),
                             },
                         )
@@ -238,8 +241,10 @@ class AutomaticRepairCoordinator:
                 f"Read {Path(__file__).resolve().parents[1]}/docs/automatic-error-repair.md. "
                 "If you reproduce a code defect, fix it, run regression tests and open a PR under the supplied branch. "
                 "For a fixable business-content mistake, return business_revision with concrete facts, source "
-                "evidence and instructions for the original task. If the feedback requests a missing delivery "
-                "and it was later delivered, return business_revision so the service verifies the existing receipt. "
+                "evidence and instructions for the original task, even if the earlier content was sent. "
+                "For feedback solely about a missing delivery, return delivery_check if the approved content "
+                "was already delivered after that feedback. Return business_revision if the original task still "
+                "needs to complete the delivery. An earlier receipt does not prove a content correction. "
                 "The service owns the guarded business handoff. "
                 "For no applicable change return no_code_change; for an external blocker return blocked. "
                 "Do not directly deploy, send, or replay business actions. End with the typed JSON outcome and summary."

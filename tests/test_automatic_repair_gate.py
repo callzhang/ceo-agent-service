@@ -218,7 +218,7 @@ def test_user_feedback_sync_claim_restart_and_result_readback(store, tmp_path):
     assert result["processing_task_id"] == entry["task_id"]
 
 
-def test_user_feedback_delivered_reply_is_not_reenqueued(store):
+def test_user_feedback_delivery_check_does_not_reenqueue_the_original(store):
     from app.feedback_repair import FeedbackRepairQueue
     from app.automatic_repair_store import save_repair
 
@@ -238,7 +238,7 @@ def test_user_feedback_delivered_reply_is_not_reenqueued(store):
     store.record_sent_reply(task.conversation_id, task.trigger_message_id, "Already delivered")
     enqueue_repair(store, "user_feedback", 101)
     entry = get_repair(store, "user_feedback", 101)
-    entry["business_retry"] = {"attempt_id": attempt, "diagnosis": "Fix the draft"}
+    entry["business_retry"] = {"attempt_id": attempt, "diagnosis": "Find the delivery", "outcome": "delivery_check"}
     save_repair(store, entry)
     FeedbackRepairQueue(store).advance_business(entry)
 
@@ -246,38 +246,59 @@ def test_user_feedback_delivered_reply_is_not_reenqueued(store):
     assert store.get_reply_task(task.id).execution_generation == task.execution_generation
 
 
-def test_user_feedback_hands_off_one_unsent_business_revision(store, tmp_path):
+@pytest.mark.parametrize("prior_delivery,new_delivery", [(False, True), (True, True), (True, False)])
+def test_user_feedback_hands_off_one_business_revision(store, tmp_path, monkeypatch, prior_delivery, new_delivery):
     from app.action_storage import update_action
+    from app.automatic_repair_store import save_repair
+    from app.dingtalk_models import DingTalkMessage
     from app.feedback_repair import FeedbackRepairQueue
     from tests.test_store import _claim_audit_run
 
+    trigger = DingTalkMessage(
+        open_conversation_id="feedback-ding", conversation_title="Original", single_chat=True,
+        open_message_id="reply-original", create_time="2026-11-20 00:00:00",
+        sender_name="Sender", sender_user_id="sender-1", content="Review the document",
+    )
     task = store.ensure_reply_task(
-        conversation_id="feedback-ding", conversation_title="Original",
-        single_chat=True, trigger_message_id="reply-original",
-        trigger_create_time="2026-11-20 00:00:00",
-        trigger_sender="Sender", trigger_text="Review the document",
+        conversation_id=trigger.open_conversation_id, conversation_title=trigger.conversation_title,
+        single_chat=trigger.single_chat, trigger_message_id=trigger.open_message_id,
+        trigger_create_time=trigger.create_time, trigger_sender=trigger.sender_name,
+        trigger_text=trigger.content, trigger_message_json=trigger.model_dump_json(),
     )
     [task] = store.claim_reply_tasks(limit=1)
     run = _claim_audit_run(store, task.id, task.execution_generation, owner="audit").run
-    store.fail_agent_run(run.id, {"code": "test_failure"}, owner="audit")
     attempt = store.record_reply_attempt(
         conversation_id=task.conversation_id, conversation_title=task.conversation_title,
         trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
         trigger_text=task.trigger_text, action="agent_run", sensitivity_kind="normal",
-        send_status="failed",
+        send_status="completed" if prior_delivery else "failed",
     )
     with store._connect() as db:
         update_action(db, "reply_attempts", attempt, {"agent_run_id": run.id})
-    store.fail_reply_task(
-        task.id, "audit_revision_exhausted",
-        expected_execution_generation=task.execution_generation,
-    )
+
+    def record_delivered(audit_run, identity):
+        store.complete_agent_run(audit_run.id, {"outcome": "approve"}, owner="audit")
+        return store.record_completed_agent_message_delivery(
+            agent_run_id=audit_run.id, external_action_key=identity,
+            business_object_key=task.business_object_key, action_identity=identity,
+            operation="reply_to_message", target_identifiers={"conversation_id": task.conversation_id},
+            conversation_id=task.conversation_id, trigger_message_id=task.trigger_message_id,
+            reply_text=identity, provider_result={"message_id": identity},
+        )
+
+    if prior_delivery:
+        old_receipt = record_delivered(run, "original draft")
+        store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+        assert store.get_reply_task(task.id).input_compacted
+        monkeypatch.setattr("app.feedback_repair.DwsClient.read_message_by_id", lambda *_: trigger)
+    else:
+        store.fail_agent_run(run.id, {"code": "test_failure"}, owner="audit")
+        store.fail_reply_task(task.id, "audit_revision_exhausted", expected_execution_generation=task.execution_generation)
+        ordinary_repair = get_repair(store, "reply_attempts", attempt)
+        ordinary_repair["status"] = "no_code_change"
+        save_repair(store, ordinary_repair)
     store.set_feedback_iteration_enabled(True)
-    store.upsert_feedback_event(key=f"manual:{attempt}", feedback_token="token", comment="Check the title")
-    from app.automatic_repair_store import save_repair
-    ordinary_repair = get_repair(store, "reply_attempts", attempt)
-    ordinary_repair["status"] = "no_code_change"
-    save_repair(store, ordinary_repair)
+    store.upsert_feedback_event(key=f"manual:{attempt}", feedback_token="token", comment="Correct the title")
 
     def no_github(_branch):
         pytest.fail("business diagnosis must not depend on GitHub")
@@ -288,18 +309,48 @@ def test_user_feedback_hands_off_one_unsent_business_revision(store, tmp_path):
     )
     coord.run_once()
     item = store.get_feedback_processing_item(f"manual:{attempt}")
-    finish(store, item.workbench_turn_id, '{"outcome":"business_revision","summary":"Use the verified title"}')
+    entry = get_repair(store, "user_feedback", item.current_round_id)
+    first_turn = item.workbench_turn_id
+    finish(store, first_turn, '{"outcome":"business_revision","summary":"Use the verified title"}')
+    if prior_delivery:
+        # A deployment recovers the first version's overly broad receipt readback.
+        entry.update(status="business_delivered", business_retry={"attempt_id": attempt, "diagnosis": "Use the verified title"})
+        save_repair(store, entry)
+        coord.run_once()
+        second = get_repair(store, "user_feedback", item.current_round_id)
+        assert second["task_id"] == entry["task_id"]
+        assert len(second["turn_ids"]) == 2 and second["turn_ids"][0] == first_turn
+        assert store.get_reply_task(task.id).execution_generation == task.execution_generation
+        finish(store, second["turn_ids"][-1], '{"outcome":"business_revision","summary":"Use the verified title"}')
     coord.run_once()
     coord.run_once()
     revised = store.get_reply_task(task.id)
     assert revised.status == "pending"
     assert revised.execution_generation != task.execution_generation
     assert revised.manual_rerun_attempt_id == attempt
+    assert revised.trigger_message_json == trigger.model_dump_json()
     assert "Use the verified title" in store.get_reply_attempt(attempt).reviewer_feedback
     coord.run_once()
     assert store.get_reply_task(task.id).execution_generation == revised.execution_generation
     assert len(store.list_reply_task_inputs(task.id)) == 2
-    assert get_repair(store, "user_feedback", item.current_round_id)["status"] == "awaiting_business"
+    entry = get_repair(store, "user_feedback", item.current_round_id)
+    assert entry["status"] == "awaiting_business"
+    if prior_delivery:
+        assert store.get_sent_reply(task.conversation_id, task.trigger_message_id).id == old_receipt.id
+
+    revised = store.claim_reply_task(revised.id)
+    if new_delivery:
+        fresh = _claim_audit_run(store, revised.id, revised.execution_generation, owner="audit").run
+        receipt = record_delivered(fresh, "corrected draft")
+    store.complete_reply_task(revised.id, expected_execution_generation=revised.execution_generation)
+    coord.user_feedback.advance_business(entry)
+    result = get_repair(store, "user_feedback", item.current_round_id)
+    if new_delivery:
+        assert result["status"] == "business_delivered"
+        assert str(receipt.id) in result["summary"]
+    else:
+        assert result["status"] == "blocked"
+        assert "尚无本次修订的发送回执" in result["summary"]
 
 
 def test_user_feedback_code_defect_reuses_the_existing_pr_readback(store, tmp_path):

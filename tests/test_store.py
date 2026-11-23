@@ -8330,7 +8330,7 @@ def test_failed_reply_task_requeues_once_for_new_source_revision(tmp_path: Path)
         expected_execution_generation=claimed.execution_generation,
     )
 
-    assert store.requeue_failed_reply_task_for_source_revision(
+    assert store.requeue_reply_task_for_source_revision(
         task.id,
         expected_execution_generation=claimed.execution_generation,
         source_revision_key="messages:sha256:later-context",
@@ -8341,7 +8341,7 @@ def test_failed_reply_task_requeues_once_for_new_source_revision(tmp_path: Path)
     assert rerun.error == "automatic_source_revision_rerun"
     assert rerun.force_new_decision is True
     assert rerun.execution_generation != task.execution_generation
-    assert not store.requeue_failed_reply_task_for_source_revision(
+    assert not store.requeue_reply_task_for_source_revision(
         task.id,
         expected_execution_generation=rerun.execution_generation,
         source_revision_key="messages:sha256:later-context",
@@ -8370,7 +8370,7 @@ def test_failed_reply_task_source_revision_rerun_stops_after_delivery_receipt(
     )
     store.record_sent_reply(task.conversation_id, task.trigger_message_id, "Already delivered")
 
-    assert not store.requeue_failed_reply_task_for_source_revision(
+    assert not store.requeue_reply_task_for_source_revision(
         task.id,
         expected_execution_generation=claimed.execution_generation,
         source_revision_key="messages:sha256:later-context",

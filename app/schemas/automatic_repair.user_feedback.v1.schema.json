@@ -5,6 +5,7 @@
       "enum": [
         "pr_created",
         "business_revision",
+        "delivery_check",
         "no_code_change",
         "blocked"
       ],
