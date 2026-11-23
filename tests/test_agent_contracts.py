@@ -58,6 +58,16 @@ def _proposal() -> dict[str, object]:
 
 
 def _decision_options() -> list[dict[str, str]]:
+    proceed_plan = _proposal()
+    proceed_plan["actions"] = [
+        {
+            **proceed_plan["actions"][0],
+            "capability": "dingtalk-chat",
+            "operation": "send_message",
+            "target": {"conversation_id": "cid-1"},
+            "payload": {"content": "The published result is effective today."},
+        }
+    ]
     return [
         {
             "key": "A",
@@ -65,7 +75,7 @@ def _decision_options() -> list[dict[str, str]]:
             "instruction": "Proceed with the verified candidate.",
             "consequence": "The accepted candidate can move to Audit.",
             "applies_to": "task_class",
-            "plan": _proposal(),
+            "plan": proceed_plan,
         },
         {
             "key": "B",

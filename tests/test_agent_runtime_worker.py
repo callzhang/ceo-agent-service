@@ -1068,10 +1068,10 @@ def test_protocol_consumer_event_uses_current_wire_without_repairing_purpose_met
                 {
                     "description": "Send the reply.",
                     "action_identity": "fixture-send",
-                    "capability": "agent_cli.dws",
-                    "operation": "chat message send",
-                    "target": {"group": "cid-1"},
-                    "payload": {"text": "approved"},
+                    "capability": "dingtalk-chat",
+                    "operation": "send_message",
+                    "target": {"conversation_id": "cid-1"},
+                    "payload": {"content": "approved"},
                 }
             ],
             "sourced_facts": [],
@@ -1500,24 +1500,10 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
                     {
                         "description": "Ask the verified inviter one factual question.",
                         "action_identity": "clarify-calendar-input",
-                        "capability": "agent_cli.dws",
-                        "operation": "chat message send",
-                        "target": {"group": "cid-1"},
-                        "payload": {
-                            "argv": [
-                                "dws",
-                                "chat",
-                                "message",
-                                "send",
-                                "--group",
-                                "cid-1",
-                                "--at-open-dingtalk-ids",
-                                "inviter-1",
-                                "--text",
-                                self.message_text,
-                                "--yes",
-                            ]
-                        },
+                        "capability": "dingtalk-chat",
+                        "operation": "send_message",
+                        "target": {"conversation_id": "cid-1"},
+                        "payload": {"content": self.message_text},
                     }
                 ],
                 "sourced_facts": [
@@ -1545,12 +1531,15 @@ class CalendarClarificationProtocolExecutor(ProtocolCodexExecutor):
 
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
-        assert action["target"] == {"group": "cid-1"}
-        prepared_message_text = action["payload"]["argv"][-2]
-        assert prepared_message_text == self.message_text
-        assert "--user" not in action["payload"]["argv"]
+        assert action["target"] == {"conversation_id": "cid-1"}
+        prepared_message_text = action["payload"]["content"]
+        assert prepared_message_text.startswith(self.message_text)
 
-        write_command = shlex.join(action["payload"]["argv"])
+        write_command = (
+            "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
+        )
         verify_command = (
             "dws chat message list --group cid-1 --time 2026-07-29"
         )
@@ -1757,22 +1746,10 @@ class ProvidedSkillReceiptProtocolExecutor(SkillReceiptProtocolExecutor):
                                 {
                                     "description": "Send the protocol fixture message.",
                                     "action_identity": "send-protocol-fixture",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "chat message send",
-                                    "target": {"group": "cid-1"},
-                                    "payload": {
-                                        "argv": [
-                                            "dws",
-                                            "chat",
-                                            "message",
-                                            "send",
-                                            "--group",
-                                            "cid-1",
-                                            "--text",
-                                            self.message_text,
-                                            "--yes",
-                                        ]
-                                    },
+                                    "capability": "dingtalk-chat",
+                                    "operation": "send_message",
+                                    "target": {"conversation_id": "cid-1"},
+                                    "payload": {"content": self.message_text},
                                 }
                             ],
                             "sourced_facts": [],
@@ -1787,7 +1764,11 @@ class ProvidedSkillReceiptProtocolExecutor(SkillReceiptProtocolExecutor):
 
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
-        write_command = shlex.join(action["payload"]["argv"])
+        write_command = (
+            "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
+        )
         verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
         records.extend(
             (
@@ -1887,24 +1868,10 @@ class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
                                 {
                                     "description": "Ask the sender one factual question.",
                                     "action_identity": "ask-sender-question",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "chat message send",
-                                    "target": {"group": "cid-1"},
-                                    "payload": {
-                                        "argv": [
-                                            "dws",
-                                            "chat",
-                                            "message",
-                                            "send",
-                                            "--group",
-                                            "cid-1",
-                                            "--at-open-dingtalk-ids",
-                                            "open-user-1",
-                                            "--text",
-                                            self.message_text,
-                                            "--yes",
-                                        ]
-                                    },
+                                    "capability": "dingtalk-chat",
+                                    "operation": "send_message",
+                                    "target": {"conversation_id": "cid-1"},
+                                    "payload": {"content": f"<@open-user-1> {self.message_text}"},
                                 }
                             ],
                             "sourced_facts": [
@@ -1924,7 +1891,11 @@ class MessageClarificationSkillExecutor(SkillReceiptProtocolExecutor):
 
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
-        write_command = shlex.join(action["payload"]["argv"])
+        write_command = (
+            "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
+        )
         self.sent_questions += 1
         records.extend(
             (
@@ -2031,22 +2002,10 @@ class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
                                 {
                                     "description": "Reply with the current conclusion.",
                                     "action_identity": "reply-with-conclusion",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "chat message send",
-                                    "target": {"group": "cid-1"},
-                                    "payload": {
-                                        "argv": [
-                                            "dws",
-                                            "chat",
-                                            "message",
-                                            "send",
-                                            "--group",
-                                            "cid-1",
-                                            "--text",
-                                            self.reply_text,
-                                            "--yes",
-                                        ]
-                                    },
+                                    "capability": "dingtalk-chat",
+                                    "operation": "send_message",
+                                    "target": {"conversation_id": "cid-1"},
+                                    "payload": {"content": self.reply_text},
                                 }
                             ],
                             "sourced_facts": [
@@ -2064,7 +2023,11 @@ class DocumentReadSkillExecutor(SkillReceiptProtocolExecutor):
 
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
-        write_command = shlex.join(action["payload"]["argv"])
+        write_command = (
+            "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
+        )
         verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
         self.sent_replies += 1
         records.extend(
@@ -2258,7 +2221,13 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
     def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
         action = candidate["proposal"]["actions"][0]
-        command = shlex.join(action["payload"]["argv"])
+        command = (
+            "dws chat message reaction add --message-id msg-1 --emoji 👍 --yes"
+            if self.scenario.useful_reaction
+            else "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
+        )
         verify_command = (
             "dws chat message reaction list --message-id msg-1"
             if self.scenario.useful_reaction
@@ -2317,33 +2286,10 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
 
     def _proposal(self) -> dict[str, object]:
         if self.scenario.useful_reaction:
-            operation = "chat message reaction add"
-            argv = [
-                "dws",
-                "chat",
-                "message",
-                "reaction",
-                "add",
-                "--message-id",
-                "msg-1",
-                "--emoji",
-                "👍",
-                "--yes",
-            ]
+            operation = "add_message_emoji"
             description = "Add one useful acknowledgment reaction."
         else:
-            operation = "chat message send"
-            argv = [
-                "dws",
-                "chat",
-                "message",
-                "send",
-                "--group",
-                "cid-1",
-                "--text",
-                self.review_text,
-                "--yes",
-            ]
+            operation = "send_message"
             description = "Send the evidence-based material review."
         return {
             "objective": description,
@@ -2351,10 +2297,14 @@ class Task4BehaviorProtocolExecutor(ConsumerAuditLifecycleExecutor):
                 {
                     "description": description,
                     "action_identity": "reviewed-action",
-                    "capability": "agent_cli.dws",
+                    "capability": "dingtalk-chat",
                     "operation": operation,
                     "target": {"conversation_id": "cid-1", "message_id": "msg-1"},
-                    "payload": {"argv": argv},
+                    "payload": (
+                        {"emoji": "👍"}
+                        if self.scenario.useful_reaction
+                        else {"content": self.review_text}
+                    ),
                 }
             ],
             "sourced_facts": [
@@ -2417,6 +2367,17 @@ class NativeCommandStub:
         raise AssertionError(f"unexpected native command: {command}")
 
 
+class OaSourceContextDws(ContextOnlyDws):
+    def read_oa_approval_detail(self, process_instance_id: str) -> dict[str, object]:
+        return {
+            "success": True,
+            "result": {
+                "processInstanceId": process_instance_id,
+                "formValueVOS": [],
+            },
+        }
+
+
 class OaProtocolExecutor(ProtocolCodexExecutor):
     def __init__(self, native_executor: NativeCommandStub) -> None:
         super().__init__()
@@ -2472,21 +2433,6 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
             else:
                 task_id = str(live_task.get("task_id") or "")
                 process_id = str(reference.get("process_instance_id") or "")
-                argv = [
-                    "dws",
-                    "oa",
-                    "approval",
-                    "approve",
-                    "--instance-id",
-                    process_id,
-                    "--task-id",
-                    task_id,
-                    "--remark",
-                    "Reviewed by protocol agent",
-                    "--format",
-                    "json",
-                    "--yes",
-                ]
                 if not audit_turn:
                     result = _consumer_protocol_result(
                         "proposal",
@@ -2497,13 +2443,13 @@ class OaProtocolExecutor(ProtocolCodexExecutor):
                                 {
                                     "description": "Approve the live OA task.",
                                     "action_identity": "approve-live-oa-task",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "oa approval approve",
+                                    "capability": "dingtalk-oa",
+                                    "operation": "approve",
                                     "target": {
                                         "process_instance_id": process_id,
                                         "task_id": task_id,
                                     },
-                                    "payload": {"argv": argv},
+                                    "payload": {"remark": "Reviewed by protocol agent"},
                                 }
                             ],
                             "sourced_facts": [],
@@ -2578,10 +2524,10 @@ class FailedWriteProtocolExecutor(ProtocolCodexExecutor):
                                 {
                                     "description": "Send the message.",
                                     "action_identity": "send-message",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "chat message send",
-                                    "target": {"group": "cid-1"},
-                                    "payload": {"argv": shlex.split(command)},
+                                    "capability": "dingtalk-chat",
+                                    "operation": "send_message",
+                                    "target": {"conversation_id": "cid-1"},
+                                    "payload": {"content": "hello"},
                                 }
                             ],
                             "sourced_facts": [],
@@ -2637,22 +2583,10 @@ class ContextRefreshingProtocolExecutor(ProtocolCodexExecutor):
                                 {
                                     "description": "Send the update.",
                                     "action_identity": "send-update",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "chat message send",
-                                    "target": {"group": "cid-1"},
-                                    "payload": {
-                                        "argv": [
-                                            "dws",
-                                            "chat",
-                                            "message",
-                                            "send",
-                                            "--group",
-                                            "cid-1",
-                                            "--text",
-                                            "old target",
-                                            "--yes",
-                                        ]
-                                    },
+                                    "capability": "dingtalk-chat",
+                                    "operation": "send_message",
+                                    "target": {"conversation_id": "cid-1"},
+                                    "payload": {"content": "old target"},
                                 }
                             ],
                             "sourced_facts": [],
@@ -2695,22 +2629,10 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                                 {
                                     "description": "Send the message.",
                                     "action_identity": "send-message",
-                                    "capability": "agent_cli.dws",
-                                    "operation": "chat message send",
-                                    "target": {"group": "cid-1"},
-                                    "payload": {
-                                        "argv": [
-                                            "dws",
-                                            "chat",
-                                            "message",
-                                            "send",
-                                            "--group",
-                                            "cid-1",
-                                            "--text",
-                                            "approved",
-                                            "--yes",
-                                        ]
-                                    },
+                                    "capability": "dingtalk-chat",
+                                    "operation": "send_message",
+                                    "target": {"conversation_id": "cid-1"},
+                                    "payload": {"content": "approved"},
                                 }
                             ],
                             "sourced_facts": [],
@@ -2736,8 +2658,11 @@ class AuthorizationRecoveryProtocolExecutor(ProtocolCodexExecutor):
                     )
                 )
             ]
-        write_command = shlex.join(
-            candidate["proposal"]["actions"][0]["payload"]["argv"]
+        action = candidate["proposal"]["actions"][0]
+        write_command = (
+            "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
         )
         verify_command = "dws chat message list --group cid-1 --time 2026-08-07"
         return [
@@ -3033,10 +2958,11 @@ def _worker_with_protocol_executor(
     *,
     max_task_attempts: int = 3,
     system_dry_run: bool = True,
+    dws: ContextOnlyDws | None = None,
 ) -> tuple[DingTalkAutoReplyWorker, ContextOnlyDws]:
     _install_protocol_skill(tmp_path, executor)
     store = AutoReplyStore(tmp_path / "runtime.sqlite3")
-    dws = ContextOnlyDws(messages)
+    dws = dws or ContextOnlyDws(messages)
     runtime_config = load_runtime_config(
         {
             "CEO_AGENT_RUNTIME_ROUTES": "codex_oauth",
@@ -3075,7 +3001,7 @@ def _worker_with_protocol_executor(
     )
     orchestrator = AgentOrchestrator(
         store=store,
-        system_executor=SystemExecutor(store, dry_run=system_dry_run),
+        system_executor=SystemExecutor(store, dws=dws, dry_run=system_dry_run),
         consumer=ConsumerAgentRunner(
             store=store,
             workspace=tmp_path,
@@ -3084,6 +3010,7 @@ def _worker_with_protocol_executor(
             codex_session_exists=lambda _session_id: True,
             runtime_config=runtime_config,
             runtime_router=runtime_router,
+            source_client=dws,
         ),
         audit=AuditAgentRunner(
             store=store,
@@ -4515,12 +4442,10 @@ def test_calendar_missing_attendance_value_is_a_verified_clarification_proposal(
     assert CalendarClarificationProtocolExecutor.question in executor.prompts[1]
     candidate = _prompt_json_section(executor.prompts[1], "Candidate revision\n")
     action = candidate["proposal"]["actions"][0]
-    argv = action["payload"]["argv"]
-    assert action["target"] == {"group": "cid-1"}
-    assert argv[argv.index("--group") + 1] == "cid-1"
-    assert argv[argv.index("--at-open-dingtalk-ids") + 1] == "inviter-1"
-    assert "<@inviter-1>" in argv[argv.index("--text") + 1]
-    assert "--user" not in argv
+    assert action["target"] == {"conversation_id": "cid-1"}
+    assert action["payload"]["content"].startswith(
+        f"<@inviter-1> {CalendarClarificationProtocolExecutor.question}"
+    )
     assert "--group cid-1" in executor.question_write_command
     assert "--user" not in executor.question_write_command
     assert executor.question_verify_command == (
@@ -4856,15 +4781,15 @@ def test_acknowledgment_proposes_reaction_only_when_useful(
     result = _task4_consumer_result(worker)
     action = result["proposal"]["actions"][0]
     assert result["outcome"] == "proposal"
-    assert action["operation"] == "chat message reaction add"
-    assert action["payload"]["argv"][-3:-1] == ["--emoji", "👍"]
+    assert action["operation"] == "add_message_emoji"
+    assert action["payload"]["emoji"] == "👍"
     runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
     assert "chat message reaction add" not in _task4_completed_operations(runs[1])
     assert all(
         event.get("item", {}).get("tool") != "execute_reviewed_write"
         for event in runs[1].tool_events
     )
-    assert executor.write_operations == ["chat message reaction add"]
+    assert executor.write_operations == ["add_message_emoji"]
     assert executor.external_readbacks == [
         "dws chat message reaction list --message-id msg-1"
     ]
@@ -4909,7 +4834,7 @@ def test_direct_decision_request_becomes_grounded_proposal(
         "dws chat message list --group cid-1 --time 2026-07-29",
     ]
     _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
-    assert executor.write_operations == ["chat message send"]
+    assert executor.write_operations == ["send_message"]
     assert len(executor.external_readbacks) == 1
 
 
@@ -5079,7 +5004,7 @@ def test_refresh_keeps_available_image_when_later_resolution_is_unavailable(
     assert attempt is not None
     assert attempt.send_status == "dry_run"
     assert len(executor.image_inspections) == 2
-    assert executor.write_operations == ["chat message send"]
+    assert executor.write_operations == ["send_message"]
     assert executor.external_readbacks == ["dws chat message list --group cid-1 --time 2026-07-29"]
     runs = _task4_agent_runs(worker)
     assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
@@ -5445,22 +5370,10 @@ class MeetingReceiptLifecycleExecutor(ConsumerAuditLifecycleExecutor):
                             {
                                 "description": "Post the representative meeting action.",
                                 "action_identity": "post-meeting-action",
-                                "capability": "agent_cli.dws",
-                                "operation": "chat message send",
-                                "target": {"group": "cid-1"},
-                                "payload": {
-                                    "argv": [
-                                        "dws",
-                                        "chat",
-                                        "message",
-                                        "send",
-                                        "--group",
-                                        "cid-1",
-                                        "--text",
-                                        self.message_text,
-                                        "--yes",
-                                    ]
-                                },
+                                "capability": "dingtalk-chat",
+                                "operation": "send_message",
+                                "target": {"conversation_id": "cid-1"},
+                                "payload": {"content": self.message_text},
                             }
                         ],
                         "sourced_facts": [],
@@ -5472,8 +5385,11 @@ class MeetingReceiptLifecycleExecutor(ConsumerAuditLifecycleExecutor):
 
     def _audit_execution_records(self, prompt: str) -> list[dict[str, object]]:
         candidate = _prompt_json_section(prompt, "Candidate revision\n")
-        write_command = shlex.join(
-            candidate["proposal"]["actions"][0]["payload"]["argv"]
+        action = candidate["proposal"]["actions"][0]
+        write_command = (
+            "dws chat message send --group cid-1 --text "
+            + shlex.quote(action["payload"]["content"])
+            + " --yes"
         )
         verify_command = "dws chat message list --group cid-1 --time 2026-07-29"
         return [
@@ -5717,7 +5633,7 @@ def test_mail_reply_proposal_with_unregistered_action_is_rejected_before_audit(
     assert attempt.send_error != "unsupported_reviewed_action"
 
 
-def test_mail_reply_review_cannot_claim_a_mismatched_provider_receipt(
+def test_unregistered_mail_reply_is_rejected_before_audit(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5736,14 +5652,15 @@ def test_mail_reply_review_cannot_claim_a_mismatched_provider_receipt(
     assert worker.consume_once(max_tasks=1) == 0
 
     runs = _task4_agent_runs(worker)
-    assert [run.role for run in runs] == [AgentRole.CONSUMER, AgentRole.AUDIT]
-    assert runs[1].status == "completed"
+    assert runs
+    assert all(run.role is AgentRole.CONSUMER for run in runs)
+    assert runs[-1].status == "failed"
     task = worker.store.get_reply_task_for_message("cid-1", "msg-1")
     assert task is not None and task.status == "failed"
     assert executor.verify_commands == []
     assert executor.write_commands == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
-    assert attempt is not None and attempt.send_error == "unsupported_reviewed_action"
+    assert attempt is not None and attempt.send_error == "codex_result_invalid"
 
 
 @pytest.mark.parametrize(
@@ -5825,6 +5742,7 @@ def test_oa_runtime_agent_reads_live_tasks_and_reviews_selected_identity(
         tmp_path,
         [trigger],
         codex_executor,
+        dws=OaSourceContextDws([trigger]),
     )
     _enqueue(worker.store, trigger)
 
@@ -5852,7 +5770,9 @@ def test_oa_runtime_agent_reads_live_tasks_and_reviews_selected_identity(
     assert native_executor.write_calls == []
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None
-    assert attempt.send_status == attempt_status
+    assert attempt.send_status == attempt_status, _protocol_worker_diagnostics(
+        worker, task_id
+    )
     if approved_task_id is not None:
         candidate = json.loads(_task4_agent_runs(worker)[0].adopted_result_json)
         assert candidate["proposal"]["actions"][0]["target"]["task_id"] == approved_task_id
