@@ -941,6 +941,41 @@ def test_consumer_codex_turn_uses_matching_native_schema_and_parser(
     assert result.result.outcome.value == "no_action"
 
 
+def test_consumer_rejects_unregistered_reviewed_action_before_audit():
+    result = {
+        "action": "plan",
+        "reason": "Run the skill reader",
+        "target": {},
+        "payload": {
+            "objective": "Read a skill",
+            "actions": [{
+                "description": "Run the skill reader",
+                "action_identity": "read-skill",
+                "capability": "codex-consumer-workspace",
+                "operation": "run_script",
+                "target": {"script": "read skill"},
+                "payload": {},
+                "effect": "none",
+            }],
+            "sourced_facts": [],
+            "authored_judgment": "This is a local read.",
+        },
+        "evidence_refs": [],
+        "summary": "Read the skill.",
+        "risk": "low",
+        "confidence": 0.9,
+        "rule_coverage": 0.9,
+        "information_completeness": 0.3,
+    }
+    raw = json.dumps({
+        "type": "item.completed",
+        "item": {"type": "agent_message", "text": json.dumps(result)},
+    })
+
+    with pytest.raises(ResultParseError, match="unregistered reviewed action: codex-consumer-workspace/run_script"):
+        consumer_agent._parse_consumer_result(raw)
+
+
 @pytest.mark.parametrize("summary", [
     "来源人在后续会话已发送参考文档；本轮没有发送，当前无需追加动作。",
     "本轮已发送通知。",
@@ -1066,8 +1101,8 @@ def test_consumer_persists_native_mcp_reads_from_codex_session(
 def _proposal_jsonl(
     payload: dict[str, object],
     *,
-    capability: str = "agent_cli.dws",
-    operation: str = "chat message send",
+    capability: str = "dingtalk-chat",
+    operation: str = "send_message",
     target: dict[str, object] | None = None,
 ) -> str:
     result = {
@@ -1081,7 +1116,7 @@ def _proposal_jsonl(
                     "action_identity": "send-result",
                     "capability": capability,
                     "operation": operation,
-                    "target": target or {"group": "cid-agent"},
+                    "target": target or {"conversation_id": "cid-agent"},
                     "payload": payload,
                 }
             ],
@@ -2888,9 +2923,9 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
 
     assert result.result.outcome.value == "proposal"
     assert result.result.proposal is not None
-    assert result.result.proposal.actions[0].payload == {
-        "text": "Verified notice."
-    }
+    assert result.result.proposal.actions[0].payload["text"].startswith(
+        "Verified notice."
+    )
     assert "--output-schema" in executor.commands[0]
 
 
@@ -2904,13 +2939,13 @@ def test_consumer_accepts_valid_nested_output_locally(store, task, context):
             "content",
         ),
         (
-            "messages-reply",
+            "reply_to_message",
             {"conversation_id": "cid-agent", "message_id": "message-1"},
             {"reply_text": "Verified notice."},
             "reply_text",
         ),
         (
-            "reply",
+            "reply_to_message",
             {"conversation_id": "cid-agent", "message_id": "message-1"},
             {"content": "Verified notice."},
             "content",

@@ -1548,10 +1548,16 @@ def _parse_consumer_result(
         predecessor_review_id=predecessor_review_id,
     )
     plans = (result.proposal, *(option.plan for option in result.decision_options))
+    from app.action_contract_catalog import validate_reviewed_action_pair
+
     for plan in plans:
         if plan is None:
             continue
         for action in plan.actions:
+            try:
+                validate_reviewed_action_pair(action.capability, action.operation)
+            except ValueError as exc:
+                raise ResultParseError(str(exc)) from exc
             if (
                 (action.capability, action.operation) == ("dingtalk-calendar", "respond_calendar_event")
                 and action.payload.get("response_status") not in DINGTALK_CALENDAR_RESPONSE_STATUSES

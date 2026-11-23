@@ -147,6 +147,8 @@ action-specific target/payload 合同校验。已完成运行结果的 schema id
 
 通用 Consumer 的 `plan` 在原生输出中仍需完整 `payload`。通过动作合同校验后，若它与生成的 `proposal` 在完整 JSON 中一致，候选只在 `proposal` 中保存这份计划，`purpose_output` 保留用途、原因、目标和证据引用。JSON 有差异的 `plan` 与其他动作继续保存原 `purpose_output.payload`。服务预备后的最终正文在 `proposal` 中送审和执行，完整来源绑定、凭据校验和 64 KiB UTF-8 候选上限沿用现有规则。历史候选继续按原样读取。
 
+Consumer 新结果中的每个 proposal action（包括 needs_human 选项内的 plan）都必须使用 `docs/system-action-contracts.md` 注册的 capability/operation pair。typed-result parser 在 Audit 前拒绝未注册 pair，并交由现有同会话结果修正处理；历史已持久化候选保持原样读取。该校验只确认动作名称已注册，不改变 Audit 判断、System Executor 分派或外部动作授权。
+
 Consumer 的动作专属合同在 `target`、`payload` 各自字段上校验，嵌套错误保留完整字段路径和数组位置，例如 `payload.remark`、`payload.actions.0.payload`。既有有界重试收到这些路径与合同说明，不包含被拒绝的输入值；原生 Schema、合法输入范围及审核、执行规则不变。
 
 Codex Audit 原生输出 Schema 的每个 `decision.anyOf` 分支都会为 `outcome` 同时声明字符串类型和固定值。虽然通用 JSON Schema 允许只写 `const`，Codex 的结构化输出校验要求显式 `type`；省略会在模型运行前被拒绝为无效 Schema。
