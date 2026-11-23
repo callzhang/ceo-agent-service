@@ -1212,6 +1212,9 @@ def test_doc_comment_and_oa_comment_require_stable_provider_comment_identity():
             self.calls.append(("oa", process_id, content))
             return self.result
 
+        def read_oa_approval_detail(self, process_id):
+            return {"success": False}
+
     dws = Dws()
     doc_action = _candidate(actions=[{
         "description": "Comment", "action_identity": "doc-comment", "capability": "dingtalk-doc",

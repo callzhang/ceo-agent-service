@@ -1824,7 +1824,7 @@ retry 的至少一项权限请求引用由完整 Consumer 合同验证，原生 
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；目录以 provider-neutral 的 `read_system_action_contract` 工具名指向 Runtime Context 中声明的原生入口（Codex 为 `mcp__agent_cli__read_system_action_contract`，Claude 为 `agent_cli.read_system_action_contract`）。该工具保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer 使用当前 Consumer wire model 生成的 general/OA 原生 Schema；Codex Audit 使用当前 Audit wire model 生成的同一原生 Schema，选择、解码和恢复指纹与 OAuth/API 认证方式无关。动态 JSON 对象以键值条目传输，并在严格 Pydantic 校验前无损还原；Audit 的 outcome/feedback 条件与 Consumer wire 分支约束保持不变，revision、digest 和候选字段断言仍由当前 Audit 上下文及既有校验负责。候选字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；校验和审核标准不变。Claude、Friday 及其他运行时路径不变。配置路线验证状态见 `docs/archive/records/native-consumer-output-validation.md`。
 
-OA 评论出现未知效果后，System 只读原实例的正式 detail；摘要 records 只含操作结果，不能证明评论正文。恢复要求持久动作键、uncertain 状态及准确带时区的首次动作时间，并匹配 detail 中唯一的 ADD_REMARK、当前本人 ID、完整获批正文和动作开始后的毫秒时间。旧评论、其他作者、歧义或缺失证据继续保留 uncertain，绝不重新评论。回执保存原实例、原生操作类型／作者／时间与正文摘要，不编造 commentId、不复制整份审批详情；该读回不授权新的审批决定。
+OA 评论调用未提供稳定评论 ID 时，System 在同一次执行中立即只读原实例的正式 detail；摘要 records 只含操作结果，不能证明评论正文。该读回使用调用评论前记录的时间边界，并要求完整 detail 中唯一的 ADD_REMARK、当前本人 ID、完整获批正文和边界后的毫秒时间。若即时读回未能证明唯一匹配，结果仍为 uncertain；后续恢复使用持久动作键和首次动作时间重复同一只读核验，绝不重新评论。旧评论、其他作者、歧义或缺失证据继续保留 uncertain。回执保存原实例、原生操作类型／作者／时间与正文摘要，不编造 commentId、不复制整份审批详情；该读回不授权新的审批决定。
 
 未精简任务的当前配置预览从原任务结构化输入识别冻结 Skill，使用任务内读取入口并标明冻结/当前目录来源；冻结材料不需要在当前安装目录存在。已结算回复输入的冻结正文精简后明确不可用。历史模式只展示选定原生 invocation 保存的服务 Task 正文，不追加任何新入口，也不由当前 Skill 或精简来源记录重建正文。
 
