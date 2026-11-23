@@ -5684,7 +5684,7 @@ class AuthorizedMailReplyProtocolExecutor(ConsumerAuditLifecycleExecutor):
         ]
 
 
-def test_mail_reply_proposal_is_rejected_without_a_typed_system_handler(
+def test_mail_reply_proposal_with_unregistered_action_is_rejected_before_audit(
     tmp_path: Path,
     monkeypatch,
 ):
@@ -5701,35 +5701,20 @@ def test_mail_reply_proposal_is_rejected_without_a_typed_system_handler(
 
     assert worker.consume_once(max_tasks=1) == 0
 
-    runs = _assert_task4_receipts_and_consumer_read_only(worker, skill_paths)
-    consumer_result = json.loads(runs[0].adopted_result_json)
-    action = consumer_result["proposal"]["actions"][0]
-    assert action["operation"] == "mail message reply"
-    assert action["payload"]["argv"] == DwsClient().build_mail_reply_command(
-        mailbox=executor.mailbox,
-        message_id=executor.original_message_id,
-        subject=executor.reply_subject,
-        content=executor.reply_content,
+    runs = _task4_agent_runs(worker)
+    assert runs
+    assert all(run.role == AgentRole.CONSUMER for run in runs)
+    assert all(
+        event["item"].get("tool") != "execute_reviewed_write"
+        for run in runs
+        for event in run.tool_events
+        if isinstance(event.get("item"), dict)
     )
-    expected_reads = [
-        "mail mailbox list",
-        "mail message search",
-        "mail message get",
-        "mail message list",
-        "doc info",
-        "doc read",
-    ]
-    assert _task4_completed_operations(runs[0]) == expected_reads
-    assert _task4_completed_operations(runs[1]) == expected_reads
-    assert executor.read_commands == [command for command, _output in executor.evidence] * 2
     assert executor.write_commands == []
     assert executor.verify_commands == []
-    audit_result = json.loads(runs[1].adopted_result_json)
-    assert audit_result["outcome"] == "approve"
-    assert "external_result" not in audit_result
     attempt = worker.store.get_latest_reply_attempt_for_trigger("cid-1", "msg-1")
     assert attempt is not None and attempt.send_status == "failed"
-    assert attempt.send_error == "unsupported_reviewed_action"
+    assert attempt.send_error != "unsupported_reviewed_action"
 
 
 def test_mail_reply_review_cannot_claim_a_mismatched_provider_receipt(

@@ -84,6 +84,18 @@ def parse_action_contracts(document: str) -> tuple[ActionContractEntry, ...]:
     return tuple(entries)
 
 
+def validate_reviewed_action_pair(capability: str, operation: str) -> None:
+    """Require every typed Consumer action to name a registered operation."""
+    registered = {
+        (entry.capability, entry.operation)
+        for entry in parse_action_contracts(_contract_document())
+    }
+    if (capability, operation) not in registered:
+        raise ValueError(
+            f"unregistered reviewed action: {capability}/{operation}"
+        )
+
+
 def _contract_document() -> str:
     return SYSTEM_ACTION_CONTRACT_PATH.read_text(encoding="utf-8").strip()
 
