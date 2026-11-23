@@ -1212,7 +1212,7 @@ def test_default_restart_bootstraps_when_launchd_label_is_unloaded(monkeypatch):
 
     def run(args, **kwargs):
         calls.append(args)
-        if args[1] == "kickstart":
+        if args[1:3] == ["kickstart", "-k"]:
             return SimpleNamespace(returncode=113, stdout="", stderr="service not found")
         if args[1] == "print":
             return SimpleNamespace(
@@ -1223,7 +1223,8 @@ def test_default_restart_bootstraps_when_launchd_label_is_unloaded(monkeypatch):
     monkeypatch.setattr(updater_module.subprocess, "run", run)
     updater_module._default_restart()
 
-    assert [call[1] for call in calls] == ["kickstart", "print", "bootstrap"]
+    assert [call[1] for call in calls] == ["kickstart", "print", "bootstrap", "kickstart"]
+    assert calls[-1] == ["launchctl", "kickstart", calls[0][-1]]
 
 
 def test_default_stop_waits_until_launchd_finishes_removing_service(monkeypatch):

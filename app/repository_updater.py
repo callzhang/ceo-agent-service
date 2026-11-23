@@ -356,9 +356,11 @@ def _launchd_service_is_absent(target: str) -> bool:
 
 
 def _default_start() -> None:
-    plist = Path.home() / "Library" / "LaunchAgents" / "com.ceo-agent-service.main.plist"
+    domain = f"gui/{_uid()}"
+    label = "com.ceo-agent-service.main"
+    plist = Path.home() / "Library" / "LaunchAgents" / f"{label}.plist"
     result = subprocess.run(
-        ["launchctl", "bootstrap", f"gui/{_uid()}", str(plist)],
+        ["launchctl", "bootstrap", domain, str(plist)],
         check=False,
         capture_output=True,
         text=True,
@@ -366,6 +368,17 @@ def _default_start() -> None:
     )
     if result.returncode != 0:
         raise UpgradeFailed("launchd bootstrap failed")
+    # Registration can defer RunAtLoad in an on-demand-only login domain.
+    # Request startup without interrupting a process that started at bootstrap.
+    result = subprocess.run(
+        ["launchctl", "kickstart", f"{domain}/{label}"],
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+    if result.returncode != 0:
+        raise UpgradeFailed("launchd start failed after bootstrap")
 
 
 def _uid() -> int:
