@@ -789,7 +789,7 @@ def test_native_source_revision_rerun_is_generation_bound_and_idempotent(tmp_pat
     task = store.ensure_reply_task(**_creator_kwargs(_spec("native-source-revision")))
     with store._connect() as db:
         db.execute("update tasks set status='failed',error='audit_revision_exhausted' where id=?", (task.id,))
-    assert store.requeue_failed_reply_task_for_source_revision(
+    assert store.requeue_reply_task_for_source_revision(
         task.id, expected_execution_generation=task.execution_generation,
         source_revision_key="current-source-revision",
     )
@@ -800,7 +800,7 @@ def test_native_source_revision_rerun_is_generation_bound_and_idempotent(tmp_pat
         assert owner["error"] == "automatic_source_revision_rerun"
         assert owner["parameters"]["manual_rerun_revision_key"] == "current-source-revision"
         assert owner["current_input"]["trigger_message_id"] == task.trigger_message_id
-    assert not store.requeue_failed_reply_task_for_source_revision(
+    assert not store.requeue_reply_task_for_source_revision(
         task.id, expected_execution_generation=task.execution_generation,
         source_revision_key="current-source-revision",
     )

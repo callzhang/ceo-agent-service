@@ -25,6 +25,7 @@ from zoneinfo import ZoneInfo
 
 from pydantic import BaseModel, ConfigDict, Field, TypeAdapter
 
+from app.dingtalk_models import DingTalkMessage
 from app.agent_runtime_contracts import (
     CredentialMode,
     RuntimeCapabilitySnapshot,
@@ -6872,7 +6873,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             )
         return task
 
-    def requeue_failed_reply_task_for_source_revision(
+    def requeue_reply_task_for_source_revision(
         self,
         task_id: int,
         *,
@@ -6880,13 +6881,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         source_revision_key: str,
         source_attempt_id: int = 0,
         reviewer_feedback: str = "",
+        restored_trigger: DingTalkMessage | None = None,
     ) -> bool:
-        """Start one fresh decision when a failed audit receives newer source context.
+        """Start a new generation for a source revision or a feedback correction.
 
-        This is deliberately limited to exhausted review revisions. A delivery or
-        registered-action receipt makes the old task non-replayable; the source
-        revision is also persisted as the idempotency key so the same context
-        cannot create an endless retry loop.
+        Background source refreshes can retry only exhausted audits without effects.
+        Explicit feedback can revise an exact completed reply; original receipts
+        remain available to Consumer, Audit and System in the new generation.
         """
         generation = expected_execution_generation.strip()
         revision_key = source_revision_key.strip()
@@ -6897,10 +6898,13 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
             owner = task_entity_storage.get_task_with_inputs(db, task_id)
             if (owner is None or owner["kind"] != "reply"
-                    or owner["status"] != "failed"
-                    or owner["error"] != "audit_revision_exhausted"
                     or owner["execution_generation"] != generation
                     or owner["current_input"] is None):
+                return False
+            completed_revision = bool(source_attempt_id and owner["status"] == "done")
+            if not completed_revision and (
+                owner["status"] != "failed" or owner["error"] != "audit_revision_exhausted"
+            ):
                 return False
             row = dict(owner["current_input"])
             row.update({key: owner[key] for key in (
@@ -6950,12 +6954,11 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "where business_object_key=? limit 1",
                 (row["business_object_key"],),
             ).fetchone()
-            if sent is not None or action_receipt is not None:
+            if not completed_revision and (sent is not None or action_receipt is not None):
                 return False
             if source_attempt_id:
                 if (
                     row["channel"] != "dingtalk" or row["oa_url"] or latest_attempt is None
-                    or self._reply_task_from_native(owner).input_compacted
                 ):
                     return False
                 source_run = db.execute(
@@ -6964,6 +6967,21 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 ).fetchone()
                 if latest_attempt["id"] != source_attempt_id or source_run is None:
                     return False
+                if row["input_compacted"]:
+                    provenance = json.loads(row["input_provenance_json"])
+                    sender_id = provenance["source"].get("sender_user_id")
+                    if (
+                        restored_trigger is None or restored_trigger.is_recalled()
+                        or restored_trigger.open_conversation_id != row["conversation_id"]
+                        or restored_trigger.open_message_id != row["trigger_message_id"]
+                        or restored_trigger.create_time != row["trigger_create_time"]
+                        or restored_trigger.single_chat != bool(row["single_chat"])
+                        or (sender_id and restored_trigger.sender_user_id != sender_id)
+                        or (not sender_id and restored_trigger.sender_name != row["trigger_sender"])
+                        or hashlib.sha256(restored_trigger.content.encode()).hexdigest() != provenance["trigger_text"]["sha256"]
+                    ):
+                        return False
+                    row.update(trigger_text=restored_trigger.content, trigger_message_json=restored_trigger.model_dump_json())
                 feedback = "\n\n".join(filter(None, (
                     str(latest_attempt["reviewer_feedback"] or "").strip(), reviewer_feedback.strip(),
                 )))

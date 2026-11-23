@@ -18,7 +18,7 @@ class RepairDiagnosis(BaseModel):
 
 class FeedbackRepairDiagnosis(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
-    outcome: Literal["pr_created", "business_revision", "no_code_change", "blocked"]
+    outcome: Literal["pr_created", "business_revision", "delivery_check", "no_code_change", "blocked"]
     summary: str = Field(min_length=1, max_length=6000)
 
 

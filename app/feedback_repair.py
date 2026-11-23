@@ -6,6 +6,8 @@ from urllib.parse import quote
 
 from app.automatic_repair_store import enqueue_in_transaction, save_repair
 from app.consumer_purpose_retry import utc_time
+from app.dingtalk_models import DingTalkConversation
+from app.dws_client import DwsClient, DwsError
 from app.feedback_events import sync_feedback_events_for_sent_replies
 from app.feedback_processing import FeedbackIterationDisabledError, FeedbackProcessingClaimError
 from app.store import ManualRerunConflict
@@ -102,8 +104,23 @@ class FeedbackRepairQueue:
                 workbench_task_id=entry['task_id'], workbench_turn_id=entry['turn_ids'][-1],
             )
 
+    def recheck_legacy_business_result(self, entry):
+        retry = entry.get('business_retry')
+        # The first contract conflated content fixes and isolated delivery checks.
+        # Reclassify those results in the same conversation before any new effect.
+        if (
+            entry['status'] in {'awaiting_business', 'business_delivered'} and retry
+            and 'outcome' not in retry and entry['turn_ids'] and self.binding(entry) is not None
+        ):
+            entry.update(
+                status='queued', next_readback_at=0, business_recheck_turn_id=entry['turn_ids'][-1],
+                summary='重新核对原反馈需要修订内容还是仅核验已有发送。',
+            )
+            del entry['business_retry']
+            save_repair(self.store, entry)
+
     def advance_business(self, entry):
-        """Use the source-revision retry and observe the exact task's receipts."""
+        """Return content corrections to the original task and verify its new delivery."""
         retry = entry['business_retry']
         attempt = self.store.get_reply_attempt(retry['attempt_id'])
         if attempt is None:
@@ -115,55 +132,54 @@ class FeedbackRepairQueue:
         if task is None:
             self._finish(entry, 'blocked', '找不到与原消息绑定的业务任务。')
             return
-        revision_key = f"{BATCH_PREFIX}revision:{entry['source_id']}"
-        sent = self.store.get_sent_reply(
-            attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel,
-        )
-        if sent is not None:
-            if task.status in {'pending', 'processing'}:
-                entry.update(next_readback_at=time.time() + 30)
-                save_repair(self.store, entry)
-                return
-            after_feedback = retry.get('received_at') and self._sent_after_feedback(sent.sent_at, retry['received_at'])
-            if task.status == 'done' and sent.provider_receipt_id and (
-                task.manual_rerun_revision_key == revision_key or after_feedback
-            ):
-                self._finish(
-                    entry, 'business_delivered',
-                    f'原任务完成，已核验本次反馈之后的发送回执（发送记录 {sent.id}）。',
-                )
-            else:
-                self._finish(
-                    entry, 'blocked',
-                    '原消息已有发送记录；本轮没有独立核验的新发送回执。',
-                )
-            return
-        if task.manual_rerun_revision_key == revision_key:
-            if task.status in {'pending', 'processing'}:
-                entry.update(next_readback_at=time.time() + 30)
-                save_repair(self.store, entry)
-            else:
-                self._finish(
-                    entry, 'blocked',
-                    f'原任务续修已结束（{task.status}）；尚无发送回执。{task.error}',
-                )
-            return
         if task.status in {'pending', 'processing'}:
             entry.update(next_readback_at=time.time() + 30)
             save_repair(self.store, entry)
             return
+        revision_key = f"{BATCH_PREFIX}revision:{entry['source_id']}"
+        if retry['outcome'] == 'delivery_check' or task.manual_rerun_revision_key == revision_key:
+            sent = self.store.get_sent_reply(
+                attempt.conversation_id, attempt.trigger_message_id, channel=attempt.channel,
+            )
+            if retry['outcome'] == 'delivery_check':
+                if (task.status == 'done' and sent and sent.provider_receipt_id
+                        and self._sent_after_feedback(sent.sent_at, retry.get('received_at') or '')):
+                    self._finish(entry, 'business_delivered', f'已核验反馈后的原发送回执（发送记录 {sent.id}）。')
+                else:
+                    self._finish(entry, 'blocked', '尚未核验到反馈之后的原发送回执。')
+                return
+            run = self.store.get_agent_run(sent.agent_run_id, load_events=False) if sent and sent.agent_run_id else None
+            if (task.status == 'done' and sent and sent.provider_receipt_id and run
+                    and run.reply_task_id == task.id and run.execution_generation == task.execution_generation):
+                self._finish(entry, 'business_delivered', f'原任务修订件已通过审核并发送（发送记录 {sent.id}）。')
+            else:
+                self._finish(entry, 'blocked', f'原任务续修已结束（{task.status}）；尚无本次修订的发送回执。{task.error}')
+            return
+        restored_trigger = None
+        if task.input_compacted and task.channel == 'dingtalk' and not task.oa_url:
+            conversation = DingTalkConversation(
+                open_conversation_id=task.conversation_id, title=task.conversation_title,
+                single_chat=task.single_chat, unread_point=0,
+            )
+            try:
+                restored_trigger = DwsClient().read_message_by_id(conversation, task.trigger_message_id)
+            except DwsError:
+                _LOGGER.warning('Automatic feedback could not read the original DingTalk trigger', exc_info=True)
         try:
-            queued = self.store.requeue_failed_reply_task_for_source_revision(
+            queued = self.store.requeue_reply_task_for_source_revision(
                 task.id, expected_execution_generation=task.execution_generation,
                 source_revision_key=revision_key, source_attempt_id=attempt.id,
-                reviewer_feedback=retry['diagnosis'],
+                reviewer_feedback=retry['diagnosis'] + (
+                    '\n\n提交通过审核的修订件。更正后的交付使用新的动作身份；已完成且无需更正的动作沿用原回执。'
+                ),
+                restored_trigger=restored_trigger,
             )
         except ManualRerunConflict:
             queued = False
         if not queued:
-            self._finish(entry, 'blocked', '原任务当前不符合未发送任务的续修条件。')
+            self._finish(entry, 'blocked', '无法核实原任务仍是反馈绑定的当前执行，或无法从原会话恢复原始输入。')
             return
-        entry.update(summary='已交回原任务，等待独立审核和发送回执。', next_readback_at=time.time() + 30)
+        entry.update(summary='已交回原任务，等待独立审核和发送新修订件。', next_readback_at=time.time() + 30)
         save_repair(self.store, entry)
 
     @staticmethod
