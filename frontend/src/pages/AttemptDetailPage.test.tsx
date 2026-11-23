@@ -241,6 +241,26 @@ describe("AttemptDetailPage", () => {
     expect(screen.getByRole("link", { name: "查看原始 Agent 记录" })).toHaveAttribute("href", "/codex/original");
   });
 
+  it("shows saved OA facts and the decision table before execution details", async () => {
+    getAttemptDetail.mockResolvedValue({ item: {
+      ...detail,
+      approval_review: {
+        summary: ["申请休息日加班 4.5 小时，HRBP 已复审同意。"],
+        scores: { information_completeness: "100%", risk: "medium", rule_coverage: "90%", confidence: "—" },
+        decision: null,
+        status_message: "等待核验",
+      },
+    }, meta: { snapshot_at: "2026-11-22T22:00:00Z" } });
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "审批内容摘要" })).toBeInTheDocument();
+    expect(screen.getByText("申请休息日加班 4.5 小时，HRBP 已复审同意。")).toBeInTheDocument();
+    const table = screen.getByRole("table", { name: "决策表" });
+    for (const [dimension, value] of [["信息完整度", "100%"], ["风险", "中"], ["规则覆盖率", "90%"], ["判断置信度", "未记录"], ["执行结果", "等待核验"]]) {
+      const row = within(table).getByRole("row", { name: new RegExp(dimension) });
+      expect(within(row).getByRole("cell", { name: value })).toBeInTheDocument();
+    }
+  });
+
   it("renders one generated reply section and hides internal session identifiers", async () => {
     renderPage();
 

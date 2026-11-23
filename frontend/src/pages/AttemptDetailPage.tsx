@@ -1,3 +1,4 @@
+import { ApprovalOverview, executionStatusLabels } from "../components/approval/ApprovalOverview";
 import { AutomaticRepairCard } from "../components/repair/AutomaticRepairCard";
 import { useCallback, useEffect, useRef, useState, type FormEvent } from "react";
 import { Link, useParams } from "react-router-dom";
@@ -33,13 +34,6 @@ function TriggerBlock({ detail }: { detail: AttemptDetail }) {
   return <ReviewBlock title={trigger.title} value={trigger.text} />;
 }
 
-const executionStatusLabels: Record<string, string> = {
-  pending: "等待执行", running: "执行中", dispatched: "已提交，等待核验",
-  retry: "等待恢复", uncertain: "外部结果待核验", failed: "执行失败",
-  verified: "已核验完成", confirmed_no_effect: "已确认未产生外部结果",
-  done: "全部动作已核验完成", skipped: "已停止",
-};
-
 function SystemExecutionProgress({ detail }: { detail: AttemptDetail }) {
   const execution = detail.system_execution;
   if (!execution) return null;
@@ -67,21 +61,6 @@ function SystemExecutionProgress({ detail }: { detail: AttemptDetail }) {
       </dl>
       <details><summary>原始系统执行记录</summary>{executionRecord}</details>
     </> : executionRecord}
-  </section>;
-}
-
-function ApprovalDecision({ detail }: { detail: AttemptDetail }) {
-  const decision = detail.oa.decision;
-  if (!decision) return null;
-  return <section className="console-card attempt-detail-section" aria-label="审批决定">
-    <h2>审批决定</h2>
-    <dl>
-      <div><dt>决定</dt><dd>{decision.label}</dd></div>
-      <div><dt>执行结果</dt><dd>{executionStatusLabels[decision.status] || decision.status}</dd></div>
-      <div><dt>判断理由</dt><dd>{decision.reason || "未记录"}</dd></div>
-      <div><dt>审批意见</dt><dd>{decision.remark || "未记录"}</dd></div>
-    </dl>
-    {decision.receipt && <details><summary>审批核验回执</summary><pre>{JSON.stringify(decision.receipt.provider_result, null, 2)}</pre></details>}
   </section>;
 }
 
@@ -179,17 +158,19 @@ function ConsumerMetric({ name, value }: { name: ConsumerMetricName; value: stri
   </div>;
 }
 
-function ConsumerResult({ result }: { result: AttemptConsumerResult }) {
+function ConsumerResult({ result, showScores }: { result: AttemptConsumerResult; showScores: boolean }) {
   const currentRun = result.current_run;
   const currentLabel = currentRun
     ? `新 Consumer run${currentRun.id === null ? "" : ` #${currentRun.id}`}`
     : "";
   const currentStatus = currentRun?.status === "running" ? "运行中" : "等待中";
   return <>
+    {showScores && <>
     <ConsumerMetric name="confidence" value={result.confidence} />
     <ConsumerMetric name="information_completeness" value={result.information_completeness} />
     <ConsumerMetric name="rule_coverage" value={result.rule_coverage} />
     <ConsumerMetric name="risk" value={result.risk} />
+    </>}
     {result.error_reason && <div className="attempt-metadata-item"><span>Consumer error</span><strong>{result.error_reason}</strong></div>}
     {currentRun && <div className="attempt-metadata-item"><span>{currentLabel}</span><strong>{currentStatus}</strong></div>}
   </>;
@@ -212,11 +193,11 @@ function HumanDecisionBasis({ detail }: { detail: AttemptDetail }) {
   </section>;
 }
 
-function MetadataGrid({ rows, consumerResult }: { rows: AttemptMetadata[]; consumerResult?: AttemptConsumerResult }) {
+function MetadataGrid({ rows, consumerResult, showScores = true }: { rows: AttemptMetadata[]; consumerResult?: AttemptConsumerResult; showScores?: boolean }) {
   return <section className="console-card attempt-metadata-card" aria-label="指标">
     <div className="attempt-metadata-grid">
       {rows.map((row) => <div className="attempt-metadata-item" key={row.label}><span>{row.label}</span><strong>{row.value || "未记录"}</strong></div>)}
-      {consumerResult && <ConsumerResult result={consumerResult} />}
+      {consumerResult && <ConsumerResult result={consumerResult} showScores={showScores} />}
     </div>
   </section>;
 }
@@ -665,7 +646,13 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
       </section>
       <div className="attempt-detail-layout attempt-review-grid">
         <div className="attempt-detail-main">
-          <ApprovalDecision detail={detail} />
+          {detail.approval_review && <ApprovalOverview review={detail.approval_review} />}
+          {!detail.approval_review && detail.oa.decision && <ApprovalOverview review={{
+            summary: [],
+            scores: detail.consumer_result,
+            decision: detail.oa.decision,
+            status_message: detail.status.message,
+          }} />}
           <section className="console-card attempt-review-main"><div className="reply-meta" aria-label="处理状态">{detail.action_pills.map((pill) => <StatusBadge key={`${pill.label}-${pill.status}`} value={pill.status} />)}</div><TriggerBlock key={detail.id} detail={detail} /><AuditExplanation detail={detail} /><ReviewBlock title={detail.generated_reply.title} value={detail.generated_reply.text} className="attempt-generated-reply" /></section>
           {detail.delivery && <section className="console-card" aria-label="Action 投递回执"><h2>投递回执</h2><dl className="attempt-email-grid"><div><dt>Action</dt><dd>#{detail.delivery.action_id}</dd></div><div><dt>外部消息</dt><dd>{detail.delivery.provider_message_id || "未提供"}</dd></div><div><dt>发送时间</dt><dd>{detail.delivery.sent_at || "未提供"}</dd></div><div><dt>来源事实</dt><dd>{detail.delivery.source_label}</dd></div><div><dt>操作</dt><dd>{detail.delivery.operation || "未提供"}</dd></div><div><dt>目标</dt><dd>{detail.delivery.target || "未提供"}</dd></div><div><dt>回执</dt><dd>{detail.delivery.provider_receipt.available ? `#${detail.delivery.provider_receipt.id}` : "未记录"}</dd></div><div><dt>撤回状态</dt><dd>{detail.delivery.recall_status || "未撤回"}{detail.delivery.recalled_at ? ` · ${detail.delivery.recalled_at}` : ""}</dd></div></dl>{detail.delivery.provider_receipt.available && <details><summary>Provider 回执正文</summary><pre>{detail.delivery.provider_receipt.body}</pre></details>}</section>}
           <EmailContext email={detail.email} />
@@ -694,7 +681,7 @@ function AttemptDetailContent({ attemptId, role }: { attemptId: string; role: st
             <textarea id="attempt-custom-decision" value={customDecision} placeholder="说明这次事项的新事实或要求" onChange={(event) => setCustomDecision(event.target.value)} />
             <button type="button" className="primary-button" disabled={!customDecision.trim() || decisionSubmitting} onClick={() => void runDecision(`/api/console/history/${detail.id}/human-decision`, { kind: "supplement", candidate_id: detail.human_decision?.candidate_id, candidate_digest: detail.human_decision?.candidate_digest, review_id: detail.human_decision?.review_id, instruction: customDecision.trim() })}>{decisionSubmitting ? "提交中…" : "提交补充信息"}</button>
           </section>}
-          <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} />
+          <MetadataGrid rows={[...detail.metadata, ...(detail.revision_count ? [{ label: "revisions", value: `${detail.revision_count} revisions` }] : [])]} consumerResult={detail.consumer_result} showScores={!detail.approval_review} />
           <FeedbackPanel detail={detail} onSaved={setMessage} />
           {message && <p className="attempt-action-message" role="status" aria-live="polite">{message}</p>}
         </aside>

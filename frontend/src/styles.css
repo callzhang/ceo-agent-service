@@ -1171,6 +1171,11 @@ h1, h2, h3, p { margin-top: 0; }
 .attempt-primary-grid { display: grid; grid-template-columns: minmax(0, 1.2fr) minmax(300px, .8fr); gap: 16px; align-items: start; }
 .attempt-primary-grid > div { display: grid; gap: 16px; min-width: 0; }
 .attempt-detail-section { min-width: 0; }
+.approval-overview ul { margin: 0 0 18px; padding-inline-start: 1.25rem; }
+.approval-overview li { margin-block: 5px; overflow-wrap: anywhere; }
+.approval-overview table { width: 100%; margin-bottom: 12px; table-layout: fixed; }
+.approval-overview th:first-child { width: 30%; }
+.approval-overview td { white-space: pre-wrap; overflow-wrap: anywhere; }
 .attempt-detail-section h2, .attempt-feedback-card h2, .attempt-runtime-card h2, .attempt-decision-card h2 { margin-bottom: 10px; }
 .attempt-feedback-card form { display: grid; gap: 14px; }
 .attempt-feedback-card label { color: var(--ink-soft); font-size: .75rem; font-weight: 700; }

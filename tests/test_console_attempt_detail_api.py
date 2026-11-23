@@ -2380,3 +2380,30 @@ def test_legacy_session_entry_survives_attempt_without_new_session(monkeypatch):
     sessions=_agent_sessions(SimpleNamespace(codex_session_id='legacy-session'),[run],
                              [{'run_id':1,'session_url':'','session_id':'','role':'consumer'}])
     assert sessions == [{'role':'consumer','label':'处理过程','session_id':'legacy-session','url':'/codex/legacy-session'}]
+
+
+
+def test_oa_review_uses_the_deciding_runs_facts_and_keeps_missing_scores_unknown():
+    from types import SimpleNamespace
+
+    from app.web_api.attempts import _oa_review_payload
+
+    latest = SimpleNamespace(
+        id=3, adopted_result_json='{"proposal": {"sourced_facts": [{"assertion": "后续处理"}]}}'
+    )
+    deciding = SimpleNamespace(
+        id=2,
+        adopted_result_json='{"risk":"medium","proposal":{"sourced_facts":[{"assertion":"申请加班半天"}]}}',
+    )
+    payload = _oa_review_payload(
+        {"from_run_id": 2, "information_completeness": "100%", "risk": "medium",
+         "confidence": "85%", "rule_coverage": "95%"},
+        [latest, deciding], latest, {"label": "同意"}, "已执行",
+        {"from_run_id": 2, "confidence": 0.85, "rule_coverage": 0.95},
+    )
+    assert payload["summary"] == ["申请加班半天"]
+    assert payload["scores"] == {
+        "information_completeness": "—", "risk": "medium", "confidence": "85%",
+        "rule_coverage": "95%",
+    }
+    assert payload["decision"] == {"label": "同意"}

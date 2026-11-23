@@ -143,6 +143,17 @@ export interface AttemptSystemExecution {
   }>;
 }
 
+export interface ApprovalReview {
+  summary: string[];
+  scores: Pick<AttemptConsumerResult, "information_completeness" | "risk" | "rule_coverage" | "confidence">;
+  decision: {
+    operation: string; label: string; status: string; reason: string; remark: string;
+    receipt: { external_action_key: string; provider_result: unknown } | null;
+  } | null;
+  status_message: string;
+  judgment_reason?: string;
+}
+
 export interface AttemptDetail {
   repair?: AutomaticRepairStatus | null;
   id: number;
@@ -158,6 +169,7 @@ export interface AttemptDetail {
   };
   metadata: AttemptMetadata[];
   consumer_result: AttemptConsumerResult;
+  approval_review?: ApprovalReview | null;
   trigger: { title: string; text: string; source_url?: string };
   audit_explanation: { title: string; text: string };
   generated_reply: { title: string; text: string };
@@ -204,10 +216,7 @@ export interface AttemptDetail {
   historical_attempt?: { run_id: number | null; status: string; error: string; resolution: unknown; session_url: string } | null;
   oa: {
     process_instance_id: string; task_id: string; url: string; action: string; remark: string; result: unknown;
-    decision?: {
-      operation: string; label: string; status: string; reason: string; remark: string;
-      receipt: { external_action_key: string; provider_result: unknown } | null;
-    } | null;
+    decision?: ApprovalReview["decision"];
   };
   calendar: { event_id: string; response_status: string; result: unknown };
   actions: {

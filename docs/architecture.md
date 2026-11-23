@@ -2510,6 +2510,8 @@ not validation results, plans or decisions. All canonical/native purpose schemas
 and all runtime validators remain unchanged. Distinct model classes have
 separate entries, and mutable caller changes cannot poison subsequent schemas.
 
+The OA process and Attempt detail pages share an approval overview. The content summary comes from the recorded decision’s sourced facts; the decision table shows the corresponding completeness, risk, coverage, confidence, decision and execution result. Missing historical facts or scores are displayed as unrecorded. Rendering the overview reads persisted decisions only.
+
 ### Attempt detail refresh after recovery
 
 An already-open Attempt page reads the current detail every ten seconds while

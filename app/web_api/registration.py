@@ -1339,6 +1339,7 @@ def register_console_routes(
         return item_envelope({"process_instance_id": process_instance_id,
                               "status": current_status,
                               "title": latest.conversation_title,
+                              "approval_review": latest_detail.get("approval_review") if latest_detail else None,
                               "attempts": [{"id": a.id,
                                             "status": current_status if index == 0 else a.send_status,
                                             "recorded_status": a.send_status,
