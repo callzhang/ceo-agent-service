@@ -178,6 +178,9 @@ def test_user_feedback_sync_claim_restart_and_result_readback(store, tmp_path):
     def sync(db, page, **_):
         synced.append(len(page))
         db.upsert_feedback_event(key="manual:700", feedback_token="token", comment="review the result")
+        if len(synced) == 1:
+            db.upsert_feedback_event(key="manual:701", feedback_token="reserved", comment="reserved feedback")
+            db.create_feedback_processing_batch(["manual:701"], batch_id="manual-reservation")
 
     def restart():
         return AutomaticRepairCoordinator(
@@ -206,7 +209,10 @@ def test_user_feedback_sync_claim_restart_and_result_readback(store, tmp_path):
         feedback_backlog_factory=lambda: {}, attention_rows_factory=lambda: [],
     )
     payload = TestClient(app).get("/api/console/feedback").json()["items"]
-    result, = payload
+    result = next(row for row in payload if row["key"] == "manual:700")
+    reserved = store.get_feedback_processing_item("manual:701")
+    assert reserved.status == "pending"
+    assert reserved.batch_id == "manual-reservation"
     assert result["repair"]["status"] == "no_code_change"
     assert result["repair"]["summary"] == "Verified existing receipt"
     assert result["processing_task_id"] == entry["task_id"]

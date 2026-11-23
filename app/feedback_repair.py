@@ -46,7 +46,7 @@ class FeedbackRepairQueue:
                        (select coalesce(max(round_number),0) + 1 from feedback_processing_rounds
                         where feedback_key=item.feedback_key) as next_round
                 from feedback_processing_items item join tasks task on task.id=item.task_id
-                where task.status='pending'
+                where task.status='pending' and trim(item.batch_id)=''
                 order by task.created_at desc, task.id desc limit 1
                 """).fetchone()
             claimed = db.execute("""
