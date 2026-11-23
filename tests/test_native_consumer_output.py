@@ -233,6 +233,58 @@ def test_native_consumer_rejects_ambiguous_or_malformed_dynamic_json_entries(
         _decode(encoded, dynamic_object, {})
 
 
+@pytest.mark.parametrize("body_chars, has_effect, fits", [
+    pytest.param(8000, True, True, id="identical-plan-counted-once"),
+    pytest.param(8000, False, False, id="different-plan-shape-preserved"),
+    pytest.param(13500, True, False, id="genuinely-over-limit"),
+])
+def test_plan_candidate_uses_existing_utf8_bound_with_full_source(
+    tmp_path, body_chars, has_effect, fits,
+):
+    from dataclasses import replace
+
+    from app.agent_turn_runner import _validate_runtime_reference_domain_result
+    from app.consumer_agent import _prepare_reviewable_candidate
+    from tests.test_reviewed_orchestration import setup
+
+    store, task, context = setup(tmp_path)
+    source = {"content": "源" * 9000}
+    context = replace(context, trigger_raw_payload=source)
+    body = "答" * body_chars
+    action = {
+        "description": "Answer the questions", "action_identity": "answer",
+        "capability": "dingtalk-chat", "operation": "reply_to_message",
+        "target": {"conversation_id": context.conversation_id,
+                   "message_id": context.trigger_message_id},
+        "payload": {"content": body},
+    }
+    if has_effect:
+        action["effect"] = "external"
+    plan = {"objective": "Answer", "actions": [action],
+            "sourced_facts": [], "authored_judgment": "Use the verified source"}
+    native = _consumer("plan", payload=plan)
+    native_action = native["decision"]["payload"]["actions"][0]
+    for name in ("target", "payload"):
+        native_action[name] = _encode_dynamic(native_action[name])
+    parsed = parse_native_result(_event(native), "consumer", parser=_parse_consumer_result)
+    prepared = _prepare_reviewable_candidate(
+        parsed, store=store, task=task, context=context, proposal_revision=0, source_client=None,
+    )
+    assert prepared.proposal.actions[0].payload["content"].startswith(body)
+    assert prepared.source_bindings[0].value["trigger_raw_payload"] == source
+    assert prepared.purpose_output["evidence_refs"] == ["source:1"]
+    if fits:
+        _validate_runtime_reference_domain_result(prepared, allow_configured_feedback_links=True)
+        assert "payload" not in prepared.purpose_output
+    else:
+        with pytest.raises(ValueError, match="runtime_result_reference_too_large"):
+            _validate_runtime_reference_domain_result(prepared, allow_configured_feedback_links=True)
+        if has_effect:
+            assert "payload" not in prepared.purpose_output
+        else:
+            assert prepared.purpose_output["payload"] == plan
+
+
 def test_native_consumer_rejects_malformed_suffix_instead_of_salvaging_it():
     native = _consumer()
     with pytest.raises(ResultParseError):

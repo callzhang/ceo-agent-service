@@ -145,6 +145,8 @@ Codex Consumer 命令按当前 `consumer_purpose` 选择 general/OA 原生输出
 action-specific target/payload 合同校验。已完成运行结果的 schema identity 绑定实际提交的 Schema
 字节，避免用旧自由格式结果恢复新原生格式运行。Consumer 的 Codex 与 Claude 原生 schema 路线不再把同一份 Pydantic wire schema 重复放进服务 Developer 文本；Friday 无原生 schema 的路线仍保留完整文本，Audit 输入不变。预览及运行快照使用同一路线装配。所有 Consumer 继续共用“不得直接发送对外消息、邮件或执行审批”的约束；解析、业务判断、审核与 SystemExecutor 外部动作流程不变。
 
+通用 Consumer 的 `plan` 在原生输出中仍需完整 `payload`。通过动作合同校验后，若它与生成的 `proposal` 在完整 JSON 中一致，候选只在 `proposal` 中保存这份计划，`purpose_output` 保留用途、原因、目标和证据引用。JSON 有差异的 `plan` 与其他动作继续保存原 `purpose_output.payload`。服务预备后的最终正文在 `proposal` 中送审和执行，完整来源绑定、凭据校验和 64 KiB UTF-8 候选上限沿用现有规则。历史候选继续按原样读取。
+
 Consumer 的动作专属合同在 `target`、`payload` 各自字段上校验，嵌套错误保留完整字段路径和数组位置，例如 `payload.remark`、`payload.actions.0.payload`。既有有界重试收到这些路径与合同说明，不包含被拒绝的输入值；原生 Schema、合法输入范围及审核、执行规则不变。
 
 Codex Audit 原生输出 Schema 的每个 `decision.anyOf` 分支都会为 `outcome` 同时声明字符串类型和固定值。虽然通用 JSON Schema 允许只写 `const`，Codex 的结构化输出校验要求显式 `type`；省略会在模型运行前被拒绝为无效 Schema。

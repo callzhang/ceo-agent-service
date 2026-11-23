@@ -127,10 +127,27 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
+        proposal = payload.proposal
+        purpose_output = {
+            "purpose": payload.purpose,
+            "action": payload.action,
+            "reason": payload.reason,
+            "target": payload.target,
+            "evidence_refs": payload.evidence_refs,
+        }
+        # The wire plan is also the canonical proposal reviewed and executed by
+        # the service. Preserve the raw payload when validation changed its shape.
+        if (
+            payload.action != "plan"
+            or proposal is None
+            or json.dumps(payload.payload, sort_keys=True)
+            != json.dumps(proposal.model_dump(mode="json"), sort_keys=True)
+        ):
+            purpose_output["payload"] = payload.payload
         result = ConsumerAgentResult.model_validate({
             "outcome": payload.outcome,
             "summary": payload.summary,
-            "proposal": payload.proposal,
+            "proposal": proposal,
             "decision_options": payload.decision_options,
             "requested_input": payload.requested_input,
             "needs_human_reason": payload.needs_human_reason,
@@ -143,8 +160,7 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
             "rule_coverage": payload.rule_coverage,
             "information_completeness": payload.information_completeness,
             "error": payload.error_payload(),
-            "purpose_output": {key: getattr(payload, key) for key in
-                ("action", "reason", "target", "payload", "evidence_refs") } | {"purpose": payload.purpose},
+            "purpose_output": purpose_output,
         })
         plans = (result.proposal, *(option.plan for option in result.decision_options))
         for plan in plans:
