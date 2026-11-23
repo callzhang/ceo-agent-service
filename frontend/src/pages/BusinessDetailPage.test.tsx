@@ -57,6 +57,20 @@ describe("BusinessDetailPage", () => {
     expect(screen.queryByRole("button", { name: "提交反馈" })).not.toBeInTheDocument();
   });
 
+  it("shows the same OA overview on the process detail", async () => {
+    getResource.mockResolvedValueOnce({
+      item: { title: "加班", status: "done", approval_review: {
+        summary: ["OA 中已记录的加班原因"],
+        scores: { information_completeness: "100%", risk: "medium", rule_coverage: "100%", confidence: "85%" },
+        decision: null, status_message: "审批已完成",
+      } },
+      meta: { snapshot_at: "2026-11-22T22:00:00Z" },
+    });
+    renderDetail("OA Approval", "/api/console/oa-approvals/:id", "/oa-approvals/:processInstanceId", "/oa-approvals/process-1");
+    expect(await screen.findByText("OA 中已记录的加班原因")).toBeInTheDocument();
+    expect(screen.getByRole("table", { name: "决策表" })).toHaveTextContent("85%");
+  });
+
   it("renders Meeting Attempt in the legacy business reading order", async () => {
     getResource.mockResolvedValueOnce({
       item: {

@@ -892,6 +892,56 @@ def _reconciled_wechat_message(store: Any, attempt: Any, reply_task: Any) -> str
     return ""
 
 
+def _oa_review_payload(
+    consumer_result: dict[str, Any],
+    runs: list[Any],
+    linked_run: Any | None,
+    decision: dict[str, Any] | None,
+    status_message: str,
+    reviewed_scores: dict[str, Any],
+) -> dict[str, Any]:
+    """Show the facts and recorded metrics from the Consumer decision being displayed."""
+    source_id = consumer_result.get("from_run_id")
+    run = next((run for run in runs if run.id == source_id), None) if source_id else linked_run
+    candidate = _stored_json(getattr(run, "adopted_result_json", ""), {})
+    if not isinstance(candidate, dict):
+        candidate = {}
+    proposal = candidate.get("proposal")
+    basis = candidate.get("decision_basis")
+    facts = (
+        proposal.get("sourced_facts") if isinstance(proposal, dict)
+        else basis.get("verified_facts") if isinstance(basis, dict)
+        else []
+    )
+    summary = []
+    if isinstance(facts, list):
+        summary = list(dict.fromkeys(
+            normalize_display_value(fact["assertion"]).strip()
+            for fact in facts
+            if isinstance(fact, dict) and isinstance(fact.get("assertion"), str)
+            and fact["assertion"].strip()
+        ))
+    if reviewed_scores.get("from_run_id") != source_id:
+        reviewed_scores = {}
+    return {
+        "summary": summary,
+        "scores": {
+            name: consumer_result[name]
+            if candidate.get(name) is not None or reviewed_scores.get(name) is not None
+            else "—"
+            for name in ("information_completeness", "risk", "rule_coverage", "confidence")
+        },
+        "decision": decision,
+        "judgment_reason": normalize_display_value(
+            candidate.get("needs_human_reason")
+            or (proposal.get("authored_judgment") if isinstance(proposal, dict) else "")
+            or candidate.get("summary")
+            or ""
+        ),
+        "status_message": status_message,
+    }
+
+
 def _oa_decision_payload(
     attempt: Any, reviewed: dict[str, Any] | None,
     execution: dict[str, Any] | None,
@@ -1490,6 +1540,24 @@ def build_attempt_detail(
     if callable(list_commands):
         for record in list_commands(attempt.conversation_id, attempt.trigger_message_id):
             metadata.append({"label": "操作记录", "value": _console_command_display(record)})
+    consumer_result = _consumer_result_with_deciding_scores(
+        _consumer_result_payload(
+            display_terminal_run or terminal_run, display_runs or agent_runs, current_agent_runs, reply_task
+        ),
+        metric_evidence,
+    )
+    approval_review = (
+        _oa_review_payload(
+            consumer_result,
+            agent_runs + current_agent_runs,
+            _linked_consumer_run(display_terminal_run or terminal_run, display_runs or agent_runs),
+            oa_decision,
+            status_message,
+            metric_evidence.get("deciding_scores") or {},
+        )
+        if attempt.oa_process_instance_id or attempt.oa_task_id or attempt.action == "oa_approval"
+        else None
+    )
     from app.automatic_repair import repair_presentation
     return 200, {
         "repair": repair_presentation(store, "reply_attempts", historical_attempt.id),
@@ -1521,12 +1589,8 @@ def build_attempt_detail(
         # The scores shown are the ones the action was taken on. Reading them
         # off the last run made the page say "approved on 86% complete
         # material" for an approval decided at 100%.
-        "consumer_result": _consumer_result_with_deciding_scores(
-            _consumer_result_payload(
-                display_terminal_run or terminal_run, display_runs or agent_runs, current_agent_runs, reply_task
-            ),
-            metric_evidence,
-        ),
+        "consumer_result": consumer_result,
+        "approval_review": approval_review,
         "trigger": _trigger_block(historical_attempt),
         "audit_explanation": {"title": "审计说明", "text": normalize_display_value(audit_explanation)},
         # Say what the turn wrote when it wrote something. "No generated reply
