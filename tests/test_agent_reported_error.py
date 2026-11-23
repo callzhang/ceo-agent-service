@@ -120,6 +120,15 @@ def test_a_runtime_risk_rejection_never_enters_automatic_retry():
     assert payload["source_code"] == "PROVIDER_RISK_REJECTED"
 
 
+def test_a_runtime_risk_refusal_name_never_enters_automatic_retry():
+    payload = agent_error_payload("provider_risk_refusal", failed=True)
+
+    assert payload["code"] == "provider_risk_rejected"
+    assert payload["retryable"] is False
+    assert payload["authorization_required"] is False
+    assert payload["source_code"] == "provider_risk_refusal"
+
+
 @pytest.mark.parametrize(
     "error_json",
     [

@@ -77,6 +77,10 @@ def _reportable_policies() -> dict[str, ErrorPolicy]:
         # Runtime risk refusal requires a safer action or informed approval,
         # not another automatic Audit turn. Keep it failed, not needs_human.
         "provider_risk_rejected": _FINAL,
+        # Codex's native automatic review reports the same refusal as
+        # `provider_risk_refusal`; preserve that source spelling while using
+        # the service's canonical non-retryable policy.
+        "provider_risk_refusal": _FINAL,
         # The provider refused the send because the identical message is
         # already delivered. Reply task 135612 failed four runs in a row on
         # this: the turn notifies the applicant, DingTalk suppresses the
@@ -115,7 +119,11 @@ def agent_error_payload(reported_code: str | None, *, failed: bool) -> dict[str,
     policy = _reportable_policies().get(normalized)
     if policy is not None:
         return {
-            "code": normalized,
+            "code": (
+                "provider_risk_rejected"
+                if normalized == "provider_risk_refusal"
+                else normalized
+            ),
             "retryable": policy.retryable,
             "authorization_required": policy.authorization_required,
             "source": AGENT_ERROR_SOURCE,

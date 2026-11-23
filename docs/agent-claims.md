@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-repair-reply_attempts-17894 | `app/agent_reported_error.py`; `tests/test_agent_reported_error.py`; `tests/test_agent_orchestrator.py`; scoped refusal/error-policy text in `docs/runtime-mechanism.md` and `docs/architecture.md`; this claim row | Fix observed `provider_risk_refusal` normalization so an actual native risk refusal stays terminal and cannot consume Consumer retry turns or bypass the existing provider-risk rerun block. No business replay, external action, deploy, or policy change. | Active; source Attempt 17894, full trajectory and receipts reviewed; test-first implementation in isolated worktree from current `origin/main`. |
+
 | codex-native-reply-identity-20261121 | app/shared_action_lifecycle.py record_sent_action and app/action_storage.py SENT_REPLY_SQL diagnosis only; own claim row | Approved sender restoration and legacy no-effect reconciliation deployed at 25fadfda; reminder on 17762 sent once and independently read back as msgQXG0DCVAl+3JJNQuQyq5BA==. Actual verified receipt 28029 is blocked at Sent projection by the older unsent prepared body. Preserve both versions and do not resend. | Awaiting separate explicit confirmation for sent-record association repair; no implementation of that change yet. Prior source file ownership released. |
 
 
