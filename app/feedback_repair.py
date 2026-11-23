@@ -33,10 +33,13 @@ class FeedbackRepairQueue:
         self.next_intake = self.clock() + 60
         try:
             cursor = int(self.store.get_service_state(_SYNC_CURSOR) or 0)
-            page = self.store.list_sent_replies_waiting_for_feedback_events(
+            page = self.store.list_sent_replies_with_feedback_tokens(
                 limit=10, before_id=cursor or None, ordered_by_id=True,
             )
-            self.sync(self.store, page, timeout_seconds=0.5, limit_per_token=5, configured_only=True)
+            self.sync(
+                self.store, page, timeout_seconds=0.5, limit_per_token=20,
+                configured_only=True, check_seen_tokens=True,
+            )
             self.store.set_service_state(_SYNC_CURSOR, str(page[-1].id if len(page) == 10 else 0))
         except Exception:
             _LOGGER.exception('Automatic user feedback sync failed')

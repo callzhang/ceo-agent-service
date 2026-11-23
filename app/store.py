@@ -16926,42 +16926,41 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return result
 
     def list_sent_replies_with_feedback_tokens(
-        self, limit: int = 500
+        self, limit: int = 500, *, before_id: int | None = None,
+        ordered_by_id: bool = False,
     ) -> list[SentReply]:
+        order = "id desc" if ordered_by_id else "sent_at desc, id desc"
         with self._connect() as db:
             rows = db.execute(
                 f"""
                 select *
                 from ({SENT_REPLY_SQL})
-                where trim(feedback_token) <> ''
-                order by sent_at desc, id desc
+                where trim(feedback_token) <> '' and (? is null or id < ?)
+                order by {order}
                 limit ?
                 """,
-                (limit,),
+                (before_id, before_id, limit),
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
 
     def list_sent_replies_waiting_for_feedback_events(
-        self, limit: int = 50, *, before_id: int | None = None,
-        ordered_by_id: bool = False,
+        self, limit: int = 50
     ) -> list[SentReply]:
-        order = "sr.id desc" if ordered_by_id else "sr.sent_at desc, sr.id desc"
         with self._connect() as db:
             rows = db.execute(
                 f"""
                 select sr.*
                 from ({SENT_REPLY_SQL}) sr
                 where trim(sr.feedback_token) <> ''
-                  and (? is null or sr.id < ?)
                   and not exists (
                       select 1
                       from ({FEEDBACK_EVENT_SQL}) fe
                       where fe.feedback_token = sr.feedback_token
                   )
-                order by {order}
+                order by sr.sent_at desc, sr.id desc
                 limit ?
                 """,
-                (before_id, before_id, limit),
+                (limit,),
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
 
