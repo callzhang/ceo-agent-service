@@ -738,6 +738,8 @@ def test_oa_audit_runner_selects_read_only_ocr_handoff_from_task_skill(
     )).split("=", 1)[1])
     assert "same JS cell" in developer
     assert "mcp__ai_services__ocr_document" in developer
+    assert "Use only the configured `ai_services.ocr_document`" in developer
+    assert "A similarly named ChatGPT app tool is not the configured connector" in developer
     assert "already authorized for its work" in developer
     assert "standalone OA comment" in developer
     assert "contact the configured principal" in developer

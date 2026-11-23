@@ -107,6 +107,7 @@ def test_current_oa_audit_preview_uses_saved_task_purpose(tmp_path, monkeypatch)
 
     assert result["status"] != "unavailable"
     assert "same JS cell" in result["developer_instructions"]
+    assert "Use only the configured `ai_services.ocr_document`" in result["developer_instructions"]
     assert "mcp__ai_services__ocr_document" in result["developer_instructions"]
     assert "dingtalk-oa-approval" in result["task_prompt"]
     assert "Test-owned OA approval review Skill." in result["task_prompt"]

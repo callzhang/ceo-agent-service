@@ -1511,7 +1511,7 @@ Message Triage 的 Audit 按触发消息判断 Derek 角色是否有待办。对
 
 OA 表单／评论附件分页读取在本地原件未缓存时，使用原有精确流程与文件 ID 的下载路径取得原件，随后执行同一分页渲染和来源摘要检查；不依赖该 MCP 进程事先读取过元数据。文件仍只保存在本进程临时目录，实际下载失败按技术错误返回。
 
-OA Consumer/Audit 收到扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里传递读取工具返回的字节、MIME、页码和摘要给 `ai_services.ocr_document`，仅展示 OCR 文本与来源信息；非 OA Audit 和其他角色保持原直接工具路径。嵌套目录、shell 清单或其他 Agent 的工具列表都不能单独证明本轮 OCR 可用；以本轮实际调用结果判断依赖故障。
+OA Consumer/Audit 收到扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里传递读取工具返回的字节、MIME、页码和摘要给 `ai_services.ocr_document`，仅展示 OCR 文本与来源信息；非 OA Audit 和其他角色保持原直接工具路径。OA 附件 OCR 直接调用服务配置的 `ai_services.ocr_document`，无需逐次确认。该入口缺失、无法连接或授权被拒时记录读取失败，保留具体错误，并按材料是否影响决策进入相应处理流程。工具搜索返回的同名 ChatGPT 应用入口不可替代。嵌套目录、shell 清单或其他 Agent 的工具列表都不能单独证明本轮 OCR 可用；以本轮实际调用结果判断依赖故障。
 
 Codex 会把 `$CODEX_HOME/config.toml` 中的全部 MCP 服务器合并进每次运行，后台 Agent turn 因此
 默认能看到安装用户的个人工具。服务清单（`CEO_SERVICE_MCP_CONFIG_PATH`）除了声明服务自己的

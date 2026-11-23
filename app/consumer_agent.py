@@ -386,11 +386,13 @@ direct call itself fails, preserve its concrete tool/provider error as the
 technical read failure.
 """.strip()
 _OA_OCR_HANDOFF_INSTRUCTIONS = """
-Use external services exposed to this task and already authorized for its work,
-including configured OCR, directly without asking for another confirmation
-just because the tool is external. Respect concrete runtime or provider denials;
-preserve the original error and do not retry the refused call through another
-tool, account, route or destination.
+Use external services exposed to this task and already authorized for its work
+directly without asking for another confirmation just because they are external.
+Use only the configured `ai_services.ocr_document` for OA attachment OCR.
+A similarly named ChatGPT app tool is not the configured connector. If the
+configured tool is missing, cannot connect, or returns an authorization denial,
+record OCR as unavailable and preserve the actual error. Do not retry a refused
+call through another tool, account, route or destination.
 In Codex OA turns, use `functions.exec` to call the declared `mcp__agent_cli`
 tools. When a read returns `ocr_input_base64`, pass that value to
 `mcp__ai_services__ocr_document` as `data_base64` in the same JS cell, with a

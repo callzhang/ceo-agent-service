@@ -641,7 +641,7 @@ OA 表单附件和评论附件的 `page_number` 请求不要求同一 MCP 进程
 
 Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。普通 Consumer 和非 OA Audit 将任务 MCP 声明为 direct-only；OA Consumer/Audit 的任务读取与 OCR 由同一个 CodeMode JS 调用衔接。角色工具选择、Audit functions 排除、沙箱和路线不变。超长直接调用结果可能被原生运行时截断，因而不能要求模型复制其中的 base64。
 
-OA Consumer/Audit 处理扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里把读取结果的确切字节、MIME、页码和摘要交给 `ai_services.ocr_document`；只显示 OCR 文本及来源信息。非 OA Audit 和其他角色保持原有直接工具路径。嵌套工具目录、shell 清单和其他 Agent 的目录都不能单独证明本轮工具是否可调用；以实际调用结果判断依赖故障，继续区分审阅端读取失败和申请人缺材料。
+OA Consumer/Audit 处理扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里把读取结果的确切字节、MIME、页码和摘要交给 `ai_services.ocr_document`；只显示 OCR 文本及来源信息。非 OA Audit 和其他角色保持原有直接工具路径。OA 附件 OCR 直接调用服务配置的 `ai_services.ocr_document`，无需逐次确认。该入口缺失、无法连接或授权被拒时记录读取失败，保留具体错误，并按材料是否影响决策进入相应处理流程。工具搜索返回的同名 ChatGPT 应用入口不可替代。嵌套工具目录、shell 清单和其他 Agent 的目录都不能单独证明本轮工具是否可调用；以实际调用结果判断依赖故障，继续区分审阅端读取失败和申请人缺材料。
 
 OA 的已授权外部工具可直接调用。审批所必需的已提交材料仍因审阅端故障读不到时，能核实原单、本人当前节点和留言权限的，Consumer 只提议一次人工接手附言，由 Audit 审核、System 执行，保留 OA 待办与原读取错误。附言告知申请人材料可沿用，并携单号直接在钉钉联系责任审批人。被拒的工具操作不会作为通知的一部分重试。
 
