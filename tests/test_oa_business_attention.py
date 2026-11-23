@@ -13,7 +13,7 @@ from app.task_scanners import (
 )
 
 
-def test_current_oa_pending_node_after_comment_done_is_not_attention(tmp_path):
+def test_current_oa_pending_node_without_attempt_is_not_attention(tmp_path):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     task = store.ensure_reply_task(
         conversation_id="oa_pending_scan:instance", conversation_title="OA",
@@ -31,6 +31,48 @@ def test_current_oa_pending_node_after_comment_done_is_not_attention(tmp_path):
     store.set_daily_scan_state("oa_pending", last_success_at="2026-10-13T02:00:00Z",
         cursor_json=json.dumps({"pending_business_object_keys": []}), last_error="")
     assert _queue_attention_rows(store) == []
+
+
+@pytest.mark.parametrize("oa_action,show_pending", [("comment", True), ("approve", False)])
+def test_locally_completed_oa_comment_keeps_the_current_node_pending(tmp_path, oa_action, show_pending):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    key = "oa:instance:node"
+    task = store.ensure_reply_task(
+        conversation_id="oa_pending_scan:instance", conversation_title="OA",
+        single_chat=True, trigger_message_id="message", trigger_sender="OA",
+        trigger_text="Review expenses", trigger_create_time="2026-11-23T00:00:00Z",
+        business_object_key=key,
+    )
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id, conversation_title="OA",
+        trigger_message_id=task.trigger_message_id, trigger_sender="OA",
+        trigger_text="Review expenses", action="agent_run", sensitivity_kind="general",
+        oa_process_instance_id="instance", oa_task_id="node", oa_action=oa_action,
+        send_status="completed",
+    )
+    with store._connect() as db:
+        db.execute("update tasks set status='done' where id=?", (task.id,))
+
+    def scan(keys):
+        store.set_daily_scan_state(
+            "oa_pending", last_success_at="2026-11-23T01:00:00Z",
+            cursor_json=json.dumps({"pending_business_object_keys": keys}), last_error="",
+        )
+
+    scan([key])
+    rows = _queue_attention_rows(store)
+    detail = build_attempt_detail(store, attempt_id)[1]
+    if show_pending:
+        assert [r["detail_url"] for r in rows if r["category"] == "OA approval"] == [f"/attempts/{attempt_id}"]
+        assert detail["status"]["raw"] == "pending"
+        assert "已完成留言，钉钉仍待你审批" in detail["status"]["message"]
+    else:
+        assert not rows
+        assert detail["status"]["raw"] != "pending"
+    scan(["oa:instance:other-node"])
+    assert _queue_attention_rows(store) == []
+    assert build_attempt_detail(store, attempt_id)[1]["status"]["raw"] != "pending"
+    assert store.get_reply_attempt(attempt_id).send_status == "completed"
 
 
 def test_completed_oa_from_previous_cursor_is_removed_from_attention(tmp_path):

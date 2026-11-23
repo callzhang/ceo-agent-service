@@ -3376,6 +3376,8 @@ def _verified_oa_return_after_attempt(
 
 
 def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) -> list[dict[str, object]]:
+    from app.attempt_projection import oa_review_keeps_pending
+
     specs = [
         (
             "Work item",
@@ -3446,14 +3448,17 @@ def _queue_attention_rows(store: AutoReplyStore, *, limit: int | None = None) ->
             task_status = str(task["status"] or "").lower()
             if task_status == "done":
                 latest = db.execute(
-                    f"select id,send_status,resolved_at,audit_summary "
+                    f"select id,send_status,oa_action,resolved_at,audit_summary "
                     f"from ({REPLY_ATTEMPT_COMMON_SQL}) "
                     "where channel=? and conversation_id=? and trigger_message_id=? "
                     "and 'oa:' || oa_process_instance_id || ':' || oa_task_id=? "
                     "order by id desc limit 1",
                     (task["channel"], task["conversation_id"], task["trigger_message_id"], key),
                 ).fetchone()
-                if latest is not None and latest["send_status"] == "skipped" and not latest["resolved_at"]:
+                if (
+                    latest is not None and not latest["resolved_at"]
+                    and oa_review_keeps_pending(latest["send_status"], latest["oa_action"])
+                ):
                     pending_oa_rows.append({
                         "category": "OA approval", "id": str(task["id"]),
                         "status": "pending", "context": str(task["conversation_title"]),

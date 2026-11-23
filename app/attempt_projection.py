@@ -14,6 +14,13 @@ _TERMINAL_OA_TASK_STATES = {"COMPLETED", "FINISHED", "CANCELED", "CANCELLED", "T
 _TERMINAL_OA_CLOSURE_SOURCE = "exact original DingTalk message and native OA detail/OpenAPI readback"
 
 
+def oa_review_keeps_pending(send_status: str, oa_action: str) -> bool:
+    """Local completion without an OA decision leaves a current node pending."""
+    return send_status == "skipped" or (
+        oa_action == "comment" and send_status in {"completed", "done"}
+    )
+
+
 def terminal_oa_source_closure_is_skipped(attempt: Any) -> bool:
     """Recognize a verified closure of an obsolete OA follow-up, not delivery.
 

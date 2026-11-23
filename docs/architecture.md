@@ -422,7 +422,7 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 OA 手动重评可在同一 `reply_task` 内轮换执行代并保留原 Attempt ID。若新一代任务已结束，
 且当前 Consumer 候选被 Audit 按摘要和 digest 明确批准为 `no_action`，任务结束时及启动恢复时
 都会将该来源 Attempt 的旧 `needs_human` 投影收口为 `skipped`，并链接当前 Audit run 与结论；只看见
-`reply_task=done` 不足以收口。最近一次钉钉待办核验仍属于 Derek 的精确 OA 节点，在无动作的审阅结束后仍出现在审批详情和 Attention，直到钉钉确认该节点已离开待办。
+`reply_task=done` 不足以收口。最近一次钉钉待办核验仍属于 Derek 的精确 OA 节点，在无动作的审阅结束或本轮仅留言后仍出现在审批详情和 Attention，直到钉钉确认该节点已离开待办。
 
 #### 为什么这是系统级边界
 
@@ -2125,7 +2125,7 @@ Historical OA review is an as-of review: use source versions that show what was 
 
 Before applying the repeated-return threshold, reconcile the complete source-timestamped DWS `REDIRECT_PROCESS` timeline against local execution receipts and the effective-return count. For the first two returns, state all known, decision-relevant correctable gaps together with actionable requests; a genuinely new gap revealed by later evidence is explained when it appears, not backdated to an earlier return. A local Attempt marked `skipped` or `uncertain` does not erase a return verified in the complete DWS timeline; match its timestamp, process/task evidence and actual DWS remark to the local receipt where possible. Provider success without DWS action readback is not sufficient. Then assess whether the actual request addressed the same correctable gap using evidence available at that time, and whether a later response left that gap unresolved. Explain every excluded return and any difference between total redirects and valid rounds. If the full timeline or a difference cannot be verified, do not claim the threshold is met.
 
-OA Attention keeps process instances present in the latest successful pending scan visible even after the local Consumer task has completed a comment or return action. Its fallback detail states only that the latest scan still sees the DingTalk process pending; it does not infer that no return receipt exists. History/System Execution and live DWS readback remain the sources for action receipt and active-node detail.
+OA Attention keeps the exact approval node visible after the local Consumer task completes only a comment when the latest successful DingTalk scan still lists that same node as pending. Completing a comment preserves its receipt and does not set an approval decision. History/System Execution and live DWS readback remain the sources for action receipt and active-node detail.
 
 The scheduled OA Consumer prompt names the available operation and business Skills and directs the Agent to use their rules and the generic OA action table. Business thresholds and case-routing policy live in the selected Skills. Startup migrates only the exact known stale OA prompt; later administrator edits remain untouched.
 

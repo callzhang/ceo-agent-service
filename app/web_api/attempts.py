@@ -8,7 +8,7 @@ from urllib.parse import quote
 
 from app.wechat.models import principal_reply_supersession
 from app.attempt_rerun_presentation import RerunPresentation, attempt_rerun_presentation
-from app.attempt_projection import terminal_oa_source_closure_is_skipped
+from app.attempt_projection import oa_review_keeps_pending, terminal_oa_source_closure_is_skipped
 from app.attempt_projection import current_wechat_delivery_matches, project_attempt_status
 from app.attempt_what_happened import build_what_happened, deciding_scores, stopped_because
 from app.history_actions import (
@@ -1441,7 +1441,7 @@ def build_attempt_detail(
             attempt = attempt.model_copy(update={"send_status": "done"})
     oa_open_after_review = False
     if (
-        attempt.send_status == "skipped" and not attempt.resolved_at
+        oa_review_keeps_pending(attempt.send_status, attempt.oa_action) and not attempt.resolved_at
         and oa_decision is None and reply_task is not None and reply_task.status == "done"
         and attempt.oa_process_instance_id and attempt.oa_task_id
         and reply_task.trigger_message_id == attempt.trigger_message_id
@@ -1454,7 +1454,11 @@ def build_attempt_detail(
             and node_key in cursor.get("pending_business_object_keys", [])
         )
         if oa_open_after_review:
-            status_message = "钉钉仍待你审批，本轮审阅未执行审批动作。"
+            status_message = (
+                "已完成留言，钉钉仍待你审批。"
+                if attempt.oa_action == "comment" and attempt.send_status != "skipped"
+                else "钉钉仍待你审批，本轮审阅未执行审批动作。"
+            )
     if oa_decision is not None:
         if oa_decision["receipt"] is not None:
             status_message = f"审批已{oa_decision['label']}，操作结果已核验。"
