@@ -8,6 +8,7 @@ from app.automatic_repair_store import enqueue_in_transaction, save_repair
 from app.consumer_purpose_retry import utc_time
 from app.feedback_events import sync_feedback_events_for_sent_replies
 from app.feedback_processing import FeedbackIterationDisabledError, FeedbackProcessingClaimError
+from app.store import ManualRerunConflict
 
 SOURCE = 'user_feedback'
 BATCH_PREFIX = 'automatic-feedback:'
@@ -148,11 +149,14 @@ class FeedbackRepairQueue:
             entry.update(next_readback_at=time.time() + 30)
             save_repair(self.store, entry)
             return
-        queued = self.store.requeue_failed_reply_task_for_source_revision(
-            task.id, expected_execution_generation=task.execution_generation,
-            source_revision_key=revision_key, source_attempt_id=attempt.id,
-            reviewer_feedback=retry['diagnosis'],
-        )
+        try:
+            queued = self.store.requeue_failed_reply_task_for_source_revision(
+                task.id, expected_execution_generation=task.execution_generation,
+                source_revision_key=revision_key, source_attempt_id=attempt.id,
+                reviewer_feedback=retry['diagnosis'],
+            )
+        except ManualRerunConflict:
+            queued = False
         if not queued:
             self._finish(entry, 'blocked', '原任务当前不符合未发送任务的续修条件。')
             return

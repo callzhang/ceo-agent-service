@@ -6953,7 +6953,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             if sent is not None or action_receipt is not None:
                 return False
             if source_attempt_id:
-                if row["channel"] != "dingtalk" or row["oa_url"] or latest_attempt is None:
+                if (
+                    row["channel"] != "dingtalk" or row["oa_url"] or latest_attempt is None
+                    or self._reply_task_from_native(owner).input_compacted
+                ):
                     return False
                 source_run = db.execute(
                     "select 1 from runs where id=? and task_id=? and execution_generation=?",
@@ -6969,7 +6972,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 })
                 if updated.rowcount != 1:
                     return False
-            self._enqueue_manual_rerun_reply_task_in_connection(
+            rerun = self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
                 conversation_id=str(row["conversation_id"]),
                 conversation_title=str(row["conversation_title"]),
@@ -6984,6 +6987,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 revision_key=revision_key,
                 channel=str(row["channel"]),
             )
+            if rerun.id != task_id:
+                raise ManualRerunConflict("original reply task changed before automatic retry")
             refreshed = task_entity_storage.get_task(db, task_id)
             if refreshed is not None and refreshed["status"] == "pending":
                 task_entity_storage.update_task_cas(
