@@ -5,6 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 REPAIR_DIAGNOSIS_CONTRACT = "automatic_repair.diagnosis.v1"
+FEEDBACK_REPAIR_CONTRACT = "automatic_repair.user_feedback.v1"
 REPAIR_PR_CONTRACT = "automatic_repair.pr.v3"
 REPAIR_MERGE_CONTRACT = "automatic_repair.merge.v1"
 
@@ -13,6 +14,12 @@ class RepairDiagnosis(BaseModel):
     model_config = ConfigDict(extra="forbid", strict=True)
     outcome: Literal["pr_created", "no_code_change", "blocked"]
     summary: str = Field(min_length=1)
+
+
+class FeedbackRepairDiagnosis(BaseModel):
+    model_config = ConfigDict(extra="forbid", strict=True)
+    outcome: Literal["pr_created", "business_revision", "no_code_change", "blocked"]
+    summary: str = Field(min_length=1, max_length=6000)
 
 
 class PRRepairResult(BaseModel):

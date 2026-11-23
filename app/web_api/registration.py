@@ -1347,6 +1347,14 @@ def register_console_routes(
                                             "created_at": a.created_at}
                                            for index, a in enumerate(attempts)]})
 
+    def _feedback_repair(store, processing):
+        from app.automatic_repair import repair_presentation
+        from app.feedback_repair import SOURCE
+
+        return repair_presentation(store, SOURCE, processing.current_round_id) if (
+            processing and processing.current_round_id
+        ) else None
+
     @app.get("/api/console/feedback")
     def console_feedback(page: int = Query(default=1, ge=1), page_size: int = Query(default=20, ge=1, le=100), q: str = "", status: str = ""):
         store = store_factory()
@@ -1371,6 +1379,7 @@ def register_console_routes(
                 "summary": persisted_feedback_summary(row), "references": refs,
                 "batch_id": processing.batch_id if processing else "",
                 "processing_task_id": processing.workbench_task_id if processing else "",
+                "repair": _feedback_repair(store, processing),
             })
         start = (page - 1) * page_size
         envelope = list_envelope(filtered[start:start + page_size], page=page, page_size=page_size, total=len(filtered))
@@ -1786,6 +1795,7 @@ def register_console_routes(
             "batch_id": processing.batch_id if processing else "",
             "processing_task_id": processing.workbench_task_id if processing else "",
             "processing": json_safe(processing) if processing else None,
+            "repair": _feedback_repair(store, processing),
             "current_processing": (
                 processing_state["current_processing"] if processing_state else None
             ),

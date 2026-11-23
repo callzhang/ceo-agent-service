@@ -5,6 +5,7 @@ import urllib.request
 from collections.abc import Iterable
 from urllib.parse import quote
 
+from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import (
     FeedbackLinkContext,
     extract_feedback_link_context,
@@ -13,8 +14,12 @@ from app.store import AutoReplyStore, SentReply
 
 
 def feedback_context_for_sent_reply(
-    sent_reply: SentReply,
+    sent_reply: SentReply, *, configured_only: bool = False,
 ) -> FeedbackLinkContext | None:
+    if configured_only:
+        token = sent_reply.feedback_token.strip()
+        base_url = feedback_spike_vercel_base_url().rstrip("/")
+        return FeedbackLinkContext(token, base_url) if token and base_url else None
     context = extract_feedback_link_context(sent_reply.reply_text)
     if context is not None:
         return context
@@ -33,11 +38,12 @@ def sync_feedback_events_for_sent_replies(
     *,
     timeout_seconds: float = 2,
     limit_per_token: int = 20,
+    configured_only: bool = False,
 ) -> int:
     contexts = {
         context.feedback_token: context
         for sent_reply in sent_replies
-        if (context := feedback_context_for_sent_reply(sent_reply)) is not None
+        if (context := feedback_context_for_sent_reply(sent_reply, configured_only=configured_only)) is not None
     }
     existing_events = store.list_feedback_events_for_tokens(list(contexts))
     synced = 0

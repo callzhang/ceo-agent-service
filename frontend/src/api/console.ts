@@ -306,6 +306,7 @@ export interface FeedbackItem {
   processing_task_id: string;
   current_processing?: FeedbackProcessingRound | null;
   processing_history?: FeedbackProcessingRound[];
+  repair?: import("../components/repair/AutomaticRepairCard").AutomaticRepairStatus | null;
 }
 export interface FeedbackList extends ConsoleList<FeedbackItem> { pending_count?: number; }
 export interface StatusService { label: string; target: string; ok: boolean; state: string; detail: string; pid: string; runs: string; initialized: string; last_terminating_signal: string; returncode: number; }

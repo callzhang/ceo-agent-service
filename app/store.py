@@ -6878,6 +6878,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         *,
         expected_execution_generation: str,
         source_revision_key: str,
+        source_attempt_id: int = 0,
+        reviewer_feedback: str = "",
     ) -> bool:
         """Start one fresh decision when a failed audit receives newer source context.
 
@@ -6888,7 +6890,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """
         generation = expected_execution_generation.strip()
         revision_key = source_revision_key.strip()
-        if not generation or not revision_key:
+        if not generation or not revision_key or bool(source_attempt_id) != bool(reviewer_feedback.strip()):
             raise ValueError("generation and source revision are required")
         with self._immediate_write_transaction() as db:
             from app import task_entity_storage
@@ -6906,7 +6908,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "claimed_input_version", "parameters",
             )})
             if (
-                int(row["parameters"].get("manual_rerun_attempt_id") or 0) == 0
+                int(row["parameters"].get("manual_rerun_attempt_id") or 0) == source_attempt_id
                 and str(row["parameters"].get("manual_rerun_revision_key") or "") == revision_key
             ):
                 return False
@@ -6926,7 +6928,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 (task_id, generation),
             ).fetchall()
             latest_attempt = db.execute(
-                f"select send_error from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=? and conversation_id=? "
+                f"select send_error,id,agent_run_id,reviewer_feedback from ({REPLY_ATTEMPT_COMMON_SQL}) as reply_attempts where channel=? and conversation_id=? "
                 "and trigger_message_id=? order by id desc limit 1",
                 (row["channel"], row["conversation_id"], row["trigger_message_id"]),
             ).fetchone()
@@ -6950,6 +6952,23 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
             if sent is not None or action_receipt is not None:
                 return False
+            if source_attempt_id:
+                if row["channel"] != "dingtalk" or row["oa_url"] or latest_attempt is None:
+                    return False
+                source_run = db.execute(
+                    "select 1 from runs where id=? and task_id=? and execution_generation=?",
+                    (latest_attempt["agent_run_id"], task_id, generation),
+                ).fetchone()
+                if latest_attempt["id"] != source_attempt_id or source_run is None:
+                    return False
+                feedback = "\n\n".join(filter(None, (
+                    str(latest_attempt["reviewer_feedback"] or "").strip(), reviewer_feedback.strip(),
+                )))
+                updated = update_action(db, "reply_attempts", source_attempt_id, {
+                    "reviewer_feedback": feedback,
+                })
+                if updated.rowcount != 1:
+                    return False
             self._enqueue_manual_rerun_reply_task_in_connection(
                 db,
                 conversation_id=str(row["conversation_id"]),
@@ -6961,7 +6980,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 trigger_text=str(row["trigger_text"]),
                 trigger_message_json=str(row["trigger_message_json"]),
                 oa_url=str(row["oa_url"] or ""),
-                attempt_id=0,
+                attempt_id=source_attempt_id,
                 revision_key=revision_key,
                 channel=str(row["channel"]),
             )
@@ -16807,18 +16826,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
 
 
     def get_sent_reply(
-        self, conversation_id: str, trigger_message_id: str
+        self, conversation_id: str, trigger_message_id: str, *, channel: str | None = None,
     ) -> SentReply | None:
         with self._connect() as db:
             row = db.execute(
                 f"""
                 select *
                 from ({SENT_REPLY_SQL})
-                where conversation_id=? and trigger_message_id=?
+                where conversation_id=? and trigger_message_id=? and (? is null or channel=?)
                 order by id desc
                 limit 1
                 """,
-                (conversation_id, trigger_message_id),
+                (conversation_id, trigger_message_id, channel, channel),
             ).fetchone()
             if row is None:
                 return None
@@ -16918,23 +16937,26 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return [SentReply.model_validate(dict(row)) for row in rows]
 
     def list_sent_replies_waiting_for_feedback_events(
-        self, limit: int = 50
+        self, limit: int = 50, *, before_id: int | None = None,
+        ordered_by_id: bool = False,
     ) -> list[SentReply]:
+        order = "sr.id desc" if ordered_by_id else "sr.sent_at desc, sr.id desc"
         with self._connect() as db:
             rows = db.execute(
                 f"""
                 select sr.*
                 from ({SENT_REPLY_SQL}) sr
                 where trim(sr.feedback_token) <> ''
+                  and (? is null or sr.id < ?)
                   and not exists (
                       select 1
                       from ({FEEDBACK_EVENT_SQL}) fe
                       where fe.feedback_token = sr.feedback_token
                   )
-                order by sr.sent_at desc, sr.id desc
+                order by {order}
                 limit ?
                 """,
-                (limit,),
+                (before_id, before_id, limit),
             ).fetchall()
             return [SentReply.model_validate(dict(row)) for row in rows]
 
