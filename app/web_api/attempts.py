@@ -978,6 +978,31 @@ def _oa_decision_payload(
     return decisions[0] if len(decisions) == 1 else None
 
 
+def _preceding_oa_decision(
+    store: Any, attempt: Any, reviewed: dict[str, Any] | None, runs: list[Any],
+) -> tuple[dict[str, Any] | None, Any | None]:
+    """A read-only final stage can follow an already verified OA action."""
+    if (
+        reviewed is None or reviewed["decision"] != "approve"
+        or _stored_json(reviewed["candidate_json"], {}).get("outcome") != "no_action"
+    ):
+        return None, None
+    by_id = {run.id: run for run in runs}
+    while predecessor_id := reviewed.get("predecessor_review_id"):
+        consumer = by_id.get(reviewed["candidate_id"])
+        prior_audit = by_id.get(getattr(consumer, "parent_agent_run_id", None))
+        if prior_audit is None or prior_audit.id >= reviewed["audit_run_id"]:
+            break
+        reviewed = store.reviewed_candidate_for_audit_run(prior_audit.id)
+        if reviewed is None or reviewed["review_id"] != predecessor_id or reviewed["decision"] != "approve":
+            break
+        prior_execution = _system_execution_payload(store, reviewed, is_current=False)
+        decision = _oa_decision_payload(attempt, reviewed, prior_execution)
+        if decision is not None and decision["status"] == "verified" and decision["receipt"]:
+            return decision, by_id.get(reviewed["candidate_id"])
+    return None, None
+
+
 def _oa_permission_wait_projection(
     store: Any,
     task: Any,
@@ -1403,6 +1428,17 @@ def build_attempt_detail(
     if principal_reply_completed:
         audit_explanation = _PRINCIPAL_WECHAT_REPLY_MESSAGE
     oa_decision = _oa_decision_payload(attempt, display_reviewed, system_execution)
+    oa_deciding_run = None
+    if (
+        oa_decision is None and attempt.send_status == "skipped"
+        and attempt.oa_process_instance_id and attempt.oa_task_id
+        and reply_task is not None and reply_task.status == "done"
+    ):
+        oa_decision, oa_deciding_run = _preceding_oa_decision(
+            store, attempt, display_reviewed, display_runs,
+        )
+        if oa_decision is not None:
+            attempt = attempt.model_copy(update={"send_status": "done"})
     oa_open_after_review = False
     if (
         attempt.send_status == "skipped" and not attempt.resolved_at
@@ -1540,6 +1576,8 @@ def build_attempt_detail(
     if callable(list_commands):
         for record in list_commands(attempt.conversation_id, attempt.trigger_message_id):
             metadata.append({"label": "操作记录", "value": _console_command_display(record)})
+    if oa_deciding_run is not None:
+        metric_evidence = {"deciding_scores": deciding_scores([oa_deciding_run])}
     consumer_result = _consumer_result_with_deciding_scores(
         _consumer_result_payload(
             display_terminal_run or terminal_run, display_runs or agent_runs, current_agent_runs, reply_task

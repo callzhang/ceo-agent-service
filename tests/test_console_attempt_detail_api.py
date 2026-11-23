@@ -713,14 +713,14 @@ def _complete_consumer_run(
     )
 
 
-def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
+def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str, proposal_revision: int = 0):
     candidate = store.adopted_candidate_for_consumer_run(consumer.id)
     assert candidate is not None
     run = store.claim_agent_run(
         task.id,
         task.execution_generation,
         role=AgentRole.AUDIT,
-        proposal_revision=0,
+        proposal_revision=proposal_revision,
         turn_attempt=0,
         parent_agent_run_id=consumer.id,
         operation_id=f"audit-{owner}",
@@ -731,7 +731,7 @@ def _complete_audit_run(store: AutoReplyStore, task, consumer, *, owner: str):
         {
             "outcome": "approve",
             "summary": "The reviewed update was published.",
-            "proposal_revision": 0,
+            "proposal_revision": proposal_revision,
             "candidate_digest": candidate["candidate_digest"],
             "feedback": None,
             "error": {"code": "", "retryable": False, "authorization_required": False},
@@ -2262,6 +2262,70 @@ def test_old_oa_attempt_displays_current_decision_and_keeps_original_failure(
     else:
         assert item["status"]["raw"] == "uncertain"
         assert "尚未核验" in item["status"]["message"]
+
+
+@pytest.mark.parametrize("same_node", [True, False])
+def test_oa_read_only_followup_preserves_verified_decision(tmp_path: Path, same_node: bool):
+    store = AutoReplyStore(tmp_path / "oa-stage-receipt.sqlite3")
+    task = _consumer_result_task(store)
+    target = {"process_instance_id": "process", "task_id": "approved-node"}
+    proposal = _consumer_result_payload(information_completeness=1.0, risk="low")
+    proposal["continue_after_execution"] = True
+    proposal["proposal"]["actions"] = [{
+        "action_identity": "approve-leave", "capability": "dingtalk-oa",
+        "operation": "approve", "description": "同意调休", "target": target,
+        "payload": {"remark": "一天调休符合短期请假规则。"},
+    }]
+    proposal["proposal"]["sourced_facts"] = [
+        {"assertion": "申请一天调休。", "references": ["form:duration"]},
+    ]
+    acting = _complete_consumer_run(store, task, owner="consumer", payload=proposal)
+    _complete_audit_run(store, task, acting, owner="audit")
+    review = store.current_reviewed_candidate(task.id, task.execution_generation)
+    execution = store.claim_candidate_execution(acting.id, review["review_id"], "executor", 60)
+    store.begin_candidate_action(execution["id"], "executor", 0, "approve-effect")
+    store.record_candidate_external_action(
+        execution["id"], "executor", 0, "approve-effect", "approve", target,
+        {"readback": {"taskResult": "AGREE", "taskStatus": "COMPLETED"}},
+    )
+    store.finish_candidate_execution(execution["id"], "executor", "done", {})
+    follow_up = {
+        **_consumer_result_payload(information_completeness=0.5),
+        "outcome": "no_action", "proposal": None,
+        "summary": "当前没有新的待办。", "stage_index": 1,
+        "predecessor_review_id": review["review_id"],
+    }
+    last_consumer = _complete_consumer_run(
+        store, task, owner="follow-up-consumer", payload=follow_up, proposal_revision=1,
+        parent_agent_run_id=review["audit_run_id"],
+    )
+    last_audit = _complete_audit_run(
+        store, task, last_consumer, owner="follow-up-audit", proposal_revision=1,
+    )
+    attempt_id = store.finalize_orchestrated_reply_task(
+        task_id=task.id, expected_execution_generation=task.execution_generation,
+        run_id=last_audit.id, task_status="done", task_error="", available_at="",
+        conversation_id=task.conversation_id, conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id, trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text, audit_tool_events_json="[]",
+        audit_summary="当前没有新的待办。", send_status="skipped", send_error="",
+        channel="dingtalk", oa_process_instance_id="process",
+        oa_task_id="approved-node" if same_node else "different-node",
+        oa_action="review",
+    )
+
+    _, item = build_attempt_detail(store, attempt_id)
+
+    assert item["status"]["raw"] == ("done" if same_node else "skipped")
+    decision = item["approval_review"]["decision"]
+    if same_node:
+        assert decision["label"] == "同意"
+        assert decision["receipt"]["external_action_key"] == "approve-effect"
+        assert item["approval_review"]["summary"] == ["申请一天调休。"]
+        assert item["approval_review"]["scores"]["information_completeness"] == "100%"
+    else:
+        assert decision is None
+    assert store.get_reply_attempt(attempt_id).send_status == "skipped"
 
 
 def test_failed_attempt_does_not_inherit_another_business_objects_refusal(tmp_path: Path):
