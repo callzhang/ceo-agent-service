@@ -1,0 +1,27 @@
+{
+  "additionalProperties": false,
+  "properties": {
+    "outcome": {
+      "enum": [
+        "pr_created",
+        "business_revision",
+        "no_code_change",
+        "blocked"
+      ],
+      "title": "Outcome",
+      "type": "string"
+    },
+    "summary": {
+      "maxLength": 6000,
+      "minLength": 1,
+      "title": "Summary",
+      "type": "string"
+    }
+  },
+  "required": [
+    "outcome",
+    "summary"
+  ],
+  "title": "FeedbackRepairDiagnosis",
+  "type": "object"
+}
