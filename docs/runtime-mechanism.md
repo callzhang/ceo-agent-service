@@ -643,6 +643,8 @@ Codex Consumer/Audit 显式启用原生 `features.code_mode.enabled`。普通 Co
 
 OA Consumer/Audit 处理扫描页时，在当前 Native Codex session 的同一 CodeMode 调用里把读取结果的确切字节、MIME、页码和摘要交给 `ai_services.ocr_document`；只显示 OCR 文本及来源信息。非 OA Audit 和其他角色保持原有直接工具路径。嵌套工具目录、shell 清单和其他 Agent 的目录都不能单独证明本轮工具是否可调用；以实际调用结果判断依赖故障，继续区分审阅端读取失败和申请人缺材料。
 
+OA 的已授权外部工具可直接调用。审批所必需的已提交材料仍因审阅端故障读不到时，能核实原单、本人当前节点和留言权限的，Consumer 只提议一次人工接手附言，由 Audit 审核、System 执行，保留 OA 待办与原读取错误。附言告知申请人材料可沿用，并携单号直接在钉钉联系责任审批人。被拒的工具操作不会作为通知的一部分重试。
+
 Audit 不得仅因 OCR/转写来源字节由已配置 AI Services 处理而额外要求人工批准；材料敏感性、任务范围、明确禁止处理要求和真实 provider 错误仍按原规则处理。此项不放宽消息或其他对外动作的审核。
 
 补充人工问题验收使用 `evals/consumer_audit_human_review/` 下的 manifest 和 `python -m scripts.eval_consumer_audit_human_review`，分别调用 baseline/candidate 的真实原生 Audit、完整角色指令和 wire schema，核对候选摘要、修订及审核结果并保存原文。输入是刻意构造且结构合法的候选，不证明 Consumer 实际产生了这些问题；结论仍需独立原文复核，不替代真实发送或生产验收。

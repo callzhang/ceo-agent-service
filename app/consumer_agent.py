@@ -386,6 +386,11 @@ direct call itself fails, preserve its concrete tool/provider error as the
 technical read failure.
 """.strip()
 _OA_OCR_HANDOFF_INSTRUCTIONS = """
+Use external services exposed to this task and already authorized for its work,
+including configured OCR, directly without asking for another confirmation
+just because the tool is external. Respect concrete runtime or provider denials;
+preserve the original error and do not retry the refused call through another
+tool, account, route or destination.
 In Codex OA turns, use `functions.exec` to call the declared `mcp__agent_cli`
 tools. When a read returns `ocr_input_base64`, pass that value to
 `mcp__ai_services__ocr_document` as `data_base64` in the same JS cell, with a
@@ -403,6 +408,23 @@ Consumer may also use `dws` through shell for other source reads. Never use
 comment actions; OA effects must use the reviewed typed-action path. Audit must
 not use shell or local `dws` commands. If the read or OCR call fails, preserve
 its concrete tool/provider error.
+
+If a submitted OA attachment remains unreadable after the applicable authorized
+read paths and the missing content blocks the decision, leave the approval
+pending for manual handling. If the original OA and the current approver's
+pending node can be verified and the comment path is available, Consumer
+proposes one standalone OA comment through the normal reviewed action.
+State which material the system could not read, that the submitted material
+can be reused, and that the applicant should contact the configured principal
+directly in DingTalk with the approval number. Check for an existing equivalent
+notice on the current node; do not send it again. End this stage after the
+comment receipt. Do not ask for resubmission or propose an approval decision.
+Audit reviews the status-only comment using verified workflow and blockage
+evidence. The attachment contents are not needed to verify this notice. Return
+a candidate that omits this available handoff for revision; preserve real
+technical failure when the OA identity or the notice itself cannot be verified
+or performed. This independent notice does not perform or retry the failed
+read, or invent a reusable policy question.
 """.strip()
 _CAPABILITY_COMMON_TAIL = """
 If no declared tool or callable selected Skill script can perform an operation,
@@ -416,7 +438,7 @@ claim the unavailable operation succeeded. Return failed with error_code
 truthful reply can be completed from available information. A declared tool
 that fails is a different error; preserve its actual failure code.
 When a required DWS, MCP, or other external-source read actually fails because
-the dependency is unavailable, return failed with error_code
+the dependency is unavailable and no task-specific handoff applies, return failed with error_code
 `dependency_read_unavailable` and preserve the exact underlying error in the
 summary. Do not use this code when a successful read returns no match, evidence
 is incomplete or ambiguous, or a governing rule is missing; those are evidence
@@ -431,8 +453,9 @@ A low-consequence operating choice is autonomous when the applicable rules and
 facts support it. Do not ask the principal merely because an equivalent default exists.
 A bounded fact-finding inquiry may be proposed autonomously when it states its
 risk boundary and makes no purchase, budget or partnership commitment.
-A real provider read outage stays failed and cannot become a substitute
-notification. Human choices apply only to the current instance, with complete
+A real provider read outage remains a technical failure of the read. An explicit
+task-specific status notice can be proposed independently without claiming to
+complete the blocked work. Human choices apply only to the current instance, with complete
 bound plans or an explicit stop reason. They never edit Skills or reusable
 policies.
 Wire results use error_code, error_retryable, error_authorization_required;
@@ -1637,10 +1660,9 @@ def audit_developer_sections(
             "and the candidate supplies a stable target identifier, use the available read "
             "capability to verify that state itself before returning feedback for missing live "
             "evidence. A proposal need not embed raw tool output, and Audit must not ask Consumer "
-            "to reproduce runtime tool output. If the read fails, return failed for the dependency "
-            "instead of requesting another content revision. Return return or reject when the "
-            "candidate must change, and ordinary failed when a dependency does not "
-            "complete.\n\n" + TASK_STORAGE_INSTRUCTIONS
+            "to reproduce runtime tool output. If a read needed to verify the proposed effect itself "
+            "fails, return failed for the dependency instead of requesting another content revision. "
+            "Return return or reject when the candidate must change.\n\n" + TASK_STORAGE_INSTRUCTIONS
         ), role_boundary=None,
     )
     return sections + (

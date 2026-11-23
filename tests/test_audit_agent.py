@@ -738,6 +738,10 @@ def test_oa_audit_runner_selects_read_only_ocr_handoff_from_task_skill(
     )).split("=", 1)[1])
     assert "same JS cell" in developer
     assert "mcp__ai_services__ocr_document" in developer
+    assert "already authorized for its work" in developer
+    assert "standalone OA comment" in developer
+    assert "contact the configured principal" in developer
+    assert "attachment contents are not needed to verify this notice" in developer
     [snapshot] = [event for event in executor.active_events if event.get("type") == "runtime.prompt"]
     assert snapshot["invocation_facts"]["audit_purpose"] == "oa"
 

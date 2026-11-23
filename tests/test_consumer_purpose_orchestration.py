@@ -33,6 +33,31 @@ def output(action, *, target=None, payload=None, refs=None):
     }).to_result()
 
 
+def test_unreadable_oa_attachment_can_end_with_reviewed_handoff_comment(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    context = replace(context, skill_names=("dingtalk-oa-approval",))
+    notice = "系统暂时无法读取已提交的凭证图片。请带上单号，在钉钉联系审批负责人本人处理。"
+    handoff = output(
+        "comment", target={"process_instance_id": "p"}, payload={"content": notice},
+        refs=["oa:p:pending-node", "ocr:provider_risk_rejected"],
+    )
+    consumer = ScriptedConsumer(store, handoff)
+    audit = ScriptedAudit(store, "approve")
+    handler = VerifiedHandler()
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {("dingtalk-oa", "comment"): handler}),
+    )
+
+    result = orchestrator.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "executed"
+    assert len(consumer.calls) == len(audit.calls) == len(handler.calls) == 1
+    assert handler.calls[0][1]["content"] == notice
+    receipts = store.list_verified_candidate_actions(task.id)
+    assert [receipt["operation"] for receipt in receipts] == ["comment"]
+
+
 def test_request_wait_retry_and_business_return_without_replaying_request(tmp_path):
     store, task, context = task_and_context(tmp_path)
     context = replace(context, skill_names=('dingtalk-oa-approval',))
