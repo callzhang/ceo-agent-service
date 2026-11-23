@@ -52,11 +52,27 @@ def build_attempt_trigger(
                          and item["channel"] == attempt.channel
                          and item["conversation_id"] == attempt.conversation_id
                          and item["trigger_message_id"] == attempt.trigger_message_id), None)
-    if source_input is None or attempt.channel != "dingtalk" or dws_factory is None:
+    if source_input is None or attempt.channel != "dingtalk":
         return 200, unavailable
     source = json.loads(source_input["trigger_message_json"])
     conversation_id = source.get("open_conversation_id")
     if not conversation_id or source.get("open_message_id") != attempt.trigger_message_id:
+        return 200, unavailable
+    raw_source = source.get("raw_payload")
+    source_kind = source.get("source") or (
+        raw_source.get("source") if isinstance(raw_source, dict) else None
+    )
+    if source_kind == "oa_pending_scan":
+        if (conversation_id != attempt.conversation_id
+                or not attempt.trigger_message_id.startswith("oa-pending:")):
+            return 200, unavailable
+        text = "系统扫描到待审批事项后触发，原触发正文已精简。"
+        if source_input["trigger_create_time"]:
+            text += f"触发时间：{source_input['trigger_create_time']}。"
+        if source_input["oa_url"]:
+            text += "可点击页面上的「查看审批」打开关联审批。"
+        return 200, {"title": "Trigger · 审批待办扫描", "text": text}
+    if dws_factory is None:
         return 200, unavailable
     conversation = DingTalkConversation(
         open_conversation_id=conversation_id, title=source_input["conversation_title"],

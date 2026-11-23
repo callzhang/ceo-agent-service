@@ -73,6 +73,60 @@ def _compacted_trigger_attempt(store):
     return attempt_id, task
 
 
+def test_compacted_oa_scan_trigger_shows_recorded_source_without_chat_read(tmp_path, monkeypatch):
+    from app.dws_client import DwsClient
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    oa_url = "https://aflow.dingtalk.com/detail?procInstId=process-1&taskId=node-1"
+    message = DingTalkMessage(
+        open_conversation_id="oa_pending_scan:process-1",
+        open_message_id="oa-pending:process-1:revision:2026-11-23",
+        conversation_title="审批待办",
+        single_chat=True,
+        sender_name="Derek OA",
+        create_time="2026-11-23 10:00:00",
+        content="审批待办扫描发现一条待处理审批。",
+        raw_payload={"source": "oa_pending_scan"},
+    )
+    assert store.enqueue_reply_task(
+        conversation_id=message.open_conversation_id,
+        conversation_title=message.conversation_title,
+        single_chat=True,
+        trigger_message_id=message.open_message_id,
+        trigger_create_time=message.create_time,
+        trigger_sender=message.sender_name,
+        trigger_text=message.content,
+        trigger_message_json=message.model_dump_json(),
+        channel="dingtalk",
+        oa_url=oa_url,
+    )
+    task = store.claim_reply_task(1)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=task.conversation_id,
+        conversation_title=task.conversation_title,
+        trigger_message_id=task.trigger_message_id,
+        trigger_sender=task.trigger_sender,
+        trigger_text=task.trigger_text,
+        oa_url=oa_url,
+        action="skip", sensitivity_kind="general", send_status="skipped",
+    )
+    store.complete_reply_task(task.id, expected_execution_generation=task.execution_generation)
+    assert store.get_reply_attempt(attempt_id).trigger_text == ""
+    monkeypatch.setattr(DwsClient, "read_message_by_id", lambda *_: pytest.fail("unexpected chat read"))
+
+    client = TestClient(create_audit_app(store.path))
+    detail = client.get(f"/api/console/history/{attempt_id}").json()["item"]
+    assert detail["actions"]["dingtalk_url"] == "/open-dingtalk-oa-popup?url=" + quote(oa_url, safe="")
+    response = client.get(detail["trigger"]["source_url"])
+    assert response.status_code == 200
+    trigger = response.json()["item"]
+    assert trigger["title"] == "Trigger · 审批待办扫描"
+    assert message.create_time in trigger["text"]
+    assert "查看审批" in trigger["text"]
+    assert store.get_reply_task(task.id).status == "done"
+    assert store.get_reply_attempt(attempt_id).trigger_text == ""
+
+
 def test_compacted_attempt_trigger_loads_exact_native_message_without_rerunning(
     tmp_path, monkeypatch,
 ):
