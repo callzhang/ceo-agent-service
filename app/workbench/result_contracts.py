@@ -13,6 +13,7 @@ from app.agent_runtime_contracts import (
 from app.automatic_repair_contracts import (
     PRRepairResult,
     RepairDiagnosis,
+    FEEDBACK_REPAIR_CONTRACT, FeedbackRepairDiagnosis,
     REPAIR_DIAGNOSIS_CONTRACT,
     REPAIR_PR_CONTRACT,
     REPAIR_MERGE_CONTRACT,
@@ -41,6 +42,7 @@ _CONTRACTS = {
     )
     for identity, model in (
         (REPAIR_DIAGNOSIS_CONTRACT, RepairDiagnosis),
+        (FEEDBACK_REPAIR_CONTRACT, FeedbackRepairDiagnosis),
         (REPAIR_PR_CONTRACT, PRRepairResult),
         (REPAIR_MERGE_CONTRACT, RepairMergeResult),
     )

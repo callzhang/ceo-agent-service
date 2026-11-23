@@ -75,3 +75,25 @@ def test_sync_feedback_events_for_sent_replies_imports_remote_event(
             0.5,
         )
     ]
+
+
+def test_periodic_sync_imports_followup_from_the_same_token(tmp_path, monkeypatch):
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    store.record_sent_reply("cid", "msg", "reply", feedback_token="token")
+    store.upsert_feedback_event(key="first", feedback_token="token", comment="Already imported")
+    monkeypatch.setattr("app.feedback_events.feedback_spike_vercel_base_url", lambda: "https://feedback.example.com")
+    calls = []
+
+    def fake_urlopen(request, timeout):
+        calls.append(request.full_url)
+        return FakeResponse({"events": [
+            {"key": "first", "feedback_token": "token", "comment": "Already imported"},
+            {"key": "followup", "feedback_token": "token", "comment": "Follow-up"},
+        ]})
+
+    monkeypatch.setattr("app.feedback_events.urllib.request.urlopen", fake_urlopen)
+    page = store.list_sent_replies_with_feedback_tokens(limit=10, ordered_by_id=True)
+    assert sync_feedback_events_for_sent_replies(store, page, configured_only=True, check_seen_tokens=True) == 1
+    assert sync_feedback_events_for_sent_replies(store, page, configured_only=True, check_seen_tokens=True) == 0
+    assert {event.key for event in store.list_feedback_events_for_token("token")} == {"first", "followup"}
+    assert len(calls) == 2

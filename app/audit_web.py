@@ -10247,8 +10247,10 @@ def create_audit_app(
     )
 
     from app.automatic_repair import AutomaticRepairCoordinator
+    from app.feedback_repair import FeedbackRepairQueue
     automatic_repair = AutomaticRepairCoordinator(
         workbench_store, repository=Path.home() / "Projects" / "ceo-agent-service",
+        user_feedback=FeedbackRepairQueue(workbench_store, initial_delay_seconds=60),
     )
     workbench_lifecycle = register_workbench_routes(
         app,

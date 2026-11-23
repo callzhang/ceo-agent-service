@@ -19,6 +19,7 @@ import { SearchField } from "../components/filters/SearchField";
 import { SelectField } from "../components/filters/SelectField";
 import { ConsolePageLayout } from "../components/layout/ConsolePageLayout";
 import { StatusBadge } from "../components/status/StatusBadge";
+import { AutomaticRepairCard } from "../components/repair/AutomaticRepairCard";
 import { SnapshotBadge } from "../components/status/SnapshotBadge";
 
 const pageSizes = [20, 50, 100];
@@ -462,6 +463,7 @@ export function FeedbackPage() {
         return displayValue(row[key]);
       }} renderExpanded={(row) => <div className="feedback-expanded">
         <div className="console-page-actions">{row.references.map((reference) => reference.route ? <a href={reference.route} key={`${reference.label}:${reference.route}`}>{reference.label}</a> : <span key={reference.label}>{reference.label}</span>)}{row.summary && <span>{displayValue(row.summary)}</span>}</div>
+        <AutomaticRepairCard repair={row.repair} userFeedback />
         <h3>处理历史</h3>
         {row.processing_history ? <><ProcessingHistory history={row.processing_history} />{row.batch_id && !batchDecisions[row.batch_id] && <button className="secondary-button feedback-history-load" type="button" disabled={decisionLoadingBatchId === row.batch_id} onClick={() => void loadDecisions(row.batch_id)}>{decisionLoadingBatchId === row.batch_id ? "正在加载反馈迭代决策…" : "加载反馈迭代决策"}</button>}<DecisionHistory decisions={batchDecisions[row.batch_id] || []} history={row.processing_history} references={row.references} /></> : <button className="secondary-button feedback-history-load" type="button" disabled={historyLoadingKey === feedbackKey(row)} onClick={() => void loadHistory(row)}>{historyLoadingKey === feedbackKey(row) ? "正在加载处理历史…" : "加载处理历史"}</button>}
       </div>} />

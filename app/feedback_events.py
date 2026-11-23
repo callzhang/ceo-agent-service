@@ -5,6 +5,7 @@ import urllib.request
 from collections.abc import Iterable
 from urllib.parse import quote
 
+from app.config import feedback_spike_vercel_base_url
 from app.feedback_spike import (
     FeedbackLinkContext,
     extract_feedback_link_context,
@@ -13,8 +14,12 @@ from app.store import AutoReplyStore, SentReply
 
 
 def feedback_context_for_sent_reply(
-    sent_reply: SentReply,
+    sent_reply: SentReply, *, configured_only: bool = False,
 ) -> FeedbackLinkContext | None:
+    if configured_only:
+        token = sent_reply.feedback_token.strip()
+        base_url = feedback_spike_vercel_base_url().rstrip("/")
+        return FeedbackLinkContext(token, base_url) if token and base_url else None
     context = extract_feedback_link_context(sent_reply.reply_text)
     if context is not None:
         return context
@@ -33,22 +38,26 @@ def sync_feedback_events_for_sent_replies(
     *,
     timeout_seconds: float = 2,
     limit_per_token: int = 20,
+    configured_only: bool = False,
+    check_seen_tokens: bool = False,
 ) -> int:
     contexts = {
         context.feedback_token: context
         for sent_reply in sent_replies
-        if (context := feedback_context_for_sent_reply(sent_reply)) is not None
+        if (context := feedback_context_for_sent_reply(sent_reply, configured_only=configured_only)) is not None
     }
     existing_events = store.list_feedback_events_for_tokens(list(contexts))
     synced = 0
     for context in contexts.values():
-        if existing_events.get(context.feedback_token):
+        known_keys = frozenset(event.key for event in existing_events.get(context.feedback_token, ()))
+        if known_keys and not check_seen_tokens:
             continue
         synced += sync_feedback_events_for_context(
             store,
             context,
             timeout_seconds=timeout_seconds,
             limit_per_token=limit_per_token,
+            known_keys=known_keys,
         )
     return synced
 
@@ -59,6 +68,7 @@ def sync_feedback_events_for_context(
     *,
     timeout_seconds: float = 2,
     limit_per_token: int = 20,
+    known_keys: frozenset[str] = frozenset(),
 ) -> int:
     url = (
         f"{context.vercel_base_url}/api/dingtalk-feedback-spike-events"
@@ -89,6 +99,8 @@ def sync_feedback_events_for_context(
         key = str(event.get("key") or "").strip()
         if not key:
             key = f"{token}:{event.get('received_at') or ''}:{event.get('rating') or ''}"
+        if key in known_keys:
+            continue
         store.upsert_feedback_event(
             key=key,
             feedback_token=token,
