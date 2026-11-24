@@ -96,6 +96,8 @@ Codex Consumer 使用按当前 purpose 选择的原生输出 Schema（general �
 已发送的微信 Attempt 不能从普通重跑入口再次入队。历史详情仅对当前最新的已发送 Attempt、且原始输入未被精简时提供独立的“再次发送”操作；操作展示原消息内容和 ID，并把该 ID 随请求提交。服务在同一事务中核对来源 Attempt、会话、原消息 ID、最新 Attempt 与之前的再次发送记录，然后创建新执行代际。相同来源在新代际待处理时重复提交复用它，完成后不能再次使用旧 Attempt 发起。精简后缺少可执行原文的历史任务不提供该操作。失败 Attempt 的普通重跑、其他渠道和现有 Sender 投递规则不变。
 
 微信回复任务统一走标准流程（Derek 2026-10-25：不要开关，统一逻辑，不留旧逻辑）：`worker.process_claimed_wechat_task` 用 Reader 读到的近期会话和已存的触发消息构建上下文，Consumer 以 `plan` 提议唯一一个目标固定为触发会话的 `wechat / send_message`，服务在送审前把正文预备成最终正文（含署名与反馈链接），Audit 审核后由 `WechatSendMessageHandler` 经放行判定发送。Consumer 候选以 `proposal` 保存服务预备后的完整提案，供 Audit 和 System 使用。通用 `plan` 解析时，只有与 `proposal` 的完整 JSON 一致的副本才从 `purpose_output` 省略。离线回放用 `scripts/replay_wechat_standard_pipeline.py`，只读线上、不发送。
+微信手动重跑沿用标准重跑上下文。新一轮 Consumer 与 Audit 都收到来源 Attempt 的人工反馈、建议正文和已有 Audit 退回意见，一起用于重新判断是否需要回复。
+
 
 ```text
 pending -> processing -> done

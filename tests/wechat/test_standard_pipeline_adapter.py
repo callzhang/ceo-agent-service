@@ -174,3 +174,63 @@ def test_the_worker_runs_a_claimed_wechat_task_through_the_shared_orchestrator(t
     with pytest.raises(ValueError):
         worker.process_claimed_wechat_task(
             task.model_copy(update={"channel": "dingtalk"}), reader=Reader(), account=ACCOUNT)
+
+
+def test_a_claimed_wechat_rerun_passes_saved_feedback_to_consumer_and_audit(tmp_path):
+    from app.agent_context import AuditTurnContext
+    from app.reviewed_candidates import candidate_digest
+    from app.worker import DingTalkAutoReplyWorker
+    from tests.test_agent_runtime_worker import NoActionOrchestrator, ReadyGate
+
+    store = AutoReplyStore(tmp_path / "rerun.sqlite3")
+    original = _task(store)
+    attempt_id = store.record_reply_attempt(
+        conversation_id=original.conversation_id,
+        conversation_title=original.conversation_title,
+        trigger_message_id=original.trigger_message_id,
+        trigger_sender=original.trigger_sender,
+        trigger_text=original.trigger_text,
+        action="send_reply",
+        sensitivity_kind="normal",
+        send_status="failed",
+        channel="wechat",
+    )
+    feedback = "这件事已经解决，不再需要回复。"
+    assert store.record_reply_feedback(attempt_id, feedback=feedback)
+    store.enqueue_manual_rerun_reply_task(
+        conversation_id=original.conversation_id,
+        conversation_title=original.conversation_title,
+        single_chat=original.single_chat,
+        trigger_message_id=original.trigger_message_id,
+        trigger_create_time=original.trigger_create_time,
+        trigger_sender=original.trigger_sender,
+        trigger_text=original.trigger_text,
+        trigger_message_json=original.trigger_message_json,
+        attempt_id=attempt_id,
+        channel="wechat",
+        expected_execution_generation=original.execution_generation,
+    )
+    [rerun] = store.claim_reply_tasks(1, channel="wechat")
+    orchestrator = NoActionOrchestrator(store)
+    worker = DingTalkAutoReplyWorker(
+        store=store, dws=object(), codex=object(), agent_orchestrator=orchestrator,
+        channel_gates={"dingtalk": ReadyGate("dingtalk"), "wechat": ReadyGate("wechat")},
+    )
+
+    worker.process_claimed_wechat_task(rerun, reader=Reader(), account=ACCOUNT)
+
+    [(_, context)] = orchestrator.calls
+    assert context.manual_rerun is not None
+    assert context.manual_rerun.source_attempt_id == attempt_id
+    assert context.manual_rerun.reviewer_feedback == feedback
+    assert feedback in context.render()
+    candidate = _proposal(context)
+    audit = AuditTurnContext(
+        task=context,
+        proposal_revision=0,
+        operation_id="test-audit",
+        candidate=candidate,
+        candidate_digest=candidate_digest(candidate),
+        audit_rules="Review the proposal against the task and saved feedback.",
+    )
+    assert feedback in audit.render()

@@ -9,7 +9,7 @@ task-bound contract and enforced when the candidate is prepared.
 
 from __future__ import annotations
 
-from app.agent_context import AgentContextMessage, AgentTaskContext
+from app.agent_context import AgentContextMessage, AgentTaskContext, ManualRerunInstruction
 from app.wechat.models import WechatAccount, WechatMessage
 
 CONTEXT_MESSAGE_LIMIT = 20
@@ -47,7 +47,9 @@ def wechat_reply_target(task, trigger: WechatMessage, account: WechatAccount) ->
     }
 
 
-def build_wechat_task_context(task, *, reader, account: WechatAccount) -> AgentTaskContext:
+def build_wechat_task_context(
+    task, *, reader, account: WechatAccount, manual_rerun: ManualRerunInstruction | None = None,
+) -> AgentTaskContext:
     trigger = wechat_trigger_message(task, account)
     recent: list[WechatMessage] = []
     if reader is not None:
@@ -85,6 +87,7 @@ def build_wechat_task_context(task, *, reader, account: WechatAccount) -> AgentT
         messages=messages,
         materials=(),
         prior_receipts=(),
+        manual_rerun=manual_rerun,
         trigger_raw_payload={
             "wechat": {"account_id": account.account_id, "conversation_type": trigger.conversation_type},
         },

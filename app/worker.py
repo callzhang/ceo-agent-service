@@ -2458,7 +2458,10 @@ class DingTalkAutoReplyWorker:
             claim_guard.assert_current(self._now().astimezone(timezone.utc))
 
         def build() -> AgentTaskContext:
-            return build_wechat_task_context(task, reader=reader, account=account)
+            return build_wechat_task_context(
+                task, reader=reader, account=account,
+                manual_rerun=build_manual_rerun_instruction(self.store, task),
+            )
 
         result = self._agent_orchestrator().process(
             task, build(), refresh_context=build,

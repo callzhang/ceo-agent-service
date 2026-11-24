@@ -261,6 +261,7 @@ Reply Task 启动时的 pre-Agent orphan recovery 只接管 Agent 执行通道�
 任务本身不进入 Attention；旧代次失败也不污染新代次。对于同一定时 Agent task，Attention 只统计最新的已派发 run：较早 run 的失败 Reply task、失败 Attempt 及绑定该 run 的读取错误仅保留在 History，不再作为当前 Attention；当 `scheduled-task-run:<id>` 已无法关联到现存 run 时，其读取错误也仅保留在 History。与 occurrence 关联的 `scheduled_task_execution_unavailable` 事件，如果同一 occurrence 已派发的 Reply task 当前为 `done` 或 `skipped`，即由该 task 终态覆盖；按相同 event ID 绑定，不依赖可能因写入顺序差异而倒置的时间戳。其他旧事件需后续已派发 run 的 Reply task 终态覆盖。最新 run 失败时仍显示其失败。未派发触发和其他 scheduled task 的成功均不覆盖当前状态。
 从失败 Attempt 手动重跑时，Consumer 与 Audit 的上下文必须带入来源代次的结构化 Audit 反馈；
 旧候选被否决的点仍须解决，或用新证据明确说明其不再适用，不得把相同候选当作未审核的新建议。
+微信 worker 构建及刷新重跑上下文时复用同一手动重跑构建器，从任务绑定的来源 Attempt 载入已保存的人工反馈、建议正文和原 Audit 退回意见。Consumer 和独立 Audit 使用同一份上下文评估是否还需要回复。
 已结案的 `skipped` OA review 仅在审核者提交明确反馈、同一钉钉 OA task 仍为 pending、流程/task
 身份仍匹配且原审核没有外部动作回执时，允许手动创建新一代 Consumer→Audit 审核。该入口不重开
 `needs_human`、其他 skipped 项或已有外部动作的 OA 审核；新的业务动作仍须经过原有审核与效果回执。
