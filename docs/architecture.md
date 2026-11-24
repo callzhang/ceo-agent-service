@@ -1023,14 +1023,9 @@ Workbench 的本地内部最终文本使用通用 `internal_text` 结果格式�
 
 邮件退订在执行标记建立前读取并确认原邮件身份；该阶段经共享外部依赖判定器识别的 provider/source 读取故障统一记录为 `email_unsubscribe_external_dependency_unavailable`，并使用同一有界指数退避预算，不建立执行标记或触发退订。读取/身份/策略错误不重试。执行标记建立后的动作继续使用原回执与效果围栏规则；退订失败仍留在 History，不进入管理者 Attention。
 
-OA 权限预算耗尽后停止文件重读，由 Consumer 再运行一次提出普通 OA `return` 候选；
-该轮不得再次申请权限或安排重试，但退回前必须对被阻塞文件实读一次：能读则按正常审批处理，仍读不了才提退回。候选仍经 Audit、System Execution 和节点读回，
-服务不会合成或直接执行退回。明确的权限申请失败也走同一流程；无法形成有效候选时才进入
-人工处理，不能把外部权限阻塞记为 `failed`。非 OA purpose 耗尽后仍可投影为
-`permission_blocked` / `blocked`，在 `needs_human` 队列外等待；History 的一次人工访问检查
-入口保留原预算且只适用于权限已开通后的确认读取。
+OA 权限预算耗尽或权限申请明确失败后，Consumer 进入一次收口审阅。该轮只对被阻塞文件实读一次，权限恢复则继续按正常规则审阅。仍不可读时依照适用 OA Skill 处理，已提交材料导致的审核侧读取阻塞走待审及人工接手流程。单纯读不到已提交文件不构成补件退回。候选动作仍经 Audit、System Execution 和节点读回。该轮不再申请权限或安排重试，外部权限阻塞不记为 `failed`。非 OA purpose 仍可投影为 `permission_blocked` / `blocked`，在 `needs_human` 队列外等待。History 的一次人工访问检查入口保留原预算且只用于确认权限已开通。
 
-权限预算属于业务对象，不属于某一次触发。同一审批在预算耗尽后收到新触发（新的 execution generation，尚无本代 Consumer run）时，若还没有已认领的 OA 退回轮次，就启动一个禁止再读取材料的 Consumer 轮次，提出普通 OA `return` 候选并继续 Audit、执行器和节点读回；该业务对象只认领一次，后续重复触发挂靠最近一次已完成的 Consumer run，记为 `permission_blocked` / `blocked`，避免重复退回。没有可用的 Consumer run 时进入人工处理，不记为权限 `failed`。
+权限预算绑定业务对象。同一审批收到新触发且本代没有 Consumer run 时，未认领过收口轮次的业务对象可认领一次。此后相同阻塞的重复触发挂靠最近一次已完成的 Consumer run，记为 `permission_blocked` / `blocked`。没有可关联的 Consumer run 时保留人工处理路径。
 
 系统执行器使用现有 provider client、ServiceMessageSender、external_action_key 和成功回执库。消息加载审核后的精确正文、目标及服务预先准备的后缀；不要求运行中的 Audit，也不向 Agent 暴露发送工具。OA 使用精确实例、节点、动作和参数，保存并回读节点结果。已完成动作不因后续通知失败而重跑。
 

@@ -156,10 +156,13 @@ class AgentTaskContext:
                 "The permitted file-access retries are exhausted, or the one permission request could not be completed. "
                 "Do not request access again or schedule another retry. Read the blocked file once now: access may have been granted since the last attempt. "
                 "If it reads, ignore the rest of this section and review the approval normally. "
-                "Only if it still cannot be read, prepare a normal `return` proposal asking the verified applicant or responsible source owner "
-                "to provide an accessible copy or correct the access path. State only the known access limitation; do not claim the file is missing or the business evidence is deficient. "
+                "If it remains unreadable, follow the applicable OA Skill for a reviewer-side access block. "
+                "If a submitted file is necessary to decide, keep the approval pending and use the existing OA handoff path. "
+                "Check the current approval node and reuse an existing equivalent handoff notice. "
+                "State the exact access limit in the review, and do not return the approval solely because a submitted file remains unreadable. "
+                "A return requires independently verified missing evidence or another valid basis under the applicable rules. "
                 "Cite the persisted permission-request receipt or the exact failed-request evidence when available. "
-                "This is an OA business proposal and must pass Audit before execution. The service will not synthesize or execute the return."
+                "Any proposed OA action must pass Audit before execution."
             )
         return "\n\n".join(sections)
 

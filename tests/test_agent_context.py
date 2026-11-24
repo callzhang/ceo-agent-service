@@ -913,7 +913,7 @@ def test_audit_business_body_view_keeps_unconfigured_callback_visible(monkeypatc
     assert not view[0]["business_body"].endswith(SIGNATURE)
 
 
-def test_exhausted_permission_turn_reads_the_file_once_before_proposing_a_return():
+def test_exhausted_oa_permission_turn_uses_existing_submitted_file_handoff():
     context = replace(_context(), permission_return_required=True)
 
     rendered = context.render()
@@ -921,4 +921,10 @@ def test_exhausted_permission_turn_reads_the_file_once_before_proposing_a_return
     section = rendered.split("### Permission Retry Exhausted", 1)[1]
     assert "Read the blocked file once now" in section
     assert "ignore the rest of this section and review the approval normally" in section
+    assert "Do not request access again or schedule another retry" in section
+    assert "follow the applicable OA Skill" in section
+    assert "keep the approval pending" in section
+    assert "reuse an existing equivalent handoff notice" in section
+    assert "do not return the approval solely because a submitted file remains unreadable" in section
+    assert "prepare a normal `return`" not in section
     assert "attempt another read" not in section
