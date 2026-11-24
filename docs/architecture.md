@@ -2562,8 +2562,8 @@ The explicit stalled Reply Task recovery API (`POST /api/console/history/tasks/{
 
 Stalled recovery also refuses live dispatcher owners, unexpired or unparseable Run/runtime leases, and missing dispatcher ownership history. These checks run inside the same immediate transaction as the task/generation transition.
 
-仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_message`，不生成群占位消息，也不使用 `skip_no_content`。仅敏感私聊使用原 `:sensitive` 投递键及回执；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
-敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。
+仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_messages`，不生成群占位消息，也不使用 `skip_no_content`。单收件人的既有 `:sensitive` 投递键及回执继续有效；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
+涉及不同收件人时，候选为每人提供独立私聊、来源身份和内容相关的披露依据，Audit 对完整候选逐条核验。敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。
 
 日历事件详情读取（`dws calendar event get`）返回 `business_error` 且为 `success=false`、`300014 Invalid EventId`、`322000` 或 `Event not exist.` / `Event not exist!`（事件已被删除）（无 developerMessage 的业务码，提供方无法返回该事件，例如已过期的重复日程实例）时，视为该事件详情不可用，`get_calendar_event` 返回空，不记录为服务错误；认证、权限和其他业务码仍按原错误记录。`Event not exist` 的句末句号和感叹号均按同一缺失事件响应处理。
 

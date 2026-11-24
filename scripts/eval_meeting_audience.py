@@ -51,6 +51,11 @@ def score(case, result):
         return False
     target = result.get("target") or {}
     private = result.get("sensitive_private_message")
+    if "sensitive_private_messages" in result:
+        messages = result["sensitive_private_messages"]
+        if not isinstance(messages, list) or len(messages) > 1:
+            return False
+        private = messages[0] if messages else None
     if result.get("action") != "send" or result.get("audience_scope") != "business":
         return False
     if any(target.get(k) != v for k, v in case["expected_target"].items()):

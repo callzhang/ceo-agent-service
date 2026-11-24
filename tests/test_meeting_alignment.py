@@ -3035,7 +3035,7 @@ def _skip_decision(action):
         **summary_decision().model_dump(mode="json"),
         "action": action, "trigger_reasons": [], "topics": [], "derek_viewpoint": None,
         "key_questions": [], "mention_names": [], "target": None, "final_message": "",
-        "sensitive_private_message": None,
+        "sensitive_private_messages": [],
         "audit_summary": "No shareable content." if action == "skip_no_content" else "Interview.",
     })
 
@@ -3762,8 +3762,8 @@ def test_sensitive_part_goes_to_the_verified_person_apart_from_the_group_summary
     assert any(participant["user_id"] == "u-mina" for participant in source["participants"])
     assert [call.get("user_id") for call in dws.send_calls] == [None, "u-mina"]
     assert decision.final_message in dws.send_calls[0]["text"]
-    assert decision.sensitive_private_message.message not in dws.send_calls[0]["text"]
-    assert decision.sensitive_private_message.message in dws.send_calls[1]["text"]
+    assert decision.sensitive_private_messages[0].message not in dws.send_calls[0]["text"]
+    assert decision.sensitive_private_messages[0].message in dws.send_calls[1]["text"]
     assert decision.final_message not in dws.send_calls[1]["text"]
 
 
@@ -3969,7 +3969,7 @@ def test_delivery_records_the_conversation_the_follow_up_reached():
     dws = FakeDws()
     delivery = SimpleNamespace(
         send_result={"data": {"result": {"openTaskId": "task-1"}}},
-        sensitive_private_delivery=None,
+        sensitive_private_deliveries=[],
     )
 
     meeting_alignment._record_where_the_message_landed(dws, delivery)
@@ -3982,7 +3982,7 @@ def test_delivery_does_not_ask_twice_for_a_conversation_it_already_has():
     dws = FakeDws()
     delivery = SimpleNamespace(
         send_result={"openTaskId": "task-1", "openConversationId": "cid-known"},
-        sensitive_private_delivery=None,
+        sensitive_private_deliveries=[],
     )
 
     meeting_alignment._record_where_the_message_landed(dws, delivery)
@@ -4341,7 +4341,7 @@ def test_sensitive_summary_never_enters_calendar_description(tmp_path, monkeypat
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     dws = ConsumerDws()
     job_id = seed_consumer_job(store, dws)
-    payload = consumer_send_decision().model_dump()
+    payload = consumer_send_decision().model_dump(exclude={"sensitive_private_messages"})
     payload.update(final_message=ordinary, mention_names=[], sensitive_private_message={
         'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-derek',
                    'title': 'Derek', 'candidates': []},

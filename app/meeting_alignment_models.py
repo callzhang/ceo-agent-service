@@ -33,16 +33,20 @@ ALIGNED_TOPIC_RESULT_RULE = CrossFieldRule(
 )
 PRIVATE_MESSAGE_DIRECT_TARGET_RULE = CrossFieldRule(
     "sensitive private message requires a direct target",
-    "sensitive_private_message.target.kind 必须是 direct",
+    "sensitive_private_messages[].target.kind 必须是 direct",
 )
 PRIVATE_MESSAGE_USER_ID_RULE = CrossFieldRule(
     "sensitive private message requires a stable direct user id",
-    "sensitive_private_message.target.direct_user_id 必须是非空的稳定 user_id，"
+    "sensitive_private_messages[].target.direct_user_id 必须是非空的稳定 user_id，"
     "写收件人本人在名册里的 user_id，不能留空",
 )
 PRIVATE_MESSAGE_EVIDENCE_RULE = CrossFieldRule(
     "sensitive private message requires non-empty recipient evidence",
-    "sensitive_private_message.recipient_evidence 至少一项，且每一项都非空",
+    "sensitive_private_messages[].recipient_evidence 至少一项，且每一项都非空",
+)
+DISTINCT_PRIVATE_RECIPIENTS_RULE = CrossFieldRule(
+    "sensitive private messages must have distinct recipients",
+    "sensitive_private_messages 每条对应一位不同的收件人，同一人需收取的内容放在同一条中",
 )
 ALIGNED_TRIGGER_NEEDS_TOPIC_RULE = CrossFieldRule(
     "aligned_disagreement requires an aligned topic",
@@ -74,11 +78,11 @@ DEREK_VIEWPOINT_PAIRING_RULE = CrossFieldRule(
 NO_SEND_EMPTY_RULE = CrossFieldRule(
     "skip actions carry nothing to send",
     "action=skip_interview 或 skip_no_content 时，final_message 必须为空串，target 必须是 null，"
-    "mention_names 必须是空数组，sensitive_private_message 必须是 null；原因写入 audit_summary",
+    "mention_names 必须是空数组，sensitive_private_messages 必须是 []；原因写入 audit_summary",
 )
 SEND_FINAL_MESSAGE_RULE = CrossFieldRule(
     "send requires final_message",
-    "有普通内容时 final_message 必须非空；仅敏感私聊时 final_message 为空、target=null、mention_names=[]，且 sensitive_private_message 非 null",
+    "有普通内容时 final_message 必须非空；仅敏感私聊时 final_message 为空、target=null、mention_names=[]，且 sensitive_private_messages 非空",
 )
 SEND_TRIGGER_REASONS_RULE = CrossFieldRule(
     "send requires trigger_reasons",
@@ -86,7 +90,7 @@ SEND_TRIGGER_REASONS_RULE = CrossFieldRule(
 )
 SEND_TARGET_RULE = CrossFieldRule(
     "send requires an explicit delivery target",
-    "有普通内容时 target 必须是对象；仅敏感私聊时 target=null，使用 sensitive_private_message.target",
+    "有普通内容时 target 必须是对象；仅敏感私聊时 target=null，使用 sensitive_private_messages[].target",
 )
 GROUP_TARGET_FIELDS_RULE = CrossFieldRule(
     "group target requires candidates and conversation_id",
@@ -111,7 +115,7 @@ DIRECT_TARGET_TITLE_RULE = CrossFieldRule(
 )
 PRIVATE_MESSAGE_BUSINESS_SCOPE_RULE = CrossFieldRule(
     "sensitive private message requires business scope",
-    "sensitive_private_message 非 null 时，audience_scope 必须是 business",
+    "sensitive_private_messages 非空时，audience_scope 必须是 business",
 )
 MEETING_AUDIT_FEEDBACK_RULE = CrossFieldRule(
     "meeting Audit return requires actionable feedback",
@@ -140,6 +144,7 @@ MEETING_ALIGNMENT_CROSS_FIELD_RULES: tuple[CrossFieldRule, ...] = (
     PRIVATE_MESSAGE_DIRECT_TARGET_RULE,
     PRIVATE_MESSAGE_USER_ID_RULE,
     PRIVATE_MESSAGE_EVIDENCE_RULE,
+    DISTINCT_PRIVATE_RECIPIENTS_RULE,
 )
 
 
@@ -260,12 +265,12 @@ class TargetCandidate(StrictModel):
 class DeliveryTarget(StrictModel):
     # This shape is used in two slots whose rules differ in what they allow, not
     # in what they mean: MeetingAlignmentDecision.target may be group or direct,
-    # sensitive_private_message.target must be direct. Each field states the part
+    # sensitive_private_messages[].target must be direct. Each field states the part
     # that always holds and points at the containing object for the rest.
     kind: Literal["group", "direct"] = Field(
         description=(
             "group 与 direct 各自的必填/必空字段由所在对象的 description 规定；"
-            "sensitive_private_message.target 只允许 direct。"
+            "sensitive_private_messages[].target 只允许 direct。"
         )
     )
     conversation_id: str = Field(
@@ -392,14 +397,14 @@ class MeetingAlignmentDecision(StrictModel):
         description=(
             "send=发送会议总结；skip_interview=面试，由 Derek 单独处理，不发送；"
             "skip_no_content=没有可共享的信息量，不发送。skip_* 时 final_message 为空串、"
-            "target 为 null、mention_names 为空数组、sensitive_private_message 为 null。"
+            "target 为 null、mention_names 为空数组、sensitive_private_messages 为 []。"
         )
     )
     audience_scope: Literal["business", "personal"] = Field(
         description=(
             "business=业务承接群总结；没有合适业务群时可发给相关参会人单聊；"
             "personal=整场均为个人事项的完整日历 1:1。"
-            "sensitive_private_message 非 null 时必须是 business。"
+            "sensitive_private_messages 非空时必须是 business。"
         )
     )
     trigger_reasons: list[
@@ -436,7 +441,7 @@ class MeetingAlignmentDecision(StrictModel):
     mention_names: list[str]
     target: DeliveryTarget | None = Field(
         description=(
-            "有普通内容时必填且不能为 null；只有敏感内容时写 null 并使用 sensitive_private_message 的目标。group 与 direct 两种形态的字段互斥，但 kind、"
+            "有普通内容时必填且不能为 null；只有敏感内容时写 null 并使用 sensitive_private_messages 的目标。group 与 direct 两种形态的字段互斥，但 kind、"
             "conversation_id、direct_user_id、title、candidates 五个键在任何形态下都必须"
             "出现，未使用的一侧要显式写成空值而不是省略："
             "audience_scope=business 时优先 target.kind=group；没有合适业务群时可 target.kind=direct，"
@@ -458,17 +463,18 @@ class MeetingAlignmentDecision(StrictModel):
     )
     final_message: str = Field(
         description=(
-            "普通总结正文；只有敏感内容时写空字符串、target=null、mention_names=[] 并只投递 sensitive_private_message。按实际内容、业务目的和披露范围核验近期讨论与业务承接；含人员敏感信息时，"
+            "普通总结正文；只有敏感内容时写空字符串、target=null、mention_names=[] 并只投递 sensitive_private_messages。按实际内容、业务目的和披露范围核验近期讨论与业务承接；含人员敏感信息时，"
             "必须移除全部敏感详情及间接暗示，发送到业务群的内容仅保留普通业务总结；"
             "普通业务群选群无需逐一核验成员披露授权。"
         )
     )
-    sensitive_private_message: SensitivePrivateMessage | None = Field(
+    sensitive_private_messages: list[SensitivePrivateMessage] = Field(
+        default_factory=list,
         description=(
-            "没有人员敏感内容时必须是 null；只要存在人员敏感内容就必须独立私聊，即使业务群是 HR 群或参会人高度匹配也不得合并；"
+            "没有人员敏感内容时写 []；只要存在人员敏感内容就必须独立私聊；每个收件人一条，正文与证据单独对应，即使业务群是 HR 群或参会人高度匹配也不得合并；"
             "按具体敏感内容选择来源中身份唯一匹配的应知情个人，可包括有依据的当前用户，不自动发给本人。"
             "recipient_evidence 记录稳定来源身份及参与该敏感讨论、承担相关决定或后续工作的依据；"
-            "非 null 时 audience_scope 必须是 business。"
+            "非空时 audience_scope 必须是 business。"
         )
     )
     audit_summary: str = Field(min_length=1)
@@ -505,10 +511,13 @@ class MeetingAlignmentDecision(StrictModel):
 
     @model_validator(mode="before")
     @classmethod
-    def default_legacy_sensitive_private_message(cls, value: Any) -> Any:
-        if isinstance(value, dict):
-            if "sensitive_private_message" not in value:
-                return {**value, "sensitive_private_message": None}
+    def read_legacy_private_message(cls, value: Any) -> Any:
+        if (isinstance(value, dict) and "sensitive_private_message" in value
+                and "sensitive_private_messages" not in value):
+            payload = dict(value)
+            message = payload.pop("sensitive_private_message")
+            payload["sensitive_private_messages"] = [] if message is None else [message]
+            return payload
         return value
 
     @model_validator(mode="after")
@@ -518,10 +527,13 @@ class MeetingAlignmentDecision(StrictModel):
                 self.final_message.strip()
                 or self.target is not None
                 or self.mention_names
-                or self.sensitive_private_message is not None
+                or self.sensitive_private_messages
             ):
                 raise ValueError(NO_SEND_EMPTY_RULE.message)
             return self
+        recipient_ids = {message.target.direct_user_id.strip() for message in self.sensitive_private_messages}
+        if len(recipient_ids) != len(self.sensitive_private_messages):
+            raise ValueError(DISTINCT_PRIVATE_RECIPIENTS_RULE.message)
         trigger_reasons = set(self.trigger_reasons)
         topic_states = {topic.state for topic in self.topics}
         if (
@@ -550,12 +562,12 @@ class MeetingAlignmentDecision(StrictModel):
             raise ValueError(DEREK_VIEWPOINT_PAIRING_RULE.message)
 
         if not self.final_message.strip() and (
-            self.target is not None or self.sensitive_private_message is None or self.mention_names
+            self.target is not None or not self.sensitive_private_messages or self.mention_names
         ):
             raise ValueError(SEND_FINAL_MESSAGE_RULE.message)
         if not self.trigger_reasons:
             raise ValueError(SEND_TRIGGER_REASONS_RULE.message)
-        if self.target is None and (self.final_message.strip() or self.sensitive_private_message is None):
+        if self.target is None and (self.final_message.strip() or not self.sensitive_private_messages):
             raise ValueError(SEND_TARGET_RULE.message)
         if self.target is not None and self.target.kind == "group":
             if (
@@ -576,7 +588,7 @@ class MeetingAlignmentDecision(StrictModel):
             if not self.target.title.strip():
                 raise ValueError(DIRECT_TARGET_TITLE_RULE.message)
         if (
-            self.sensitive_private_message is not None
+            self.sensitive_private_messages
             and self.audience_scope != "business"
         ):
             raise ValueError(PRIVATE_MESSAGE_BUSINESS_SCOPE_RULE.message)
@@ -604,8 +616,14 @@ class MeetingAlignmentAuditResult(StrictModel):
 
 
 def meeting_alignment_decision_digest(decision: MeetingAlignmentDecision) -> str:
+    payload = decision.model_dump(mode="json")
+    messages = payload["sensitive_private_messages"]
+    if len(messages) < 2:
+        # Preserve the exact Audit digest of stored zero/one-recipient decisions.
+        payload.pop("sensitive_private_messages")
+        payload["sensitive_private_message"] = messages[0] if messages else None
     canonical = json.dumps(
-        decision.model_dump(mode="json"),
+        payload,
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),

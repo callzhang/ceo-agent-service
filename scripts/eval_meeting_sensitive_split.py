@@ -36,7 +36,13 @@ else:
 
 
 def planner_matches(result, expected):
-    private = result.get('sensitive_private_message') or {}
+    private = result.get("sensitive_private_message")
+    if "sensitive_private_messages" in result:
+        messages = result["sensitive_private_messages"]
+        if not isinstance(messages, list) or len(messages) > 1:
+            return False
+        private = messages[0] if messages else None
+    private = private or {}
     body = result.get('final_message', '')
     private_body = private.get('message', '')
     return (

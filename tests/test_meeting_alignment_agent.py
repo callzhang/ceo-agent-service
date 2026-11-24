@@ -560,7 +560,7 @@ def test_prompt_schema_does_not_override_generic_audience_policy():
     schema = MeetingAlignmentDecision.model_json_schema()
     properties = schema["properties"]
     assert "普通业务群选群无需逐一核验成员披露授权" in properties["final_message"]["description"]
-    assert "只要存在人员敏感内容就必须独立私聊" in properties["sensitive_private_message"]["description"]
+    assert "只要存在人员敏感内容就必须独立私聊" in properties["sensitive_private_messages"]["description"]
     assert "业务私信必须非空" in properties["target"]["description"]
     assert "业务私信必须非空" in schema["$defs"]["DeliveryTarget"]["properties"]["direct_user_id"]["description"]
 
@@ -956,7 +956,7 @@ def test_consumer_copies_source_recipient_title_when_only_punctuation_differs(se
     else:
         payload["target"] = target
     decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(meeting)
-    actual = decision.sensitive_private_message.target if sensitive else decision.target
+    actual = decision.sensitive_private_messages[0].target if sensitive else decision.target
     assert actual.title == roster_name
     assert actual.direct_user_id == "alex"
 
@@ -1954,7 +1954,7 @@ def test_sensitive_private_summary_can_address_source_identified_principal():
         'recipient_evidence': ['Derek participated in this sensitive discussion and owns its follow-up.'],
     }
     decision = MeetingAlignmentAgent(FakeMeetingCodex(payload)).decide(source())
-    assert decision.sensitive_private_message.target.direct_user_id == 'derek'
+    assert decision.sensitive_private_messages[0].target.direct_user_id == 'derek'
 
 
 def test_sensitive_private_is_required_in_planner_and_audit_instead_of_omission():

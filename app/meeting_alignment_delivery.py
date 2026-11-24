@@ -1,9 +1,10 @@
 import subprocess
 from datetime import datetime
+from hashlib import sha256
 from typing import Any, Literal, Protocol
 from zoneinfo import ZoneInfo
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.dingtalk_models import DingTalkConversation, DingTalkMessage
 from app.dws_client import DwsError, DwsUserProfile
@@ -45,8 +46,21 @@ class MeetingDeliveryResult(BaseModel):
     unresolved_mention_names: list[str]
     send_result: dict[str, Any]
     message_text: str = ""
-    sensitive_private_delivery: SensitivePrivateDeliveryResult | None = None
+    sensitive_private_deliveries: list[SensitivePrivateDeliveryResult] = Field(default_factory=list)
     sensitive_private_merged: bool = False
+
+
+    @model_validator(mode="before")
+    @classmethod
+    def read_legacy_private_delivery(cls, value: Any) -> Any:
+        if isinstance(value, dict) and "sensitive_private_delivery" in value:
+            if "sensitive_private_deliveries" in value:
+                raise ValueError("conflicting sensitive private delivery fields")
+            payload = dict(value)
+            receipt = payload.pop("sensitive_private_delivery")
+            payload["sensitive_private_deliveries"] = [] if receipt is None else [receipt]
+            return payload
+        return value
 
 
 class MeetingDeliveryRetry(RuntimeError):
@@ -149,10 +163,13 @@ def deliver_meeting_alignment(
     direct_user_id = ""
     direct_open_dingtalk_id = ""
     target_title = source.title
-    if target is None and decision.sensitive_private_message is None:
+    private_messages = decision.sensitive_private_messages
+    if target is None and not private_messages:
         raise MeetingDeliveryError("meeting delivery requires an explicit target")
-    private_message = decision.sensitive_private_message
-    if private_message is not None:
+    recipient_ids = {message.target.direct_user_id.strip() for message in private_messages}
+    if len(recipient_ids) != len(private_messages):
+        raise MeetingDeliveryError("sensitive private messages must have distinct recipients")
+    for private_message in private_messages:
         try:
             meeting_source_direct_recipient(
                 source, private_message.target, participant_only=True
@@ -192,28 +209,24 @@ def deliver_meeting_alignment(
                 "two-person roster"
             )
 
+    if not delivery_key.strip():
+        raise ValueError("meeting delivery key is required")
+    base_delivery_key = delivery_key
     if target is None:
-        if not delivery_key.strip():
-            raise ValueError("meeting delivery key is required")
-        sensitive_body = meeting_followup_message(decision, source, final_message=private_message.message)
-        try:
-            prepared = message_sender.prepare_meeting_alignment(
-                delivery_key=f"{delivery_key}:sensitive", body=sensitive_body,
-                original_text=source.summary, target_kind="user",
-                target_id=private_message.target.direct_user_id,
-            )
-        except ValueError as exc:
-            raise MeetingDeliveryError(str(exc)) from exc
-        if not _prepared_content_matches(prepared, sensitive_body):
-            raise MeetingDeliveryError("prepared sensitive body does not match the original content")
-        private_delivery = _deliver_sensitive_private_message(
-            private_message, decision, source, message_sender=message_sender, prepared=prepared,
+        prepared_private = _prepare_private_deliveries(
+            private_messages, decision, source, message_sender=message_sender,
+            legacy_key=delivery_key, base_key=base_delivery_key,
         )
+        private_deliveries = [
+            _deliver_sensitive_private_message(message, decision, source, message_sender=message_sender, prepared=prepared)
+            for message, prepared in prepared_private
+        ]
+        first = private_deliveries[0]
         return MeetingDeliveryResult(
-            target_kind="direct", target_id=private_delivery.target_id,
-            target_title=private_delivery.target_title, resolved_mentions=[],
-            unresolved_mention_names=[], send_result=private_delivery.send_result,
-            message_text=private_delivery.message_text, sensitive_private_delivery=private_delivery,
+            target_kind="direct", target_id=first.target_id,
+            target_title=first.target_title, resolved_mentions=[],
+            unresolved_mention_names=[], send_result=first.send_result,
+            message_text=first.message_text, sensitive_private_deliveries=private_deliveries,
         )
     if target.kind == "group":
         if (
@@ -295,22 +308,22 @@ def deliver_meeting_alignment(
     for mention in resolved_mentions:
         embedded_name = _embedded_mention_name(final_message, mention)
         mention_display_names.append(embedded_name or mention.display_name)
-    same_private_audience = (
-        private_message is not None
-        and target_kind == "direct"
-        and direct_user_id == private_message.target.direct_user_id.strip()
+    merged_private = next(
+        (
+            message for message in private_messages
+            if target_kind == "direct" and direct_user_id == message.target.direct_user_id.strip()
+        ),
+        None,
     )
     message_text = meeting_followup_message(
         decision,
         source,
         final_message=_primary_message_content(
             final_message,
-            decision.sensitive_private_message,
-            same_private_audience=same_private_audience,
+            merged_private,
+            same_private_audience=merged_private is not None,
         ),
     )
-    if not delivery_key.strip():
-        raise ValueError("meeting delivery key is required")
     prepared_target_kind = (
         "group" if target_kind == "group"
         else "user" if direct_user_id else "open_user"
@@ -332,7 +345,7 @@ def deliver_meeting_alignment(
         # A confirmed same-target action is an immutable delivery fact, not a
         # request to send revised prose under its old idempotency key.
         receipt = message_sender.store.get_outbound_postfix_receipt("dingtalk", delivery_key)
-        if (private_message is None and receipt is not None
+        if (not private_messages and receipt is not None
                 and message_sender.store.get_outbound_postfix("dingtalk", f"{delivery_key}:sensitive") is None
                 and dws.verify_message_send_result(receipt).get("state") == "sent"):
             return MeetingDeliveryResult(
@@ -344,28 +357,20 @@ def deliver_meeting_alignment(
         ordinary_body = meeting_followup_message(
             decision, source, final_message=final_message
         )
-        if not same_private_audience or not _prepared_content_matches(prepared, ordinary_body):
+        if merged_private is None or not _prepared_content_matches(prepared, ordinary_body):
             raise MeetingDeliveryError("prepared meeting body does not match the original split or merged content")
-        same_private_audience = False
-    if same_private_audience and message_sender.store.get_outbound_postfix(
-        "dingtalk", f"{delivery_key}:sensitive"
-    ) is not None:
-        raise MeetingDeliveryError("merged primary conflicts with a prepared sensitive action")
-    sensitive_prepared = None
-    if private_message is not None and not same_private_audience:
-        sensitive_body = meeting_followup_message(
-            decision, source, final_message=private_message.message
+        merged_private = None
+    if merged_private is not None:
+        split_key = _private_delivery_key(
+            decision, merged_private, legacy_key=delivery_key, base_key=base_delivery_key,
         )
-        try:
-            sensitive_prepared = message_sender.prepare_meeting_alignment(
-                delivery_key=f"{delivery_key}:sensitive",
-                body=sensitive_body, original_text=source.summary,
-                target_kind="user", target_id=private_message.target.direct_user_id,
-            )
-        except ValueError as exc:
-            raise MeetingDeliveryError(str(exc)) from exc
-        if not _prepared_content_matches(sensitive_prepared, sensitive_body):
-            raise MeetingDeliveryError("prepared meeting body does not match sensitive content")
+        if message_sender.store.get_outbound_postfix("dingtalk", split_key) is not None:
+            raise MeetingDeliveryError("merged primary conflicts with a prepared sensitive action")
+    prepared_private = _prepare_private_deliveries(
+        [message for message in private_messages if message is not merged_private],
+        decision, source, message_sender=message_sender,
+        legacy_key=delivery_key, base_key=base_delivery_key,
+    )
     message_text = prepared.final_body
     message_title = f"会议跟进｜{decision.message_title}"
     try:
@@ -393,18 +398,10 @@ def deliver_meeting_alignment(
         raise MeetingDeliveryRetry(f"meeting send failed: {exc}") from exc
     if send_result.get("success") is False:
         raise MeetingDeliveryError("provider rejected primary meeting message")
-    sensitive_delivery = None
-    sensitive_private_merged = False
-    if decision.sensitive_private_message is not None and not same_private_audience:
-        sensitive_delivery = _deliver_sensitive_private_message(
-            decision.sensitive_private_message,
-            decision,
-            source,
-            message_sender=message_sender,
-            prepared=sensitive_prepared,
-        )
-    elif decision.sensitive_private_message is not None:
-        sensitive_private_merged = True
+    private_deliveries = [
+        _deliver_sensitive_private_message(message, decision, source, message_sender=message_sender, prepared=prepared)
+        for message, prepared in prepared_private
+    ]
     return MeetingDeliveryResult(
         target_kind=target_kind,
         target_id=target_id,
@@ -413,8 +410,8 @@ def deliver_meeting_alignment(
         unresolved_mention_names=unresolved_names,
         send_result=send_result,
         message_text=message_text,
-        sensitive_private_delivery=sensitive_delivery,
-        sensitive_private_merged=sensitive_private_merged,
+        sensitive_private_deliveries=private_deliveries,
+        sensitive_private_merged=merged_private is not None,
     )
 
 
@@ -439,16 +436,57 @@ def _primary_message_content(
     return f"{final_message.strip()}\n\n{private_message.message.strip()}"
 
 
-def _deliver_sensitive_private_message(
-    private_message: SensitivePrivateMessage | None,
+def _private_delivery_key(
+    decision: MeetingAlignmentDecision,
+    message: SensitivePrivateMessage,
+    *,
+    legacy_key: str,
+    base_key: str,
+) -> str:
+    if len(decision.sensitive_private_messages) == 1:
+        return f"{legacy_key}:sensitive"
+    recipient = sha256(message.target.direct_user_id.strip().encode()).hexdigest()
+    # Use the meeting's existing target-key namespace so effect guards include
+    # every prepared private action, even if the primary message never sent.
+    return f"{base_key}:target:sensitive:{recipient}"
+
+
+def _prepare_private_deliveries(
+    messages: list[SensitivePrivateMessage],
     decision: MeetingAlignmentDecision,
     source: MeetingSource,
     *,
     message_sender: ServiceMessageSender,
-    prepared: PreparedOutboundMessage | None,
-) -> SensitivePrivateDeliveryResult | None:
-    if private_message is None:
-        return None
+    legacy_key: str,
+    base_key: str,
+) -> list[tuple[SensitivePrivateMessage, PreparedOutboundMessage]]:
+    prepared_messages = []
+    for message in messages:
+        body = meeting_followup_message(decision, source, final_message=message.message)
+        try:
+            prepared = message_sender.prepare_meeting_alignment(
+                delivery_key=_private_delivery_key(
+                    decision, message, legacy_key=legacy_key, base_key=base_key,
+                ),
+                body=body, original_text=source.summary,
+                target_kind="user", target_id=message.target.direct_user_id.strip(),
+            )
+        except ValueError as exc:
+            raise MeetingDeliveryError(str(exc)) from exc
+        if not _prepared_content_matches(prepared, body):
+            raise MeetingDeliveryError("prepared sensitive body does not match the original content")
+        prepared_messages.append((message, prepared))
+    return prepared_messages
+
+
+def _deliver_sensitive_private_message(
+    private_message: SensitivePrivateMessage,
+    decision: MeetingAlignmentDecision,
+    source: MeetingSource,
+    *,
+    message_sender: ServiceMessageSender,
+    prepared: PreparedOutboundMessage,
+) -> SensitivePrivateDeliveryResult:
     target = private_message.target
     try:
         recipient = meeting_source_direct_recipient(
@@ -456,8 +494,6 @@ def _deliver_sensitive_private_message(
         )
     except ValueError as exc:
         raise MeetingDeliveryError(str(exc)) from exc
-    if prepared is None:
-        raise MeetingDeliveryError("sensitive message requires verified preparation")
     try:
         send_result = message_sender.send_meeting_alignment_prepared(
             prepared,

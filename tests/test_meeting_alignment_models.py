@@ -246,8 +246,8 @@ def test_business_summary_can_split_personnel_evaluation_into_private_message():
     decision = MeetingAlignmentDecision.model_validate(payload)
 
     assert decision.target.kind == "group"
-    assert decision.sensitive_private_message is not None
-    assert decision.sensitive_private_message.target.direct_user_id == "u-mina"
+    assert decision.sensitive_private_messages
+    assert decision.sensitive_private_messages[0].target.direct_user_id == "u-mina"
 
 
 def test_sensitive_private_message_requires_direct_stable_recipient_and_evidence():
@@ -658,10 +658,8 @@ def test_committed_schema_requires_explicit_sensitive_private_message():
     )
     schema = json.loads(schema_path.read_text())
 
-    assert "sensitive_private_message" in schema["required"]
-    assert {entry.get("type") for entry in schema["properties"][
-        "sensitive_private_message"
-    ]["anyOf"]} >= {"null"}
+    assert "sensitive_private_messages" in schema["required"]
+    assert schema["properties"]["sensitive_private_messages"]["type"] == "array"
 
 
 def direct_target():
@@ -696,6 +694,11 @@ def sensitive_private_payload():
 def cross_field_rule_payloads() -> dict[str, dict]:
     """One decision payload per cross-field rule, each breaking exactly that rule."""
     payloads: dict[str, dict] = {}
+
+    duplicate_recipient = valid_send_decision()
+    private = sensitive_private_payload()
+    duplicate_recipient["sensitive_private_messages"] = [private, private]
+    payloads[models.DISTINCT_PRIVATE_RECIPIENTS_RULE.message] = duplicate_recipient
 
     topic_without_conclusion = valid_send_decision()
     topic_without_conclusion["topics"][0]["state"] = "aligned"
@@ -842,6 +845,8 @@ def cross_field_rule_satisfying_payloads() -> dict[str, dict]:
     shape the validators reject fails here instead of only misleading the model.
     """
     payloads: dict[str, dict] = {}
+
+    payloads[models.DISTINCT_PRIVATE_RECIPIENTS_RULE.message] = private_send_decision()
 
     # topics[].state=aligned needs both results; state=unresolved writes them empty.
     payloads[models.ALIGNED_TOPIC_RESULT_RULE.message] = aligned_send_decision()
@@ -1043,7 +1048,7 @@ def test_the_rules_still_teach_the_sensitive_private_target_shape():
     """
     rules = render_meeting_alignment_cross_field_rules()
 
-    assert "sensitive_private_message.target.kind 必须是 direct" in rules
+    assert "sensitive_private_messages[].target.kind 必须是 direct" in rules
     assert "direct_user_id 必须是非空的稳定 user_id" in rules
     direct_shape = next(
         line
@@ -1138,3 +1143,34 @@ def test_skip_decision_carries_nothing_to_send(action):
         MeetingAlignmentDecision.model_validate(
             _skip_payload(action, target=valid_send_decision()["target"])
         )
+
+
+def test_legacy_single_private_message_keeps_its_exact_audit_binding():
+    from hashlib import sha256
+
+    decision = MeetingAlignmentDecision.model_validate(private_send_decision())
+    payload = decision.model_dump(mode="json")
+    [payload["sensitive_private_message"]] = payload.pop("sensitive_private_messages")
+    digest = sha256(json.dumps(
+        payload, ensure_ascii=False, sort_keys=True, separators=(",", ":"),
+    ).encode()).hexdigest()
+    payload["_service_audit"] = {
+        "version": 1, "candidate_sha256": digest, "result": {
+            "outcome": "approve", "summary": "Legacy approved.", "feedback": None,
+        },
+    }
+    raw = json.dumps(payload)
+    assert models.meeting_decision_audit_is_approved(raw)
+    _, canonical = models.load_persisted_meeting_alignment_decision(raw)
+    assert models.meeting_decision_audit_is_approved(canonical)
+    tampered = json.loads(canonical)
+    tampered["sensitive_private_messages"][0]["message"] = "Different body."
+    assert not models.meeting_decision_audit_is_approved(json.dumps(tampered))
+
+
+def test_sensitive_private_messages_reject_duplicate_recipient():
+    payload = private_send_decision()
+    private = payload.pop("sensitive_private_message")
+    payload["sensitive_private_messages"] = [private, private]
+    with pytest.raises(ValidationError, match="distinct recipients"):
+        MeetingAlignmentDecision.model_validate(payload)

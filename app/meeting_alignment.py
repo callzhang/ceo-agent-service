@@ -809,7 +809,7 @@ def _audit_frozen_meeting_candidate(
             raise ValueError("frozen Meeting candidate digest changed before Audit")
         if (
             decision.action != "send"
-            or (decision.target is None and decision.sensitive_private_message is None)
+            or (decision.target is None and not decision.sensitive_private_messages)
             or decision.final_message != job.final_message
         ):
             raise ValueError("frozen Meeting candidate no longer matches its delivery fields")
@@ -934,7 +934,7 @@ def reconcile_confirmed_meeting_delivery(
     if job.status != "failed" or job.locked_at or job.send_result_json != "{}":
         return report
     decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
-    if decision.sensitive_private_message is not None or decision.target is None:
+    if decision.sensitive_private_messages or decision.target is None:
         return report
     if decision.target.kind != job.target_kind:
         return report
@@ -2020,8 +2020,8 @@ def _write_meeting_summary_to_calendar_or_retry(
         )
         return
     decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
-    private_only = decision.target is None and decision.sensitive_private_message is not None
-    if decision.sensitive_private_message is not None and not private_only:
+    private_only = decision.target is None and bool(decision.sensitive_private_messages)
+    if decision.sensitive_private_messages and not private_only:
         # Only the ordinary summary belongs in the shared calendar, even when
         # ordinary and sensitive content used one direct-message audience.
         summary = decision.final_message.strip()
@@ -2574,17 +2574,20 @@ def _record_where_the_message_landed(dws: Any, delivery: MeetingDeliveryResult) 
     neither has to ask again. A provider that cannot answer leaves the receipt as
     it was: the follow-up itself was delivered either way.
     """
-    for receipt in (delivery.send_result, getattr(delivery.sensitive_private_delivery, "send_result", None)):
+    receipts = [delivery.send_result, *(private.send_result for private in delivery.sensitive_private_deliveries)]
+    references = {}
+    for receipt in receipts:
         if not isinstance(receipt, dict):
             continue
         open_task_id = _find_nested_value(receipt, "openTaskId")
         if not open_task_id or _find_nested_value(receipt, "openConversationId"):
             continue
-        try:
-            reference = dws.resolve_sent_message_reference(open_task_id)
-        except DwsError:
-            continue
-        if reference:
+        if open_task_id not in references:
+            try:
+                references[open_task_id] = dws.resolve_sent_message_reference(open_task_id)
+            except DwsError:
+                references[open_task_id] = None
+        if reference := references[open_task_id]:
             receipt.update(reference)
 
 
@@ -2634,7 +2637,7 @@ def _notify_meeting_sent(job: Any, result: MeetingDeliveryResult) -> None:
     title = job.title
     message = result.message_text or job.final_message
     decision, _ = load_persisted_meeting_alignment_decision(job.decision_json)
-    if decision.sensitive_private_message is not None:
+    if decision.sensitive_private_messages:
         title = decision.message_title
         message = decision.final_message or "敏感会议总结已通过私聊发送。"
     send_macos_notification(

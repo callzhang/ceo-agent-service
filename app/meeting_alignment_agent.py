@@ -62,7 +62,8 @@ MEETING_BUSINESS_GROUP_SCOPE = (
 )
 MEETING_SENSITIVE_PRIVATE_SCOPE = (
     "Ordinary meeting information goes to the appropriate business group; sensitive information "
-    "goes in a separate sensitive_private_message, even for an HR group or matching attendees. "
+    "goes into separate sensitive_private_messages, one independently supported message per recipient, "
+    "even for an HR group or matching attendees. Review each message's body, recipient and evidence independently. "
     "Do not omit sensitive conclusions or actions and call the ordinary summary complete. "
     "Select a source-identified individual for the specific sensitive content and record concrete "
     "recipient_evidence: participation in that sensitive discussion, responsibility for its "
@@ -72,7 +73,7 @@ MEETING_SENSITIVE_PRIVATE_SCOPE = (
     "If sensitive conclusions or actions are present but the private summary or its recipient "
     "evidence is missing, return the candidate for a separate private summary and recipient evidence. "
     "When only sensitive content exists, action=send, target=null, final_message empty, mention_names=[]; "
-    "send only sensitive_private_message, without a group placeholder or skip_no_content. "
+    "send only sensitive_private_messages, without a group placeholder or skip_no_content. "
     "An unresolved recipient is an unresolved delivery, never approval of omission; use the existing "
     "feedback and revision flow without guessing a recipient. "
 )
@@ -208,12 +209,12 @@ class MeetingAlignmentAgent:
                 options["compact_prompt"] = compact_prompt
             decision = self.codex.decide(**options)
             if decision.action == "send" and decision.audience_scope == "business":
-                private = decision.sensitive_private_message
                 decision = decision.model_copy(update={
                     "target": _source_display_target(source, decision.target),
-                    "sensitive_private_message": private.model_copy(update={
-                        "target": _source_display_target(source, private.target),
-                    }) if private is not None else None,
+                    "sensitive_private_messages": [
+                        private.model_copy(update={"target": _source_display_target(source, private.target)})
+                        for private in decision.sensitive_private_messages
+                    ],
                 })
             try:
                 _validate_source_aware_target(
@@ -584,7 +585,7 @@ def build_meeting_alignment_prompt(
     target_contract = f"""会议默认须生成并发送一条会议总结（action=send）。只有两种例外，均不发送，Derek 另行处理或无需处理：
 - 面试（候选人面试、招聘面谈）：action=skip_interview，面试由 Derek 单独处理。
 - 没有可共享的信息量：整场会议没有普通或敏感的实质结论、事项或行动，只剩空泛概述时，action=skip_no_content，不要发一条空话。
-不发送时 final_message 为空串、target 为 null、mention_names 为空数组、sensitive_private_message 为 null，原因写入 audit_summary。
+不发送时 final_message 为空串、target 为 null、mention_names 为空数组、sensitive_private_messages 为 []，原因写入 audit_summary。
 {MEETING_BUSINESS_GROUP_SCOPE}
 - 业务内容返回 audience_scope=business，优先选择经过核验的业务群（target.kind=group）。如果完整搜索后没有合适业务群，从来源明确的参会人中选择一人，以 target.kind=direct 发送单聊；若只有一位非当前用户参会人则发给该人，多人时优先选与讨论最相关者，不要求会议明确指派其负责决定或行动。direct_user_id 必须是来源中稳定匹配的参会人 user_id，不能是当前用户。不得因为没有合适群而返回 no_action。使用 DWS 做群发现，以实际内容、业务目的和披露范围选择群；人数和群名称不决定群受众。
 - 会议标题只是线索。优先核对会议材料中明确提及或分享的讨论群，再从会议结论、行动项和负责人提炼业务主题与预期受众。审阅下方预置候选，同时使用原文中的中文业务词与英文术语分别搜索 DWS，搜索会议标题和核心议题对应的群消息；必要时按工作线、项目、交付对象或行动负责人交叉搜索。没有预置候选或首次搜索零命中，不等于业务群发现失败。
@@ -593,8 +594,8 @@ def build_meeting_alignment_prompt(
 - prior_sent_count 只表示同名会议的历史投递次数，不证明本次业务承接或人员匹配，不得仅凭历史投递选群。
 - topic_discussion_evidence 是群内近期消息与本次会议摘要的词项交集线索，必须阅读其具体内容和业务负责人，再判断是否承接本次议题。人员匹配只看 member_precision=匹配参会人数/完整群成员数（3/N），不得使用参会人召回率（3/3）；参考参会名单不完整时保留缺口。准确率不证明业务归属；群成员多不代表更合适。优先选择讨论过同一工作线、负责本次行动且参会人匹配度较高的群。
 - personal 只适用于整场会议均为个人事项，必须返回 audience_scope=personal；只有完整日历 1:1（attendee_evidence=calendar、attendee_roster_complete=true、恰好两名参会人）时，才可以使用 target.kind=direct，目标只能是另一位参会人。
-- 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示，并放入独立 sensitive_private_message；即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息。
-- sensitive_private_message.target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，recipient_evidence 写明具体敏感内容与收件人的参与、决定或后续工作关系。
+- 裁员、减员、人员优化的存在、进展和安排本身就是敏感信息，没有具体名单或人数也不得作为普通业务内容发到业务群。业务会议中出现这类组织层面信息，或人员评价、绩效、薪酬、晋升、去留、候选人结论、健康或请假等人员敏感内容时，必须从 final_message 和 message_title 中移除全部敏感详情及间接暗示，并放入独立 sensitive_private_messages；即使群是 HR 群或群成员与会人员高度匹配，也不得把敏感详情放入群消息。
+- sensitive_private_messages[].target 必须是 direct，稳定 user_id 必须唯一匹配来源参会人，recipient_evidence 写明具体敏感内容与收件人的参与、决定或后续工作关系。
 {MEETING_SENSITIVE_PRIVATE_SCOPE}
 - 普通的工作分工、交付进展、项目风险和业务结果不是人员敏感内容，不得因为出现姓名就从群消息中删除。
 - 没有实质观点分歧但有可共享的结论、已确认事项或下一步时，仍须发送简短总结；不得因议题平稳而跳过。"""
@@ -659,15 +660,15 @@ def build_meeting_alignment_prompt(
 - 能只靠会议证据解释时，historical_sources 必须为空数组。只有实际引用了工作人格中的具体判断或案例时才记录工作人格来源。
 - 记录注入的工作人格来源时，historical_sources 的数组元素必须逐字填写 `{work_profile_source}`，不得改写、加标题或写成说明性文字。
 - message_title 必须按完整接收受众的实际披露权限核验，安全时沿用会议原题，否则给出中性业务标题；不得在标题暗示未授权的人员方案。final_message 只写正文；发送层只加 message_title 和时间，不会自动加原始会议标题，不要重复标题或时间。用 Markdown 把正文结构化，提高可读性和信息密度——钉钉按 Markdown 渲染这些消息，加粗、标题和列表都会生效。按实际内容用加粗小节标签（如 **结论**、**后续行动**、**待确认**），小节之间空一行；没有内容的小节不写。多条并列的结论、事项或行动写成 `- ` 列表，列表前空一行、每条单独一行，写清责任人、动作与时间或验收点；单条内容直接成段即可，不必强行套列表。真实 @ 保留在对应的列表项或句子内，不集中到开头。
-- final_message 和 sensitive_private_message.message 都不要暴露工具、审计过程、本地路径或置信度。
+- final_message 和 sensitive_private_messages[].message 都不要暴露工具、审计过程、本地路径或置信度。
 
 目标合同：
 {target_contract}
 
 输出合同：
 - 只输出 MeetingAlignmentDecision JSON，严格遵守下方 schema，不添加字段。
-- action=send 时 trigger_reasons、audience_scope 必须完整，遵守内容优先于参会人数的目标合同。有普通内容时 final_message 与明确 target 必须完整；仅敏感内容时 target=null、final_message 为空、mention_names=[]，仅 sensitive_private_message 承载私聊目标和正文。skip_interview / skip_no_content 见目标合同。
-- 没有人员敏感内容时 sensitive_private_message 必须为 null；只要存在人员敏感内容，就必须生成独立 sensitive_private_message；同时有普通信息才生成已脱敏的 final_message，不因业务群成员与敏感内容相关而合并。缺少敏感私聊或收件人依据时继续反馈修订，不能省略后通过。
+- action=send 时 trigger_reasons、audience_scope 必须完整，遵守内容优先于参会人数的目标合同。有普通内容时 final_message 与明确 target 必须完整；仅敏感内容时 target=null、final_message 为空、mention_names=[]，仅 sensitive_private_messages 承载私聊目标和正文。skip_interview / skip_no_content 见目标合同。
+- 没有人员敏感内容时 sensitive_private_messages 必须为 []；只要存在人员敏感内容，就必须生成独立 sensitive_private_messages，每个经核验的收件人一条且只含该人有依据接收的内容；同时有普通信息才生成已脱敏的 final_message，不因业务群成员与敏感内容相关而合并。缺少敏感私聊或收件人依据时继续反馈修订，不能省略后通过。
 
 {render_meeting_alignment_cross_field_rules()}
 
@@ -794,13 +795,19 @@ def _normalize_decision_shape(payload: dict[str, object]) -> dict[str, object]:
     target = _normalize_delivery_target(normalized.get("target"))
     if target is not None:
         normalized["target"] = target
-    private_message = normalized.get("sensitive_private_message")
-    if isinstance(private_message, dict):
-        private_normalized = dict(private_message)
-        private_target = _normalize_delivery_target(private_normalized.get("target"))
-        if private_target is not None:
-            private_normalized["target"] = private_target
-        normalized["sensitive_private_message"] = private_normalized
+    field = "sensitive_private_messages"
+    private_messages = normalized.get(field)
+    if isinstance(private_messages, list):
+        normalized[field] = [
+            {**message, "target": _normalize_delivery_target(message.get("target")) or message.get("target")}
+            if isinstance(message, dict) else message
+            for message in private_messages
+        ]
+    elif isinstance(normalized.get("sensitive_private_message"), dict):
+        message = normalized["sensitive_private_message"]
+        normalized["sensitive_private_message"] = {
+            **message, "target": _normalize_delivery_target(message.get("target")) or message.get("target"),
+        }
     return normalized
 
 
@@ -912,7 +919,7 @@ def _validate_source_aware_target(
     if decision.action != "send":
         return
     target = decision.target
-    if target is None and decision.sensitive_private_message is None:
+    if target is None and not decision.sensitive_private_messages:
         raise MeetingAlignmentTargetError("send requires an explicit delivery target")
     if decision.audience_scope == "business":
         if target is not None and target.kind == "direct":
@@ -928,8 +935,7 @@ def _validate_source_aware_target(
                 raise MeetingAlignmentTargetError(str(exc)) from exc
         elif target is not None and target.kind != "group":
             raise MeetingAlignmentTargetError("business summary requires a verified audience")
-        private_message = decision.sensitive_private_message
-        if private_message is not None:
+        for private_message in decision.sensitive_private_messages:
             try:
                 meeting_source_direct_recipient(
                     source, private_message.target, participant_only=True

@@ -348,7 +348,7 @@ def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_n
     sender = ServiceMessageSender(
         store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
     )
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     payload["final_message"] = "招聘站会｜确认下周面试安排和材料负责人。"
     payload["sensitive_private_message"] = {
         "target": {
@@ -379,8 +379,8 @@ def test_mixed_recruiting_summary_sends_sanitized_group_message_and_private_hr_n
         delivery_key="meeting-alignment:recruiting:job-1",
     )
 
-    assert result.sensitive_private_delivery is not None
-    assert result.sensitive_private_delivery.target_id == "u-a"
+    assert result.sensitive_private_deliveries
+    assert result.sensitive_private_deliveries[0].target_id == "u-a"
     assert dws.sent[0]["conversation_id"] == "cid-first"
     assert dws.sent[0]["title"] == "会议跟进｜上线评审"
     assert "管理成熟度" not in dws.sent[0]["text"]
@@ -398,7 +398,7 @@ def test_same_audience_recovery_preserves_bound_split(tmp_path, primary_receipt,
     dws = FakeDws()
     store = AutoReplyStore(tmp_path / "meeting.sqlite3")
     sender = ServiceMessageSender(store=store, dingtalk=dws)
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["sensitive_private_message"] = {
         "target": {"kind": "direct", "conversation_id": "", "direct_user_id": "u-a", "title": "A", "candidates": []},
         "message": "Private personnel assessment.",
@@ -423,12 +423,12 @@ def test_same_audience_recovery_preserves_bound_split(tmp_path, primary_receipt,
     )
 
     assert result.sensitive_private_merged is False
-    assert result.sensitive_private_delivery is not None
+    assert result.sensitive_private_deliveries
     assert result.message_text == original_body
     assert len(dws.sent) == 2
     assert payload["sensitive_private_message"]["message"] not in dws.sent[0]["text"]
     assert payload["sensitive_private_message"]["message"] in dws.sent[1]["text"]
-    assert replay.sensitive_private_delivery == result.sensitive_private_delivery
+    assert replay.sensitive_private_deliveries == result.sensitive_private_deliveries
 
 
 @pytest.mark.parametrize("feedback_base_url", ["", "https://feedback.example"])
@@ -438,7 +438,7 @@ def test_business_summary_keeps_hr_sensitive_content_in_private_message(tmp_path
     sender = ServiceMessageSender(
         store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
     )
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["final_message"] = "招聘事项已确认，后续按流程推进。"
     payload["sensitive_private_message"] = {
         "target": {
@@ -467,7 +467,7 @@ def test_business_summary_keeps_hr_sensitive_content_in_private_message(tmp_path
         delivery_key=key,
     )
 
-    assert result.sensitive_private_delivery is not None
+    assert result.sensitive_private_deliveries
     assert result.sensitive_private_merged is False
     assert len(dws.sent) == 2
     assert dws.sent[0]["conversation_id"] == "cid-first"
@@ -484,7 +484,7 @@ def test_business_summary_keeps_hr_sensitive_content_in_private_message(tmp_path
 def test_conflicting_prepared_same_audience_body_fails_before_any_effect(tmp_path):
     dws = FakeDws()
     sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["sensitive_private_message"] = {
         "target": {"kind": "direct", "conversation_id": "", "direct_user_id": "u-a", "title": "A", "candidates": []}, "message": "Sensitive assessment.",
         "reason": "Verified business need", "recipient_evidence": ["Current owner"],
@@ -517,7 +517,7 @@ def test_changed_prose_recovers_confirmed_primary_without_resending(tmp_path):
 def test_different_audience_recovery_rejects_old_disclosure_before_any_effect(tmp_path, bad_action):
     dws = FakeDws()
     sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["sensitive_private_message"] = {
         "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
         "message": "RESTRICTED_TO_B", "reason": "Only B owns this issue",
@@ -543,19 +543,19 @@ def test_different_audience_recovery_rejects_old_disclosure_before_any_effect(tm
         result = deliver_meeting_alignment(
             decision, source, dws, message_sender=sender, delivery_key=key
         )
-        assert result.sensitive_private_delivery is not None
+        assert result.sensitive_private_deliveries
         assert len(dws.sent) == 2
         assert "RESTRICTED_TO_B" not in dws.sent[0]["text"]
         assert "RESTRICTED_TO_B" in dws.sent[1]["text"]
         assert dws.sent[1]["text"] != "Unexpected private content"
-        assert dws.sent[1]["text"] == result.sensitive_private_delivery.message_text
+        assert dws.sent[1]["text"] == result.sensitive_private_deliveries[0].message_text
 
 
 @pytest.mark.parametrize("slot", ["primary", "sensitive"])
 def test_recovery_never_borrows_receipt_for_a_different_target(tmp_path, slot):
     dws = FakeDws()
     sender = ServiceMessageSender(store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws)
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["sensitive_private_message"] = {
         "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
         "message": "Private section", "reason": "Verified owner",
@@ -670,7 +670,7 @@ def test_provider_refusal_is_not_reported_as_meeting_sent(tmp_path, refused_call
     dws.send_message = send
     store = AutoReplyStore(tmp_path / "meeting.sqlite3")
     sender = ServiceMessageSender(store=store, dingtalk=dws)
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["sensitive_private_message"] = {
         "target": {"kind": "direct", "direct_user_id": "u-b", "title": "B", "conversation_id": "", "candidates": []},
         "message": "Private section", "reason": "Verified owner",
@@ -703,7 +703,7 @@ def test_private_retry_reuses_successful_group_delivery(tmp_path):
     sender = ServiceMessageSender(
         store=AutoReplyStore(tmp_path / "meeting.sqlite3"), dingtalk=dws
     )
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     payload["final_message"] = "招聘站会｜确认下周面试安排。"
     payload["sensitive_private_message"] = {
         "target": {
@@ -737,7 +737,7 @@ def test_private_retry_reuses_successful_group_delivery(tmp_path):
         delivery_key=delivery_key,
     )
 
-    assert result.sensitive_private_delivery is not None
+    assert result.sensitive_private_deliveries
     assert [item["conversation_id"] for item in dws.sent] == [
         "cid-first",
         None,
@@ -812,7 +812,7 @@ def test_business_summary_direct_delivery_to_meeting_attendee():
 
 def test_delivery_rejects_principal_as_ordinary_fallback_before_any_send():
     private = False
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     target = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "u-derek",
         "title": "Derek", "candidates": [],
@@ -847,7 +847,7 @@ def test_planned_group_unavailable_never_changes_audience(state):
 
 
 def test_hr_primary_does_not_absorb_a_different_private_recipient():
-    payload = business_group_payload(send_decision(mention_names=[]).model_dump())
+    payload = business_group_payload(send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"}))
     payload["sensitive_private_message"] = {
         "target": {
             "kind": "direct", "conversation_id": "", "direct_user_id": "u-b",
@@ -908,7 +908,7 @@ def test_personal_identity_resolution_cannot_send_to_principal(alias):
 @pytest.mark.parametrize("private", [False, True])
 @pytest.mark.parametrize("problem", ["duplicate", "alias", "title", "unknown_principal", "missing_evidence"])
 def test_delivery_identity_and_evidence_gates_run_before_any_send(private, problem):
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     target = {
         "kind": "direct", "conversation_id": "", "direct_user_id": "u-a",
         "title": "A", "candidates": [],
@@ -933,11 +933,11 @@ def test_delivery_identity_and_evidence_gates_run_before_any_send(private, probl
         payload["audit_summary"] = "   "
     decision = MeetingAlignmentDecision.model_validate(payload)
     if problem == "missing_evidence" and private:
-        decision = decision.model_copy(update={"sensitive_private_message": decision.sensitive_private_message.model_copy(update={"recipient_evidence": []})})
+        decision = decision.model_copy(update={"sensitive_private_messages": [decision.sensitive_private_messages[0].model_copy(update={"recipient_evidence": []})]})
     dws = FakeDws()
     if private and problem == "alias":
         result = deliver_meeting_alignment(decision, source, dws)
-        assert result.sensitive_private_delivery.target_id == 'u-a'
+        assert result.sensitive_private_deliveries[0].target_id == 'u-a'
         assert len(dws.sent) == 2
         return
     with pytest.raises(MeetingDeliveryError):
@@ -1487,7 +1487,7 @@ def test_cross_version_prepared_title_is_never_resent(confirmed):
 
 def test_split_private_notification_also_uses_reviewed_title():
     source = meeting_source().model_copy(update={"title": "其他保密人员事项与项目交付"})
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     payload.update(message_title="项目交付跟进", final_message="项目清单已确认。",
         sensitive_private_message={
             "target": {"kind": "direct", "conversation_id": "", "direct_user_id": "u-a",
@@ -1537,7 +1537,7 @@ def test_followup_header_prints_a_utc_meeting_in_beijing_time():
 
 
 def test_group_and_sensitive_principal_private_are_both_delivered():
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     payload['final_message'] = 'Ordinary meeting conclusions.'
     payload['sensitive_private_message'] = {
         'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-derek',
@@ -1547,7 +1547,7 @@ def test_group_and_sensitive_principal_private_are_both_delivered():
     }
     dws = FakeDws()
     result = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
-    assert result.sensitive_private_delivery.target_id == 'u-derek'
+    assert result.sensitive_private_deliveries[0].target_id == 'u-derek'
     assert len(dws.sent) == 2
     assert dws.sent[0]['conversation_id'] == 'cid-first'
     assert 'Restricted meeting conclusions.' not in dws.sent[0]['text']
@@ -1556,7 +1556,7 @@ def test_group_and_sensitive_principal_private_are_both_delivered():
 
 
 def test_sensitive_only_meeting_sends_one_private_message_without_group_placeholder():
-    payload = send_decision(mention_names=[]).model_dump()
+    payload = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
     payload.update(target=None, final_message='', sensitive_private_message={
         'target': {'kind': 'direct', 'conversation_id': '', 'direct_user_id': 'u-derek',
                    'title': 'Derek', 'candidates': []},
@@ -1568,8 +1568,64 @@ def test_sensitive_only_meeting_sends_one_private_message_without_group_placehol
     assert len(dws.sent) == 1
     assert dws.sent[0]['user_id'] == 'u-derek'
     assert result.target_kind == 'direct'
-    assert result.sensitive_private_delivery.target_id == 'u-derek'
+    assert result.sensitive_private_deliveries[0].target_id == 'u-derek'
     assert 'Restricted decision only.' in result.message_text
     repeated = deliver_meeting_alignment(MeetingAlignmentDecision.model_validate(payload), meeting_source(), dws)
     assert len(dws.sent) == 1
-    assert repeated.sensitive_private_delivery.send_result == result.sensitive_private_delivery.send_result
+    assert repeated.sensitive_private_deliveries[0].send_result == result.sensitive_private_deliveries[0].send_result
+
+
+def _multi_private_decision(*, second_id="u-b"):
+    data = send_decision(mention_names=[]).model_dump(exclude={"sensitive_private_messages"})
+    data.pop("sensitive_private_message", None)
+    data["sensitive_private_messages"] = [
+        {
+            "target": {"kind": "direct", "conversation_id": "", "direct_user_id": user_id,
+                       "title": name, "candidates": []},
+            "message": f"Private feedback for {name}.",
+            "reason": f"Personal follow-up for {name}.",
+            "recipient_evidence": [f"{name} owns the relevant follow-up."],
+        }
+        for name, user_id in (("A", "u-a"), ("B", second_id))
+    ]
+    return MeetingAlignmentDecision.model_validate(data)
+
+
+def test_multiple_sensitive_messages_send_and_resume_by_exact_recipient(tmp_path):
+    class FailOnceDws(FakeDws):
+        def __init__(self):
+            super().__init__()
+            self.blocked = True
+
+        def send_message(self, conversation_id, text, **kwargs):
+            if kwargs.get("user_id") == "u-b" and self.blocked:
+                self.blocked = False
+                raise DwsError("provider unavailable before send")
+            return super().send_message(conversation_id, text, **kwargs)
+
+    decision = _multi_private_decision()
+    dws = FailOnceDws()
+    db = tmp_path / "meeting.sqlite3"
+    key = "meeting-alignment:meeting-42:job-42"
+    sender = ServiceMessageSender(store=AutoReplyStore(db), dingtalk=dws)
+    with pytest.raises(MeetingDeliveryRetry):
+        deliver_meeting_alignment(decision, meeting_source(), dws, message_sender=sender, delivery_key=key)
+    assert [m.get("user_id") for m in dws.sent] == [None, "u-a"]
+
+    sender = ServiceMessageSender(store=AutoReplyStore(db), dingtalk=dws)
+    result = deliver_meeting_alignment(
+        decision.model_copy(update={"sensitive_private_messages": list(reversed(decision.sensitive_private_messages))}),
+        meeting_source(), dws, message_sender=sender, delivery_key=key,
+    )
+    assert [m.get("user_id") for m in dws.sent] == [None, "u-a", "u-b"]
+    assert all("Private feedback" not in m["text"] for m in dws.sent if m["conversation_id"])
+    assert "Private feedback for A." in dws.sent[1]["text"] and "Private feedback for B." not in dws.sent[1]["text"]
+    assert "Private feedback for B." in dws.sent[2]["text"] and "Private feedback for A." not in dws.sent[2]["text"]
+    assert {receipt.target_id for receipt in result.sensitive_private_deliveries} == {"u-a", "u-b"}
+
+
+def test_invalid_second_sensitive_recipient_blocks_all_meeting_delivery():
+    dws = FakeDws()
+    with pytest.raises(MeetingDeliveryError):
+        deliver_meeting_alignment(_multi_private_decision(second_id="unknown"), meeting_source(), dws)
+    assert not dws.sent

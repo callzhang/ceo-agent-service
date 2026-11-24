@@ -2386,9 +2386,9 @@ Attempt 的处理／审计步骤、历史代记录、Task 历史、Meeting 详�
 
 Stalled recovery also refuses live dispatcher owners, unexpired or unparseable Run/runtime leases, and missing dispatcher ownership history. These checks run inside the same immediate transaction as the task/generation transition.
 
-会议敏感私聊（2026-11-09）：普通信息进合适业务群，敏感信息独立私发。身份校验共用精确来源身份解析；普通业务无群单聊仍排除本人，敏感私聊不再一律排除本人。独立私聊沿用原投递键及回执，群成功而私聊失败时只重试私聊；两条投递都完成后才返回完整发送结果。不新增任务状态、敏感词运行时分类或历史会议重发。
+会议敏感私聊（2026-11-09）：普通信息进合适业务群，敏感信息独立私发。身份校验共用精确来源身份解析；普通业务无群单聊仍排除本人，敏感私聊不再一律排除本人。候选以 `sensitive_private_messages` 保存每位收件人的独立正文与披露依据，独立 Audit 审核完整候选。发送前核验全部收件人与预备正文；多位收件人按会议和稳定用户 ID 分配投递键，每条分别存回执。重启或重试复用已保存回执，所有投递完成后才标记发送完成。旧单条候选保留原 Audit 摘要绑定和投递键。不新增任务状态、敏感词运行时分类或历史会议重发。
 
-仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_message`，不生成群占位消息，也不使用 `skip_no_content`。仅敏感私聊使用原 `:sensitive` 投递键及回执；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
+仅有敏感结论或行动时，Meeting 仍为 `send`，普通 `target=null`、`final_message=""`、`mention_names=[]`，只投递 `sensitive_private_messages`，不生成群占位消息，也不使用 `skip_no_content`。单收件人的既有 `:sensitive` 投递键及回执继续有效；日历回写跳过。混合会议的共享日历只使用普通总结正文，即使两部分合并在同一条单聊中。会议 Skill 的安装文件、不可变修订、运行绑定和定时任务引用须通过现有托管 Skill 设置与正式重启流程一起更新。
 敏感私聊正文不进入系统通知预览；混合会议的通知只取普通正文，仅敏感会议只提示私聊已发送。
 
 微信发送窗口等待期间，每轮重新取得当前运行的客户端进程；客户端退出时继续等待，重新启动后仅操作新实例，不保留已退出实例的进程号。原审核、动作身份、会话绑定、已派发和未知结果的只读对账保持原样。

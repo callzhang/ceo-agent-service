@@ -14113,7 +14113,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         result = MeetingDeliveryResult.model_validate_json(result_json)
         if (result.message_text != prepared.final_body or result.send_result != receipt
                 or result.target_kind != job.target_kind or result.target_id != job.target_id
-                or result.sensitive_private_delivery is not None or result.sensitive_private_merged):
+                or result.sensitive_private_deliveries or result.sensitive_private_merged):
             return False
         try:
             stored_decision = json.loads(job.decision_json)
@@ -14304,7 +14304,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 expected_candidate_sha256,
             )
             or decision.action != "send" or decision.target is None
-            or decision.sensitive_private_message is not None
+            or decision.sensitive_private_messages
             or decision.final_message != current.final_message
         ):
             return None
