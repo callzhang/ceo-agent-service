@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import errno
 import json
 import imaplib
 import logging
@@ -76,6 +77,8 @@ def _email_classifier_failure_is_retryable(exc: BaseException) -> bool:
         retryable = getattr(current, "retryable_external_dependency", None)
         if retryable is not None:
             return bool(retryable)
+        if isinstance(current, OSError) and current.errno == errno.ENETUNREACH:
+            return True
         if isinstance(
             current,
             (

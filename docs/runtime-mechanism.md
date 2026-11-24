@@ -779,6 +779,8 @@ folder generation 时间。generation 按账号和文件夹单独记录，分类
 扫描时间；消息内容未变时不更新消息行及其索引。扫描成员先放入连接级临时表，再按
 `(account_id, provider_folder_id)` 索引对账，避免大批动态 `NOT IN` 参数并缩短共享数据库写锁持有时间。
 
+邮件分类将操作系统的 `ENETUNREACH`（网络不可达）视为瞬时网络错误，原任务沿用既有退避与重试上限。TLS 证书、认证和权限失败仍按各自原规则终止；没有生成分类结果的失败可通过单任务正式入口重试原邮件。
+
 IMAP 移动模式是账号级显式配置：默认 `imap_move_mode=move` 并要求服务端支持 `UID MOVE`；
 只有 provider 官方协议把 `UID COPY` 定义为移动时才配置 `copy_as_move`。运行时不按 hostname
 自动推断，不对普通 COPY 执行 `\\Deleted`/`EXPUNGE` 补偿；动作完成后统一用稳定 Message-ID

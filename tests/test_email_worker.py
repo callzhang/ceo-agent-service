@@ -3,6 +3,7 @@ from __future__ import annotations
 from tests.support.email_listing_oracle import StoredEmailListingOracle
 from tests.support.native_task_fields import set_native_task_fields
 import json
+import errno
 import imaplib
 import sqlite3
 import socket
@@ -4846,6 +4847,8 @@ def _imap_authentication_failure() -> ConnectionError:
     (
         (ValueError("invalid Agent JSON"), "failed"),
         (socket.gaierror(-2, "name resolution failed"), "pending"),
+        (OSError(errno.ENETUNREACH, "network is unreachable"), "pending"),
+        (PermissionError(errno.EACCES, "socket access denied"), "failed"),
         (ssl.SSLEOFError("unexpected EOF while reading"), "pending"),
         (ssl.SSLCertVerificationError("certificate verify failed"), "failed"),
         (ssl.SSLError("certificate verify failed"), "failed"),
