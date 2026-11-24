@@ -265,13 +265,14 @@ def test_oa_comment_existing_effect_reconciles_after_store_reopen(tmp_path, chan
             super().__init__()
             self.detail["result"]["operationRecords"] = []
             self.detail["result"]["formValueVOS"] = [{"id": "amount", "value": "100"}]
+            self.accepted_comment = None
 
         def comment_oa_approval(self, process_id, content):
             self.comments += 1
-            self.detail["result"]["operationRecords"].append({
+            self.accepted_comment = {
                 "type": "ADD_REMARK", "userId": "principal", "remark": content,
                 "date": int(datetime.now(timezone.utc).timestamp() * 1000),
-            })
+            }
             return {"success": True}
 
     store, task, context = setup(tmp_path)
@@ -302,6 +303,9 @@ def test_oa_comment_existing_effect_reconciles_after_store_reopen(tmp_path, chan
     [original] = store.list_candidate_action_attempts(execution["id"])
     assert original["status"] == "uncertain"
     reopened = AutoReplyStore(store.path)
+    # The provider accepted the comment, but its operation log lagged the first read.
+    assert source.accepted_comment is not None
+    source.detail["result"]["operationRecords"].append(source.accepted_comment)
     if change == "changed_source":
         source.detail["result"]["formValueVOS"][0]["value"] = "900"
     recovered = SystemExecutor(reopened, dws=source).execute(

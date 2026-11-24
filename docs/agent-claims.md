@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-oa-comment-reopen-fixture-20261123 | tests/test_oa_comment_readback.py (reopen reconciliation fixture); own claim row | Make the verified deployment blocker reproducible by surfacing the fake receipt only after reopening; production OA behavior stays as implemented. | 2026-11-23 |
-
 | codex-native-reply-identity-20261121 | app/shared_action_lifecycle.py record_sent_action and app/action_storage.py SENT_REPLY_SQL diagnosis only; own claim row | Approved sender restoration and legacy no-effect reconciliation deployed at 25fadfda; reminder on 17762 sent once and independently read back as msgQXG0DCVAl+3JJNQuQyq5BA==. Actual verified receipt 28029 is blocked at Sent projection by the older unsent prepared body. Preserve both versions and do not resend. | Awaiting separate explicit confirmation for sent-record association repair; no implementation of that change yet. Prior source file ownership released. |
 
 
