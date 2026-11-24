@@ -4,10 +4,12 @@ from __future__ import annotations
 
 from datetime import timedelta
 from hashlib import sha256
+import json
 from typing import Any
 
 from app.agent_contracts import parse_persisted_consumer_result
 from app.system_action_handlers import WechatSendMessageHandler
+from app.wechat.standard_review import DELIVERY_RECONCILIATION_REQUIRED
 
 
 NO_SEND_READBACK_FIELDS = (
@@ -185,6 +187,103 @@ def _reconcile_completed_no_action(store, task):
         return {**failure, "reason": "wechat_terminal_reconciliation_conflict"}
     return {"outcome": "done", "task_id": task.id, "delivery_id": delivery.id,
             "reconciliation_status": "confirmed_no_effect"}
+
+
+def review_independent_wechat_trigger(
+    store, *, delivery_id: int, original_attempt_id: int, newer_attempt_id: int,
+    confirmed_feedback_sha256: str = "",
+) -> dict[str, object]:
+    """Verify the two source messages before recording an operator's scope decision."""
+    old = store.get_wechat_delivery_by_id(delivery_id)
+    origin = store.get_reply_attempt(original_attempt_id)
+    current = store.get_reply_attempt(newer_attempt_id)
+    if (
+        old is None or old.status != "send_unknown" or origin is None or current is None
+        or origin.channel != "wechat" or current.channel != "wechat"
+        or origin.conversation_id != old.conversation_id
+        or current.conversation_id != old.conversation_id
+        or origin.trigger_message_id == current.trigger_message_id
+        or current.send_status != "failed"
+    ):
+        raise ValueError("WeChat independent trigger identity is not eligible")
+    prior = store.get_reply_task(old.task_id)
+    new = store.get_reply_task_by_trigger_message_id(current.trigger_message_id, channel="wechat")
+    if (
+        prior is None or new is None or new.status != "failed"
+        or prior.trigger_message_id != origin.trigger_message_id
+        or (prior.conversation_id, new.conversation_id) != (
+            old.conversation_id, old.conversation_id
+        )
+        or store.get_wechat_delivery_for_task(new.id) is not None
+    ):
+        raise ValueError("WeChat independent trigger does not match current tasks")
+
+    feedback = store.get_feedback_event(f"manual:{original_attempt_id}")
+    if feedback is None or feedback.source != "workbench" or not feedback.comment.strip():
+        raise ValueError("WeChat principal decision is not recorded")
+    feedback_digest = sha256(feedback.comment.encode()).hexdigest()
+
+    review, action = _reviewed_wechat_action(store, new)
+    execution = store.get_candidate_execution(review["candidate_id"])
+    attempts = store.list_candidate_action_attempts(execution["id"]) if execution else ()
+    if (
+        current.agent_run_id != review["audit_run_id"]
+        or any(action.target.get(field) != getattr(old, field)
+               for field in ("account_id", "conversation_id", "target_type", "target_id"))
+        or len(attempts) != 1 or attempts[0]["status"] != "failed"
+        or attempts[0].get("provider_receipt_id")
+    ):
+        raise ValueError("WeChat new trigger does not have a matching pre-delivery failure")
+    failure = json.loads(attempts[0].get("result_json") or "{}")
+    if (failure.get("reason"), failure.get("detail")) != (
+        "wechat_delivery_not_creatable", DELIVERY_RECONCILIATION_REQUIRED,
+    ):
+        raise ValueError("WeChat new trigger was not blocked by the independent delivery fence")
+
+    handler = WechatSendMessageHandler(store)
+    account, reader = handler._reader_runtime()
+    if account is None or account.account_id != old.account_id:
+        raise ValueError("WeChat scope decision requires the original account")
+    old_inbound_at, new_inbound_at = (
+        handler._utc_instant(task.trigger_create_time) for task in (prior, new)
+    )
+    if new_inbound_at <= old_inbound_at:
+        raise ValueError("WeChat independent trigger must be newer")
+    for task, instant in ((prior, old_inbound_at), (new, new_inbound_at)):
+        sources = reader.read_messages(
+            account, conversation_id=old.conversation_id, conversation_type=old.target_type,
+            since=(instant - timedelta(seconds=1)).isoformat(),
+            until=(instant + timedelta(seconds=2)).isoformat(), limit=20,
+        )
+        matches = [message for message in sources if message.message_id == task.trigger_message_id]
+        if (
+            len(sources) >= 20 or len(matches) != 1
+            or matches[0].direction != "inbound" or not matches[0].text.strip()
+            or matches[0].account_id != old.account_id
+            or matches[0].conversation_id != old.conversation_id
+            or matches[0].conversation_type != old.target_type
+            or handler._utc_instant(matches[0].sent_at) != instant
+            or (task.trigger_text.strip() and task.trigger_text.strip() != matches[0].text.strip())
+        ):
+            raise ValueError("WeChat independent trigger source readback is incomplete")
+
+    result = {
+        "delivery_id": delivery_id, "new_task_id": new.id,
+        "feedback_sha256": feedback_digest, "recorded": False,
+    }
+    if confirmed_feedback_sha256:
+        if confirmed_feedback_sha256 != feedback_digest:
+            raise ValueError("WeChat principal decision evidence changed")
+        store.record_independent_wechat_trigger(delivery_id, {
+            "old_message_id": prior.trigger_message_id,
+            "new_message_id": new.trigger_message_id,
+            "old_execution_generation": old.execution_generation,
+            "old_confirmation_reference": f"{feedback.key}:{feedback_digest}",
+            "new_task_id": new.id,
+            "new_execution_generation": new.execution_generation,
+        })
+        result["recorded"] = True
+    return result
 
 
 def reconcile_failed_wechat_attempt(

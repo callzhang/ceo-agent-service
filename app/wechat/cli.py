@@ -12,6 +12,7 @@ is the explicit opt-in for a local verification run.
 from __future__ import annotations
 
 import argparse
+import json
 from pathlib import Path
 
 from app import config
@@ -175,6 +176,20 @@ def cmd_import_memory(args) -> int:
     return 0
 
 
+def cmd_record_independent_trigger(args) -> int:
+    from app.wechat_reconciliation import review_independent_wechat_trigger
+
+    result = review_independent_wechat_trigger(
+        AutoReplyStore(Path(args.db)),
+        delivery_id=args.delivery_id,
+        original_attempt_id=args.original_attempt_id,
+        newer_attempt_id=args.newer_attempt_id,
+        confirmed_feedback_sha256=args.confirm_original_declined_and_new_topic,
+    )
+    print(json.dumps(result, ensure_ascii=False))
+    return 0
+
+
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="wechat")
     sub = parser.add_subparsers(dest="cmd", required=True)
@@ -207,6 +222,17 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--id", type=int, required=True)
     p.set_defaults(fn=cmd_retry_absent)
+    p = sub.add_parser("record-independent-trigger")
+    p.add_argument("--db", required=True)
+    p.add_argument("--delivery-id", type=int, required=True)
+    p.add_argument("--original-attempt-id", type=int, required=True)
+    p.add_argument("--newer-attempt-id", type=int, required=True)
+    p.add_argument(
+        "--confirm-original-declined-and-new-topic", default="",
+        help="Exact feedback SHA from preview after verifying the user declined the original "
+             "reply and the new message is an unrelated request. Without it, only preview.",
+    )
+    p.set_defaults(fn=cmd_record_independent_trigger)
     p = sub.add_parser("import-memory")
     p.add_argument("--db", default=DEFAULT_DB)
     p.add_argument("--account-id", default="")

@@ -16,6 +16,7 @@ import json
 
 WECHAT_SEND_CAPABILITY = "wechat"
 WECHAT_SEND_OPERATION = "send_message"
+DELIVERY_RECONCILIATION_REQUIRED = "WeChat delivery reconciliation required before a newer trigger"
 STANDARD_EVIDENCE_KEYS = (
     "standard_candidate_id", "standard_review_id", "standard_action_identity",
 )

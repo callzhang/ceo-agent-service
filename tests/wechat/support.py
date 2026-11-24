@@ -42,7 +42,7 @@ def create_wechat_delivery(
         generation = str(task["execution_generation"])
         store._prepare_new_wechat_delivery(
             db, reply_task_id=reply_task_id, account_id=account_id, target_type=target_type,
-            target_id=target_id, conversation_id=conversation_id,
+            target_id=target_id, conversation_id=conversation_id, reply_text=reply_text,
         )
         existing = db.execute(
             f"""select * from ({WECHAT_DELIVERY_SQL})

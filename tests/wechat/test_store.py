@@ -1079,6 +1079,62 @@ def test_newer_wechat_trigger_waits_for_uncertain_delivery_reconciliation(
     assert store.get_wechat_delivery_for_task(tasks[1].id) is None
 
 
+def test_unknown_wechat_delivery_allows_only_a_bound_independent_trigger(tmp_path):
+    store = _store(tmp_path)
+    tasks = [
+        store.ensure_reply_task(
+            channel="wechat", conversation_id="u1", conversation_title="Alex",
+            single_chat=True, trigger_message_id=message,
+            trigger_create_time=f"2026-07-28T10:0{index}:00",
+            trigger_sender="Alex", trigger_text=message,
+        )
+        for index, message in enumerate(("old", "independent", "unverified"), start=1)
+    ]
+
+    def create(task, body):
+        return create_wechat_delivery(
+            store, reply_task_id=task.id, account_id="acct-1",
+            target_type="direct", target_id="u1", conversation_id="u1", reply_text=body,
+        )
+
+    old_id = create(tasks[0], "outcome unknown")
+    store.mark_wechat_delivery_sending(old_id)
+    store.set_wechat_delivery_status(old_id, "send_unknown",
+        error="read_only_reconciliation_inconclusive")
+    with pytest.raises(ValueError, match="reconciliation required"):
+        create(tasks[1], "fresh reply")
+
+    # A trusted controller has confirmed the old user instruction and
+    # independently verified these exact inbound message identities.
+    evidence = {
+        "old_message_id": "old",
+        "new_message_id": "independent",
+        "old_execution_generation": tasks[0].execution_generation,
+        "old_confirmation_reference": "case-77",
+        "new_task_id": tasks[1].id,
+        "new_execution_generation": tasks[1].execution_generation,
+    }
+    with pytest.raises(ValueError, match="identity"):
+        store.record_independent_wechat_trigger(old_id, evidence)
+    assert store.claim_reply_task(tasks[1].id) is not None
+    store.fail_reply_task(tasks[1].id, "external_action_failed",
+                          expected_execution_generation=tasks[1].execution_generation)
+    with pytest.raises(ValueError, match="identity"):
+        store.record_independent_wechat_trigger(old_id, {**evidence, "new_message_id": "other"})
+    store.record_independent_wechat_trigger(old_id, evidence)
+    store.record_independent_wechat_trigger(old_id, evidence)
+
+    with pytest.raises(AgentRunLeaseLostError):
+        store.requeue_readback_absent_wechat_delivery_for_user(old_id)
+    with pytest.raises(ValueError, match="reconciliation required"):
+        create(tasks[1], store.get_wechat_delivery_by_id(old_id).reply_text)
+    new_id = create(tasks[1], "fresh reply")
+    assert store.get_wechat_delivery_by_id(new_id).status == "ready_to_send"
+    with pytest.raises(ValueError, match="reconciliation required"):
+        create(tasks[2], "unverified relationship")
+    assert store.get_wechat_delivery_by_id(old_id).status == "send_unknown"
+
+
 def test_reconciled_unknown_delivery_can_be_superseded_without_replay(tmp_path):
     store = _store(tmp_path)
     store.enqueue_reply_task(

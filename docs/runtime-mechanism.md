@@ -1222,6 +1222,8 @@ History 的回复类记录以 task 为核心：列表行带 `task_id` 与 `run_c
 听记归档保留分页失败前已经写入的文件和归档游标。任一列表范围未完整读回时，扫描结果会携带 `listing_error`，定时运行记录失败；后续完整读取才更新最后成功时间。
 退订页返回的固定外部拒绝类别即使附带 `;operation=...` 阶段信息，也保留失败历史、
 归为外部依赖故障而不计入待工程修复的 Attention；浏览器/会话自身错误仍计入 Attention。
+微信原投递仍为 `send_unknown` 且本人已明确取消那条原回复时，维护者可使用 `python -m app.wechat.cli record-independent-trigger` 复核一条不同话题的新触发。预检按旧投递、原 Attempt、当前失败 Attempt、原用户反馈和两条原生入站消息逐项绑定，并要求新候选曾通过独立 Audit、只在创建投递前被同一围栏拒绝、没有供应商回执。只有核过原反馈和新旧话题后才提交对应摘要。登记只在旧投递的证据中保存所核实的新触发，旧投递状态不变；旧回复不能重发，未登记的触发、同一话题或身份不一致仍不放行。登记不会重新入队或调用 Sender。新触发若需恢复，仍走当时的 Consumer、独立 Audit 和原发送门禁。
+
 ## Chrome 登录态副本（系统服务）
 
 需要复用本人 Chrome 登录态的无头浏览器任务（退订链接、听记权限申请）默认使用共享副本；Dingteam OKR 则保留现有专用会话并通过既有本机 SSO 刷新。共享副本的同步方式为：服务每天 `06:00`（`Asia/Shanghai`）运行“同步 Chrome 登录态”（`sync-chrome-cookies`，定时任务，`chrome-cookie-copy-daily-v1`），用 SQLite 备份接口把 `~/Library/Application Support/Google/Chrome/Default/Cookies` 复制到服务数据库旁的 `chrome-cookies/Default/Cookies`，再按明文 `host_key` 删掉 `CEO_CHROME_COOKIE_DENY_DOMAINS`（逗号分隔的域名，含子域名）里的银行、券商和支付类域名，其余全部保留供各任务复用；这份名单为空时命令拒绝执行。整个过程不解密任何 cookie，也不碰钥匙串。 Dingteam OKR token 缓存读取时先验证 JWT 有效期；过期或将过期的缓存不会返回，调用者在锁内重新读取缓存后再尝试既有 Chrome/本机 SSO 刷新。新捕获 token 也先验证再写入；认证仍不可用时保留认证失败。

@@ -223,6 +223,7 @@ from app.business_source_reader import (
 from app.provenance_definitions import SOURCE_FIELDS
 from app.provenance_storage import signal_projection, insert_signal_version
 from app.wechat.models import WechatReplyScope
+from app.wechat.standard_review import DELIVERY_RECONCILIATION_REQUIRED
 
 
 from app.action_storage import (
@@ -11866,6 +11867,53 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             error=error,
         )
 
+    def record_independent_wechat_trigger(self, delivery_id: int, evidence: dict) -> None:
+        """Persist a verified scope decision without changing an unknown delivery."""
+        task_id = evidence["new_task_id"]
+        with self._immediate_write_transaction() as db:
+            old = self._native_wechat_delivery(db, delivery_id)
+            original = self._native_wechat_task(db, int(old["reply_task_id"])) if old else None
+            newer = self._native_wechat_task(db, task_id)
+            if (
+                old is None or old["status"] != "send_unknown"
+                or original is None or newer is None
+                or original["channel"] != "wechat" or newer["channel"] != "wechat"
+                or original["id"] == task_id or newer["status"] != "failed"
+                or newer["execution_generation"] != evidence["new_execution_generation"]
+                or old["execution_generation"] != evidence["old_execution_generation"]
+                or original["trigger_message_id"] != evidence["old_message_id"]
+                or newer["trigger_message_id"] != evidence["new_message_id"]
+                or original["trigger_message_id"] == newer["trigger_message_id"]
+                or original["conversation_id"] != old["conversation_id"]
+                or newer["conversation_id"] != old["conversation_id"]
+                or not evidence["old_confirmation_reference"].strip()
+            ):
+                raise ValueError("WeChat independent trigger identity changed")
+            if db.execute(
+                f"select 1 from ({WECHAT_DELIVERY_SQL}) where reply_task_id=? limit 1",
+                (task_id,),
+            ).fetchone():
+                raise ValueError("WeChat independent trigger has a delivery")
+            bindings = json.loads(old["evidence_json"])
+            scope_key = f"independent_trigger:{task_id}"
+            encoded_scope = json.dumps(evidence, ensure_ascii=False, sort_keys=True)
+            confirmation = evidence["old_confirmation_reference"]
+            if (
+                bindings.get(scope_key, encoded_scope) != encoded_scope
+                or bindings.get("principal_declined_reply", confirmation) != confirmation
+            ):
+                raise ValueError("WeChat independent trigger evidence changed")
+            bindings[scope_key] = encoded_scope
+            bindings["principal_declined_reply"] = confirmation
+            assignments, parameters = task_delivery_set_parts(
+                "wechat_deliveries", {"evidence_json": json.dumps(bindings, ensure_ascii=False)},
+            )
+            db.execute(
+                f"update actions set {assignments} where record_type='wechat_deliveries' "
+                "and cast(legacy_key as integer)=?",
+                (*parameters, delivery_id),
+            )
+
     @classmethod
     def _prepare_new_wechat_delivery(
         cls,
@@ -11876,31 +11924,41 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         target_type: str,
         target_id: str,
         conversation_id: str,
+        reply_text: str,
     ) -> None:
         unresolved = db.execute(
             f"""
-            select 1
+            select status, reply_task_id, evidence_json, reply_text
             from ({WECHAT_DELIVERY_SQL})
-            where reply_task_id!=?
-              and account_id=?
+            where account_id=?
               and target_type=?
               and target_id=?
               and conversation_id=?
               and status in ('sending', 'send_unknown')
-            limit 1
             """,
             (
-                reply_task_id,
                 account_id,
                 target_type,
                 target_id,
                 conversation_id,
             ),
-        ).fetchone()
-        if unresolved is not None:
-            raise ValueError(
-                "WeChat delivery reconciliation required before a newer trigger"
-            )
+        ).fetchall()
+        if unresolved:
+            task = cls._native_wechat_task(db, reply_task_id)
+            for old in unresolved:
+                bindings = json.loads(old["evidence_json"])
+                if old["reply_task_id"] == reply_task_id:
+                    if bindings.get("principal_declined_reply"):
+                        raise ValueError("WeChat original reply was explicitly declined")
+                    continue
+                scoped = json.loads(bindings.get(f"independent_trigger:{reply_task_id}", "{}"))
+                if (
+                    old["status"] != "send_unknown" or task is None
+                    or not bindings.get("principal_declined_reply")
+                    or scoped.get("new_message_id") != task["trigger_message_id"]
+                    or old["reply_text"].strip() == reply_text.strip()
+                ):
+                    raise ValueError(DELIVERY_RECONCILIATION_REQUIRED)
         error = f"superseded_by_newer_wechat_trigger:{reply_task_id}"
         older_deliveries = db.execute(
             f"""
@@ -12302,6 +12360,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                   and cast(wechat_deliveries.legacy_key as integer)=?
                   and wechat_deliveries.td_status='send_unknown'
                   and wechat_deliveries.td_error='read_only_reconciliation_inconclusive'
+                  and json_type(wechat_deliveries.td_evidence_json, '$.principal_declined_reply') is null
                   and trim(wechat_deliveries.td_action_started_at)<>''
                   and exists (
                       select 1 from ({NATIVE_REPLY_TASK_CURRENT_SQL}) as tasks
@@ -12564,7 +12623,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             self._prepare_new_wechat_delivery(
                 db, reply_task_id=row["task_id"], account_id=fields["account_id"],
                 target_type=fields["target_type"], target_id=fields["target_id"],
-                conversation_id=fields["conversation_id"],
+                conversation_id=fields["conversation_id"], reply_text=fields["text"],
             )
             evidence = dict(zip(STANDARD_EVIDENCE_KEYS, (
                 str(candidate_id), str(review_id), action_identity)))
