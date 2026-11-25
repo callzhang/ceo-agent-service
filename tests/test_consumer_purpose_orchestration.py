@@ -58,6 +58,29 @@ def test_unreadable_oa_attachment_can_end_with_reviewed_handoff_comment(tmp_path
     assert [receipt["operation"] for receipt in receipts] == ["comment"]
 
 
+def test_general_request_access_does_not_require_file_id(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    request = consumer_wire_model('general').model_validate({
+        'action': 'request_access', 'reason': 'Please provide a readable copy',
+        'target': {'conversation_id': 'conversation', 'message_id': 'message'},
+        'payload': {'content': 'Please provide a readable copy'},
+        'evidence_refs': ['message:message'], 'summary': 'Request readable copy',
+        'error_code': '', 'error_retryable': False,
+        'error_authorization_required': False, 'risk': 'low', 'confidence': 1.0,
+        'rule_coverage': 1.0, 'information_completeness': 1.0,
+    }).to_result()
+
+    prepared = _prepare_reviewable_candidate(
+        request, store=store, task=task, context=context,
+        proposal_revision=1, source_client=None,
+    )
+
+    assert prepared.purpose_output['action'] == 'request_access'
+    assert prepared.purpose_output['target'] == {
+        'conversation_id': 'conversation', 'message_id': 'message',
+    }
+
+
 def test_request_wait_retry_and_business_return_without_replaying_request(tmp_path):
     store, task, context = task_and_context(tmp_path)
     context = replace(context, skill_names=('dingtalk-oa-approval',))
