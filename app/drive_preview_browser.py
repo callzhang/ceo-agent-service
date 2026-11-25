@@ -6,19 +6,22 @@ account can open its preview page. The page embeds its PDF viewer in a child fra
 per document page, rendered to a canvas, with no text layer. So the readable form is an image of
 each page, which the Agent passes to OCR.
 
-The preview opens in the service's shared headless Chrome
-(`launch_service_chrome`), on a profile of its own. Chrome allows one process
-per profile, so captures on this machine take turns on a file lock.
+The preview uses a dedicated Chrome profile signed in directly to DingTalk.
+Chrome allows one process per profile, so captures on this machine take turns
+on a file lock.
 """
 
 from __future__ import annotations
 
+import argparse
 import fcntl
 import re
+import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
-PREVIEW_URL = "https://alidocs.dingtalk.com/i/nodes/{node_id}"
+DINGTALK_DOCS_URL = "https://alidocs.dingtalk.com"
+PREVIEW_URL = DINGTALK_DOCS_URL + "/i/nodes/{node_id}"
 LOGIN_HOST = "login.dingtalk.com"
 MAX_PREVIEW_PAGES = 30
 _NODE_ID = re.compile(r"[A-Za-z0-9]{8,64}")
@@ -46,7 +49,23 @@ class DrivePreview:
 def _profile_dir() -> Path:
     from app import config as app_config
 
-    return app_config.worker_db_path().parent / "drive-preview-profile"
+    return app_config.worker_db_path().parent / "oa-drive-preview-profile"
+
+
+def _main() -> None:
+    parser = argparse.ArgumentParser(description="Sign in to the OA Drive preview browser.")
+    parser.add_argument("--login", action="store_true", required=True)
+    parser.parse_args()
+    profile = _profile_dir()
+    profile.mkdir(mode=0o700, parents=True, exist_ok=True)
+    subprocess.run(
+        [
+            "/usr/bin/open", "-n", "-a", "Google Chrome", "--args",
+            f"--user-data-dir={profile}", "--no-first-run", "--no-default-browser-check",
+            DINGTALK_DOCS_URL,
+        ],
+        check=True,
+    )
 
 
 def capture_drive_preview(
@@ -64,13 +83,9 @@ def capture_drive_preview(
     with open(profile.with_name(profile.name + ".lock"), "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         with playwright_factory() as playwright:
-            # Chrome ignores --restore-last-session for a new profile, and
-            # without it the copied session cookies are dropped (see
-            # minutes_console_browser.signed_in_console).
-            if not (profile / "Default" / "Preferences").is_file():
-                launch_service_chrome(playwright, profile).close()
             context = launch_service_chrome(
-                playwright, profile, args=["--restore-last-session"],
+                playwright, profile, initialize_from_snapshot=False,
+                args=["--restore-last-session"],
                 viewport={"width": 1400, "height": 1800}, device_scale_factor=2,
             )
             try:
@@ -96,8 +111,7 @@ def _read_preview(page, node_id: str) -> DrivePreview:
     for _ in range(_PREVIEW_READY_TIMEOUT_MS // _PAGE_POLL_MS):
         if LOGIN_HOST in page.url:
             raise DrivePreviewError(
-                "drive_preview_login_required: the copy of Derek's Chrome cookies "
-                "carries no DingTalk login"
+                "drive_preview_login_required: sign in to the dedicated OA DingTalk browser"
             )
         for frame in page.frames:
             elements = frame.query_selector_all(_PAGE_SELECTOR)
@@ -115,3 +129,7 @@ def _read_preview(page, node_id: str) -> DrivePreview:
         page.wait_for_timeout(_PAGE_SETTLE_MS)
         images.append(element.screenshot(type="png"))
     return DrivePreview(title=title, page_count=len(elements), pages=tuple(images))
+
+
+if __name__ == "__main__":
+    _main()

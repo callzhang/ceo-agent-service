@@ -104,9 +104,9 @@ def test_capture_scrolls_and_shoots_every_page(monkeypatch, tmp_path) -> None:
 
     assert preview == DrivePreview(title="结算单.pdf", page_count=2, pages=tuple(images))
     assert page.visited[0] == "https://alidocs.dingtalk.com/i/nodes/AbCdEf0123456789AbCdEf0123456789"
-    # A new profile is initialized once, then opened with the restored session.
-    assert launches[0] == {}
-    assert launches[-1]["args"] == ["--restore-last-session"]
+    assert len(launches) == 1
+    assert launches[0]["initialize_from_snapshot"] is False
+    assert launches[0]["args"] == ["--restore-last-session"]
     assert all(context.closed for context in contexts)
 
 

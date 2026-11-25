@@ -1524,7 +1524,7 @@ Audit 对已配置 AI Services 的 OCR/转写调用，不因来源字节交给�
 
 OA 表单附件的临时文件路径由下载材料层直接返回；表格抽取结果本身可以没有 `path`，角色读取器仍以该真实临时文件缓存来源并返回表格内容、原审批实例/文件 ID 和原字节 SHA-256。此路径修复不改变 OA 下载权限、钉盘拒绝结果或审核动作。
 
-钉盘里以“仅可查看”（READER）共享给我们的文件，下载接口按防泄漏保护拒绝，但同一账号能打开预览页（Derek 2026-11-02）。两角色可用 `preview_dingtalk_drive_file(node_id, page_number)`：在服务共用的无头 Chrome（`launch_service_chrome`，独立 profile `drive-preview-profile`，同机串行）打开 alidocs 预览，逐页截取 pdf.js 页面（最多 30 页），首次调用返回标题和 `ocr_page_numbers`，按页返回不超过 OCR 输入上限的 JPEG 交给 `ai_services.ocr_document`。cookie 副本没有钉钉登录时明确报 `drive_preview_login_required`。何时改用它由 Agent 按 Skill 判断，代码不做自动兜底。
+钉盘里以“仅可查看”（READER）共享的文件可以由有权限的钉钉账号在原生预览页打开。两角色可用 `preview_dingtalk_drive_file(node_id, page_number)`，在 `launch_service_chrome` 中串行使用 OA 专用 Chrome profile `oa-drive-preview-profile`，逐页截取最多 30 页。首次返回标题和 `ocr_page_numbers`，随后按页返回适合交给 `ai_services.ocr_document` 的 JPEG。操作者在服务机器执行 `python -m app.drive_preview_browser --login`，在打开的专用 Chrome 登录钉钉，然后退出该专用 Chrome，让后台进程接管同一登录态。这个 profile 只使用直接登录；常规 Chrome 的 cookie 快照不参与初始化或刷新。遇到钉钉登录页时工具返回 `drive_preview_login_required`。Agent 按 Skill 判断何时使用预览。
 
 部分 OA 表单图片字段直接保存 DingTalk static media URL，而不是附件 file ID。两角色可用 `read_dingtalk_oa_form_image` 读取；工具先从该流程的实时表单值确认 URL 完全匹配，再使用评论图片相同的域名、重定向、大小、OCR 和临时文件限制。跨流程 URL 在请求网络前被拒绝。
 
