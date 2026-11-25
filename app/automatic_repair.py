@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 import subprocess
 import time
+from urllib.parse import urlsplit
 
 from pydantic import ValidationError
 
@@ -335,6 +336,29 @@ class AutomaticRepairCoordinator:
         identity = hashlib.sha256(json.dumps(
             {'feedback_id': identity, 'result_schema': schema}, sort_keys=True,
         ).encode()).hexdigest()
+        last_result = entry.get('last_feedback_result', {})
+        failed_checks = feedback['failed_checks']
+        if (
+            last_result.get('outcome') == 'blocked'
+            and last_result.get('remaining_work')
+            and entry.get('active_feedback') == feedback
+            and not any(feedback[key] for key in ('unresolved_threads', 'change_requests', 'commented_reviews'))
+            and pr['reviewDecision'] != 'CHANGES_REQUESTED'
+            and failed_checks
+            and all(
+                check['__typename'] == 'StatusContext'
+                and (target := urlsplit(check.get('targetUrl') or '')).scheme == 'https'
+                and target.hostname
+                and target.hostname != urlsplit(pr['url']).hostname
+                for check in failed_checks
+            )
+        ):
+            entry.update(
+                status='feedback_blocked',
+                summary='等待外部检查解除阻断。' + last_result['summary'],
+            )
+            save_repair(self.store, entry)
+            return
         if not actionable:
             if passed:
                 self._continue_merge(entry, pr, feedback)

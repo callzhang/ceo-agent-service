@@ -477,6 +477,39 @@ def test_retry_carries_previous_result_and_remaining_goal(store, tmp_path):
     assert latest["last_feedback_result"]["outcome"] == "blocked"
 
 
+def test_unchanged_external_blocker_waits_and_resumes_when_remote_feedback_changes(store, tmp_path):
+    import json
+
+    identity, _ = attached(store, tmp_path)
+    account_blocked = dict(
+        __typename="StatusContext", id="external-deploy-1", context="Preview",
+        state="FAILURE", targetUrl="https://preview.example.test/account-status",
+    )
+    data = snapshot(checks=[dict(failed_check(), conclusion="SUCCESS"), account_blocked])
+    poll(store, tmp_path, data)
+    repair = get_repair(store, "errors", identity)
+    finish(store, repair["turn_ids"][-1], json.dumps({
+        "outcome": "blocked",
+        "summary": "Provider account cannot create previews",
+        "remaining_work": ["Re-enable the provider account"],
+        "addressed_review_ids": [],
+    }))
+
+    for _ in range(2):
+        poll(store, tmp_path, data)
+        unchanged = get_repair(store, "errors", identity)
+        assert unchanged["status"] == "feedback_blocked"
+        assert unchanged["turn_ids"] == repair["turn_ids"]
+        assert "Provider account cannot create previews" in unchanged["summary"]
+        assert unchanged["feedback_attempt_counts"] == repair["feedback_attempt_counts"]
+
+    data["checks"].append(failed_check(run="new-code-check"))
+    poll(store, tmp_path, data)
+    resumed = get_repair(store, "errors", identity)
+    assert resumed["status"] == "running"
+    assert len(resumed["turn_ids"]) == len(repair["turn_ids"]) + 1
+
+
 def test_invalid_result_gets_format_feedback_in_same_conversation(store, tmp_path):
     identity, original = attached(store, tmp_path)
     data = snapshot(checks=[failed_check()])
