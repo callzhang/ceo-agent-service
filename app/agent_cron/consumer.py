@@ -5,10 +5,12 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import json
 import logging
+from time import sleep
 from typing import Protocol
 
 from app.agent_cron.commands import (
     SERVICE_COMMAND_EXECUTION_KIND,
+    ServiceCommandResult,
     ServiceCommandRegistry,
 )
 from app.agent_cron.context import (
@@ -19,16 +21,18 @@ from app.agent_cron.context import (
 from app.agent_cron.models import ScheduledTaskRun
 from app.agent_cron.options import scheduled_route_order
 from app.agent_cron.scheduler import EXECUTION_UNAVAILABLE
-from app.dispatcher.models import ClaimGuard, DispatchEnvelope
+from app.dispatcher.models import ClaimGuard, ClaimLostError, DispatchEnvelope
 from app.dws_client import is_transient_dependency_error
 from app.external_retry import retry_delay_seconds
 from app.worker import MAX_REPLY_TASK_ATTEMPTS
 from app.store import AutoReplyStore, ReplyTask
 from app.manual_rerun import build_manual_rerun_instruction
 from app.notification import send_macos_notification
+from app.task_scanners import OAPendingListUnavailable
 
 
 SERVICE_COMMAND_FAILED = "scheduled_task_service_command_failed"
+OA_PENDING_LIST_RETRY_DELAYS = (30, 60)
 # How long a dependency has to stay unreachable before the outage is an
 # incident rather than a blip.  Below it the trigger record is the only fact;
 # at it, one Attention entry is written for the whole outage, and the next
@@ -106,6 +110,29 @@ class ScheduledTaskTriggerConsumer:
             f"scheduled-task:{run.scheduled_task_id}", SERVICE_COMMAND_FAILED
         )
 
+    def _run_command(
+        self, run: ScheduledTaskRun, guard: ClaimGuard,
+    ) -> ServiceCommandResult | None:
+        command = run.snapshot.command
+        context = self._builder.build_consumer_context(run)
+        retry_oa_read = command == "scan-oa-approvals"
+        retry_delays = iter(OA_PENDING_LIST_RETRY_DELAYS if retry_oa_read else ())
+        while True:
+            if retry_oa_read and self._store.has_later_scheduled_service_success(run):
+                return None
+            try:
+                return self._commands.run_with_result(command, consumer_context=context)
+            except OAPendingListUnavailable:
+                delay = next(retry_delays, None)
+                if delay is None:
+                    raise
+            logger.info(
+                "scheduled_oa_pending_read_retry",
+                extra={"scheduled_task_run_id": run.id, "retry_delay_seconds": delay},
+            )
+            sleep(delay)
+            guard.assert_current(self._now().astimezone(UTC))
+
     def _run_service_command(self, run: ScheduledTaskRun, guard: ClaimGuard) -> None:
         """Run the command inside the trigger claim; the trigger is the only fact.
 
@@ -126,11 +153,9 @@ class ScheduledTaskTriggerConsumer:
             self._store.resolve_errors_recovered_by_scheduled_service_command()
             return
         try:
-            consumer_context = self._builder.build_consumer_context(run)
-            command_result = self._commands.run_with_result(
-                command,
-                consumer_context=consumer_context,
-            )
+            command_result = self._run_command(run, guard)
+        except ClaimLostError:
+            raise
         except Exception as exc:  # noqa: BLE001 - the trigger records this failure fact
             reason = f"{SERVICE_COMMAND_FAILED}: {exc}"
             failed_at = self._now().astimezone(UTC)
@@ -160,6 +185,9 @@ class ScheduledTaskTriggerConsumer:
             )
             return
         now = self._now().astimezone(UTC)
+        if command_result is None:
+            guard.finish_source(now, status="skipped", reason="covered_by_later_service_success")
+            return
         self._store.link_scheduled_task_run_execution(
             run.id, owner=guard.token.owner,
             execution_kind=SERVICE_COMMAND_EXECUTION_KIND, execution_id=command,

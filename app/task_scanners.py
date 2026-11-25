@@ -10,7 +10,7 @@ from app.agent_cron.commands import (
     current_service_command_consumer_context,
 )
 from app.dingtalk_models import DingTalkMessage
-from app.dws_client import OA_PENDING_PAGE_SIZE_MAX
+from app.dws_client import OA_PENDING_PAGE_SIZE_MAX, is_transient_dependency_error
 from app.minutes_todo_context import minutes_full_summary, todo_transcript_excerpts
 from app.oa_review_request import (
     mark_oa_review_request_queued,
@@ -23,6 +23,10 @@ from app.skill_features import FeatureRegistry
 AI_MINUTES_SCANNER = "ai_minutes"
 MEETING_TODO_SCANNER = "meeting_todos"
 OA_PENDING_SCANNER = "oa_pending"
+
+
+class OAPendingListUnavailable(RuntimeError):
+    """A transient pending-list read failed before any OA task work began."""
 
 
 def _utc_now() -> str:
@@ -510,6 +514,8 @@ def scan_pending_oa_approvals(
             cursor_json=previous_cursor,
             last_error=str(exc),
         )
+        if is_transient_dependency_error(exc):
+            raise OAPendingListUnavailable(f"scan-oa-approvals incomplete: {exc}") from exc
         return 0
 
     store.backfill_oa_audit_metadata()
