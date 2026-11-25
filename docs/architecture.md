@@ -251,6 +251,7 @@ scheduled adapter 领取 trigger 后，Dispatcher 在本进程内直接运行该
 `service_command + 命令名` 记为 trigger 的 execution link、保存命令返回的单行结果摘要并标记 `dispatched`，失败时 trigger
 以 `failed` 结束并进入 Attention。服务命令任务不创建 synthetic scheduled reply task、agent run
 或 reply_attempt；命令发现真实对象后，才由既有 reply、meeting 或 work-summary Consumer 处理。
+OA 待办扫描仅在分页读取遇到暂时性依赖错误、尚未进入本地业务任务写入阶段时，在同一已领取的 trigger 内延时补跑，最多两次。每次调用前使用同一调度和命令的后续成功回执判断是否已覆盖，已覆盖的 trigger 记为 `skipped`。补跑成功沿用正常执行回执；审批决策、任务去重和对外动作走原流程。
 运行记录 API 和定时任务页面展示已保存的结果摘要；旧运行记录的摘要为空。这样服务命令即使没有
 创建 Agent Attempt，也能显示本次扫描数量和结果。页面把结果里的 `key=数字` 读成中文计数（入队、发现、失败……），原始摘要、trigger id 和执行链接收进每行的“技术详情”。连续的定时触发如果什么都没带出来——没有 Attempt，且结果计数除上下文项（邮箱数、会话剩余天数）外全为 0，或摘要为空，或因上一轮未结束而跳过——合并成一行“N 次定时检查都没有新内容”；手动运行、失败和有计数的运行始终单独成行。没有新对象时不会在消息历史里留下每分钟一条的记录。`scheduled-task-options` 为每个服务
 命令附带一份从服务状态计算的只读“下游”描述（通道、consumer 执行器、角色边界常量、实际加载的

@@ -4992,6 +4992,18 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ).fetchone()
         return self._scheduled_task_run_from_row(row) if row is not None else None
 
+    def has_later_scheduled_service_success(self, run: ScheduledTaskRun) -> bool:
+        """Require a completed receipt for the same schedule and command."""
+        with self._connect() as db:
+            return db.execute(
+                "select 1 from schedule_occurrences where scheduled_task_id=? "
+                "and (scheduled_for>? or (scheduled_for=? and id>?)) "
+                "and dispatch_status='dispatched' and execution_kind='service_command' "
+                "and execution_id=? and dispatched_at is not null limit 1",
+                (run.scheduled_task_id, run.scheduled_for.isoformat(),
+                 run.scheduled_for.isoformat(), run.id, run.snapshot.command),
+            ).fetchone() is not None
+
     def get_scheduled_task_run_for_reply_execution(
         self, reply_task_id: int
     ) -> ScheduledTaskRun | None:

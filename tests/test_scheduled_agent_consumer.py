@@ -130,7 +130,10 @@ def claim(adapter, source_id, owner, *, now=NOW):
     return envelope, ClaimGuard(adapter=adapter, envelope=envelope, owner=owner)
 
 
-def commands(produce_once=lambda: unknown_service_result("produce-once queued=0")):
+def commands(
+    produce_once=lambda: unknown_service_result("produce-once queued=0"),
+    *, scan_oa=lambda: unknown_service_result("scan-oa-approvals queued=0"),
+):
     return ServiceCommandRegistry({
         "email-message-check-once": lambda: unknown_service_result("email-message-check-once discovered=0"),
         "produce-once": produce_once,
@@ -138,7 +141,7 @@ def commands(produce_once=lambda: unknown_service_result("produce-once queued=0"
         "recover-recent-messages": lambda: unknown_service_result("recover-recent-messages queued=0"),
         "wechat-produce-once": lambda: unknown_service_result("wechat produce-once queued=0"),
         "scan-meetings-once": lambda: unknown_service_result("scan-meetings-once queued=0"),
-        "scan-oa-approvals": lambda: unknown_service_result("scan-oa-approvals queued=0"),
+        "scan-oa-approvals": scan_oa,
         "scan-meeting-todos-once": lambda: unknown_service_result("scan-meeting-todos-once queued=0"),
         "request-minutes-access": lambda: unknown_service_result("request-minutes-access requested=0"),
         "sync-minutes-once": lambda: unknown_service_result("sync-minutes-once queued=0"),
@@ -176,6 +179,120 @@ def test_service_command_notification_preference_suppresses_terminal_notificatio
     )
     assert persisted.dispatch_status == "dispatched"
     assert notifications == []
+
+
+@pytest.mark.parametrize(
+    ("failure", "expected_status", "expected_reads"),
+    [
+        ("transient", "dispatched", 2),
+        ("newer_success", "skipped", 1),
+        ("already_covered", "skipped", 0),
+        ("other_schedule_success", "dispatched", 2),
+        ("persistent", "failed", 3),
+        ("nontransient", "failed", 1),
+        ("after_read", "failed", 1),
+    ],
+)
+def test_scheduled_oa_scan_retries_only_uncovered_pre_write_reads(
+    tmp_path, monkeypatch, failure, expected_status, expected_reads,
+):
+    from app import agent_cron, cli
+    from app.agent_cron.commands import ServiceCommandResult
+    from app.task_scanners import OA_PENDING_SCANNER
+
+    store = AutoReplyStore(tmp_path / "oa-scan.sqlite3")
+    task = store.create_scheduled_task(
+        name="OA pending scan", command="scan-oa-approvals",
+        cron_expression="0 * * * *", timezone_name="UTC", enabled=True,
+        notify_on_completion=False, now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        task.id, trigger_kind="scheduled", scheduled_for=NOW, now=NOW,
+    )
+    clock = [NOW]
+    reads = []
+    delays = []
+    adapter = ScheduledTaskQueueAdapter(store, owner_alive=lambda _pid: True)
+    network_error = DwsError("DNS unavailable", code="NETWORK_ERROR")
+
+    class Provider:
+        def list_pending_oa_approvals(self, **page):
+            reads.append(page["page"])
+            if failure == "nontransient":
+                raise DwsError("authorization required", code="PERMISSION_DENIED")
+            if failure == "persistent" or (len(reads) == 1 and failure != "after_read"):
+                raise network_error
+            return []
+
+        def read_oa_approval_tasks(self, _process):
+            raise AssertionError("empty pending list has no approval tasks to read")
+
+        def read_oa_process_instance_openapi(self, _process):
+            raise AssertionError("empty pending list has no approval to read")
+
+    def later_success(task_id):
+        newer = store.create_scheduled_task_run(
+            task_id, trigger_kind="manual", scheduled_for=clock[0], now=clock[0],
+        )
+        _, newer_guard = claim(adapter, newer.id, "newer", now=clock[0])
+        store.link_scheduled_task_run_execution(
+            newer.id, owner="newer", execution_kind=SERVICE_COMMAND_EXECUTION_KIND,
+            execution_id=task.command, result_summary="scan-oa-approvals queued=0",
+            now=clock[0],
+        )
+        newer_guard.finish_source(clock[0], status="dispatched")
+
+    def delay(seconds):
+        delays.append(seconds)
+        clock[0] += timedelta(seconds=seconds)
+        if failure == "newer_success":
+            later_success(task.id)
+        if failure == "other_schedule_success":
+            other = store.create_scheduled_task(
+                name="Another OA scan", command=task.command,
+                cron_expression="0 * * * *", timezone_name="UTC", now=clock[0],
+            )
+            later_success(other.id)
+
+    def scan():
+        count = cli.scan_oa_approvals_command(SimpleNamespace(
+            db_path=store.path, ding_robot_code="", ding_robot_name="",
+            ding_receiver_user_id="", oa_pending_scan_lookback_days=365,
+        ))
+        return ServiceCommandResult(f"scan-oa-approvals queued={count}")
+
+    monkeypatch.setattr(cli, "DwsClient", lambda **_settings: Provider())
+    monkeypatch.setattr(agent_cron.consumer, "sleep", delay)
+    if failure == "after_read":
+        def fail_after_read(_store):
+            raise network_error
+
+        monkeypatch.setattr(AutoReplyStore, "backfill_oa_audit_metadata", fail_after_read)
+    envelope, guard = claim(adapter, run.id, "original")
+    if failure == "already_covered":
+        clock[0] += timedelta(seconds=1)
+        later_success(task.id)
+    ScheduledTaskTriggerConsumer(
+        store=store, option_service=None, commands=commands(scan_oa=scan),
+        now=lambda: clock[0],
+    )(envelope, guard)
+
+    persisted = store.get_scheduled_task_run(run.id)
+    assert persisted.dispatch_status == expected_status
+    assert reads == [1] * expected_reads
+    if failure in {"transient", "other_schedule_success"}:
+        assert persisted.result_summary == "scan-oa-approvals queued=0"
+        assert store.get_daily_scan_state(OA_PENDING_SCANNER)["last_error"] == ""
+        assert delays == [30]
+    if failure in {"newer_success", "already_covered"}:
+        assert persisted.result_summary == ""
+        assert persisted.skip_or_error_reason == "covered_by_later_service_success"
+        assert delays == ([30] if failure == "newer_success" else [])
+    if failure == "persistent":
+        assert delays == [30, 60]
+        assert "DNS unavailable" in persisted.skip_or_error_reason
+    if failure in {"nontransient", "after_read"}:
+        assert delays == []
 
 
 def error_rows(store):
