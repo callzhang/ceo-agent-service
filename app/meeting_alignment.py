@@ -1126,6 +1126,8 @@ def _search_meeting_group_candidates(
             and len(participants) == len(source.participants)
             and len(participants) >= 2
         ),
+        # Meeting precision ranks groups but never disqualifies one.
+        member_precision_filters_groups=False,
         source_context={
             "participant_names": "\n".join(
                 participant.name for participant in source.participants if participant.name

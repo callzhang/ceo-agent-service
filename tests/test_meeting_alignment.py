@@ -2644,16 +2644,22 @@ def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_pat
     dws = ConsumerDws()
     dws.search_conversations = lambda query: candidates
     member_reads: list[str] = []
-    dws.list_group_member_open_dingtalk_ids = lambda _conversation_id: {
-        "open-a", "open-b"
-    }
+    discussion_reads: list[str] = []
+
+    def list_members(conversation_id):
+        member_reads.append(conversation_id)
+        if conversation_id != "cid-sales-hiring":
+            raise DwsError("430104: provider rate limited an irrelevant group")
+        return {"open-a", "open-b"}
+
     def read_recent_messages(conversation, limit=50):
-        member_reads.append(conversation.open_conversation_id)
+        discussion_reads.append(conversation.open_conversation_id)
         return [SimpleNamespace(
             content="销售项目进展：招聘候选人面试结论和后续招聘安排",
             create_time="2026-07-13 10:00:00",
         )] if conversation.open_conversation_id == "cid-sales-hiring" else []
 
+    dws.list_group_member_open_dingtalk_ids = list_members
     dws.read_recent_messages = read_recent_messages
 
     discovered = meeting_alignment._search_meeting_group_candidates(
@@ -2665,6 +2671,10 @@ def test_meeting_group_candidates_check_discussion_after_raw_search_page(tmp_pat
     )
     assert selected["topic_discussion_evidence"]
     assert member_reads == ["cid-sales-hiring"]
+    assert discussion_reads == ["cid-sales-hiring"]
+    assert selected["member_roster_complete"] is True
+    assert selected["reference_audience_complete"] is True
+    assert selected["member_open_dingtalk_ids"] == ["open-a", "open-b"]
 
 
 def test_same_task_prior_group_candidate_survives_content_revision():

@@ -101,6 +101,7 @@ class GroupDiscoveryRequest:
     audience: tuple[MemberRef, ...] = ()
     audience_is_complete: bool = False
     source_context: Mapping[str, str] = field(default_factory=dict)
+    member_precision_filters_groups: bool = True
 
 
 @dataclass(frozen=True)
@@ -266,9 +267,12 @@ class GroupDiscoveryService:
 
             candidate_groups = tuple(groups.values())
             prechecked_sendability: dict[tuple[str, str, str], Sendability] = {}
-            # With incomplete reference participants, title selection is
-            # independent of precision evidence. Do not fetch discarded rosters.
-            if not request.audience_is_complete:
+            # Only read rosters before title selection when precision can
+            # disqualify a group. Otherwise do not fetch discarded rosters.
+            filter_by_member_precision = (
+                request.audience_is_complete and request.member_precision_filters_groups
+            )
+            if not filter_by_member_precision:
                 for group in candidate_groups:
                     sendability = (
                         self.provider.get_group_sendability(group)
@@ -314,12 +318,12 @@ class GroupDiscoveryService:
                         precision = MemberPrecisionEvidence(None, None, "unavailable")
                     else:
                         precision = self.policy.member_precision(request, members)
-                        if request.audience_is_complete and precision.status == "ineligible":
+                        if filter_by_member_precision and precision.status == "ineligible":
                             continue
 
                     title_score = self.policy.title_score(request, group.display_name)
                     sendability: Sendability | None = None
-                    if not request.audience_is_complete:
+                    if not filter_by_member_precision:
                         sendability = prechecked_sendability[group.dedup_key]
                     elif self.provider.capabilities.sendability:
                         sendability = self.provider.get_group_sendability(group)
