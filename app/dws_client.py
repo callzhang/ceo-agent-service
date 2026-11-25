@@ -291,6 +291,8 @@ class DwsOaApprovalCandidate(BaseModel):
     process_instance_id: str
     title: str = ""
     process_name: str = ""
+    task_id: str = ""
+    activity_id: str = ""
 
 
 _MARKDOWN_LINE_MARKER = re.compile(r"^(?:#{1,6}\s+|[-*+]\s+|\d+[.)]\s+)")
@@ -6138,6 +6140,8 @@ class DwsClient:
                         or ""
                     ),
                     process_name=str(record.get("processName") or ""),
+                    task_id=str(record.get("taskId") or record.get("task_id") or "").strip(),
+                    activity_id=str(record.get("activityId") or record.get("activity_id") or "").strip(),
                 )
             )
         return approvals

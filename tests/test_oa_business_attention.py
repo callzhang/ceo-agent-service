@@ -6,7 +6,7 @@ from app.audit_web import _queue_attention_rows
 from app.web_api.attempts import build_attempt_detail
 from app.web_api.status import AttentionRow
 from app.store import AgentRole, AutoReplyStore
-from app.dws_client import DwsOaApprovalCandidate
+from app.dws_client import DwsClient, DwsOaApprovalCandidate
 from app.task_scanners import (
     _pending_oa_task_ids_for_current_user,
     scan_pending_oa_approvals,
@@ -33,8 +33,17 @@ def test_current_oa_pending_node_without_attempt_is_not_attention(tmp_path):
     assert _queue_attention_rows(store) == []
 
 
-@pytest.mark.parametrize("oa_action,show_pending", [("comment", True), ("approve", False)])
-def test_locally_completed_oa_comment_keeps_the_current_node_pending(tmp_path, oa_action, show_pending):
+@pytest.mark.parametrize(
+    "oa_action,show_pending,waiting_message",
+    [
+        ("comment", True, "已完成留言，钉钉仍待你审批"),
+        ("comment", True, "已完成留言，钉钉仍待发起人补正"),
+        ("approve", False, ""),
+    ],
+)
+def test_locally_completed_oa_comment_keeps_the_current_node_pending(
+    tmp_path, oa_action, show_pending, waiting_message,
+):
     store = AutoReplyStore(tmp_path / "worker.sqlite3")
     key = "oa:instance:node"
     task = store.ensure_reply_task(
@@ -56,7 +65,10 @@ def test_locally_completed_oa_comment_keeps_the_current_node_pending(tmp_path, o
     def scan(keys):
         store.set_daily_scan_state(
             "oa_pending", last_success_at="2026-11-23T01:00:00Z",
-            cursor_json=json.dumps({"pending_business_object_keys": keys}), last_error="",
+            cursor_json=json.dumps({
+                "pending_business_object_keys": keys,
+                "pending_oa_resubmission_keys": keys if "发起人补正" in waiting_message else [],
+            }), last_error="",
         )
 
     scan([key])
@@ -65,7 +77,7 @@ def test_locally_completed_oa_comment_keeps_the_current_node_pending(tmp_path, o
     if show_pending:
         assert [r["detail_url"] for r in rows if r["category"] == "OA approval"] == [f"/attempts/{attempt_id}"]
         assert detail["status"]["raw"] == "pending"
-        assert "已完成留言，钉钉仍待你审批" in detail["status"]["message"]
+        assert waiting_message in detail["status"]["message"]
     else:
         assert not rows
         assert detail["status"]["raw"] != "pending"
@@ -73,6 +85,40 @@ def test_locally_completed_oa_comment_keeps_the_current_node_pending(tmp_path, o
     assert _queue_attention_rows(store) == []
     assert build_attempt_detail(store, attempt_id)[1]["status"]["raw"] != "pending"
     assert store.get_reply_attempt(attempt_id).send_status == "completed"
+
+
+def test_scan_names_the_exact_applicant_resubmission_node_in_the_trigger(tmp_path):
+    class Provider:
+        def list_pending_oa_approvals(self, **kwargs):
+            return DwsClient.parse_pending_oa_approvals({"result": {"values": [
+                {"processInstanceId": "instance", "title": "Account access",
+                 "taskId": "rework", "activityId": "sid-startevent"},
+                {"processInstanceId": "instance", "taskId": "someone-else",
+                 "activityId": "sid-startevent"},
+            ]}})
+
+        def get_current_user_id(self):
+            return "principal"
+
+        def read_oa_approval_tasks(self, instance):
+            return {"result": {"tasks": []}}
+
+        def read_oa_process_instance_openapi(self, instance):
+            return {"result": {"status": "RUNNING", "originatorUserid": "principal", "tasks": [
+                {"taskId": "rework", "userId": "principal", "taskStatus": "RUNNING"},
+                {"taskId": "someone-else", "userId": "other", "taskStatus": "RUNNING"},
+            ]}}
+
+        def read_oa_approval_records(self, instance):
+            return {"result": {"operationRecords": []}}
+
+    store = AutoReplyStore(tmp_path / "worker.sqlite3")
+    assert scan_pending_oa_approvals(store, Provider()) == 1
+    task, = store.list_reply_tasks(statuses=("pending",), channel="dingtalk")
+    assert "发起人补正节点" in task.trigger_text
+    assert "属于审批人 Derek" not in task.trigger_text
+    cursor = json.loads(store.get_daily_scan_state("oa_pending")["cursor_json"])
+    assert cursor["pending_oa_resubmission_keys"] == ["oa:instance:rework"]
 
 
 def test_completed_oa_from_previous_cursor_is_removed_from_attention(tmp_path):

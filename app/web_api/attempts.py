@@ -1470,10 +1470,15 @@ def build_attempt_detail(
             and node_key in cursor.get("pending_business_object_keys", [])
         )
         if oa_open_after_review:
+            waiting_for = (
+                "发起人补正"
+                if node_key in cursor.get("pending_oa_resubmission_keys", [])
+                else "你审批"
+            )
             status_message = (
-                "已完成留言，钉钉仍待你审批。"
+                f"已完成留言，钉钉仍待{waiting_for}。"
                 if attempt.oa_action == "comment" and attempt.send_status != "skipped"
-                else "钉钉仍待你审批，本轮审阅未执行审批动作。"
+                else f"钉钉仍待{waiting_for}，本轮审阅未执行审批动作。"
             )
     if oa_decision is not None:
         if oa_decision["receipt"] is not None:

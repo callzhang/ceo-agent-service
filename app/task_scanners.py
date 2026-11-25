@@ -12,6 +12,7 @@ from app.agent_cron.commands import (
 from app.dingtalk_models import DingTalkMessage
 from app.dws_client import OA_PENDING_PAGE_SIZE_MAX, is_transient_dependency_error
 from app.minutes_todo_context import minutes_full_summary, todo_transcript_excerpts
+from app.oa_notification_routing import oa_node_key
 from app.oa_review_request import (
     mark_oa_review_request_queued,
     pending_oa_review_request,
@@ -23,6 +24,7 @@ from app.skill_features import FeatureRegistry
 AI_MINUTES_SCANNER = "ai_minutes"
 MEETING_TODO_SCANNER = "meeting_todos"
 OA_PENDING_SCANNER = "oa_pending"
+OA_RESUBMISSION_ACTIVITY = "sid-startevent"
 
 
 class OAPendingListUnavailable(RuntimeError):
@@ -569,6 +571,13 @@ def scan_pending_oa_approvals(
                 unverified_pending_process_ids.add(process_instance_id)
             pending_task_ids_by_process[process_instance_id] = current_user_tasks
 
+    resubmission_keys = {
+        oa_node_key(approval.process_instance_id, approval.task_id)
+        for approval in approvals
+        if getattr(approval, "activity_id", "") == OA_RESUBMISSION_ACTIVITY
+        and approval.task_id in pending_task_ids_by_process.get(approval.process_instance_id, ())
+    }
+
     for attempt in store.list_open_oa_needs_human_attempts():
         process_instance_id = attempt.oa_process_instance_id.strip()
         try:
@@ -613,11 +622,13 @@ def scan_pending_oa_approvals(
     previous_skill_digests: dict[str, str] = {}
     previous_queued_days: dict[str, str] = {}
     previous_pending_keys: set[str] = set()
+    previous_resubmission_keys: set[str] = set()
     reconciled_legacy_oa_attempt_ids: set[int] = set()
     if previous_state is not None:
         try:
             cursor = json.loads(previous_state["cursor_json"])
             previous_pending_keys = set(cursor.get("pending_business_object_keys", []))
+            previous_resubmission_keys = set(cursor.get("pending_oa_resubmission_keys", []))
             reconciled_legacy_oa_attempt_ids = {
                 int(value)
                 for value in cursor.get("reconciled_legacy_oa_attempt_ids", [])
@@ -711,6 +722,7 @@ def scan_pending_oa_approvals(
             skipped_missing_task_id.append(process_instance_id)
             continue
         task_id = task_ids[0]
+        is_applicant_resubmission = oa_node_key(process_instance_id, task_id) in resubmission_keys
         if (
             not skill_binding_checked
             and scheduled_consumer is not None
@@ -860,7 +872,10 @@ def scan_pending_oa_approvals(
                 # took the applicant's id for Derek's, concluded Derek's own task
                 # belonged to someone else, and skipped it twice.
                 + (
-                    f"本条待办属于审批人 Derek（userId {current_user_id}），"
+                    f"当前钉钉任务 {task_id} 是发起人补正节点，待办属于 Derek"
+                    f"（userId {current_user_id}）。按补正节点说明状态。\n"
+                    if is_applicant_resubmission
+                    else f"本条待办属于审批人 Derek（userId {current_user_id}），"
                     f"当前任务 taskId {task_id} 就是他的待办；"
                     "表单与流水里出现的 originatorUserid 是申请人，不是审批人，"
                     "不要用申请人的 userId 判断待办归属。\n"
@@ -1060,6 +1075,9 @@ def scan_pending_oa_approvals(
                 "window_start": window_start,
                 "seen_process_instance_ids": sorted(seen_process_ids),
                 "pending_business_object_keys": sorted(pending_business_object_keys),
+                "pending_oa_resubmission_keys": sorted(
+                    (resubmission_keys | previous_resubmission_keys) & pending_business_object_keys
+                ),
                 "queued_process_instance_ids": queued_process_ids,
                 "process_revisions": process_revisions,
                 "skill_digests": process_skill_digests,

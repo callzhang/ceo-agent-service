@@ -427,7 +427,7 @@ Attempt 详情页默认展示 `reply_attempt` 的 current projection，并允许
 OA 手动重评可在同一 `reply_task` 内轮换执行代并保留原 Attempt ID。若新一代任务已结束，
 且当前 Consumer 候选被 Audit 按摘要和 digest 明确批准为 `no_action`，任务结束时及启动恢复时
 都会将该来源 Attempt 的旧 `needs_human` 投影收口为 `skipped`，并链接当前 Audit run 与结论；只看见
-`reply_task=done` 不足以收口。最近一次钉钉待办核验仍属于 Derek 的精确 OA 节点，在无动作的审阅结束或本轮仅留言后仍出现在审批详情和 Attention，直到钉钉确认该节点已离开待办。
+`reply_task=done` 不足以收口。最近一次钉钉待办核验仍属于 Derek 的精确 OA 节点，在无动作的审阅结束或本轮仅留言后仍出现在审批详情和 Attention，直到钉钉确认该节点已离开待办。扫描器按同一待办的钉钉活动 ID 区分发起人补正，Consumer 的任务上下文和审批详情据此显示当前节点职责。
 
 #### 为什么这是系统级边界
 
