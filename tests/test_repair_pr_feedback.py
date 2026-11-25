@@ -189,6 +189,27 @@ def test_identical_feedback_is_bounded_but_new_evidence_continues(store, tmp_pat
     )
 
 
+def test_completed_checks_resume_review_after_pending_feedback_exhaustion(store, tmp_path):
+    from app.external_retry import MAX_AUTOMATIC_ATTEMPTS
+
+    identity, _ = attached(store, tmp_path)
+    review = dict(id="review1", state="COMMENTED", body="Review remaining behavior")
+    pending = dict(failed_check(), status="QUEUED", conclusion=None)
+    for _ in range(MAX_AUTOMATIC_ATTEMPTS):
+        poll(store, tmp_path, snapshot(checks=[pending], reviews=[review]))
+        repair = get_repair(store, "errors", identity)
+        finish(store, repair["turn_ids"][-1])
+    poll(store, tmp_path, snapshot(checks=[pending], reviews=[review]))
+    blocked = get_repair(store, "errors", identity)
+    assert blocked["status"] == "feedback_blocked"
+
+    completed = dict(pending, status="COMPLETED", conclusion="SUCCESS")
+    poll(store, tmp_path, snapshot(checks=[completed], reviews=[review]))
+    resumed = get_repair(store, "errors", identity)
+    assert resumed["status"] == "running"
+    assert len(resumed["turn_ids"]) == len(blocked["turn_ids"]) + 1
+
+
 def test_feedback_checkpoint_interruption_reuses_turn(store, tmp_path, monkeypatch):
     import app.automatic_repair as module
     import pytest

@@ -333,8 +333,10 @@ class AutomaticRepairCoordinator:
             return
         feedback, identity, actionable, passed, pending = assess_feedback(pr, entry.get('handled_reviews', []))
         schema = PRRepairResult.model_json_schema()
+        checks_ready = bool(pr['checks']) and pending == 0
         identity = hashlib.sha256(json.dumps(
-            {'feedback_id': identity, 'result_schema': schema}, sort_keys=True,
+            {'feedback_id': identity, 'checks_ready': checks_ready, 'result_schema': schema},
+            sort_keys=True,
         ).encode()).hexdigest()
         last_result = entry.get('last_feedback_result', {})
         failed_checks = feedback['failed_checks']
@@ -388,7 +390,8 @@ class AutomaticRepairCoordinator:
                     "Return the declared native result JSON, including concrete remaining_work until the goal is met. "
                     "The coordinator independently observes the new head and remote results.\n"
                     + json.dumps({'previous_result': entry.get('last_feedback_result'),
-                                  'current_feedback': feedback},
+                                  'current_feedback': feedback,
+                                  'checks_ready': checks_ready, 'pending_checks': pending},
                                  ensure_ascii=False, sort_keys=True)
                 )
                 entry['pending_feedback_turn'] = {
