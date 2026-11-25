@@ -590,3 +590,4 @@ reverts committed work they did not author.
 
 
 
+| codex-oa-pending-read-retry-20261125 | app/task_scanners.py pending-list error boundary; app/agent_cron/consumer.py OA read retry only; app/store.py scheduled OA successor receipt lookup only; tests/test_scheduled_agent_consumer.py focused OA regression; docs/architecture.md; docs/runtime-mechanism.md; this row | Approved production OA pending-list read retry before any business task write, bounded and superseded by a later verified success. | Implementing regression and deploying via the formal gate. |
