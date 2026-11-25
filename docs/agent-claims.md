@@ -53,6 +53,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-oa-resubmission-node-status | `app/dws_client.py` OA pending parsing, `app/task_scanners.py` OA node context, `app/web_api/attempts.py` OA pending message, OA tests in `tests/test_oa_business_attention.py` and `tests/test_dws_client.py`, OA paragraphs in `docs/architecture.md` and `docs/runtime-mechanism.md` | Distinguish provider-confirmed applicant resubmission tasks from approval tasks in the scanner and console. | Active in isolated `codex/oa-resubmission-node-status`. |
+
 | codex-native-reply-identity-20261121 | app/shared_action_lifecycle.py record_sent_action and app/action_storage.py SENT_REPLY_SQL diagnosis only; own claim row | Approved sender restoration and legacy no-effect reconciliation deployed at 25fadfda; reminder on 17762 sent once and independently read back as msgQXG0DCVAl+3JJNQuQyq5BA==. Actual verified receipt 28029 is blocked at Sent projection by the older unsent prepared body. Preserve both versions and do not resend. | Awaiting separate explicit confirmation for sent-record association repair; no implementation of that change yet. Prior source file ownership released. |
 
 
