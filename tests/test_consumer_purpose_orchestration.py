@@ -58,13 +58,13 @@ def test_unreadable_oa_attachment_can_end_with_reviewed_handoff_comment(tmp_path
     assert [receipt["operation"] for receipt in receipts] == ["comment"]
 
 
-def test_general_request_access_does_not_require_file_id(tmp_path):
+def test_general_request_access_uses_audited_chat_reply(tmp_path):
     store, task, context = task_and_context(tmp_path)
     request = consumer_wire_model('general').model_validate({
         'action': 'request_access', 'reason': 'Please provide a readable copy',
-        'target': {'conversation_id': 'conversation', 'message_id': 'message'},
+        'target': {'conversation_id': 'conversation', 'message_id': task.trigger_message_id},
         'payload': {'content': 'Please provide a readable copy'},
-        'evidence_refs': ['message:message'], 'summary': 'Request readable copy',
+        'evidence_refs': [f'message:{task.trigger_message_id}'], 'summary': 'Request readable copy',
         'error_code': '', 'error_retryable': False,
         'error_authorization_required': False, 'risk': 'low', 'confidence': 1.0,
         'rule_coverage': 1.0, 'information_completeness': 1.0,
@@ -75,10 +75,26 @@ def test_general_request_access_does_not_require_file_id(tmp_path):
         proposal_revision=1, source_client=None,
     )
 
-    assert prepared.purpose_output['action'] == 'request_access'
-    assert prepared.purpose_output['target'] == {
-        'conversation_id': 'conversation', 'message_id': 'message',
+    consumer = ScriptedConsumer(store, prepared)
+    audit = ScriptedAudit(store, "approve")
+    handler = VerifiedHandler()
+    orchestrator = AgentOrchestrator(
+        store=store, consumer=consumer, audit=audit,
+        system_executor=SystemExecutor(store, {("dingtalk-chat", "reply_to_message"): handler}),
+    )
+
+    result = orchestrator.process(task, context, refresh_context=lambda: context)
+
+    assert result.status == "executed", result
+    assert len(audit.calls) == len(handler.calls) == 1
+    assert prepared.purpose_output["action"] == "reply"
+    assert prepared.proposal.actions[0].target == {
+        "conversation_id": task.conversation_id, "message_id": task.trigger_message_id,
     }
+    assert handler.calls[0][1] == prepared.proposal.actions[0].payload
+    assert [receipt["operation"] for receipt in store.list_verified_candidate_actions(task.id)] == [
+        "reply_to_message",
+    ]
 
 
 def test_request_wait_retry_and_business_return_without_replaying_request(tmp_path):

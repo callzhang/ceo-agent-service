@@ -127,6 +127,10 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
+        if payload.purpose == "general" and payload.action == "request_access":
+            # A chat request for a readable link is a reply to the source
+            # message. Only file-scoped OA requests use permission retries.
+            payload = payload.model_copy(update={"action": "reply"})
         proposal = payload.proposal
         purpose_output = {
             "purpose": payload.purpose,
