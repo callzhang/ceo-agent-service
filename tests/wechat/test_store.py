@@ -18,7 +18,7 @@ from app.store import AgentRunLeaseLostError, AutoReplyStore
 from app.configs_definitions import config_projection
 from app.wechat.models import WechatReplyScope
 from tests.wechat.support import approve_delivery
-from tests.wechat.support import create_wechat_delivery
+from tests.wechat.support import IDENTITY, create_wechat_delivery, review_candidate, wechat_result
 
 WECHAT_SQL = task_delivery_projection("wechat_deliveries")
 
@@ -562,6 +562,35 @@ def test_new_delivery_supersedes_older_unsent_delivery_for_same_conversation(
     assert new_attempt.send_status == "pending"
 
 
+def test_late_preparation_of_older_wechat_reply_preserves_newer_trigger(tmp_path):
+    store = _store(tmp_path)
+    older = store.ensure_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="older",
+        trigger_create_time="2026-11-23T19:04:24-08:00",
+        trigger_sender="Alex", trigger_text="older message",
+    )
+    newer = store.ensure_reply_task(
+        channel="wechat", conversation_id="u1", conversation_title="Alex",
+        single_chat=True, trigger_message_id="newer",
+        trigger_create_time="2026-11-24T10:34:44Z",
+        trigger_sender="Alex", trigger_text="newer message",
+    )
+    target = {"account_id": "acct-1", "target_type": "direct", "target_id": "u1", "conversation_id": "u1"}
+    for task in (newer, older):
+        result = wechat_result(f"reply to {task.trigger_message_id}", target)
+        candidate, review = review_candidate(store, task, result)
+        store.create_standard_wechat_delivery(
+            candidate_id=candidate["id"], review_id=review["id"], action_identity=IDENTITY,
+        )
+
+    assert store.get_wechat_delivery_for_task(newer.id).status == "ready_to_send"
+    older_delivery = store.get_wechat_delivery_for_task(older.id)
+    assert older_delivery.status == "superseded"
+    assert older_delivery.error == f"superseded_by_newer_wechat_trigger:{newer.id}"
+    assert not older_delivery.action_started_at
+
+
 def test_stale_ready_delivery_can_be_superseded_without_send(tmp_path):
     store = _store(tmp_path)
     store.enqueue_reply_task(
@@ -982,11 +1011,11 @@ def test_failed_wechat_task_can_skip_only_with_readback_of_linked_sent_successor
 
     store = _store(tmp_path)
     tasks = []
-    for message_id in ("m-old", "m-new"):
+    for minute, message_id in enumerate(("m-old", "m-new")):
         tasks.append(store.ensure_reply_task(
             channel="wechat", conversation_id="u1", conversation_title="Alex",
             single_chat=True, trigger_message_id=message_id,
-            trigger_create_time="2026-07-28T10:00:00", trigger_sender="Alex",
+            trigger_create_time=f"2026-07-28T10:0{minute}:00", trigger_sender="Alex",
             trigger_text=message_id,
         ))
     old_id = create_wechat_delivery(
