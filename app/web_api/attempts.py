@@ -994,7 +994,7 @@ def _oa_decision_payload(
     return decisions[0] if len(decisions) == 1 else None
 
 
-def _preceding_oa_decision(
+def preceding_verified_oa_decision(
     store: Any, attempt: Any, reviewed: dict[str, Any] | None, runs: list[Any],
 ) -> tuple[dict[str, Any] | None, Any | None]:
     """A read-only final stage can follow an already verified OA action."""
@@ -1450,7 +1450,7 @@ def build_attempt_detail(
         and attempt.oa_process_instance_id and attempt.oa_task_id
         and reply_task is not None and reply_task.status == "done"
     ):
-        oa_decision, oa_deciding_run = _preceding_oa_decision(
+        oa_decision, oa_deciding_run = preceding_verified_oa_decision(
             store, attempt, display_reviewed, display_runs,
         )
         if oa_decision is not None:

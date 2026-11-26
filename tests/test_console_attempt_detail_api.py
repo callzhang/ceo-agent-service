@@ -716,7 +716,7 @@ def _consumer_result_payload(
     }
 
 
-def _consumer_result_task(store: AutoReplyStore):
+def _consumer_result_task(store: AutoReplyStore, *, business_object_key: str = ''):
     assert store.enqueue_reply_task(
         conversation_id="cid-consumer-api-result",
         conversation_title="Consumer API result",
@@ -737,6 +737,7 @@ def _consumer_result_task(store: AutoReplyStore):
             }
         ),
         execution_generation="consumer-api-result-generation",
+        business_object_key=business_object_key,
     )
     task = store.claim_reply_task(1)
     assert task is not None
@@ -2320,8 +2321,17 @@ def test_old_oa_attempt_displays_current_decision_and_keeps_original_failure(
 
 @pytest.mark.parametrize("same_node", [True, False])
 def test_oa_read_only_followup_preserves_verified_decision(tmp_path: Path, same_node: bool):
+    from app.audit_web import _queue_attention_rows
+
     store = AutoReplyStore(tmp_path / "oa-stage-receipt.sqlite3")
-    task = _consumer_result_task(store)
+    node = "approved-node" if same_node else "different-node"
+    business_key = f"oa:process:{node}"
+    task = _consumer_result_task(store, business_object_key=business_key)
+    store.set_daily_scan_state(
+        "oa_pending",
+        last_success_at="2026-11-26T10:00:00+00:00",
+        cursor_json=json.dumps({"pending_business_object_keys": [business_key]}),
+    )
     target = {"process_instance_id": "process", "task_id": "approved-node"}
     proposal = _consumer_result_payload(information_completeness=1.0, risk="low")
     proposal["continue_after_execution"] = True
@@ -2364,13 +2374,15 @@ def test_oa_read_only_followup_preserves_verified_decision(tmp_path: Path, same_
         trigger_text=task.trigger_text, audit_tool_events_json="[]",
         audit_summary="当前没有新的待办。", send_status="skipped", send_error="",
         channel="dingtalk", oa_process_instance_id="process",
-        oa_task_id="approved-node" if same_node else "different-node",
+        oa_task_id=node,
         oa_action="review",
     )
 
     _, item = build_attempt_detail(store, attempt_id)
 
-    assert item["status"]["raw"] == ("done" if same_node else "skipped")
+    oa_rows = [row for row in _queue_attention_rows(store) if row["category"] == "OA approval"]
+    assert [row["id"] for row in oa_rows] == ([] if same_node else [str(task.id)])
+    assert item["status"]["raw"] == ("done" if same_node else "pending")
     decision = item["approval_review"]["decision"]
     if same_node:
         assert decision["label"] == "同意"
