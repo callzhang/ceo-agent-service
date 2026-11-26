@@ -3228,7 +3228,7 @@ class PlaywrightUnsubscribeBrowser:
         self, binding: _AuditedControlBinding, previous_text: str
     ) -> None:
         waited_ms = 0
-        budget_ms = min(self.timeout_ms, _VISIBLE_TEXT_WAIT_MS)
+        budget_ms = self.timeout_ms
         while True:
             self._raise_if_blocked()
             controls = self._ordinary_controls()
@@ -3242,8 +3242,9 @@ class PlaywrightUnsubscribeBrowser:
                     UnsubscribeBrowserFailure.OPERATION_TIMEOUT,
                     "form submission produced no provider state transition",
                 )
-            self.page.wait_for_timeout(_VISIBLE_TEXT_POLL_MS)
-            waited_ms += _VISIBLE_TEXT_POLL_MS
+            wait_ms = min(_VISIBLE_TEXT_POLL_MS, budget_ms - waited_ms)
+            self.page.wait_for_timeout(wait_ms)
+            waited_ms += wait_ms
 
     def _dismiss_unique_blocking_dialog(self, target: object) -> None:
         """Close one modal that visibly covers the accepted control.
