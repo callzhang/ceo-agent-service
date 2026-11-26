@@ -282,9 +282,6 @@ class PlaywrightMinutesConsole:
 _ORG_PICKER_ITEM = ".module-corp-sel-listitem"
 _ORG_PICK_TIMEOUT_MS = 10_000
 _CONSOLE_SETTLE_MS = 6_000
-_USER_CHROME_EXECUTABLE = Path(
-    "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-)
 
 
 def _service_profile_dir() -> Path:
@@ -343,7 +340,7 @@ def signed_in_console(profile_dir: Path | None = None):
                     )
             except MinutesBrowserSessionExpired:
                 subprocess.run(
-                    [str(_USER_CHROME_EXECUTABLE), "--new-window", HISTORY_URL],
+                    ["/usr/bin/open", "-a", "Google Chrome", HISTORY_URL],
                     check=True,
                 )
                 raise
