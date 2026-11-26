@@ -1758,11 +1758,12 @@ def test_http_json_exposes_openapi_http_error(monkeypatch):
 
     monkeypatch.setattr(dws_client, "urlopen", fake_urlopen)
 
-    with pytest.raises(DwsError, match='HTTP 403 .*Forbidden'):
+    with pytest.raises(DwsError, match='HTTP 403 .*Forbidden') as raised:
         DwsClient._http_json(
             "GET",
             "https://api.dingtalk.com/v1.0/agoal/objectiveRules/lists",
         )
+    assert raised.value.code == "Forbidden"
 
 
 def test_build_doc_list_command_uses_read_only_list():

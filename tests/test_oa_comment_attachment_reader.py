@@ -8,6 +8,7 @@ from io import BytesIO
 import pytest
 
 from app import agent_cli
+from app.dws_client import DwsError
 
 
 def test_oversized_image_is_reencoded_for_bounded_ocr_and_keeps_source_digest(
@@ -72,6 +73,107 @@ def test_oa_comment_attachment_is_read_through_premium_endpoint_and_ocr_input(
     assert result["file_name"] == "meeting.png"
     assert result["ocr_required"] is True
     assert result["sha256"] == hashlib.sha256(image_bytes).hexdigest()
+
+
+@pytest.mark.parametrize("single_attachment", [False, True])
+def test_comment_attachment_uses_existing_drive_access_when_premium_is_unavailable(
+    tmp_path, monkeypatch, single_attachment
+):
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    contents = b"Subject: Legal review\r\n\r\nReviewed contract attachment.\r\n"
+    calls = []
+
+    class FakeDws:
+        def download_oa_process_comment_attachment(self, process_instance_id, file_id):
+            calls.append(("premium", process_instance_id, file_id))
+            raise DwsError("OA Premium unavailable", code="benefit.status.invalid")
+
+        def read_oa_approval_detail(self, process_instance_id):
+            calls.append(("approval", process_instance_id))
+            attachment = {
+                "fileId": "1001",
+                "fileName": "legal.eml",
+                "spaceId": "space-1",
+            }
+            return {
+                "success": True,
+                "result": {
+                    "processInstanceId": process_instance_id,
+                    "operationRecords": [{
+                        "attachments": attachment if single_attachment else [attachment],
+                    }],
+                },
+            }
+
+        def download_drive_file(self, node, *, file_name, space_id, max_bytes):
+            calls.append(("drive", node, file_name, space_id, max_bytes))
+            return contents
+
+    result = agent_cli._download_dingtalk_oa_comment_attachment(
+        dws=FakeDws(),
+        process_instance_id="process-1",
+        file_id="1001",
+        file_name="legal.eml",
+        material_root=tmp_path,
+    )
+
+    assert calls == [
+        ("premium", "process-1", "1001"),
+        ("approval", "process-1"),
+        ("drive", "1001", "legal.eml", "space-1", agent_cli.MAX_SPREADSHEET_BYTES),
+    ]
+    assert result["process_instance_id"] == "process-1"
+    assert result["file_id"] == "1001"
+    assert result["sha256"] == hashlib.sha256(contents).hexdigest()
+    assert "Reviewed contract attachment." in result["content"]
+
+
+@pytest.mark.parametrize(
+    ("premium_code", "process_id", "file_name", "spaces"),
+    [
+        ("Forbidden", "process-1", "legal.eml", ["space-1"]),
+        ("benefit.status.invalid", "process-2", "legal.eml", ["space-1"]),
+        ("benefit.status.invalid", "process-1", "unrelated.eml", ["space-1"]),
+        ("benefit.status.invalid", "process-1", "legal.eml", []),
+        ("benefit.status.invalid", "process-1", "legal.eml", ["space-1", "space-2"]),
+    ],
+)
+def test_comment_attachment_does_not_download_unverified_drive_identity(
+    tmp_path, premium_code, process_id, file_name, spaces
+):
+    failure = DwsError("OA download failed", code=premium_code)
+
+    class FakeDws:
+        def download_oa_process_comment_attachment(self, *_args):
+            raise failure
+
+        def read_oa_approval_detail(self, _process_instance_id):
+            assert premium_code == "benefit.status.invalid"
+            return {
+                "success": True,
+                "result": {
+                    "processInstanceId": process_id,
+                    "operationRecords": [{
+                        "attachments": [
+                            {"fileId": "1001", "fileName": file_name, "spaceId": space}
+                            for space in spaces
+                        ],
+                    }],
+                },
+            }
+
+        def download_drive_file(self, *_args, **_kwargs):
+            pytest.fail("a Drive download requires a matching attachment identity")
+
+    with pytest.raises(DwsError) as raised:
+        agent_cli._download_dingtalk_oa_comment_attachment(
+            dws=FakeDws(),
+            process_instance_id="process-1",
+            file_id="1001",
+            file_name="legal.eml",
+            material_root=tmp_path,
+        )
+    assert raised.value is failure
 
 
 def test_oa_comment_attachment_rejects_path_like_name_before_download(tmp_path):

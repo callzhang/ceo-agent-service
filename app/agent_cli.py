@@ -825,16 +825,57 @@ def _download_dingtalk_oa_comment_attachment(
     file_name: str,
     material_root: Path,
 ) -> dict[str, object]:
-    """Read one exact OA operation-record attachment through its premium endpoint."""
+    """Read one exact OA operation-record attachment using existing access."""
+    from app.dws_client import DwsError
+
     if not process_instance_id.strip() or not file_id.strip():
         raise AgentReadOnlyViolationError("oa_comment_attachment_identity_required")
     if not _task_file_component(file_name) or len(file_name) > 255:
         raise AgentReadOnlyViolationError("oa_comment_attachment_file_name_invalid")
     is_pdf = Path(file_name).suffix.casefold() == ".pdf"
     max_bytes = MAX_PDF_BYTES if is_pdf else MAX_SPREADSHEET_BYTES
-    contents = dws.download_oa_process_comment_attachment(
-        process_instance_id, file_id,
-    )
+    try:
+        contents = dws.download_oa_process_comment_attachment(
+            process_instance_id, file_id,
+        )
+    except DwsError as error:
+        if error.code != "benefit.status.invalid":
+            raise
+        # The Premium API refused the tenant entitlement. The existing Drive
+        # identity must come from this approval's native operation history.
+        response = dws.read_oa_approval_detail(process_instance_id)
+        detail = response.get("result")
+        if (
+            response.get("success") is not True
+            or not isinstance(detail, dict)
+            or detail.get("processInstanceId") != process_instance_id
+            or response.get("hasMore") is True
+            or detail.get("hasMore") is True
+        ):
+            raise
+        records = detail.get("operationRecords")
+        if not isinstance(records, list):
+            raise
+        matches = []
+        for record in records:
+            if not isinstance(record, dict):
+                continue
+            attachments = record.get("attachments")
+            if isinstance(attachments, dict):
+                attachments = [attachments]
+            if isinstance(attachments, list):
+                matches.extend(
+                    attachment for attachment in attachments
+                    if isinstance(attachment, dict) and attachment.get("fileId") == file_id
+                )
+        if len(matches) != 1 or matches[0].get("fileName") != file_name:
+            raise
+        space_id = matches[0].get("spaceId")
+        if not isinstance(space_id, str) or not space_id.strip():
+            raise
+        contents = dws.download_drive_file(
+            file_id, file_name=file_name, space_id=space_id, max_bytes=max_bytes,
+        )
     return _materialize_oa_attachment(
         contents, process_instance_id=process_instance_id, file_id=file_id,
         file_name=file_name, material_root=material_root,
@@ -2522,14 +2563,16 @@ def build_role_server(
         file_name: str,
         page_number: int | None = None,
     ) -> dict[str, object]:
-        """Read one exact premium OA comment attachment and return bounded OCR input.
+        """Read one exact OA comment attachment and return bounded OCR input.
 
-        Use the file_id and file_name from read_dingtalk_oa_records. Scanned PDFs
+        Use the file_id and file_name from the live approval's operation records.
+        If OA Premium is unavailable, the tool checks those records and uses
+        existing Drive access for the same file. Scanned PDFs
         return one-based ocr_page_numbers; pass a listed page_number to receive
         a bounded JPEG for ai_services.ocr_document. A page can be requested
         directly; a missing local copy uses the same exact source downloader.
-        The exact file remains only for this MCP process lifetime. An unavailable
-        premium download is a technical failure, not evidence of missing material.
+        The exact file remains only for this MCP process lifetime. A failed
+        download leaves the material unread, even when it was submitted.
         """
         nonlocal drive_material_directory
         if not process_instance_id.strip() or not file_id.strip():

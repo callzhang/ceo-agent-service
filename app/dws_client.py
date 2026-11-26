@@ -6329,9 +6329,10 @@ class DwsClient:
             with urlopen(request, timeout=30) as response:
                 raw = response.read().decode("utf-8")
         except HTTPError as exc:
-            detail = exc.read().decode("utf-8", errors="replace")[:500]
+            detail = exc.read().decode("utf-8", errors="replace")
             raise DwsError(
-                f"DingTalk OpenAPI request failed: HTTP {exc.code} {detail}"
+                f"DingTalk OpenAPI request failed: HTTP {exc.code} {detail[:500]}",
+                code=DwsClient._error_code(detail),
             ) from exc
         except Exception as exc:
             raise DwsError("DingTalk OpenAPI request failed") from exc
