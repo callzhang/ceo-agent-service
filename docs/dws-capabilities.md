@@ -12,6 +12,10 @@ This project uses the `dws` CLI as the only DingTalk integration surface.
 - `dws contact dept search --query <name> --format json`
 - `dws contact dept list-members --depts <ids> --format json`
 
+The current-user lookup is read-only. Transient DWS rate-limit responses for
+this lookup use the bounded read retry and wait at least 10 seconds before
+retrying, matching the provider's explicit wait guidance.
+
 ## Write
 
 - `dws chat +messages-send --as user (--group <openConversationId> | --user <userId> | --open-dingtalk-id <id>) --title <title> --markdown <text> --format json --yes`
