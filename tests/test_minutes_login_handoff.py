@@ -31,8 +31,7 @@ def test_expired_console_opens_user_chrome_and_keeps_failure(monkeypatch, tmp_pa
                 pytest.fail('unauthenticated console must not be yielded')
         open_page.assert_called_once_with(
             [
-                '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-                '--new-window',
+                '/usr/bin/open', '-a', 'Google Chrome',
                 browser.HISTORY_URL,
             ],
             check=True,
@@ -69,8 +68,7 @@ def test_organization_redirect_timeout_opens_user_chrome_and_keeps_failure(
     assert page.wait_for_url.call_args.kwargs['timeout'] == 10_000
     open_page.assert_called_once_with(
         [
-            '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
-            '--new-window',
+            '/usr/bin/open', '-a', 'Google Chrome',
             browser.HISTORY_URL,
         ],
         check=True,

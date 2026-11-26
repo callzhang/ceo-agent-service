@@ -11937,7 +11937,10 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         target_id: str,
         conversation_id: str,
         reply_text: str,
-    ) -> None:
+    ) -> int | None:
+        task = cls._native_wechat_task(db, reply_task_id)
+        if task is None:
+            raise ValueError("WeChat reply task was not found")
         unresolved = db.execute(
             f"""
             select status, reply_task_id, evidence_json, reply_text
@@ -11956,7 +11959,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             ),
         ).fetchall()
         if unresolved:
-            task = cls._native_wechat_task(db, reply_task_id)
             for old in unresolved:
                 bindings = json.loads(old["evidence_json"])
                 if old["reply_task_id"] == reply_task_id:
@@ -11965,34 +11967,40 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     continue
                 scoped = json.loads(bindings.get(f"independent_trigger:{reply_task_id}", "{}"))
                 if (
-                    old["status"] != "send_unknown" or task is None
+                    old["status"] != "send_unknown"
                     or not bindings.get("principal_declined_reply")
                     or scoped.get("new_message_id") != task["trigger_message_id"]
                     or old["reply_text"].strip() == reply_text.strip()
                 ):
                     raise ValueError(DELIVERY_RECONCILIATION_REQUIRED)
-        error = f"superseded_by_newer_wechat_trigger:{reply_task_id}"
-        older_deliveries = db.execute(
+        # Review completion order can differ from the native message order.
+        # Compare provider timestamps in UTC, never the delivery insertion IDs.
+        competing = db.execute(
             f"""
-            select id
-            from ({WECHAT_DELIVERY_SQL})
-            where reply_task_id!=?
-              and account_id=?
-              and target_type=?
-              and target_id=?
-              and conversation_id=?
-              and status in ('ready_to_send', 'failed')
-              and error!='user_rejected'
+            select delivery.id, delivery.reply_task_id,
+                   julianday(source.trigger_create_time) > julianday(?) as newer,
+                   delivery.status != 'sent'
+                       and julianday(source.trigger_create_time) < julianday(?) as older
+            from ({WECHAT_DELIVERY_SQL}) delivery
+            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) source on source.id=delivery.reply_task_id
+                and source.execution_generation=delivery.execution_generation
+            where delivery.reply_task_id!=?
+              and delivery.account_id=?
+              and delivery.target_type=?
+              and delivery.target_id=?
+              and delivery.conversation_id=?
+              and delivery.status in ('ready_to_send', 'failed', 'sent')
+              and delivery.error!='user_rejected'
+            order by julianday(source.trigger_create_time) desc, delivery.id desc
             """,
-            (
-                reply_task_id,
-                account_id,
-                target_type,
-                target_id,
-                conversation_id,
-            ),
+            (task["trigger_create_time"], task["trigger_create_time"], reply_task_id,
+             account_id, target_type, target_id, conversation_id),
         ).fetchall()
-        for older in older_deliveries:
+        successor = next((row for row in competing if row["newer"]), None)
+        if successor is not None:
+            return int(successor["reply_task_id"])
+        error = f"superseded_by_newer_wechat_trigger:{reply_task_id}"
+        for older in (row for row in competing if row["older"]):
             assignments, set_args = task_delivery_set_parts(
                 "wechat_deliveries", {"status": "superseded", "error": error},
                 update_sql={"updated_at": "current_timestamp"},
@@ -12008,6 +12016,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 delivery_status="superseded",
                 error=error,
             )
+
+        return None
 
     def get_wechat_delivery_for_task(self, reply_task_id: int):
         from app.wechat.models import WechatDelivery
@@ -12632,7 +12642,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                         (*set_args, int(existing["id"])),
                     )
                 return int(existing["id"])
-            self._prepare_new_wechat_delivery(
+            successor = self._prepare_new_wechat_delivery(
                 db, reply_task_id=row["task_id"], account_id=fields["account_id"],
                 target_type=fields["target_type"], target_id=fields["target_id"],
                 conversation_id=fields["conversation_id"], reply_text=fields["text"],
@@ -12643,7 +12653,9 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "reply_task_id": row["task_id"], "account_id": fields["account_id"],
                 "target_type": fields["target_type"], "target_id": fields["target_id"],
                 "conversation_id": fields["conversation_id"], "reply_text": fields["text"],
-                "execution_generation": generation, "status": "ready_to_send",
+                "execution_generation": generation,
+                "status": "ready_to_send" if successor is None else "superseded",
+                "error": "" if successor is None else f"superseded_by_newer_wechat_trigger:{successor}",
                 "evidence_json": json.dumps(evidence, ensure_ascii=False),
             }).lastrowid)
 
@@ -12928,10 +12940,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """
         sent = db.execute(
             f"""
-            select account_id, target_type, target_id, conversation_id, reply_task_id,
-                   execution_generation
-            from ({WECHAT_DELIVERY_SQL})
-            where id=? and status='sent'
+            select delivery.account_id, delivery.target_type, delivery.target_id,
+                   delivery.conversation_id, delivery.reply_task_id, delivery.execution_generation,
+                   source.trigger_create_time
+            from ({WECHAT_DELIVERY_SQL}) delivery
+            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) source on source.id=delivery.reply_task_id
+            where delivery.id=? and delivery.status='sent'
             """,
             (sent_delivery_id,),
         ).fetchone()
@@ -12939,27 +12953,22 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return 0
         rows = db.execute(
             f"""
-            select id
-            from ({WECHAT_DELIVERY_SQL})
-            where account_id=?
-              and target_type=?
-              and target_id=?
-              and conversation_id=?
-              and (reply_task_id < ? or (
-                  reply_task_id=? and id < ? and execution_generation<>?
-              ))
-              and status='failed'
-              and pre_action_failure=1
+            select delivery.id
+            from ({WECHAT_DELIVERY_SQL}) delivery
+            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) source on source.id=delivery.reply_task_id
+            where delivery.account_id=?
+              and delivery.target_type=?
+              and delivery.target_id=?
+              and delivery.conversation_id=?
+              and ((delivery.reply_task_id<>? and julianday(source.trigger_create_time)<julianday(?))
+                   or (delivery.reply_task_id=? and delivery.id<? and delivery.execution_generation<>?))
+              and delivery.status='failed'
+              and delivery.pre_action_failure=1
             """,
             (
-                sent["account_id"],
-                sent["target_type"],
-                sent["target_id"],
-                sent["conversation_id"],
-                sent["reply_task_id"],
-                sent["reply_task_id"],
-                sent_delivery_id,
-                sent["execution_generation"],
+                sent["account_id"], sent["target_type"], sent["target_id"], sent["conversation_id"],
+                sent["reply_task_id"], sent["trigger_create_time"], sent["reply_task_id"],
+                sent_delivery_id, sent["execution_generation"],
             ),
         ).fetchall()
         error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
