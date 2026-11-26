@@ -1159,9 +1159,11 @@ class ConsumerAgentRunner:
 
 def _prepare_reviewable_candidate(parsed, *, store, task, context, proposal_revision, source_client):
     from app.reviewed_sources import capture_candidate_sources
-    if (parsed.purpose_output or {}).get("action") == "request_access":
+    purpose_output = parsed.purpose_output or {}
+    if (purpose_output.get("action") == "request_access"
+            and purpose_output.get("purpose") == "oa"):
+        file_id = purpose_output.get("target", {}).get("file_id")
         from app.consumer_purpose_retry import verified_access_request_for_file
-        file_id = (parsed.purpose_output or {}).get("target", {}).get("file_id")
         try:
             prior_request = verified_access_request_for_file(store, task, file_id)
         except ValueError as exc:

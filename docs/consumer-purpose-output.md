@@ -35,7 +35,7 @@ purpose 由服务从任务的 OA 链接、已选 Skill 或明确 OA 动作上下
 | `oa` | `return` | 目标额外含字符串 `target_activity_id`；参数为 `remark` 和 `revert_action`。 |
 | `oa` | `comment` | 目标为 `process_instance_id`，参数为 `content`；作为普通 OA 提案进入 Audit。 |
 | `oa` | `request_access` | 目标含 `process_instance_id` 和 `file_id`，参数为 `content`；Consumer 请求该文件只读访问。 |
-| `general` | `reply`、`request_access` | 目标为 `conversation_id`、`message_id`，参数为 `content`；回复原会话消息。 |
+| `general` | `reply`、`request_access` | 目标为 `conversation_id`、`message_id`，参数为 `content`；向原会话请求访问权限。该聊天目标不含文件 ID，不参与 OA 文件级请求去重。 |
 | `general` | `react` | 同样定位原消息，参数为 `emoji`。 |
 
 未知 action、非字符串 ID、缺失的必填参数和额外参数均不能作为合法新输出。

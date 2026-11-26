@@ -23,14 +23,34 @@ from app.store import AgentRole
 from app.consumer_agent import _prepare_reviewable_candidate
 
 
-def output(action, *, target=None, payload=None, refs=None):
-    return consumer_wire_model('oa').model_validate({
+def output(action, *, target=None, payload=None, refs=None, purpose='oa'):
+    return consumer_wire_model(purpose).model_validate({
         'action': action, 'reason': action, 'target': target or {},
         'payload': payload or {}, 'evidence_refs': refs or [],
         'summary': action, 'error_code': '', 'error_retryable': False,
         'error_authorization_required': False, 'risk': 'low', 'confidence': 1.0,
         'rule_coverage': 1.0, 'information_completeness': 1.0, 
     }).to_result()
+
+
+def test_general_access_request_is_not_rejected_by_file_scoped_deduplication(tmp_path):
+    store, task, context = task_and_context(tmp_path)
+    request = output(
+        'request_access',
+        purpose='general',
+        target={'conversation_id': 'conversation-1', 'message_id': 'message-1'},
+        payload={'content': 'Please grant access to the document.'},
+    )
+
+    prepared = _prepare_reviewable_candidate(
+        request, store=store, task=task, context=context,
+        proposal_revision=0, source_client=None,
+    )
+
+    assert prepared.purpose_output['purpose'] == 'general'
+    assert prepared.purpose_output['target'] == {
+        'conversation_id': 'conversation-1', 'message_id': 'message-1',
+    }
 
 
 def test_unreadable_oa_attachment_can_end_with_reviewed_handoff_comment(tmp_path):
