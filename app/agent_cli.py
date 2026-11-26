@@ -2563,12 +2563,12 @@ def build_role_server(
         file_name: str,
         page_number: int | None = None,
     ) -> dict[str, object]:
-        """Read one exact OA comment attachment and return bounded OCR input.
+        """Read one exact premium OA comment attachment and return bounded OCR input.
 
         Use the file_id and file_name from the live approval's operation records.
         If OA Premium is unavailable, the tool checks those records and uses
-        existing Drive access for the same file. Scanned PDFs
-        return one-based ocr_page_numbers; pass a listed page_number to receive
+        existing Drive access for the same file. Scanned PDFs return one-based
+        ocr_page_numbers. Pass a listed page_number to receive
         a bounded JPEG for ai_services.ocr_document. A page can be requested
         directly; a missing local copy uses the same exact source downloader.
         The exact file remains only for this MCP process lifetime. A failed
