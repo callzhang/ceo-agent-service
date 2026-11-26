@@ -127,6 +127,10 @@ class ConsumerAgentWireResult(RootModel[_ConsumerWire]):
 
     def to_result(self) -> ConsumerAgentResult:
         payload = self.root
+        # The general wire action is an ordinary reply about access. Only the
+        # OA action is a file-scoped request with its own receipt lifecycle.
+        if payload.purpose == "general" and payload.action == "request_access":
+            payload = payload.model_copy(update={"action": "reply"})
         proposal = payload.proposal
         purpose_output = {
             "purpose": payload.purpose,

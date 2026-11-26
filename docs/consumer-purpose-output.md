@@ -39,7 +39,7 @@ purpose 由服务从任务的 OA 链接、已选 Skill 或明确 OA 动作上下
 | `general` | `react` | 同样定位原消息，参数为 `emoji`。 |
 
 未知 action、非字符串 ID、缺失的必填参数和额外参数均不能作为合法新输出。
-服务从同一动作定义生成 schema 并校验输出，再规范化为现有内部候选。OA 的
+服务从同一动作定义生成 schema 并校验输出，再规范化为现有内部候选。普通会话的 `request_access` 使用与 `reply` 相同的回复候选和动作身份，经原 Audit 与系统执行器处理。仅 OA 的权限申请绑定文件 ID 和专用的申请回执、等待流程。OA 的
 approve、reject、return、comment 和普通 plan 都由 Audit 审阅；文件权限申请和权限等待 retry
 是 Consumer purpose 动作，不提交给 Audit。
 

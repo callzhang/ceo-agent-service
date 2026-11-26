@@ -105,6 +105,27 @@ def test_oa_access_request_is_scoped_to_one_file_and_identity():
         })
 
 
+def test_general_access_request_converts_to_an_ordinary_reviewed_reply():
+    from app.agent_wire_contracts import consumer_wire_model
+
+    request = {
+        "action": "request_access",
+        "reason": "Request read access",
+        "target": {"conversation_id": "chat", "message_id": "message"},
+        "payload": {"content": "Please grant read access."},
+        "evidence_refs": ["source"],
+        "summary": "Request read access",
+        "risk": "low",
+        "confidence": 1.0,
+        "rule_coverage": 1.0,
+        "information_completeness": 1.0,
+    }
+    model = consumer_wire_model("general")
+    assert model.model_validate(request).to_result() == model.model_validate(
+        {**request, "action": "reply"}
+    ).to_result()
+
+
 def test_historical_candidate_serialization_does_not_add_new_metadata():
     from test_agent_orchestrator import candidate
     from app.agent_contracts import parse_persisted_consumer_result
