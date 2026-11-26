@@ -83,6 +83,76 @@ from app.email_unsubscribe import (
 SKILLS_ROOT = Path(__file__).resolve().parents[1] / "ci" / "shared-skills"
 
 
+def test_form_readback_uses_the_configured_browser_timeout() -> None:
+    class _Page:
+        waited_ms = 0
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waited_ms += milliseconds
+
+    page = _Page()
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = page
+    browser.timeout_ms = 60_000
+    control = UnsubscribeDiscoveredControl(
+        reference="unsubscribe-control:form",
+        kind="form",
+        intent="unsubscribe",
+    )
+    binding = _AuditedControlBinding(
+        control=control,
+        target_url="https://example.com/unsubscribe",
+        method="POST",
+        enctype="application/x-www-form-urlencoded",
+        successful_controls=(),
+    )
+    browser._raise_if_blocked = lambda: None
+    browser._ordinary_controls = lambda: (
+        [binding] if page.waited_ms < 5_250 else []
+    )
+    browser._visible_text = lambda: (
+        "pending" if page.waited_ms < 5_250 else "You have unsubscribed"
+    )
+
+    browser._await_form_transition(binding, "pending")
+
+    assert page.waited_ms == 5_250
+
+
+def test_form_readback_fails_at_the_configured_browser_timeout() -> None:
+    class _Page:
+        waited_ms = 0
+
+        def wait_for_timeout(self, milliseconds: int) -> None:
+            self.waited_ms += milliseconds
+
+    page = _Page()
+    browser = object.__new__(PlaywrightUnsubscribeBrowser)
+    browser.page = page
+    browser.timeout_ms = 5_100
+    control = UnsubscribeDiscoveredControl(
+        reference="unsubscribe-control:form",
+        kind="form",
+        intent="unsubscribe",
+    )
+    binding = _AuditedControlBinding(
+        control=control,
+        target_url="https://example.com/unsubscribe",
+        method="POST",
+        enctype="application/x-www-form-urlencoded",
+        successful_controls=(),
+    )
+    browser._raise_if_blocked = lambda: None
+    browser._ordinary_controls = lambda: [binding]
+    browser._visible_text = lambda: "pending"
+
+    with pytest.raises(UnsubscribeBrowserError) as failure:
+        browser._await_form_transition(binding, "pending")
+
+    assert failure.value.category is UnsubscribeBrowserFailure.OPERATION_TIMEOUT
+    assert page.waited_ms == 5_100
+
+
 def test_connected_mailbox_otp_requires_exact_recipient_site_context_and_window() -> None:
     opened_at = datetime(2026, 9, 8, 12, 0, tzinfo=timezone.utc)
     challenge = EmailOtpChallenge(
