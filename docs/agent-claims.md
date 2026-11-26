@@ -53,7 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-general-access-reply-20261125 | app/agent_wire_contracts.py; tests/test_consumer_purpose_output.py; docs/consumer-purpose-output.md; this claim | Normalize the existing general request-access reply to its ordinary reply equivalent before it reaches OA-only permission-request handling. | Active |
 
 
 
