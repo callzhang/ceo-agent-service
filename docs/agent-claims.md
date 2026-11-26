@@ -11,6 +11,7 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
+| codex-ceo-attention-source-and-login-20261126 | `app/store.py`, `tests/wechat/test_store.py`, `docs/runtime-mechanism.md` | Use the same native chronology in post-send supersession recovery | 2026-11-26 |
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents
