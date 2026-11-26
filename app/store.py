@@ -11979,7 +11979,8 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             f"""
             select delivery.id, delivery.reply_task_id,
                    julianday(source.trigger_create_time) > julianday(?) as newer,
-                   julianday(source.trigger_create_time) < julianday(?) as older
+                   delivery.status != 'sent'
+                       and julianday(source.trigger_create_time) < julianday(?) as older
             from ({WECHAT_DELIVERY_SQL}) delivery
             join ({NATIVE_REPLY_TASK_CURRENT_SQL}) source on source.id=delivery.reply_task_id
                 and source.execution_generation=delivery.execution_generation
@@ -11988,7 +11989,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
               and delivery.target_type=?
               and delivery.target_id=?
               and delivery.conversation_id=?
-              and delivery.status in ('ready_to_send', 'failed')
+              and delivery.status in ('ready_to_send', 'failed', 'sent')
               and delivery.error!='user_rejected'
             order by julianday(source.trigger_create_time) desc, delivery.id desc
             """,
@@ -12939,10 +12940,12 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         """
         sent = db.execute(
             f"""
-            select account_id, target_type, target_id, conversation_id, reply_task_id,
-                   execution_generation
-            from ({WECHAT_DELIVERY_SQL})
-            where id=? and status='sent'
+            select delivery.account_id, delivery.target_type, delivery.target_id,
+                   delivery.conversation_id, delivery.reply_task_id, delivery.execution_generation,
+                   source.trigger_create_time
+            from ({WECHAT_DELIVERY_SQL}) delivery
+            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) source on source.id=delivery.reply_task_id
+            where delivery.id=? and delivery.status='sent'
             """,
             (sent_delivery_id,),
         ).fetchone()
@@ -12950,27 +12953,22 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
             return 0
         rows = db.execute(
             f"""
-            select id
-            from ({WECHAT_DELIVERY_SQL})
-            where account_id=?
-              and target_type=?
-              and target_id=?
-              and conversation_id=?
-              and (reply_task_id < ? or (
-                  reply_task_id=? and id < ? and execution_generation<>?
-              ))
-              and status='failed'
-              and pre_action_failure=1
+            select delivery.id
+            from ({WECHAT_DELIVERY_SQL}) delivery
+            join ({NATIVE_REPLY_TASK_CURRENT_SQL}) source on source.id=delivery.reply_task_id
+            where delivery.account_id=?
+              and delivery.target_type=?
+              and delivery.target_id=?
+              and delivery.conversation_id=?
+              and ((delivery.reply_task_id<>? and julianday(source.trigger_create_time)<julianday(?))
+                   or (delivery.reply_task_id=? and delivery.id<? and delivery.execution_generation<>?))
+              and delivery.status='failed'
+              and delivery.pre_action_failure=1
             """,
             (
-                sent["account_id"],
-                sent["target_type"],
-                sent["target_id"],
-                sent["conversation_id"],
-                sent["reply_task_id"],
-                sent["reply_task_id"],
-                sent_delivery_id,
-                sent["execution_generation"],
+                sent["account_id"], sent["target_type"], sent["target_id"], sent["conversation_id"],
+                sent["reply_task_id"], sent["trigger_create_time"], sent["reply_task_id"],
+                sent_delivery_id, sent["execution_generation"],
             ),
         ).fetchall()
         error = f"superseded_by_newer_wechat_delivery:{sent_delivery_id}"
