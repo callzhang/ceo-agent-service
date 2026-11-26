@@ -53,8 +53,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-oa-attention-verified-followup-20261126 | app/audit_web.py (completed OA Attention projection), app/web_api/attempts.py (shared verified predecessor readback), tests/test_console_attempt_detail_api.py, scoped docs/runtime-mechanism.md | Keep Attention and OA detail consistent when a read-only follow-up follows a verified decision for the exact node. Read projection only. | 2026-11-26 |
-
 
 
 
