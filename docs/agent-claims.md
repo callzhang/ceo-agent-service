@@ -11,7 +11,6 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-ceo-attention-source-and-login-20261126 | `app/minutes_console_browser.py`, `tests/test_minutes_login_handoff.py`, WeChat delivery chronology in `app/store.py`, `tests/wechat/test_store.py`, scoped `docs/runtime-mechanism.md` | Verify and repair foreground Chrome login handoff and chronology of reviewed WeChat sends; retain identity and send gates | 2026-11-26 |
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents
