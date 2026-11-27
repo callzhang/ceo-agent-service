@@ -12,7 +12,6 @@
 
 | Owner | Files | What | Since |
 | --- | --- | --- | --- |
-| codex-retain-verified-email-locations | app/email_training_observer.py; tests/test_email_training_observer.py; docs/architecture.md | Stop capped training samples from invalidating independently verified email locations. | 2026-11-27 |
 
 Several agents (Claude Code sessions and Codex) edit this working tree at the
 same time. This file is the shared claim board: it exists so that two agents
