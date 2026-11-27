@@ -6253,21 +6253,30 @@ class DwsClient:
             if env_values["DINGTALK_APP_KEY"] and env_values["DINGTALK_APP_SECRET"]:
                 return env_values
         path = config_path or os.path.expanduser("~/.dingtalk-skills/config")
+        try:
+            lines = Path(path).read_text(encoding="utf-8").splitlines()
+        except FileNotFoundError as exc:
+            raise DwsError(
+                "DingTalk OpenAPI app credentials are not configured",
+                code="dingtalk_app_credentials_unavailable",
+            ) from exc
         values: dict[str, str] = {}
-        with open(path, encoding="utf-8") as file:
-            for line in file:
-                line = line.strip()
-                if not line or line.startswith("#") or "=" not in line:
-                    continue
-                key, value = line.split("=", 1)
-                values[key.strip()] = value.strip().strip("\"'")
+        for line in lines:
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, value = line.split("=", 1)
+            values[key.strip()] = value.strip().strip("\"'")
         missing = [
             key
             for key in ("DINGTALK_APP_KEY", "DINGTALK_APP_SECRET")
             if not values.get(key)
         ]
         if missing:
-            raise DwsError("DingTalk OpenAPI config is missing required credentials")
+            raise DwsError(
+                "DingTalk OpenAPI config is missing required credentials",
+                code="dingtalk_app_credentials_unavailable",
+            )
         return values
 
     def _read_dingtalk_app_access_token(

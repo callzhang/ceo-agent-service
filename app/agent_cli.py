@@ -839,10 +839,10 @@ def _download_dingtalk_oa_comment_attachment(
             process_instance_id, file_id,
         )
     except DwsError as error:
-        if error.code != "benefit.status.invalid":
+        if error.code not in {"benefit.status.invalid", "dingtalk_app_credentials_unavailable"}:
             raise
-        # The Premium API refused the tenant entitlement. The existing Drive
-        # identity must come from this approval's native operation history.
+        # The Premium path is unavailable. The existing Drive identity must
+        # come from this approval's native operation history.
         response = dws.read_oa_approval_detail(process_instance_id)
         detail = response.get("result")
         if (
@@ -2566,9 +2566,9 @@ def build_role_server(
         """Read one exact premium OA comment attachment and return bounded OCR input.
 
         Use the file_id and file_name from the live approval's operation records.
-        If OA Premium is unavailable, the tool checks those records and uses
-        existing Drive access for the same file. Scanned PDFs return one-based
-        ocr_page_numbers. Pass a listed page_number to receive
+        If OA Premium entitlement or app credentials are unavailable, the
+        tool checks those records and uses existing Drive access for the same
+        file. Scanned PDFs return one-based ocr_page_numbers. Pass a listed page_number to receive
         a bounded JPEG for ai_services.ocr_document. A page can be requested
         directly; a missing local copy uses the same exact source downloader.
         The exact file remains only for this MCP process lifetime. A failed

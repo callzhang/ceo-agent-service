@@ -8,7 +8,7 @@ from io import BytesIO
 import pytest
 
 from app import agent_cli
-from app.dws_client import DwsError
+from app.dws_client import DwsClient, DwsError
 
 
 def test_oversized_image_is_reencoded_for_bounded_ocr_and_keeps_source_digest(
@@ -126,6 +126,49 @@ def test_comment_attachment_uses_existing_drive_access_when_premium_is_unavailab
     assert result["file_id"] == "1001"
     assert result["sha256"] == hashlib.sha256(contents).hexdigest()
     assert "Reviewed contract attachment." in result["content"]
+
+
+@pytest.mark.parametrize("incomplete_config", [False, True])
+def test_comment_attachment_can_use_drive_without_premium_app_credentials(
+    tmp_path, monkeypatch, incomplete_config
+):
+    monkeypatch.setattr(agent_cli, "TEXT_MATERIAL_ROOTS", (tmp_path,))
+    legacy_config = tmp_path / "dingtalk-config"
+    if incomplete_config:
+        legacy_config.write_text("DINGTALK_APP_KEY=test-key\n")
+
+    class FakeDws(DwsClient):
+        def download_oa_process_comment_attachment(self, process_instance_id, file_id):
+            return super().download_oa_process_comment_attachment(
+                process_instance_id, file_id, config_path=str(legacy_config)
+            )
+
+        def _http_json(self, *_args, **_kwargs):
+            pytest.fail("a Premium request requires configured app credentials")
+
+        def read_oa_approval_detail(self, process_instance_id):
+            return {"success": True, "result": {
+                "processInstanceId": process_instance_id,
+                "operationRecords": [{"attachments": [{
+                    "fileId": "file-1",
+                    "fileName": "legal.eml",
+                    "spaceId": "space-1",
+                }]}],
+            }}
+
+        def download_drive_file(self, node, *, file_name, space_id, max_bytes):
+            assert (node, file_name, space_id) == ("file-1", "legal.eml", "space-1")
+            return b"Subject: Legal review\r\n\r\nAttachment read via Drive.\r\n"
+
+    result = agent_cli._download_dingtalk_oa_comment_attachment(
+        dws=FakeDws(),
+        process_instance_id="process-1",
+        file_id="file-1",
+        file_name="legal.eml",
+        material_root=tmp_path,
+    )
+
+    assert "Attachment read via Drive." in result["content"]
 
 
 @pytest.mark.parametrize(
