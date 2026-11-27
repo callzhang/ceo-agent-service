@@ -1044,6 +1044,40 @@ def test_oa_action_requires_exact_completed_task_and_result_readback():
     assert handler.dispatch(action, action_key="key", candidate={}).status == "uncertain"
 
 
+def test_oa_legacy_rejection_plan_cannot_dispatch_and_existing_rejection_can_still_be_read():
+    from app.system_action_handlers import OaDecisionHandler
+
+    class Dws:
+        status = "RUNNING"
+        result = "NONE"
+
+        def get_current_user_id(self):
+            return "derek"
+
+        def read_oa_approval_detail(self, process_id):
+            return {"result": {"processInstanceId": process_id, "tasks": [
+                {"taskId": "task-1", "userId": "derek", "taskStatus": self.status,
+                 "taskResult": self.result}]}}
+
+        def execute_oa_approval_action(self, *args):
+            pytest.fail("The service must never dispatch an OA rejection")
+
+    dws = Dws()
+    action = _candidate(actions=[{
+        "description": "Previously approved rejection", "action_identity": "oa",
+        "capability": "dingtalk-oa", "operation": "reject",
+        "target": {"process_instance_id": "p1", "task_id": "task-1"},
+        "payload": {"remark": "The old proposal would reject"},
+    }]).proposal.actions[0]
+    handler = OaDecisionHandler(dws)
+    blocked = handler.dispatch(action, action_key="key", candidate={})
+    assert blocked.status == "business_state_changed"
+    assert blocked.provider_result["reason"] == "oa_rejection_reserved_for_principal"
+
+    dws.status, dws.result = "COMPLETED", "REFUSE"
+    assert handler.reconcile(action, action_key="key", candidate={}).status == "verified"
+
+
 def test_oa_native_detail_nested_tasks_and_integer_task_id_are_authoritative():
     from app.system_action_handlers import OaDecisionHandler
 

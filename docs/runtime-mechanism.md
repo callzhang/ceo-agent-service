@@ -595,9 +595,7 @@ OA 判断以当前节点的实际表单为边界：不存在于当前表单的�
   执行分开记账并按事件/Attempt 幂等。
 - 扫描任务绑定通用 `dingtalk-oa-approval` 与适用的 Stardust 业务 Skills。
 
-决策规则在审批 Skill 里，不在代码里：通用的完整决策表、
-`information_completeness` / `rule_coverage` 评分口径、退回优先于评论搁置、拒绝前必须先查
-`revert-activities`、`--remark` 必填，都在 `dingtalk-oa-approval` 中。OA 定时任务冻结绑定
+业务判断标准在审批 Skill 里。通用决策表、`information_completeness` / `rule_coverage` 评分口径、可补正时的退回路径与附言都在 `dingtalk-oa-approval` 中。Derek 保留所有 OA 驳回决定。Consumer 与 Audit 使用同一节点上的现有人工接手入口，保留待办，由 Derek 在钉钉本人决定。执行器对当前仍为待办的驳回动作拒绝派发，即使候选由之前的版本审核通过。已生效的历史动作仍可只读核验。OA 定时任务冻结绑定
 `dingtalk-oa-approval` 以及 Stardust 财务、立项、合同、人员、考勤/出差、云资源六个业务 Skill，本机任务的
 Prompt 另写入负责人的个人规则（只存在该定时任务的数据库记录里，代码默认值不含）。未被适用 Skill 明确引用的背景材料可跳过；Skill 明确引用的规则卡、登记表等规范材料必须读取，代码默认 Prompt 不得一概禁止读取参考资料。Consumer 按 live `processCode` 与表单事实
 分类，交叉事项组合适用类别；财务规则卡仅约束登记的财务模板，且只提供判断标准，动作按通用决策表。适用业务 Skill 必须覆盖

@@ -386,6 +386,12 @@ direct call itself fails, preserve its concrete tool/provider error as the
 technical read failure.
 """.strip()
 _OA_OCR_HANDOFF_INSTRUCTIONS = """
+The configured principal personally decides every OA rejection. If your
+assessment would lead to a rejection, leave the current OA pending for the
+principal and use the OA Skill's one-time human handoff at the verified node.
+Record the decisive facts and rule for the principal. Do not propose reject,
+including inside a plan or option, or use a return as a substitute for rejection.
+
 Use external services exposed to this task and already authorized for its work
 directly without asking for another confirmation just because they are external.
 Use only the configured `ai_services.ocr_document` for OA attachment OCR.
@@ -411,8 +417,12 @@ comment actions; OA effects must use the reviewed typed-action path. Audit must
 not use shell or local `dws` commands. If the read or OCR call fails, preserve
 its concrete tool/provider error.
 
-If a submitted OA attachment remains unreadable after the applicable authorized
-read paths and the missing content blocks the decision, leave the approval
+Before any return, identify the necessary fact the applicant can actually
+correct and the evidence it was not supplied. A failed or incomplete download,
+preview, parse, decryption, OCR, or source read never proves that a submitted
+item is missing, incorrect, or blank. Use independently verified sources when
+they establish the fact. If a submitted OA attachment remains unreadable after
+the applicable authorized paths and its contents block the decision, leave the approval
 pending for manual handling. If the original OA and the current approver's
 pending node can be verified and the comment path is available, Consumer
 proposes one standalone OA comment through the normal reviewed action.
@@ -422,8 +432,10 @@ directly in DingTalk with the approval number. Check for an existing equivalent
 notice on the current node; do not send it again. End this stage after the
 comment receipt. Do not ask for resubmission or propose an approval decision.
 Audit reviews the status-only comment using verified workflow and blockage
-evidence. The attachment contents are not needed to verify this notice. Return
-a candidate that omits this available handoff for revision; preserve real
+evidence. The attachment contents are not needed to verify this notice. Require
+revision of an OA rejection proposal or a return that relies on a reader failure
+as evidence of missing material. Require revision when the available handoff is
+omitted; preserve real
 technical failure when the OA identity or the notice itself cannot be verified
 or performed. This independent notice does not perform or retry the failed
 read, or invent a reusable policy question.

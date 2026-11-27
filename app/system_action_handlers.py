@@ -352,6 +352,11 @@ class OaDecisionHandler:
             return ActionOutcome("failed", {"reason": "oa_task_target_invalid"})
         if state != "running":
             return ActionOutcome("uncertain", {"reason": "oa_current_task_unresolved"})
+        if action.operation == "reject":
+            return ActionOutcome("business_state_changed", {
+                "reason": "oa_rejection_reserved_for_principal",
+                "readback": task,
+            })
         receipt = self.dws.execute_oa_approval_action(
             action.target["process_instance_id"], action.target["task_id"],
             self._decisions[action.operation][0], remark,

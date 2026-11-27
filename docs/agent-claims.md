@@ -5,6 +5,8 @@
 
 # Concurrent agent file claims
 
+| codex-oa-human-reject-20261126 | app/system_action_handlers.py; app/consumer_agent.py; data/prompts/audit_rules.md; tests/test_system_executor.py; docs/architecture.md; docs/runtime-mechanism.md | Derek explicitly reserved all OA rejections for himself and prohibited returns caused by service-side attachment reads. Keep the scope to OA. | 2026-11-26 |
+
 
 
 ## Current assessment implementation coordination
