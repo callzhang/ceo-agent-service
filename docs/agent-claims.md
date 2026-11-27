@@ -54,6 +54,8 @@ reverts committed work they did not author.
 
 ## Current claims
 
+| codex-oa-comment-download-config-20261126 | app/dws_client.py application credential error; app/agent_cli.py OA comment attachment read only; tests/test_oa_comment_attachment_reader.py; attachment read notes in docs/architecture.md and docs/runtime-mechanism.md | Fix the legacy missing app configuration interrupting the existing exact-file Drive read | 2026-11-26 |
+
 
 
 
