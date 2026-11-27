@@ -102,6 +102,41 @@ def test_folder_training_cache_keeps_a_stable_per_category_sample_limit():
     assert len(first["accounts"]["account-a"]["folders"]["trash"]["observations"]) == 500
 
 
+
+def test_capped_training_folder_is_not_an_authoritative_membership_snapshot(tmp_path):
+    from app.email_training_observer import ProviderTrainingObservationJob
+
+    class Source:
+        def list_folders(self):
+            return (_folder(), _folder("trash", role=FolderRole.TRASH))
+
+        def fetch_uid_batch(self, folder, **_kwargs):
+            messages = (_message(1, "training-sample"),) if folder == "trash" else ()
+            return SimpleNamespace(uidvalidity=10, messages=messages)
+
+        def logout(self):
+            return None
+
+    store = _Store()
+    observer = ProviderTrainingObservationJob(
+        state_path=tmp_path / "observer.json",
+        source_factory=lambda _account: Source(),
+        email_store=store,
+        max_category_samples=1,
+    )
+    accounts = ({"account_id": "account-1"},)
+    observer.run_once(accounts)
+    assert store.current_observation_calls[-1][2] == ("account-1:inbox", "account-1:trash")
+
+    observer.run_once(accounts)
+
+    observations, _, authoritative_folders, _, _ = store.current_observation_calls[-1]
+    assert [observation["stable_message_identity"] for observation in observations] == [
+        "training-sample"
+    ]
+    assert authoritative_folders == ("account-1:inbox",)
+
+
 def test_observer_uses_bounded_uid_watermark_and_resumes_after_restart(tmp_path):
     from app.email_training_observer import ProviderTrainingObservationJob
 

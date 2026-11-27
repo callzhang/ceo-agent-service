@@ -190,7 +190,7 @@ class ProviderTrainingObservationJob:
                         key = f"{account_id}:{folder_id}"
                         if key in capped_folders:
                             folder_state["status"] = "sample_cap_reached"
-                            authoritative_folders.add(key)
+                            # A capped sample cannot establish which other messages left the folder.
                             continue
                         cached_identities = tuple(folder_state["observations"])
                         classified_identities = (
