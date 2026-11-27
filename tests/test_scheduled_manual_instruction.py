@@ -10,7 +10,7 @@ from tests.test_scheduled_agent_consumer import (
 
 
 def test_scheduled_manual_revision_receives_instruction_and_prior_audit_feedback(tmp_path):
-    store, occurrence, options = fixture(tmp_path, notify_on_completion=False)
+    store, occurrence, options = fixture(tmp_path)
     task_id = int(dispatch(store, occurrence, options).execution_id)
     original = store.get_reply_task(task_id)
     original_input = original.trigger_message_json

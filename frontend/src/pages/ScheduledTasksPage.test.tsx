@@ -23,14 +23,14 @@ const run: ScheduledTaskRun = {
   dispatch_status: "dispatched", skip_or_error_reason: "",
   execution_kind: "reply_task", execution_id: "91", created_at: "2026-09-08T12:00:00Z", dispatched_at: "2026-09-08T12:00:01Z",
   attempts: [],
-  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", notify_on_completion: true, skill_refs: [operationRef] },
+  snapshot: { task_id: 7, task_version: 3, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "", cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const }, required_runtime_capabilities: [], working_directory: "/tmp/ceo-agent", skill_refs: [operationRef] },
 };
 const task: ScheduledTask = {
   id: 7, migration_key: null, name: "检查钉钉消息", description: "增量检查 DingTalk 消息并创建后续处理任务。", prompt: "检查新的钉钉消息 $dingtalk-chat", command: "",
   cron_expression: "0 * * * * *", timezone_name: "Asia/Shanghai", schedule_description: "每分钟执行 · Asia/Shanghai",
   next_run_at: "2026-09-08T12:01:00Z", runtime_id: "codex_oauth", runtime_options: { thinking: "high" as const } as { thinking?: "low" | "medium" | "high" | "xhigh" },
   required_runtime_capabilities: [] as string[],
-  working_directory: "/tmp/ceo-agent", enabled: true, notify_on_completion: true, version: 3, skill_refs: [operationRef], recent_run: run,
+  working_directory: "/tmp/ceo-agent", enabled: true, version: 3, skill_refs: [operationRef], recent_run: run,
   created_at: "2026-09-08T10:00:00Z", updated_at: "2026-09-08T11:00:00Z", deleted_at: null,
 };
 type TestTask = ScheduledTask;
@@ -515,37 +515,16 @@ describe("ScheduledTasksPage", () => {
     expect(screen.queryByRole("button", { name: "立即运行" })).toBeNull();
   });
 
-  it("defaults completion notification on and saves its checkbox independently from schedule activation", async () => {
+  it("omits completion notification controls in both task details and editing", async () => {
     const user = userEvent.setup();
     setup([task]);
     renderPage();
+    await screen.findByRole("button", { name: "编辑任务" });
+    expect(screen.queryByText("完成通知")).not.toBeInTheDocument();
+    expect(screen.queryByRole("img", { name: /完成通知/ })).not.toBeInTheDocument();
+    expect(screen.queryByRole("checkbox", { name: "发送完成通知" })).not.toBeInTheDocument();
     await editSelectedTask(user);
-    const checkbox = screen.getByRole("checkbox", { name: "发送完成通知" });
-    expect(checkbox).toBeChecked();
-    await user.click(checkbox);
-    await user.click(screen.getByRole("button", { name: "保存更改" }));
-    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(
-      task.id,
-      expect.objectContaining({ enabled: true, notify_on_completion: false, version: task.version }),
-    ));
-  });
-
-  it("shows completion notification in the read-only details and list, and toggles it beside Edit", async () => {
-    const user = userEvent.setup();
-    setup([{ ...task, notify_on_completion: false }, { ...taskB, notify_on_completion: true }]);
-    api.updateScheduledTask.mockImplementation(async (_id, draft) => ({ item: { ...task, ...draft, version: 4 }, meta: { snapshot_at: "now" } }));
-    renderPage();
-
-    expect(await screen.findByText("已关闭")).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "已关闭完成通知" })).toBeInTheDocument();
-    expect(screen.getByRole("img", { name: "已开启完成通知" })).toBeInTheDocument();
-    const toggle = screen.getByRole("checkbox", { name: "发送完成通知" });
-    expect(toggle).not.toBeChecked();
-    await user.click(toggle);
-    await waitFor(() => expect(api.updateScheduledTask).toHaveBeenCalledWith(
-      task.id,
-      expect.objectContaining({ notify_on_completion: true, version: task.version }),
-    ));
+    expect(screen.queryByRole("checkbox", { name: "发送完成通知" })).not.toBeInTheDocument();
   });
 
   it("defaults a new draft from the first available Runtime capability", async () => {

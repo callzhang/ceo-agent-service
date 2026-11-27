@@ -54,8 +54,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex/scheduled-failure-notifications | app/agent_cron/{consumer,models}.py; app/store.py scheduled task fields; app/web_api/scheduled_tasks.py; frontend scheduled task page/API/styles and tests; scheduled task backend tests; docs/architecture.md; docs/runtime-mechanism.md | Remove per-task completion preference, notify on final failure, keep successful runs in history. | 2026-11-27 |
-
 
 
 

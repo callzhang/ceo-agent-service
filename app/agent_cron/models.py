@@ -193,7 +193,7 @@ class ScheduledTask:
     required_runtime_capabilities_json: str
     working_directory: str
     enabled: bool
-    notify_on_completion: bool
+    notify_on_completion: bool  # Historic value kept for snapshot identity.
     version: int
     skill_refs: tuple[ScheduledTaskSkillRef, ...]
     created_at: datetime
@@ -229,7 +229,7 @@ class ScheduledTaskSnapshot:
     runtime_options_json: str
     required_runtime_capabilities_json: str
     working_directory: str
-    notify_on_completion: bool
+    notify_on_completion: bool  # Historic value kept for snapshot identity.
     skill_refs: tuple[ScheduledTaskSkillRef, ...]
 
     @property

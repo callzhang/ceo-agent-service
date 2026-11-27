@@ -198,8 +198,6 @@ headless source 还会在调用 OKR API 前校验新捕获凭据的有效期；�
 
 ### Agent Cron 与统一 Dispatcher
 
-每个定时任务有独立的「发送完成通知」偏好，默认开启。偏好保存在任务配置中，并在创建手动或 Cron run 时冻结进该 run snapshot；后续编辑只影响之后创建的 run。关闭时只抑制该 run 的终态桌面通知，不改变任务/run 状态、Attention 或 History。没有该字段的历史 snapshot 按开启读取。
-
 用户可见的定时任务是 `任务描述 + Cron + Agent 能力（结构化 Skill 引用）+ Runtime`。任务描述是所有
 定时任务共有的可读用途说明；Agent 任务另有执行提示词，服务命令不把描述伪装成 Agent prompt。Scheduler 维护
 下一个触发点，并把一次触发保存为 `scheduled_task_run`；它不执行领域业务，
@@ -264,8 +262,7 @@ scheduled_tasks[command]
   -> trigger: dispatched + service_command link, or failed + Attention
 ```
 
-定时任务只有在服务命令或 Agent execution 已持久化为成功（`dispatched`/`done`）或失败
-（`failed`）时，才发送桌面通知，标题含任务名称，正文含结果摘要或错误。排队、等待重试、跳过和仍在执行时不通知；通知不改变运行状态或 Attention 规则。终态保存后，通知以尽力投递处理；本机没有可用通知程序时记录错误并保留任务的真实终态。
+手动和自动触发的定时任务统一只在执行以 `failed` 收口后发送桌面通知，标题含任务名称，正文含失败原因。服务命令的外部依赖故障沿用持续故障的合并提醒规则。成功结果和故障恢复留在运行记录及控制台，排队、运行中、等待重试和跳过均不弹窗。定时任务配置没有通知开关，旧偏好仅用于保持运行快照的身份。终态保存后，通知以尽力投递处理；本机没有可用通知程序时记录错误并保留真实终态。
 
 OA 的钉钉系统通知和聊天催办是外部观察事件，不是第二条审批执行入口。消息生产器将
 `OA审批` 系统通知以及 `[Ding]…提醒您审批` 聊天消息写入 `oa_notification_events`；前者只

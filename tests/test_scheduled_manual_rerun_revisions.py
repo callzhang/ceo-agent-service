@@ -182,7 +182,7 @@ def test_history_rerun_queues_the_refreshed_input_for_the_original_occurrence(tm
 def _compacted_scheduled_source(tmp_path):
     from tests.test_scheduled_agent_consumer import dispatch
 
-    store, run, options = scheduled_fixture(tmp_path, notify_on_completion=False)
+    store, run, options = scheduled_fixture(tmp_path)
     linked = dispatch(store, run, options)
     task = store.get_reply_task(int(linked.execution_id))
     attempt_id = store.record_reply_attempt(

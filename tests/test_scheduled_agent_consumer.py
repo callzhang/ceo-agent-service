@@ -4,6 +4,7 @@ from dataclasses import replace
 from datetime import UTC, datetime, timedelta
 import hashlib
 import json
+import sqlite3
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -79,7 +80,7 @@ def fixture(
     kind=RuntimeKind.CODEX_CLI,
     runtime_options=None,
     required_runtime_capabilities=(),
-    notify_on_completion=True,
+    previously_muted=False,
 ):
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
     skill = store.create_managed_skill("managed-check", "Managed Check")
@@ -105,7 +106,6 @@ def fixture(
         runtime_options=runtime_options or {"model": "saved", "reasoning_effort": "high"},
         required_runtime_capabilities=required_runtime_capabilities,
         working_directory=str(workspace), enabled=True,
-        notify_on_completion=notify_on_completion,
         skill_refs=(
             ScheduledTaskSkillRef(
                 skill_source="managed", skill_name="managed-check",
@@ -116,6 +116,8 @@ def fixture(
             ),
         ), now=NOW,
     )
+    if previously_muted:
+        mute_legacy_schedule(store, task.id)
     run = store.create_scheduled_task_run(
         task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
     )
@@ -159,26 +161,39 @@ def dispatch(store, run, options, *, registry=None, now=NOW, notification_sender
     return store.get_scheduled_task_run(run.id)
 
 
-def command_task_run(store, *, notify_on_completion=True):
+def mute_legacy_schedule(store, task_id):
+    with sqlite3.connect(store.path) as db:
+        db.execute("update schedules set notify_on_completion=0 where id=?", (task_id,))
+
+
+def command_task_run(store, *, previously_muted=False):
     task = store.create_scheduled_task(
         name="Producer", command="produce-once", cron_expression="0 * * * * *",
-        timezone_name="UTC", enabled=True, notify_on_completion=notify_on_completion, now=NOW,
+        timezone_name="UTC", enabled=True, now=NOW,
     )
+    if previously_muted:
+        mute_legacy_schedule(store, task.id)
     return store.create_scheduled_task_run(
         task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
     )
 
 
-def test_service_command_notification_preference_suppresses_terminal_notification(tmp_path):
+def test_service_command_failure_notifies_even_if_previously_muted(tmp_path):
     store = AutoReplyStore(tmp_path / "command-muted.sqlite3")
-    run = command_task_run(store, notify_on_completion=False)
+    run = command_task_run(store, previously_muted=True)
     notifications = []
+
+    def fail():
+        raise RuntimeError("command failed")
+
     persisted = dispatch(
-        store, run, None, registry=commands(lambda: unknown_service_result("done")),
+        store, run, None, registry=commands(fail),
         notification_sender=lambda **kwargs: notifications.append(kwargs),
     )
-    assert persisted.dispatch_status == "dispatched"
-    assert notifications == []
+    assert persisted.dispatch_status == "failed"
+    assert notifications == [{
+        "title": "定时任务失败：Producer", "message": "Producer 执行失败：command failed",
+    }]
 
 
 @pytest.mark.parametrize(
@@ -204,7 +219,7 @@ def test_scheduled_oa_scan_retries_only_uncovered_pre_write_reads(
     task = store.create_scheduled_task(
         name="OA pending scan", command="scan-oa-approvals",
         cron_expression="0 * * * *", timezone_name="UTC", enabled=True,
-        notify_on_completion=False, now=NOW,
+        now=NOW,
     )
     run = store.create_scheduled_task_run(
         task.id, trigger_kind="scheduled", scheduled_for=NOW, now=NOW,
@@ -588,7 +603,8 @@ def test_command_trigger_runs_in_process_and_never_creates_an_agent_input(tmp_pa
     assert persisted.execution_kind == SERVICE_COMMAND_EXECUTION_KIND
     assert persisted.execution_id == "produce-once"
     assert persisted.dispatched_at == NOW
-    assert notifications == [{"title": "定时任务完成：Producer", "message": "produce-once queued=2"}]
+    assert persisted.result_summary == "produce-once queued=2"
+    assert notifications == []
     assert store.list_reply_tasks(channel="scheduled") == []
     assert ScheduledExecutionQueueAdapter(store).claim(
         NOW, owner="execution", owner_pid=42, lease=timedelta(minutes=5)
@@ -829,17 +845,14 @@ def test_transient_service_outage_coalesces_macos_failure_notifications(tmp_path
     )
     assert notifications == []
 
-    def attempt(minutes, command_registry, *, notification_enabled=True):
+    def attempt(minutes, command_registry):
         moment = NOW + timedelta(minutes=minutes)
         run = store.create_scheduled_task_run(
             task_id, trigger_kind="manual", scheduled_for=moment, now=moment
         )
         return dispatch(
             store, run, None, registry=command_registry, now=moment,
-            notification_sender=(
-                lambda **kwargs: notifications.append(kwargs)
-                if notification_enabled else None
-            ),
+            notification_sender=lambda **kwargs: notifications.append(kwargs),
         )
 
     attempt(5, registry)
@@ -859,11 +872,8 @@ def test_transient_service_outage_coalesces_macos_failure_notifications(tmp_path
         30, commands(lambda: unknown_service_result("produce-once queued=1"))
     )
     assert recovered.dispatch_status == "dispatched"
-    assert notifications[-1] == {
-        "title": "定时任务完成：Producer",
-        "message": "produce-once queued=1",
-    }
-    assert len(notifications) == 2
+    assert recovered.result_summary == "produce-once queued=1"
+    assert len(notifications) == 1
 
 
 def test_command_registry_rejects_bindings_that_do_not_match_the_catalog():
@@ -1060,8 +1070,8 @@ def test_execution_availability_loss_is_skipped_without_agent_run(tmp_path, loss
     assert ledger is not None and ledger["terminal_at"]
 
 
-def test_provider_failure_only_fails_execution_fact(tmp_path):
-    store, run, options = fixture(tmp_path)
+def test_terminal_provider_failure_notifies_even_if_previously_muted(tmp_path):
+    store, run, options = fixture(tmp_path, previously_muted=True)
     task_id = int(dispatch(store, run, options).execution_id)
     task = store.get_reply_task(task_id)
     claimed = store.claim_agent_run(
@@ -1077,13 +1087,16 @@ def test_provider_failure_only_fails_execution_fact(tmp_path):
     )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
     envelope, guard = claim(adapter, task_id, "execution")
+    notifications = []
     ScheduledAgentConsumer(
         store=store, option_service=options,
         orchestrator_factory=lambda _built: SimpleNamespace(
             process=lambda *_args, **_kwargs: result
         ), now=lambda: NOW,
+        notification_sender=lambda **kwargs: notifications.append(kwargs),
     )(envelope, guard)
     assert store.get_reply_task(task_id).status == "failed"
+    assert notifications == [{"title": "定时任务失败：Check", "message": "provider failed"}]
     assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
 
 
@@ -1167,27 +1180,8 @@ def test_real_orchestrator_preserves_feedback_revision_chain(tmp_path):
     assert json.loads(runs[0].adopted_result_json)["proposal"]["actions"][0]["action_identity"] == "stable-action"
     assert json.loads(runs[2].adopted_result_json)["outcome"] == "no_action"
     assert task.status == "done"
-    assert notifications == [{"title": "定时任务完成：Check", "message": "R1"}]
-    assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
-
-
-def test_agent_notification_preference_suppresses_terminal_notification(tmp_path):
-    store, run, options = fixture(tmp_path, notify_on_completion=False)
-    execution_id = int(dispatch(store, run, options).execution_id)
-    orchestrator = AgentOrchestrator(
-        store=store, consumer=Consumer(store, proposal("R0"), no_action("R1")),
-        audit=Audit(store, "return", "approve"),
-    )
-    adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda _pid: False)
-    envelope, guard = claim(adapter, execution_id, "execution")
-    notifications = []
-    ScheduledAgentConsumer(
-        store=store, option_service=options,
-        orchestrator_factory=lambda _built: orchestrator, now=lambda: NOW,
-        notification_sender=lambda **kwargs: notifications.append(kwargs),
-    )(envelope, guard)
-    assert store.get_reply_task(execution_id).status == "done"
     assert notifications == []
+    assert store.get_scheduled_task_run(run.id).dispatch_status == "dispatched"
 
 
 def test_scheduled_audit_receives_exact_consumer_document_return(tmp_path, monkeypatch):
@@ -1511,7 +1505,11 @@ def test_scheduled_context_refresh_failures_stop_at_configured_attempt_budget(tm
                 raise RuntimeError('source unavailable CTX503')
             return orchestrator.process(task, context, refresh_context=refresh)
     clock = {'now':NOW}
-    consumer = ScheduledAgentConsumer(store=store, option_service=options, orchestrator_factory=lambda built:RefreshFailure(), now=lambda:clock['now'])
+    notifications = []
+    consumer = ScheduledAgentConsumer(
+        store=store, option_service=options, orchestrator_factory=lambda _built: RefreshFailure(),
+        now=lambda: clock['now'], notification_sender=lambda **kwargs: notifications.append(kwargs),
+    )
     adapter = ScheduledExecutionQueueAdapter(store, owner_alive=lambda pid:False)
     for attempt in range(1, MAX_REPLY_TASK_ATTEMPTS + 1):
         envelope, guard = claim(adapter, task_id, f'owner-{attempt}', now=clock['now'])
@@ -1521,10 +1519,14 @@ def test_scheduled_context_refresh_failures_stop_at_configured_attempt_budget(tm
         assert task.attempts == attempt
         assert task.status == ('failed' if attempt == MAX_REPLY_TASK_ATTEMPTS else 'pending')
         if attempt < MAX_REPLY_TASK_ATTEMPTS:
+            assert notifications == []
             clock['now'] = datetime.strptime(task.available_at,'%Y-%m-%d %H:%M:%S').replace(tzinfo=UTC)
     assert store.list_agent_runs_for_task_generation(task_id,task.execution_generation) == []
     assert adapter.claim(clock['now']+timedelta(days=1), owner='extra', owner_pid=42, lease=timedelta(minutes=5)) is None
     attempts = store.list_reply_attempts_for_conversation(task.conversation_id)
+    assert len(notifications) == 1
+    assert notifications[0]["title"] == "定时任务失败：Check"
+    assert "CTX503" in notifications[0]["message"]
     assert attempts[0].send_status == 'failed'
     assert 'CTX503' in attempts[0].audit_summary
 

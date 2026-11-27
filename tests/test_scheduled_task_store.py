@@ -108,43 +108,22 @@ def test_schema_manifest_creates_current_schedules_and_config_indexes(
     assert store._schema_is_current() is True
 
 
-def test_notification_preference_defaults_enabled_and_roundtrips(tmp_path: Path) -> None:
+def test_schedule_edit_preserves_legacy_value_for_snapshot_identity(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
     task = _create_task(store)
-    assert task.notify_on_completion is True
-    updated = store.update_scheduled_task(
-        task.id, expected_version=task.version, notify_on_completion=False, now=NOW
-    )
-    assert updated.notify_on_completion is False
-    updated = store.update_scheduled_task(
-        task.id, expected_version=updated.version, notify_on_completion=True, now=NOW
-    )
-    assert updated.notify_on_completion is True
-
-
-def test_notification_preference_is_frozen_in_snapshot(tmp_path: Path) -> None:
-    store = AutoReplyStore(tmp_path / "cron.sqlite3")
-    task = store.update_scheduled_task(
-        (created := _create_task(store)).id,
-        expected_version=created.version,
-        notify_on_completion=False,
-        now=NOW,
-    )
+    with sqlite3.connect(store.path) as db:
+        db.execute("update schedules set notify_on_completion=0 where id=?", (task.id,))
     run = store.create_scheduled_task_run(
         task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW
     )
     edited = store.update_scheduled_task(
-        task.id,
-        expected_version=task.version,
-        notify_on_completion=True,
-        now=NOW,
+        task.id, expected_version=task.version, name="Edited", now=NOW,
     )
-    assert edited.notify_on_completion is True
-    assert run.snapshot.notify_on_completion is False
+    assert edited.notify_on_completion is False
     assert json.loads(run.snapshot.to_json())["notify_on_completion"] is False
 
 
-def test_prior_snapshot_without_notification_preference_reads_enabled(tmp_path: Path) -> None:
+def test_prior_snapshot_without_notification_preference_can_still_be_read(tmp_path: Path) -> None:
     store = AutoReplyStore(tmp_path / "cron.sqlite3")
     task = _create_task(store)
     payload = json.loads(ScheduledTaskSnapshot.from_task(task).to_json())

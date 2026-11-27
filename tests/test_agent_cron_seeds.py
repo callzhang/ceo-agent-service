@@ -2142,7 +2142,7 @@ def test_scheduled_terminal_run_uses_current_finalizer_signature(monkeypatch):
         conversation_title='title', trigger_message_id='m', trigger_sender='s', trigger_text='input',
         manual_rerun_attempt_id=0)
     run = SimpleNamespace(id=7, tool_events=[], codex_session_id='', transcript_start_line=0,
-                          transcript_end_line=0, snapshot=SimpleNamespace(notify_on_completion=False))
+                          transcript_end_line=0, snapshot=SimpleNamespace(name="Check"))
     result = SimpleNamespace(status='no_action', error=SimpleNamespace(code=''), final_run_id=7,
                              summary='done', consumer_result=None)
     store = SimpleNamespace(get_reply_task=lambda _: task,

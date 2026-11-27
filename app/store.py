@@ -2522,7 +2522,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         working_directory: str = "",
         skill_refs: Sequence[ScheduledTaskSkillRef] = (),
         enabled: bool = True,
-        notify_on_completion: bool = True,
         migration_key: str | None = None,
         now: datetime | None = None,
     ) -> ScheduledTask:
@@ -2546,8 +2545,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         prompt, command, runtime_id = prompt.strip(), command.strip(), runtime_id.strip()
         if not isinstance(enabled, bool):
             raise ValueError("scheduled task enabled must be a boolean")
-        if not isinstance(notify_on_completion, bool):
-            raise ValueError("scheduled task notification preference must be a boolean")
         if migration_key is not None:
             migration_key = self._require_scheduled_task_text(
                 migration_key, field="scheduled task migration key"
@@ -2591,7 +2588,7 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 "runtime_id": runtime_id, "runtime_options_json": runtime_options_json,
                 "working_directory": working_directory,
                 "required_runtime_capabilities_json": required_runtime_capabilities_json,
-                "enabled": int(enabled), "notify_on_completion": int(notify_on_completion), "version": 1,
+                "enabled": int(enabled), "version": 1,
                 "created_at": now_text, "updated_at": now_text,
             }))
             self._replace_scheduled_task_skill_refs(db, task_id, refs)
@@ -3889,7 +3886,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
         required_runtime_capabilities: Sequence[str] | None = None,
         working_directory: str | None = None,
         skill_refs: Sequence[ScheduledTaskSkillRef] | None = None,
-        notify_on_completion: bool | None = None,
         now: datetime | None = None,
     ) -> ScheduledTask:
         expected_version = self._require_scheduled_task_version(expected_version)
@@ -3910,8 +3906,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                 raise ScheduledTaskVersionConflictError(
                     "scheduled task version conflict"
                 )
-            if notify_on_completion is not None and not isinstance(notify_on_completion, bool):
-                raise ValueError("scheduled task notification preference must be a boolean")
             next_name = (
                 self._require_scheduled_task_text(
                     name, field="scheduled task name"
@@ -3967,9 +3961,6 @@ class AutoReplyStore(LogicalRunStoreMixin, ReviewedCandidateStoreMixin):
                     working_directory
                     if working_directory is not None
                     else current.working_directory
-                ),
-                "notify_on_completion": int(
-                    notify_on_completion if notify_on_completion is not None else current.notify_on_completion
                 ),
             }
             for field_name in ("prompt", "command", "runtime_id", "working_directory"):
