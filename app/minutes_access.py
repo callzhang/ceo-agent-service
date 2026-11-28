@@ -19,6 +19,7 @@ still requires Derek to sign in through the ordinary Chrome handoff.
 
 from __future__ import annotations
 
+from bisect import bisect_right
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
@@ -29,6 +30,7 @@ from app.minutes_sync import _is_restricted_minute_error
 
 
 MINUTES_ACCESS_SCANNER = "ai_minutes_access"
+MAX_PERMISSION_RECHECKS_PER_SCAN = 40
 
 MINUTES_CONSOLE_HOST = "shanji-admin.dingtalk.com"
 
@@ -69,6 +71,7 @@ class MinutesAccessResult:
     readable: int = 0
     unresolved: int = 0
     failed: int = 0
+    recheck_deferred: int = 0
 
     def __post_init__(self) -> None:
         accounted = (
@@ -77,16 +80,27 @@ class MinutesAccessResult:
             + self.readable
             + self.unresolved
             + self.failed
+            + self.recheck_deferred
         )
         if accounted != self.discovered:
             raise ValueError("minutes access outcomes do not account for every item")
 
+    @property
+    def waiting_for_owner(self) -> int:
+        """Still restricted with a permission application verified by DingTalk."""
+        return self.requested + self.already_requested
+
     def summary(self) -> str:
-        return (
+        summary = (
             f"discovered={self.discovered} requested={self.requested} "
             f"already_requested={self.already_requested} readable={self.readable} "
             f"unresolved={self.unresolved} failed={self.failed}"
         )
+        if self.waiting_for_owner:
+            summary += f" waiting_for_owner={self.waiting_for_owner}"
+        if self.recheck_deferred:
+            summary += f" recheck_deferred={self.recheck_deferred}"
+        return summary
 
 
 @dataclass(frozen=True)
@@ -156,19 +170,28 @@ def request_minutes_access(
         if not task_uuid or task_uuid in seen:
             continue
         seen.add(task_uuid)
-        # Asking again for a minute already asked for would notify its owner a
-        # second time, and a cleaned minute has nothing left to grant.
-        if task_uuid in requested_ids or task_uuid in readable_ids:
-            continue
-        if _is_cleaned(row):
+        if task_uuid in readable_ids or _is_cleaned(row):
             continue
         candidates.append(row)
 
+    # The receipt ledger can contain hundreds of applications. Rotate a bounded
+    # set of read-only checks and leave fresh discovery unconstrained.
+    last_rechecked_id = str(cursor.get("last_rechecked_id") or "")
+    pending = sorted(requested_ids.intersection(_task_uuid(row) for row in candidates))
+    cursor_index = bisect_right(pending, last_rechecked_id)
+    rechecks = (pending[cursor_index:] + pending[:cursor_index])[:MAX_PERMISSION_RECHECKS_PER_SCAN]
+    recheck_ids = set(rechecks)
+    if rechecks:
+        last_rechecked_id = rechecks[-1]
+
     counts = {"requested": 0, "already_requested": 0, "readable": 0,
-              "unresolved": 0, "failed": 0}
+              "unresolved": 0, "failed": 0, "recheck_deferred": 0}
     last_error = ""
     for row in candidates:
         task_uuid = _task_uuid(row)
+        if task_uuid in requested_ids and task_uuid not in recheck_ids:
+            counts["recheck_deferred"] += 1
+            continue
         readable = _readable(dws, task_uuid)
         if readable is None:
             counts["failed"] += 1
@@ -176,6 +199,12 @@ def request_minutes_access(
         if readable:
             counts["readable"] += 1
             readable_ids.add(task_uuid)
+            requested_ids.discard(task_uuid)
+            continue
+        if task_uuid in requested_ids:
+            # The existing provider receipt deduplicates the application. DWS
+            # readback above is enough to clear waiting when access is granted.
+            counts["already_requested"] += 1
             continue
         try:
             result = console.request_access(task_uuid, reason=ACCESS_REQUEST_REASON)
@@ -206,6 +235,7 @@ def request_minutes_access(
             {
                 "requested_ids": sorted(requested_ids),
                 "readable_ids": sorted(readable_ids),
+                "last_rechecked_id": last_rechecked_id,
             },
             sort_keys=True,
         ),

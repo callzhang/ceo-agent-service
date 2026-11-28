@@ -178,6 +178,62 @@ def command_task_run(store, *, previously_muted=False):
     )
 
 
+@pytest.mark.parametrize("session_expired", [False, True])
+def test_minutes_access_distinguishes_owner_wait_from_login_failure(
+    tmp_path, monkeypatch, session_expired,
+):
+    from contextlib import contextmanager
+    from app import cli, minutes_console_browser
+    from app.minutes_access import MinutesAccessRequest, MinutesBrowserSessionExpired
+
+    class RestrictedDws:
+        def get_minutes_info(self, _task_uuid):
+            raise DwsError("denied", "1", business_message="no permission", server_key="minutes")
+
+    class Console:
+        def list_backend_minutes(self):
+            return [{"row_key": key, "size": "10 MB"} for key in ("notified", "ownerless")]
+
+        def request_access(self, task_uuid, *, reason):
+            applications.append(task_uuid)
+            return MinutesAccessRequest(
+                "requested" if task_uuid == "notified" else "unresolved",
+            )
+
+    @contextmanager
+    def signed_in_console():
+        if session_expired:
+            raise MinutesBrowserSessionExpired("service login expired")
+        yield Console()
+
+    monkeypatch.setattr(cli, "DwsClient", lambda **kwargs: RestrictedDws())
+    monkeypatch.setattr(minutes_console_browser, "signed_in_console", signed_in_console)
+    store = AutoReplyStore(tmp_path / "minutes.sqlite3")
+    task = store.create_scheduled_task(
+        name="Minutes", command="request-minutes-access", cron_expression="0 * * * * *",
+        timezone_name="UTC", enabled=True, now=NOW,
+    )
+    run = store.create_scheduled_task_run(
+        task.id, trigger_kind="manual", scheduled_for=NOW, now=NOW,
+    )
+    applications, alerts = [], []
+    registry = cli._service_command_registry(store, None, cli.WorkerSettings(db_path=store.path))
+
+    result = dispatch(store, run, None, registry=registry, notification_sender=lambda **alert: alerts.append(alert))
+
+    if session_expired:
+        assert result.dispatch_status == "failed"
+        assert "service login expired" in result.skip_or_error_reason
+        assert len(alerts) == 1
+        assert applications == []
+    else:
+        assert result.dispatch_status == "dispatched"
+        assert "waiting_for_owner=1" in result.result_summary
+        assert "unresolved=1" in result.result_summary
+        assert alerts == []
+        assert applications == ["notified", "ownerless"]
+
+
 def test_service_command_failure_notifies_even_if_previously_muted(tmp_path):
     store = AutoReplyStore(tmp_path / "command-muted.sqlite3")
     run = command_task_run(store, previously_muted=True)

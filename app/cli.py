@@ -1087,7 +1087,7 @@ def _service_command_registry(
             f"request-minutes-access {result.summary()}",
             tuple((name, getattr(result, name)) for name in (
                 "discovered", "requested", "already_requested", "readable",
-                "unresolved", "failed",
+                "waiting_for_owner", "unresolved", "failed", "recheck_deferred",
             )),
             True,
         )

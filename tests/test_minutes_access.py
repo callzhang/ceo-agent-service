@@ -100,8 +100,47 @@ def test_a_minute_already_asked_for_is_never_asked_again(tmp_path: Path) -> None
     )
 
     assert len(console.requested) == 1
-    assert second.discovered == 0
+    assert second.discovered == 1
+    assert second.already_requested == 1
+    assert second.waiting_for_owner == 1
     assert _cursor(store)["requested_ids"] == ["restricted"]
+
+
+def test_an_owner_grant_clears_waiting_without_another_application(tmp_path: Path) -> None:
+    store = _store(tmp_path)
+    console = FakeConsole(_rows("restricted"))
+    request_minutes_access(store, FakeDws(), console, now=NOW)
+
+    result = request_minutes_access(
+        store, FakeDws(readable={"restricted"}), console, now=NOW,
+    )
+
+    assert result.readable == 1
+    assert result.waiting_for_owner == 0
+    assert console.requested == [("restricted", ACCESS_REQUEST_REASON)]
+    assert _cursor(store)["requested_ids"] == []
+    assert _cursor(store)["readable_ids"] == ["restricted"]
+
+
+def test_saved_requests_are_rechecked_in_bounded_batches(
+    tmp_path: Path, monkeypatch,
+) -> None:
+    import app.minutes_access as access
+
+    monkeypatch.setattr(access, "MAX_PERMISSION_RECHECKS_PER_SCAN", 1, raising=False)
+    store = _store(tmp_path)
+    console = FakeConsole(_rows("a", "b"))
+    request_minutes_access(store, FakeDws(), console, now=NOW)
+    dws = FakeDws(readable={"b"})
+
+    first = request_minutes_access(store, dws, console, now=NOW)
+    second = request_minutes_access(store, dws, console, now=NOW)
+
+    assert first.waiting_for_owner == 1
+    assert first.recheck_deferred == 1
+    assert second.readable == 1
+    assert second.recheck_deferred == 1
+    assert console.requested == [("a", ACCESS_REQUEST_REASON), ("b", ACCESS_REQUEST_REASON)]
 
 
 def test_structured_minutes_denial_uses_the_existing_request_once(tmp_path: Path) -> None:
@@ -170,6 +209,7 @@ def test_an_unresolved_owner_is_retried_rather_than_recorded_as_asked(
     )
 
     assert first.unresolved == 1
+    assert first.waiting_for_owner == 0
     assert second.requested == 1
     assert _cursor(store)["requested_ids"] == ["slow"]
 
