@@ -1238,7 +1238,7 @@ DWS 读到详情后将条目记为可读。钉钉未提供可申请对象的记�
 
 所有任务只通过 `app/service_browser.py` 的 `launch_service_chrome` 启动浏览器：真 Chrome、始终无头、指向调用方自己的资料目录；默认启动前把最新的副本放进该目录的 `Default/Cookies`；已维护专用会话的调用显式传 `initialize_from_snapshot=False`，保留原 Cookie 和附属文件，不按任务名、域名或路径判断。两种方式都去掉 Playwright 默认的 `--use-mock-keychain`（否则 Chrome 解不开复制来的 cookie）。这样由真 Chrome 自己读“Chrome Safe Storage”钥匙串项，不会弹授权。副本是快照，会话过期后等下一次同步；不连接你正在用的 Chrome（Chrome 136 起默认资料目录不允许远程调试）。
 
-每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”从听记管理后台发现条目，在听记页面提交申请并读回送达。对方批准后，`20:00` 的归档任务读取内容。无头 Chrome 与可见登录窗口使用服务数据库旁的同一个 `minutes-console-profile`。后台启动显式保留该资料目录的 Cookie 和 Chrome 会话；登录失效时先关闭无头实例，再打开该目录的可见窗口。用户在这个窗口完成钉钉原生登录并退出该实例，后续后台任务即可接管，无需运行 `sync-chrome-cookies`。钉钉显示组织选择时仍选取列表第一个组织。登录页加载超时或组织跳转失败继续保留失败记录，收到完整扫描结果后才恢复。申请去重和运行摘要沿用原有回执。
+每天 `19:30`（`Asia/Shanghai`）运行的“申请读不到的钉钉 AI 听记”从听记管理后台发现条目，在听记页面提交申请并读回送达。对方批准后，`20:00` 的归档任务读取内容。无头 Chrome 与可见登录窗口使用服务数据库旁的同一个 `minutes-console-profile`。后台启动显式保留该资料目录的 Cookie 和 Chrome 会话，并以 `zh-CN` 加载管理页，让日期筛选控件与扫描使用的中文标签一致。登录失效时先关闭无头实例，再打开该目录的可见窗口。用户在这个窗口完成钉钉原生登录并退出该实例，后续后台任务即可接管，无需运行 `sync-chrome-cookies`。钉钉显示组织选择时仍选取列表第一个组织。登录页加载超时或组织跳转失败继续保留失败记录，收到完整扫描结果后才恢复。申请去重和运行摘要沿用原有回执。
 
 定时任务固定 Agent 案例在独立离线原生 CLI 中运行。评测 Consumer、Audit 和修订共享同一传输字段、标签与身份投影定义；业务规则仍来自各自精确 Skill 快照。冻结案例和评分函数，不改标历史失败；首轮、一次审核修订、实际正文/动作草稿与外部发布分别记录。参见 [Agent 验收记录](archive/records/scheduled-task-generic-agent-validation.md)。评测协议不改变生产 Consumer/Audit 契约。
 

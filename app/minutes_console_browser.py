@@ -303,7 +303,7 @@ def signed_in_console(profile_dir: Path | None = None):
         with sync_playwright() as playwright:
             context = launch_service_chrome(
                 playwright, profile, initialize_from_snapshot=False,
-                args=["--restore-last-session"],
+                args=["--restore-last-session"], locale="zh-CN",
             )
             try:
                 page = context.new_page()

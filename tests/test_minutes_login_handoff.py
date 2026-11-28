@@ -124,7 +124,7 @@ def test_scheduled_browser_preserves_its_own_profile(monkeypatch, tmp_path, init
 
     launch.assert_called_once_with(
         playwright, tmp_path, initialize_from_snapshot=False,
-        args=['--restore-last-session'],
+        args=['--restore-last-session'], locale='zh-CN',
     )
     context.close.assert_called_once()
 
