@@ -50,44 +50,6 @@
       "minimum": 0.0,
       "type": "number"
     },
-    "decision_options": {
-      "items": {
-        "$ref": "#/$defs/DecisionOption"
-      },
-      "maxItems": 4,
-      "type": "array"
-    },
-    "requested_input": {
-      "anyOf": [
-        {
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "needs_human_reason": {
-      "anyOf": [
-        {
-          "maxLength": 100,
-          "type": "string"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
-    "decision_basis": {
-      "anyOf": [
-        {
-          "$ref": "#/$defs/DecisionBasis"
-        },
-        {
-          "type": "null"
-        }
-      ]
-    },
     "stage_index": {
       "minimum": 0,
       "type": "integer"
@@ -154,12 +116,32 @@
                 "authored_judgment"
               ],
               "type": "object"
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -183,12 +165,32 @@
               "properties": {},
               "type": "object",
               "required": []
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -212,12 +214,32 @@
               "properties": {},
               "type": "object",
               "required": []
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -241,12 +263,32 @@
               "properties": {},
               "type": "object",
               "required": []
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -270,12 +312,35 @@
               "properties": {},
               "type": "object",
               "required": []
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 4,
+              "type": "array",
+              "minItems": 2
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 100
+            },
+            "decision_basis": {
+              "$ref": "#/$defs/DecisionBasis"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -318,12 +383,32 @@
                 "content"
               ],
               "type": "object"
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -366,12 +451,32 @@
                 "emoji"
               ],
               "type": "object"
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -414,12 +519,32 @@
                 "content"
               ],
               "type": "object"
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         },
@@ -457,12 +582,32 @@
                 "reason"
               ],
               "type": "object"
+            },
+            "decision_options": {
+              "items": {
+                "$ref": "#/$defs/DecisionOption"
+              },
+              "maxItems": 0,
+              "type": "array"
+            },
+            "requested_input": {
+              "type": "null"
+            },
+            "needs_human_reason": {
+              "type": "null"
+            },
+            "decision_basis": {
+              "type": "null"
             }
           },
           "required": [
             "action",
             "target",
-            "payload"
+            "payload",
+            "decision_options",
+            "requested_input",
+            "needs_human_reason",
+            "decision_basis"
           ],
           "additionalProperties": false
         }
@@ -480,10 +625,6 @@
     "confidence",
     "rule_coverage",
     "information_completeness",
-    "decision_options",
-    "requested_input",
-    "needs_human_reason",
-    "decision_basis",
     "stage_index",
     "predecessor_review_id",
     "continue_after_execution",

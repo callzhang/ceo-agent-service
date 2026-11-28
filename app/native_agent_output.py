@@ -16,6 +16,10 @@ from app.agent_wire_contracts import AuditAgentWireResult, consumer_wire_model
 
 ResultT = TypeVar("ResultT")
 
+_CONSUMER_ACTION_FIELDS = ("action", "target", "payload")
+_CONSUMER_OUTCOME_FIELDS = ("decision_options", "requested_input", "needs_human_reason", "decision_basis")
+CONSUMER_DECISION_FIELDS = _CONSUMER_ACTION_FIELDS + _CONSUMER_OUTCOME_FIELDS
+
 _UNSUPPORTED = {
     "oneOf", "allOf", "if", "then", "else", "not",
     "dependentRequired", "dependentSchemas", "default", "title",
@@ -74,6 +78,36 @@ def _consumer_action_branches(root: dict) -> list[dict]:
     raise ValueError("consumer action branch schema missing")
 
 
+def _consumer_decision_branches(root: dict) -> list[dict]:
+    outcome_branches = next(
+        clause["oneOf"] for clause in root["allOf"]
+        if clause.get("oneOf") and "decision_basis" in clause["oneOf"][0]["properties"]
+    )
+    fields_by_action = {}
+    for outcome in outcome_branches:
+        properties = outcome["properties"]
+        action_rule = properties["action"]
+        fields = {name: properties[name] for name in _CONSUMER_OUTCOME_FIELDS}
+        fields["decision_options"] = root["properties"]["decision_options"] | fields["decision_options"]
+        if fields["decision_basis"]["type"] == "object":
+            fields["decision_basis"] = next(
+                variant for variant in root["properties"]["decision_basis"]["anyOf"] if "$ref" in variant
+            )
+        for name in action_rule.get("enum", [action_rule.get("const")]):
+            fields_by_action[name] = fields
+    branches = []
+    for branch in _consumer_action_branches(root):
+        properties = branch["properties"]
+        name = properties["action"]["const"]
+        branches.append(_project({"type": "object", "properties": {
+            "action": {"type": "string", "enum": [name]},
+            "target": properties["target"],
+            "payload": properties["payload"],
+            **fields_by_action[name],
+        }}))
+    return branches
+
+
 def native_output_schema(role: str = "consumer", *, purpose: str = "general") -> dict:
     """Project the current purpose wire model into Codex's structural subset."""
     if role == "audit":
@@ -110,22 +144,9 @@ def native_output_schema(role: str = "consumer", *, purpose: str = "general") ->
     root = copy.deepcopy(_resolve(canonical, canonical["$defs"]))
     root["$defs"] = canonical["$defs"]
     projected = _project(root)
-    for name in ("action", "target", "payload"):
+    for name in CONSUMER_DECISION_FIELDS:
         projected["properties"].pop(name)
-    branches = []
-    for branch in _consumer_action_branches(root):
-        shape = _project({
-            "type": "object", "properties": {
-                name: branch["properties"][name] for name in ("action", "target", "payload")
-            },
-            "required": ["action", "target", "payload"],
-            "additionalProperties": False,
-        })
-        shape["properties"]["action"] = {
-            "type": "string", "enum": [branch["properties"]["action"]["const"]],
-        }
-        branches.append(shape)
-    projected["properties"]["decision"] = {"anyOf": branches}
+    projected["properties"]["decision"] = {"anyOf": _consumer_decision_branches(root)}
     projected["required"] = list(projected["properties"])
     return projected
 
@@ -245,8 +266,8 @@ def parse_native_output(raw: str, role: str = "consumer", *, purpose: str = "gen
             return result
         decision = native.pop("decision", None)
         if (not isinstance(decision, dict)
-                or set(decision) != {"action", "target", "payload"}
-                or any(name in native for name in ("action", "target", "payload"))):
+                or set(decision) != set(CONSUMER_DECISION_FIELDS)
+                or any(name in native for name in CONSUMER_DECISION_FIELDS)):
             raise ValueError("native consumer decision is invalid")
         action = decision["action"]
         root = _resolve(schema, schema["$defs"])
@@ -254,7 +275,8 @@ def parse_native_output(raw: str, role: str = "consumer", *, purpose: str = "gen
                        if item["properties"]["action"]["const"] == action), None)
         if branch is None:
             raise ValueError("native consumer action is unknown")
-        restored = _decode(native, root, schema["$defs"])
+        restored = _decode({**native, **{name: decision[name] for name in _CONSUMER_OUTCOME_FIELDS}},
+                           root, schema["$defs"])
         restored.update({
             "action": action,
             "target": _decode(decision["target"], branch["properties"]["target"],

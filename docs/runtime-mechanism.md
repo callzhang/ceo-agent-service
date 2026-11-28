@@ -1833,7 +1833,7 @@ Consumer 准备钉钉单聊候选前，使用触发消息中已有的发送者�
 状态已匹配时以只读证据完成；已派发而待核对的写入仅通过读回恢复，同一账号与日程的后续写入须等待。
 两个消息可各自回复；改选响应仍须由自己的候选经 Audit 后执行。
 
-Consumer 原生输出的 decision 只包含 action、target、payload；evidence_refs 始终位于根字段。
+Codex Consumer 原生输出在 `decision` 内用 `anyOf` 绑定 `action`、`target`、`payload` 与当前结果允许的人工决策字段。普通结果的人工选项为空，其余人工决策字段为 `null`。`needs_human` 仍要求两到四个适用于同类任务的选项和完整的 `DecisionBasis`。`evidence_refs` 始终位于根字段。恢复为现有 wire 对象后再执行严格校验。
 retry 的至少一项权限请求引用由完整 Consumer 合同验证，原生 Schema 不将该根字段重复放入 decision。
 
 System Action Contracts 在 Developer 中提供由 docs/system-action-contracts.md 自动生成的 capability/operation 目录；目录以 provider-neutral 的 `read_system_action_contract` 工具名指向 Runtime Context 中声明的原生入口（Codex 为 `mcp__agent_cli__read_system_action_contract`，Claude 为 `agent_cli.read_system_action_contract`）。该工具保留动作表外的全部原规范正文，只返回选定能力／操作的动作表行；只给 capability 时返回该能力的全部操作。原有角色、identity、payload、target、回执和完成条件保持完整，不返回其他操作的表行。Consumer 提出及 Audit 审查相应操作前必须读取规范；契约指纹仍包含全文。结果 schema 在 prompt 中只去除 title/default 注释，保留字段名、描述、枚举、约束及原有 Pydantic 校验。Codex Consumer 使用当前 Consumer wire model 生成的 general/OA 原生 Schema；Codex Audit 使用当前 Audit wire model 生成的同一原生 Schema，选择、解码和恢复指纹与 OAuth/API 认证方式无关。动态 JSON 对象以键值条目传输，并在严格 Pydantic 校验前无损还原；Audit 的 outcome/feedback 条件与 Consumer wire 分支约束保持不变，revision、digest 和候选字段断言仍由当前 Audit 上下文及既有校验负责。候选字段断言路径不存在时，修正反馈会指出准确路径和该父对象可用的字段名或数组索引，不回显候选字段值；校验和审核标准不变。Claude、Friday 及其他运行时路径不变。配置路线验证状态见 `docs/archive/records/native-consumer-output-validation.md`。

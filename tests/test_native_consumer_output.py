@@ -7,6 +7,7 @@ from app.agent_result import ResultParseError
 from app.agent_wire_contracts import consumer_wire_model, parse_consumer_agent_wire_result
 from app.consumer_agent import _parse_consumer_result
 from app.native_agent_output import (
+    CONSUMER_DECISION_FIELDS,
     _decode,
     native_output_schema,
     native_output_schema_path,
@@ -21,15 +22,15 @@ def _event(value):
     }}, ensure_ascii=False)
 
 
-def _consumer(action="no_action", *, purpose="general", target=None, payload=None):
+def _consumer(action="no_action", *, purpose="general", target=None, payload=None, **outcome_fields):
     wire = consumer_wire_model(purpose).model_validate({
         "action": action, "reason": "Current source checked", "target": target or {},
         "payload": payload or {}, "evidence_refs": ["source:1"],
         "summary": "Current source checked", "risk": "low", "confidence": 1.0,
         "rule_coverage": 1.0, "information_completeness": 1.0,
-        
+        **outcome_fields,
     }).model_dump(mode="json")
-    wire["decision"] = {name: wire.pop(name) for name in ("action", "target", "payload")}
+    wire["decision"] = {name: wire.pop(name) for name in CONSUMER_DECISION_FIELDS}
     return wire
 
 
@@ -139,9 +140,44 @@ def test_committed_native_schema_matches_current_wire_contract(purpose):
 
 
 @pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_non_human_schema_rejects_decision_basis(purpose):
+    from tests.test_agent_contracts import _decision_basis
+
+    native = _consumer(purpose=purpose)
+    native["decision"]["decision_basis"] = _decision_basis()
+    assert not Draft202012Validator(native_output_schema(purpose=purpose)).is_valid(native)
+
+
+@pytest.mark.parametrize("purpose", ["general", "oa"])
+def test_native_needs_human_accepts_full_decision_basis(purpose):
+    from tests.test_agent_contracts import _decision_basis, _decision_options
+
+    native = _consumer(
+        "needs_human", purpose=purpose, risk="high", confidence=0.49,
+        decision_options=_decision_options(), decision_basis=_decision_basis(),
+        needs_human_reason="A policy decision is needed",
+    )
+    for option in native["decision"]["decision_options"]:
+        if option["plan"] is None:
+            continue
+        for action in option["plan"]["actions"]:
+            for name in ("target", "payload"):
+                action[name] = _encode_dynamic(action[name])
+    schema = native_output_schema(purpose=purpose)
+    assert "anyOf" not in schema
+    validator = Draft202012Validator(schema)
+    validator.validate(native)
+    restored = json.loads(parse_native_output(_event(native), purpose=purpose))
+    assert restored["decision_basis"] == _decision_basis()
+    assert len(restored["decision_options"]) == 2
+    native["decision"]["decision_basis"].pop("conclusion")
+    assert not validator.is_valid(native)
+
+
+@pytest.mark.parametrize("purpose", ["general", "oa"])
 def test_native_retry_schema_and_parser_agree(purpose):
     native = _consumer("retry", purpose=purpose)
-    assert set(native["decision"]) == {"action", "target", "payload"}
+    assert set(native["decision"]) == set(CONSUMER_DECISION_FIELDS)
     Draft202012Validator(native_output_schema(purpose=purpose)).validate(native)
 
     restored = json.loads(parse_native_output(_event(native), purpose=purpose))
