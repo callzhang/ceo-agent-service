@@ -8,6 +8,7 @@ from jsonschema import Draft202012Validator
 
 from app.agent_wire_contracts import consumer_wire_model
 from app.native_agent_output import (
+    CONSUMER_DECISION_FIELDS,
     _JSON_VALUE_SCHEMA,
     _consumer_action_branches,
     _matches,
@@ -63,14 +64,16 @@ def native_consumer_stream_for_command(stdout: str, command: list[str]) -> str:
                     and item.get("type") == "agent_message"):
                 value = json.loads(item["text"])
                 if isinstance(value, dict) and not validator.is_valid(value):
-                    model.model_validate(value)
+                    value = model.model_validate(value).model_dump(mode="json")
                     root = _resolve(schema, schema["$defs"])
                     branch = next(part for part in _consumer_action_branches(root)
                                   if part["properties"]["action"]["const"] == value["action"])
                     encoded = {key: _encode(val, root["properties"][key], schema["$defs"])
                                for key, val in value.items()
-                               if key not in {"action", "target", "payload"}}
+                               if key not in CONSUMER_DECISION_FIELDS}
                     encoded["decision"] = {
+                        **{key: _encode(value[key], root["properties"][key], schema["$defs"])
+                           for key in CONSUMER_DECISION_FIELDS[3:]},
                         "action": value["action"],
                         "target": _encode(value["target"], branch["properties"]["target"],
                                           schema["$defs"]),
