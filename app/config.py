@@ -10,7 +10,7 @@ from datetime import timedelta
 from pathlib import Path
 
 
-DEFAULT_CEO_CODEX_MODEL = "gpt-5.5"
+DEFAULT_CEO_CODEX_MODEL = "gpt-6.1-terra"
 DEFAULT_CEO_CODEX_MODEL_REASONING_EFFORT = "medium"
 _ENCODED_ENV_VALUE_PREFIX = "__CEO_ENV_B64_V1__:"
 _EMAIL_SECRET_ENV_KEY = re.compile(

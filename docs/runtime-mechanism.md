@@ -201,6 +201,8 @@ workload 进入 `RoutedCodexExecution`，共用模型路由、会话、runtime a
 模型路由的名字：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条内置路由名字固定；其余
 路由（含名为 `codex_api`、`claude_api` 的）都是添加的线路，由 `CEO_RUNTIME_<名字>_*` 描述、可改名，
 运行时规则按路由种类而不按名字判断（详见 `docs/architecture.md` 的「Agent Runtime 路由模型」）。
+内置 Codex OAuth 路由默认使用 GPT-6.1 Terra（`gpt-6.1-terra`）。显式配置的
+`CEO_CODEX_MODEL` 优先，控制台保存后经主服务重启生效。
 添加的 Codex 路由可设置独立的 `REASONING_EFFORT`（`low`/`medium`/`high`/`xhigh`）；
 留空沿用全局 Codex 默认值，任务本轮显式指定的值仍优先。路线改名和删除会同步处理此设置。
 旧的 `CEO_CODEX_API_*` / `CEO_CLAUDE_API_*` 在服务启动时由 supervisor 先行一次性迁移，名字不变，

@@ -11,8 +11,17 @@ def test_default_runtime_uses_only_codex_oauth():
     config = load_runtime_config({})
 
     assert [route.name for route in config.routes] == ["codex_oauth"]
+    assert config.routes[0].model == "gpt-6.1-terra"
     assert config.probe_interval == timedelta(minutes=5)
     assert config.retry_delay == timedelta(minutes=30)
+
+
+@pytest.mark.parametrize(
+    "model",
+    ["gpt-6.2-sol", "gpt-6.2-astra", "gpt-6.1-terra", "gpt-6.1-sol", "gpt-5.5"],
+)
+def test_codex_oauth_accepts_explicit_catalog_and_existing_models(model: str):
+    assert load_runtime_config({"CEO_CODEX_MODEL": model}).routes[0].model == model
 
 
 def test_only_three_routes_have_fixed_names():

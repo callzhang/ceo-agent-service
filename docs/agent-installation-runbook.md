@@ -382,7 +382,7 @@ not in `~/.agents/skills`.
    CEO_WORKSPACE=$HOME/Documents/memory
    CEO_WORKER_DB=$HOME/Library/Application Support/ceo-agent-service/auto-reply.sqlite3
    CEO_CORPUS_DIR=./data/corpus
-   CEO_CODEX_MODEL=gpt-5.5
+   CEO_CODEX_MODEL=gpt-6.1-terra
    CEO_CODEX_MODEL_REASONING_EFFORT=medium
    CEO_CODEX_MODEL_PROVIDER=
    CEO_DRY_RUN=1

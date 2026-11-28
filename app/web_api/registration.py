@@ -2427,7 +2427,7 @@ def register_console_routes(
             else:
                 env = app_config.read_env_file()
                 fields = {key: env.get(key, "") for key in (
-                    "CEO_CODEX_MODEL", "CEO_CODEX_MODEL_REASONING_EFFORT",
+                    "CEO_CODEX_MODEL_REASONING_EFFORT",
                     "CEO_AGENT_RUNTIME_ROUTES", "CEO_AGENT_RUNTIME_HIDDEN_ROUTES",
                     "CEO_CLAUDE_MODEL", "CEO_CLAUDE_MODEL_REASONING_EFFORT",
                     "CEO_FRIDAY_RUNTIME_BASE_URL", "CEO_FRIDAY_RUNTIME_PROJECT_ID",
@@ -2437,6 +2437,9 @@ def register_console_routes(
                     "CEO_FRIDAY_RUNTIME_AUTH_DISABLED",
                     "CEO_FRIDAY_RUNTIME_TICKET", "CEO_FRIDAY_SESSION_TOKEN",
                 )}
+                fields["CEO_CODEX_MODEL"] = env.get(
+                    "CEO_CODEX_MODEL", app_config.DEFAULT_CEO_CODEX_MODEL
+                )
                 # An added route describes itself, so the console reads and
                 # writes its settings under the route's own name.
                 from app.agent_runtime_config import (

@@ -672,7 +672,7 @@ def test_codex_command_does_not_auto_fallback_to_configured_profile(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert command[command.index("-m") + 1] == "gpt-5.5"
+    assert command[command.index("-m") + 1] == "gpt-6.1-terra"
     assert 'model_reasoning_effort="medium"' in command
     assert 'model_provider="minimax"' not in command
 
@@ -698,7 +698,7 @@ def test_codex_command_ignores_legacy_profile_env_for_service_default_model(
 
     command = runner.build_command(prompt="hello", session_id=None)
 
-    assert command[command.index("-m") + 1] == "gpt-5.5"
+    assert command[command.index("-m") + 1] == "gpt-6.1-terra"
     assert 'model_reasoning_effort="medium"' in command
     assert 'model_provider="minimax"' not in command
 
@@ -792,7 +792,7 @@ def test_builds_new_thread_command(tmp_path: Path):
         "--disable",
         "hooks",
         "-m",
-        "gpt-5.5",
+        "gpt-6.1-terra",
         "-c",
         'model_reasoning_effort="medium"',
         "-c",
@@ -830,7 +830,7 @@ def test_builds_resume_command(tmp_path: Path):
         "--disable",
         "hooks",
         "-m",
-        "gpt-5.5",
+        "gpt-6.1-terra",
         "-c",
         'model_reasoning_effort="medium"',
         "-c",

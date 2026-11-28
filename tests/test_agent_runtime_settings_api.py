@@ -30,6 +30,16 @@ def _save(tmp_path: Path, **fields: str):
         return client.post(ENDPOINT, json={"fields": {**BASE_FIELDS, **fields}})
 
 
+def test_settings_show_the_default_codex_model_without_an_override(
+    tmp_path: Path, env_path: Path
+):
+    with _client(tmp_path) as client:
+        response = client.get(ENDPOINT)
+
+    assert response.status_code == 200
+    assert response.json()["item"]["fields"]["CEO_CODEX_MODEL"] == "gpt-6.1-terra"
+
+
 def test_friday_is_verified_against_the_desktop_cli_on_save(
     tmp_path: Path, env_path: Path, monkeypatch
 ):

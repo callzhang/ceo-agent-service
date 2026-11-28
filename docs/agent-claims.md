@@ -54,8 +54,6 @@ reverts committed work they did not author.
 
 ## Current claims
 
-| codex-model-catalog-20261128 | app/config.py; app/agent_runtime_config.py; app/web_api/registration.py Agent Runtime settings read only; frontend/src/pages/SettingsPage.tsx; docs/architecture.md; docs/runtime-mechanism.md; docs/agent-installation-runbook.md; .env.example; tests/test_agent_runtime_config.py; tests/test_agent_runtime_settings_api.py; tests/test_codex_runner.py; tests/test_hourly_dry_run_launchd.py; tests/test_setup_wizard.py | Refresh the Codex OAuth Settings options and default model from the installed Codex catalog, then deploy and verify. | 2026-11-28 |
-
 
 
 

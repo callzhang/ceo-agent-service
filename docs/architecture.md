@@ -1551,6 +1551,8 @@ Router 取下一条已配置且健康的路由。列表里出现的名字分两�
 - **内置路由**：只有 `codex_oauth`、`claude_oauth`、`friday_runtime` 三条（常量
   `SUPPORTED_RUNTIME_ROUTES`，Derek 2026-09-24），名字固定、不能改名，使用各自固定的环境变量
   （`CEO_CODEX_MODEL*`、`CEO_CLAUDE_MODEL*`、`CEO_FRIDAY_RUNTIME_*`）。
+  Codex OAuth 在未配置 `CEO_CODEX_MODEL` 时使用 GPT-6.1 Terra（`gpt-6.1-terra`）。控制台的
+  模型下拉列表按 Codex 原生目录的可选模型维护；已有的 GPT-5.5 配置仍可读取和保存。
 - **添加的路由**：列表里任何其它名字（小写字母、数字、下划线，字母开头）都是运维自己加的路由，
   由它自己名下的 `CEO_RUNTIME_<大写名>_KIND` / `_BASE_URL` / `_MODEL` / `_API_KEY` 描述，
   模型自由填写。`KIND` 取 `codex_oauth`、`codex_api`、`claude_oauth`、`claude_api` 之一

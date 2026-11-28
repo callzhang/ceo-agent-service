@@ -15,13 +15,17 @@ DEFAULT_CODEX_API_BASE_URL = "https://api.openai.com/v1"
 DEFAULT_FRIDAY_RUNTIME_BASE_URL = "http://127.0.0.1:8080"
 SUPPORTED_CODEX_RUNTIME_MODELS = frozenset(
     {
-        "gpt-5.5",
-        "gpt-5.6-sol",
-        "gpt-5.6-terra",
-        "gpt-5.6-luna",
+        "gpt-6.2-sol",
+        "gpt-6.2-astra",
+        "gpt-6.1-terra",
+        "gpt-6.1-sol",
         "gpt-6-astra",
         "gpt-6-sol",
         "gpt-6-luna",
+        "gpt-5.6-sol",
+        "gpt-5.6-terra",
+        "gpt-5.6-luna",
+        "gpt-5.5",  # Accept existing settings; Codex no longer lists this model.
     }
 )
 ROUTE_NAME_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")

@@ -10,7 +10,7 @@ REPO_ROOT = Path(__file__).resolve().parents[1]
 def test_env_example_sets_default_codex_agent_settings():
     content = (REPO_ROOT / ".env.example").read_text(encoding="utf-8")
 
-    assert "\nCEO_CODEX_MODEL=gpt-5.5\n" in content
+    assert "\nCEO_CODEX_MODEL=gpt-6.1-terra\n" in content
     assert "\nCEO_CODEX_MODEL_REASONING_EFFORT=medium\n" in content
 
 

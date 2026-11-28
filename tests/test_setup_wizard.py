@@ -831,7 +831,7 @@ def test_run_setup_service_config_creates_env_and_directories(tmp_path: Path):
     assert "CEO_NOT_SEND_MESSAGE=1" in (tmp_path / ".env").read_text(
         encoding="utf-8"
     )
-    assert "CEO_CODEX_MODEL=gpt-5.5" in (tmp_path / ".env").read_text(
+    assert "CEO_CODEX_MODEL=gpt-6.1-terra" in (tmp_path / ".env").read_text(
         encoding="utf-8"
     )
     assert "CEO_CODEX_MODEL_REASONING_EFFORT=medium" in (
