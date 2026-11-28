@@ -5930,7 +5930,7 @@ def test_run_json_retries_message_read_with_flattened_rate_limit_error(
 
     assert DwsClient().run_json(command) == {"ok": True}
     assert calls == [command, command]
-    assert sleeps == [1.0]
+    assert sleeps == [10.0]
 
 
 def test_run_json_refreshes_cache_before_retrying_dws_discovery_code(monkeypatch):
@@ -6115,6 +6115,32 @@ def test_run_json_still_retries_read_timeout(monkeypatch):
 
     assert DwsClient(transient_retry_attempts=1).run_json(command) == {"ok": True}
     assert calls == [command, command]
+
+
+def test_run_json_retries_current_user_rate_limit_after_provider_wait(monkeypatch):
+    calls = []
+    sleeps = []
+    command = ["dws", "contact", "user", "get-self", "--format", "json"]
+    rate_limit = (
+        '{"error":{"code":1,"message":"由于当前请求频率过高，'
+        '请等待 10 秒后重试。","reason":"rate_limited",'
+        '"server_error_code":"RATE_LIMIT_ERROR"}}'
+    )
+
+    def fake_run(command_arg, text, capture_output, check, timeout, env=None):
+        calls.append(command_arg)
+        if len(calls) == 1:
+            return SimpleNamespace(returncode=1, stdout="", stderr=rate_limit)
+        return SimpleNamespace(returncode=0, stdout='{"result":{"userid":"u1"}}', stderr="")
+
+    monkeypatch.setattr("app.dws_client.subprocess.run", fake_run)
+    monkeypatch.setattr("app.dws_client.time.sleep", sleeps.append)
+
+    assert DwsClient(transient_retry_attempts=1).run_json(command) == {
+        "result": {"userid": "u1"}
+    }
+    assert calls == [command, command]
+    assert sleeps == [10.0]
 
 
 def test_run_json_retries_json_null_from_message_list_read(monkeypatch):

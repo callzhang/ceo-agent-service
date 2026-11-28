@@ -350,6 +350,7 @@ class DwsClient:
         ("chat", "message", "list-all"),
         ("chat", "message", "list-unread-conversations"),
         ("chat", "search"),
+        ("contact", "user", "get-self"),
         ("contact", "user", "get"),
         ("contact", "user", "search"),
     }
@@ -4471,7 +4472,10 @@ class DwsClient:
             if retryable_error and remaining_retries > 0:
                 if code in self.DISCOVERY_CACHE_REFRESH_CODES:
                     self._refresh_cache()
-                self._sleep_before_retry(attempt_index)
+                self._sleep_before_retry(
+                    attempt_index,
+                    minimum_delay_seconds=10.0 if code == "RATE_LIMIT_ERROR" else 0.0,
+                )
                 attempt_index += 1
                 remaining_retries -= 1
                 continue
@@ -4646,11 +4650,14 @@ class DwsClient:
             env.pop(key, None)
         return env
 
-    def _sleep_before_retry(self, attempt_index: int) -> None:
+    def _sleep_before_retry(
+        self, attempt_index: int, *, minimum_delay_seconds: float = 0.0
+    ) -> None:
         delay_seconds = retry_delay_seconds(
             self.transient_retry_delay_seconds,
             attempt_index,
         )
+        delay_seconds = max(delay_seconds, minimum_delay_seconds)
         if delay_seconds > 0:
             time.sleep(delay_seconds)
 
