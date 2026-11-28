@@ -2447,11 +2447,9 @@ def request_minutes_access_command(
 
     Deterministic throughout: the console says which minutes exist, the read
     API says which of them we may not read, and a request counts only when the
-    minute's page reads it back. It needs a signed-in console session, which is
-    the one thing it cannot make for itself: it comes from the service's shared
-    headless Chrome carrying the copy of Derek's own Chrome cookies, and a copy
-    without a DingTalk login fails the command rather than reporting an empty
-    pass.
+    minute's page reads it back. The command uses the dedicated Minutes Chrome
+    profile with its own DingTalk session. An expired session opens that same
+    profile visibly for sign-in and fails the command.
     """
     from app.minutes_access import request_minutes_access
     from app.minutes_console_browser import signed_in_console

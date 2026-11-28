@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 import subprocess
 from typing import Any
+from urllib.parse import urlsplit
 from zoneinfo import ZoneInfo
 
 from app.minutes_access import (
@@ -292,69 +293,65 @@ def _service_profile_dir() -> Path:
 
 @contextmanager
 def signed_in_console(profile_dir: Path | None = None):
-    """Open the console in the service's headless Chrome, signed in as Derek.
-
-    Refresh the owner's cookie copy on every launch and restore its session
-    cookies with Chrome's native session startup. Otherwise Chrome removes
-    the copied console access token before the first request. A genuinely
-    expired login still requires the owner's ordinary Chrome login handoff.
-    """
+    """Use the native DingTalk session in the dedicated Minutes profile."""
     from playwright.sync_api import sync_playwright
 
     from app.service_browser import launch_service_chrome
 
     profile = profile_dir or _service_profile_dir()
-    with sync_playwright() as playwright:
-        # Chrome ignores --restore-last-session for a new profile. Initialize
-        # it without visiting a site, then the normal launcher refreshes the
-        # cookie copy before the real launch. Cookie expiry is unchanged.
-        if not (profile / "Default" / "Preferences").is_file():
-            launch_service_chrome(playwright, profile).close()
-        context = launch_service_chrome(
-            playwright, profile, args=["--restore-last-session"],
-        )
-        try:
-            page = context.new_page()
-            for restored_page in tuple(context.pages):
-                if restored_page is not page:
-                    restored_page.close()
+    try:
+        with sync_playwright() as playwright:
+            context = launch_service_chrome(
+                playwright, profile, initialize_from_snapshot=False,
+                args=["--restore-last-session"],
+            )
             try:
-                try:
-                    page.goto(
-                        HISTORY_URL, wait_until="domcontentloaded", timeout=45_000
-                    )
-                except Exception as exc:
-                    if LOGIN_HOST in page.url:
-                        raise MinutesBrowserSessionExpired(
-                            f"the DingTalk sign-in page did not finish loading: {exc}"
-                        ) from exc
-                    raise
-                page.wait_for_timeout(_CONSOLE_SETTLE_MS)
-                if LOGIN_HOST in page.url:
-                    _pick_organisation(page)
-                if MINUTES_CONSOLE_HOST not in page.url:
-                    raise MinutesBrowserSessionExpired(
-                        "the copy of Derek's Chrome cookies no longer carries a "
-                        f"DingTalk login (stopped at {page.url[:120]}); open "
-                        "DingTalk in Chrome and let `sync-chrome-cookies` run"
-                    )
-            except MinutesBrowserSessionExpired:
-                subprocess.run(
-                    ["/usr/bin/open", "-a", "Google Chrome", HISTORY_URL],
-                    check=True,
-                )
-                raise
-            yield PlaywrightMinutesConsole(page)
-        finally:
-            # Session restoration must retain cookies, not reload old minute
-            # URLs or grow a saved tab list on every scheduled invocation.
-            try:
-                previous_pages = tuple(context.pages)
-                context.new_page()
-                for open_page in previous_pages:
-                    open_page.close()
+                page = context.new_page()
+                for restored_page in tuple(context.pages):
+                    if restored_page is not page:
+                        restored_page.close()
+                _open_console_page(page)
+                yield PlaywrightMinutesConsole(page)
             finally:
-                context.close()
+                # Retain the session without saving old minute tabs. Do not
+                # navigate a tab that may still be navigating on its own.
+                try:
+                    previous_pages = tuple(context.pages)
+                    context.new_page()
+                    for open_page in previous_pages:
+                        open_page.close()
+                finally:
+                    context.close()
+    except MinutesBrowserSessionExpired:
+        # Release Chrome's profile lock before opening the visible window.
+        subprocess.run(
+            [
+                "/usr/bin/open", "-n", "-a", "Google Chrome", "--args",
+                f"--user-data-dir={profile}", "--no-first-run",
+                "--no-default-browser-check", HISTORY_URL,
+            ],
+            check=True,
+        )
+        raise
+
+
+def _open_console_page(page) -> None:
+    try:
+        page.goto(HISTORY_URL, wait_until="domcontentloaded", timeout=45_000)
+    except Exception as exc:
+        if urlsplit(page.url).hostname == LOGIN_HOST:
+            raise MinutesBrowserSessionExpired(
+                f"the DingTalk sign-in page did not finish loading: {exc}"
+            ) from exc
+        raise
+    page.wait_for_timeout(_CONSOLE_SETTLE_MS)
+    if urlsplit(page.url).hostname == LOGIN_HOST:
+        _pick_organisation(page)
+    if urlsplit(page.url).hostname != MINUTES_CONSOLE_HOST:
+        raise MinutesBrowserSessionExpired(
+            "the dedicated Minutes browser did not reach the management console; "
+            "sign in using its visible window"
+        )
 
 
 def _pick_organisation(page) -> None:

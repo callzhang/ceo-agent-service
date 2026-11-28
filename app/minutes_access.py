@@ -10,11 +10,9 @@ every one of their pages still offered `Send Application` afterwards).
 
 So this pass reads the console for candidates, asks the provider which of them
 we may not read, and sends a request on the page, counting it only when the
-page reads the request back.  Every step is a fixed rule, and the browser it
-drives is the service's shared headless Chrome, which carries the daily copy
-of Derek's own Chrome cookies. The minutes browser restores the copied session
-cookies through Chrome's native startup mode; a genuinely expired source login
-still requires Derek to sign in through the ordinary Chrome handoff.
+page reads the request back. The console uses a dedicated Chrome profile
+signed in through DingTalk's own visible login page. The same profile is
+reopened headlessly for later scans.
 """
 
 from __future__ import annotations
@@ -41,13 +39,7 @@ ACCESS_REQUEST_REASON = (
 )
 
 class MinutesBrowserSessionExpired(RuntimeError):
-    """The service's headless Chrome could not reach the 听记 admin console.
-
-    It carries the daily copy of Derek's own Chrome cookies, so the remedy is
-    to give that copy a DingTalk login again -- open DingTalk in Chrome, and
-    let the daily `sync-chrome-cookies` pass run -- not to sign in anywhere on
-    the console's behalf.
-    """
+    """The dedicated Minutes browser must renew its native DingTalk session."""
 
 
 class MinutesConsoleUnavailable(RuntimeError):

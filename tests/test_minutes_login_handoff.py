@@ -10,7 +10,7 @@ from app.minutes_access import MinutesBrowserSessionExpired
 
 
 @pytest.mark.parametrize('expired', [True, False])
-def test_expired_console_opens_user_chrome_and_keeps_failure(monkeypatch, tmp_path, expired):
+def test_expired_console_opens_same_profile_after_background_closes(monkeypatch, tmp_path, expired):
     (tmp_path / 'Default').mkdir()
     (tmp_path / 'Default' / 'Preferences').write_text('{}')
     page = Mock()
@@ -23,7 +23,10 @@ def test_expired_console_opens_user_chrome_and_keeps_failure(monkeypatch, tmp_pa
     def pick(*args):
         raise MinutesBrowserSessionExpired('scan login required')
     monkeypatch.setattr(browser, '_pick_organisation', pick)
-    open_page = Mock(return_value=SimpleNamespace(returncode=0))
+    def open_after_close(*args, **kwargs):
+        context.close.assert_called_once()
+        return SimpleNamespace(returncode=0)
+    open_page = Mock(side_effect=open_after_close)
     monkeypatch.setattr('subprocess.run', open_page)
     if expired:
         with pytest.raises(MinutesBrowserSessionExpired, match='scan login required'):
@@ -31,7 +34,8 @@ def test_expired_console_opens_user_chrome_and_keeps_failure(monkeypatch, tmp_pa
                 pytest.fail('unauthenticated console must not be yielded')
         open_page.assert_called_once_with(
             [
-                '/usr/bin/open', '-a', 'Google Chrome',
+                '/usr/bin/open', '-n', '-a', 'Google Chrome', '--args',
+                f'--user-data-dir={tmp_path}', '--no-first-run', '--no-default-browser-check',
                 browser.HISTORY_URL,
             ],
             check=True,
@@ -68,7 +72,8 @@ def test_organization_redirect_timeout_opens_user_chrome_and_keeps_failure(
     assert page.wait_for_url.call_args.kwargs['timeout'] == 10_000
     open_page.assert_called_once_with(
         [
-            '/usr/bin/open', '-a', 'Google Chrome',
+            '/usr/bin/open', '-n', '-a', 'Google Chrome', '--args',
+            f'--user-data-dir={tmp_path}', '--no-first-run', '--no-default-browser-check',
             browser.HISTORY_URL,
         ],
         check=True,
@@ -101,42 +106,27 @@ def test_login_page_navigation_timeout_opens_user_chrome_and_keeps_failure(
 
 
 @pytest.mark.parametrize('initialized', [True, False])
-def test_copied_session_cookies_are_restored_after_native_profile_initialization(
-    monkeypatch, tmp_path, initialized,
-):
-    preferences = tmp_path / 'Default' / 'Preferences'
+def test_scheduled_browser_preserves_its_own_profile(monkeypatch, tmp_path, initialized):
     if initialized:
+        preferences = tmp_path / 'Default' / 'Preferences'
         preferences.parent.mkdir()
         preferences.write_text('{}')
-    events = []
-    page = Mock()
-    page.url = browser.HISTORY_URL
-    context = Mock()
-    context.pages = [page]
-    context.new_page.side_effect = lambda: events.append('new page') or page
-    context.close.side_effect = lambda: events.append('close')
-    warmup = Mock()
-    warmup.close.side_effect = lambda: events.append('initialized')
-
-    def launch(_playwright, profile, **kwargs):
-        assert profile == tmp_path
-        events.append(kwargs)
-        if not preferences.exists():
-            preferences.parent.mkdir(exist_ok=True)
-            preferences.write_text('{}')
-            return warmup
-        return context
-
-    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: nullcontext(object()))
+    page = Mock(url=browser.HISTORY_URL)
+    context = Mock(pages=[page])
+    context.new_page.return_value = page
+    playwright = object()
+    monkeypatch.setattr('playwright.sync_api.sync_playwright', lambda: nullcontext(playwright))
+    launch = Mock(return_value=context)
     monkeypatch.setattr(service_browser, 'launch_service_chrome', launch)
-    with browser.signed_in_console(tmp_path) as console:
-        assert console is not None
-    if initialized:
-        assert events == [{'args': ['--restore-last-session']}, 'new page', 'new page', 'close']
-        warmup.close.assert_not_called()
-    else:
-        assert events == [{}, 'initialized', {'args': ['--restore-last-session']}, 'new page', 'new page', 'close']
-        warmup.new_page.assert_not_called()
+
+    with browser.signed_in_console(tmp_path):
+        pass
+
+    launch.assert_called_once_with(
+        playwright, tmp_path, initialize_from_snapshot=False,
+        args=['--restore-last-session'],
+    )
+    context.close.assert_called_once()
 
 
 def test_repeated_restores_save_only_blank_tabs(monkeypatch, tmp_path):
